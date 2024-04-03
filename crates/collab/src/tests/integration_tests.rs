@@ -1,6 +1,9 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::{channel_id, room_participants, rust_lang, RoomParticipants, TestClient, TestServer},
+    tests::{
+        channel_id, following_tests::join_channel, room_participants, rust_lang, RoomParticipants,
+        TestClient, TestServer,
+    },
 };
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
@@ -5914,7 +5917,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_cmd_k_left(cx: &mut TestAppContext) {
-    let client = TestServer::start1(cx).await;
+    let (_, client) = TestServer::start1(cx).await;
     let (workspace, cx) = client.build_test_workspace(cx).await;
 
     cx.simulate_keystrokes("cmd-n");
@@ -5933,4 +5936,17 @@ async fn test_cmd_k_left(cx: &mut TestAppContext) {
     workspace.update(cx, |workspace, cx| {
         assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
     });
+}
+
+#[gpui::test]
+async fn test_join_after_restart(cx1: &mut TestAppContext, cx2: &mut TestAppContext) {
+    let (mut server, client) = TestServer::start1(cx1).await;
+    let channel1 = server.make_public_channel("channel1", &client, cx1).await;
+    let channel2 = server.make_public_channel("channel2", &client, cx1).await;
+
+    join_channel(channel1, &client, cx1).await.unwrap();
+    drop(client);
+
+    let client2 = server.create_client(cx2, "user_a").await;
+    join_channel(channel2, &client2, cx2).await.unwrap();
 }
