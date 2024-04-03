@@ -1,10 +1,15 @@
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
+use futures::channel::mpsc::{self, Receiver, Sender};
 use gpui::{AppContext, Context, EventEmitter, Global, Model, ModelContext, Task, WeakModel};
 use language::{LanguageRegistry, Tree, PARSER};
 use project::{Entry, Project, Worktree};
-use smol::channel;
+use sha2::{Digest, Sha256};
+use smol::{
+    channel::{self},
+    stream::StreamExt,
+};
 use std::{cmp, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
 
@@ -47,6 +52,7 @@ pub struct ProjectIndex {
     db: lmdb::Database,
     project: WeakModel<Project>,
     worktree_scans: HashMap<WeakModel<Worktree>, Task<()>>,
+    chunked_files_tx: Sender<ChunkedFile>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
 }
@@ -55,10 +61,14 @@ impl ProjectIndex {
     fn new(project: Model<Project>, db: lmdb::Database, cx: &mut ModelContext<Self>) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let fs = project.read(cx).fs().clone();
+
+        let (chunked_files_tx, chunked_files_rx) = mpsc::channel(2048);
+
         let mut this = ProjectIndex {
             db,
             project: project.downgrade(),
             worktree_scans: HashMap::default(),
+            chunked_files_tx,
             language_registry,
             fs,
         };
@@ -66,6 +76,8 @@ impl ProjectIndex {
         for worktree in project.read(cx).worktrees().collect::<Vec<_>>() {
             this.add_worktree(worktree, cx);
         }
+
+        embed_chunks(chunked_files_rx, cx);
 
         this
     }
@@ -141,7 +153,12 @@ struct ChunkedFile {
     worktree_path: Arc<Path>,
     entry: Entry,
     contents: String,
-    chunk_ranges: Vec<Range<usize>>,
+    chunks: Vec<Chunk>,
+}
+
+struct Chunk {
+    range: Range<usize>,
+    digest: [u8; 32],
 }
 
 async fn index_entry(
@@ -167,13 +184,6 @@ async fn index_entry(
         });
 
         let chunks = chunk_parse_tree(tree, &text);
-
-        for chunk in chunks {
-            println!(
-                "=====================================================================\n{}",
-                &text[chunk]
-            );
-        }
     } else {
         return Err(anyhow!("plain text is not yet supported"));
     }
@@ -183,7 +193,7 @@ async fn index_entry(
 
 const CHUNK_THRESHOLD: usize = 1500;
 
-fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Range<usize>> {
+fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
     let mut chunk_ranges = Vec::new();
     let mut cursor = tree.walk();
 
@@ -224,8 +234,25 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Range<usize>> {
                 if !range.is_empty() {
                     chunk_ranges.push(range);
                 }
-                return chunk_ranges;
+
+                return chunk_ranges
+                    .into_iter()
+                    .map(|range| {
+                        let mut hasher = Sha256::new();
+                        hasher.update(&text[range.clone()]);
+                        let mut digest = [0u8; 32];
+                        digest.copy_from_slice(hasher.finalize().as_slice());
+                        Chunk { range, digest }
+                    })
+                    .collect();
             }
         }
     }
+}
+
+fn embed_chunks(mut chunked_files: Receiver<ChunkedFile>, cx: &mut ModelContext<ProjectIndex>) {
+    cx.spawn(
+        |this, cx| async move { while let Some(chunked_file) = chunked_files.next().await {} },
+    )
+    .detach();
 }

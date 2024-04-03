@@ -12,13 +12,15 @@ path = "src/semantic_index.rs"
 anyhow.workspace = true
 collections.workspace = true
 fs.workspace = true
+futures.workspace = true
 gpui.workspace = true
 language.workspace = true
 lmdb = "0.8.0"
 project.workspace = true
 settings.workspace = true
+sha2.workspace = true
 smol.workspace = true
-util = { workspace = true }
+util. workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
