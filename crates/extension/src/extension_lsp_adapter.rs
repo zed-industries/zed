@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
-use language::{Language, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{CodeLabel, Language, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use std::{
     any::Any,
@@ -171,5 +171,55 @@ impl LspAdapter for ExtensionLspAdapter {
         } else {
             None
         })
+    }
+
+    async fn labels_for_completions(
+        &self,
+        completions: &[lsp::CompletionItem],
+        language: &Arc<Language>,
+    ) -> Vec<Option<CodeLabel>> {
+        let labels = self
+            .extension
+            .call({
+                let this = self.clone();
+                let completions = completions.into_iter().cloned().collect::<Vec<_>>();
+                |extension, store| {
+                    async move {
+                        let labels = extension
+                            .call_labels_for_completions(
+                                store,
+                                &LanguageServerName("TODO".into()),
+                                &completions,
+                            )
+                            .await
+                            .map_err(|e| anyhow!("{}", e))
+                            // TODO: Don't unwrap.
+                            .unwrap();
+                        labels
+                    }
+                    .boxed()
+                }
+            })
+            .await
+            // TODO: Don't unwrap.
+            .unwrap();
+
+        labels
+            .into_iter()
+            .map(|label| {
+                label.map(|label| match label {
+                    crate::wit::CodeLabel::Fixed(label) => CodeLabel {
+                        text: todo!(),
+                        runs: todo!(),
+                        filter_range: todo!(),
+                    },
+                    crate::wit::CodeLabel::Parsed(label) => CodeLabel {
+                        text: todo!(),
+                        runs: todo!(),
+                        filter_range: todo!(),
+                    },
+                })
+            })
+            .collect()
     }
 }

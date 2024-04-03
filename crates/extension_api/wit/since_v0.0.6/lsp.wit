@@ -2,7 +2,7 @@ interface lsp {
     record completion {
         label: string,
         detail: option<string>,
-        kind: completion-item-kind,
+        kind: option<completion-item-kind>,
         insert-text-format: option<insert-text-format>,
     }
 
