@@ -208,7 +208,9 @@ message Envelope {
         ChannelMessageUpdate channel_message_update = 171;
 
         BlameBuffer blame_buffer = 172;
-        BlameBufferResponse blame_buffer_response = 173; // Current max
+        BlameBufferResponse blame_buffer_response = 173;
+        
+        UpdateNotification update_notification = 174;  // current max
     }
 
     reserved 158 to 161;
@@ -1713,6 +1715,10 @@ message GetNotificationsResponse {
 
 message DeleteNotification {
     uint64 notification_id = 1;
+}
+
+message UpdateNotification {
+    Notification notification = 1;
 }
 
 message MarkNotificationRead {
