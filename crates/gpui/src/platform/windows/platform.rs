@@ -57,7 +57,6 @@ pub(crate) struct WindowsPlatformInner {
     background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     main_receiver: flume::Receiver<Runnable>,
-    // text_system: Arc<DirectWriteTextSystem>,
     text_system: Arc<dyn PlatformTextSystem>,
     callbacks: Mutex<Callbacks>,
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
