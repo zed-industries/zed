@@ -72,7 +72,7 @@ pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
 pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::LineEnding;
-pub use tree_sitter::{Parser, Tree};
+pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 
 use crate::language_settings::SoftWrap;
 

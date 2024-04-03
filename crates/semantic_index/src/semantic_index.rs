@@ -2,10 +2,12 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, Context, EventEmitter, Global, Model, ModelContext, Task, WeakModel};
-use language::{LanguageRegistry, PARSER};
+use language::{LanguageRegistry, Node, Tree, TreeCursor, PARSER};
 use project::{Project, Worktree};
 use smol::channel;
 use std::{
+    cmp,
+    ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
@@ -98,25 +100,19 @@ impl ProjectIndex {
                         }
                     }
                 });
-                let path_count = AtomicUsize::new(0);
 
                 cx.background_executor()
                     .scoped(|cx| {
                         for _ in 0..cx.num_cpus() {
                             cx.spawn(async {
                                 while let Ok(path) = paths_rx.recv().await {
-                                    if index_path(
+                                    index_path(
                                         worktree_abs_path.join(&path),
                                         &language_registry,
                                         fs.as_ref(),
                                     )
                                     .await
-                                    .log_err()
-                                    .is_some()
-                                    {
-                                        path_count
-                                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                                    }
+                                    .log_err();
                                 }
                             });
                         }
@@ -129,7 +125,6 @@ impl ProjectIndex {
                     if this.worktree_scans.is_empty() {
                         cx.emit(StatusEvent::Idle);
                     }
-                    dbg!(path_count.load(std::sync::atomic::Ordering::SeqCst));
                 })
                 .ok();
             }
@@ -169,22 +164,66 @@ async fn index_path(
                 .expect("incompatible grammar");
             parser.parse(&text, None).expect("invalid language")
         });
-        dbg!(tree.root_node().start_byte()..tree.root_node().end_byte());
+
+        let chunks = chunk_parse_tree(tree, &text);
+
+        for chunk in chunks {
+            println!("-- CHUNKY --\n{}", &text[chunk]);
+        }
     } else {
-        return Err(anyhow!("plain text"));
+        return Err(anyhow!("plain text is not yet supported"));
     }
 
     Ok(())
+}
 
-    // if let Ok(contents) = fs.read(&path).await {
-    //     if let Some(language) = language_registry.get_language_for_path(&path) {
-    //         // Process the contents with the determined language
-    //         // This is a placeholder for actual indexing logic
-    //         println!("Indexing {:?} with language {:?}", path, language);
-    //     } else {
-    //         println!("No language found for {:?}", path);
-    //     }
-    // } else {
-    //     println!("Failed to read {:?}", path);
-    // }
+const CHUNK_THRESHOLD: usize = 3200;
+
+fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Range<usize>> {
+    let mut chunk_ranges = Vec::new();
+    let mut cursor = tree.walk();
+
+    let mut range = 0..0;
+    loop {
+        let node = cursor.node();
+
+        // If we can't fit the entire node into the current chunk, we flush the current chunk.
+        if node.end_byte() - range.start > CHUNK_THRESHOLD {
+            if !range.is_empty() {
+                chunk_ranges.push(range);
+                range = cursor.node().start_byte()..cursor.node().start_byte();
+            }
+        }
+
+        // If the node can't fit into a chunk, we recurse into its children.
+        // Otherwise we extend the range and advance to the next sibling at the current level of the tree.
+        if node.end_byte() - node.start_byte() > CHUNK_THRESHOLD {
+            if cursor.goto_first_child() {
+                continue;
+            }
+
+            // If the node is too big but has no children, we chunk its text arbitrarily.
+            while range.start < node.end_byte() {
+                range.end = cmp::min(range.start + CHUNK_THRESHOLD, node.end_byte());
+                while !text.is_char_boundary(range.end) {
+                    range.end -= 1;
+                }
+                chunk_ranges.push(range.clone());
+                range.start = range.end;
+            }
+        } else {
+            range.end = node.end_byte();
+        }
+
+        while !cursor.goto_next_sibling() {
+            if !range.is_empty() {
+                chunk_ranges.push(range);
+                range = cursor.node().end_byte()..cursor.node().end_byte();
+            }
+
+            if !cursor.goto_parent() {
+                return chunk_ranges;
+            }
+        }
+    }
 }

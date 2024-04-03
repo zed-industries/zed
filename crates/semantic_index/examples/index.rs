@@ -59,10 +59,10 @@ fn main() {
             });
 
             let t0 = std::time::Instant::now();
-            let event = rx.await.expect("no event emitted");
+            rx.await.expect("no event emitted");
             drop(subscription);
             dbg!(t0.elapsed());
-            cx.update(|cx| cx.quit());
+            cx.update(|cx| cx.quit()).unwrap();
         })
         .detach();
     });
