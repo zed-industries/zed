@@ -1085,6 +1085,16 @@ impl CollabPanel {
         let maybe_project_id = remote_project.project_id.clone();
         //TODO grey out if project is not hosted yet
 
+        let dev_server = self
+            .channel_store
+            .read(cx)
+            .find_dev_server_by_id(remote_project.dev_server_id);
+
+        let tooltip_text = SharedString::from(match dev_server {
+            Some(dev_server) => format!("Open Remote Project ({})", dev_server.name),
+            None => "Open Remote Project".to_string(),
+        });
+
         ListItem::new(ElementId::NamedInteger(
             "remote-project".into(),
             id.0 as usize,
@@ -1104,7 +1114,7 @@ impl CollabPanel {
                 .child(IconButton::new(0, IconName::FileTree)),
         )
         .child(Label::new(name.clone()))
-        .tooltip(move |cx| Tooltip::text("Open Remote Project", cx))
+        .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
     }
 
     fn has_subchannels(&self, ix: usize) -> bool {

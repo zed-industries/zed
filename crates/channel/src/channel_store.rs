@@ -375,6 +375,10 @@ impl ChannelStore {
         dev_servers
     }
 
+    pub fn find_dev_server_by_id(&self, id: DevServerId) -> Option<&DevServer> {
+        self.dev_servers.get(&id)
+    }
+
     pub fn remote_projects_for_id(&self, channel_id: ChannelId) -> Vec<RemoteProject> {
         let mut remote_projects: Vec<RemoteProject> = self
             .channel_states
