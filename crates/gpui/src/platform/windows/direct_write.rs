@@ -7,7 +7,7 @@ use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use windows::{
-    core::{implement, HRESULT, HSTRING, PCWSTR},
+    core::{implement, HSTRING, PCWSTR},
     Win32::{
         Foundation::{BOOL, COLORREF, E_NOTIMPL},
         Globalization::GetUserDefaultLocaleName,
@@ -223,11 +223,13 @@ impl DirectWriteState {
                     continue;
                 };
                 let is_emoji = font_face.IsColorFont().as_bool();
+                let direct_write_featrues = self.components.factory.CreateTypography().unwrap();
+                apply_font_features(&direct_write_featrues, features);
                 let font_info = FontInfo {
                     font_family: family_name,
                     font_face,
                     font_set_index: fontset_index,
-                    features: direct_write_features(&self.components.factory, features),
+                    features: direct_write_featrues,
                     is_emoji,
                 };
                 let font_id = FontId(self.fonts.len());
@@ -811,6 +813,7 @@ impl Drop for DirectWriteState {
 #[implement(IDWriteTextRenderer)]
 struct TextRenderer {
     inner: Arc<RwLock<TextRendererInner>>,
+    locale_vec: Vec<u16>,
     locale: PCWSTR,
 }
 
@@ -818,9 +821,12 @@ impl TextRenderer {
     pub fn new(inner: Arc<RwLock<TextRendererInner>>, locale_str: &str) -> Self {
         let locale_vec = locale_str.encode_utf16().chain(Some(0)).collect_vec();
         let locale = PCWSTR::from_raw(locale_vec.as_ptr());
-        std::mem::forget(locale_vec); // give ownership to locale
 
-        TextRenderer { inner, locale }
+        TextRenderer {
+            inner,
+            locale_vec,
+            locale,
+        }
     }
 }
 
@@ -1083,11 +1089,10 @@ unsafe fn get_postscript_name(font_face: &IDWriteFontFace3) -> Option<String> {
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
-fn direct_write_features(factory: &IDWriteFactory5, features: &FontFeatures) -> IDWriteTypography {
-    let result = unsafe { factory.CreateTypography().unwrap() };
+unsafe fn apply_font_features(direct_write_featrues: &IDWriteTypography, features: &FontFeatures) {
     let tag_values = features.tag_value_list();
     if tag_values.is_empty() {
-        return result;
+        return;
     }
 
     // All of these features are enabled by default by DirectWrite.
@@ -1109,19 +1114,14 @@ fn direct_write_features(factory: &IDWriteFactory5, features: &FontFeatures) -> 
             feature_calt.parameter = 0;
             continue;
         }
-        unsafe {
-            result
-                .AddFontFeature(make_direct_write_feature(&tag, enable))
-                .unwrap()
-        };
-    }
-    unsafe {
-        result.AddFontFeature(feature_liga).unwrap();
-        result.AddFontFeature(feature_clig).unwrap();
-        result.AddFontFeature(feature_calt).unwrap();
-    }
 
-    result
+        direct_write_featrues
+            .AddFontFeature(make_direct_write_feature(&tag, enable))
+            .unwrap();
+    }
+    direct_write_featrues.AddFontFeature(feature_liga).unwrap();
+    direct_write_featrues.AddFontFeature(feature_clig).unwrap();
+    direct_write_featrues.AddFontFeature(feature_calt).unwrap();
 }
 
 #[inline]
