@@ -431,7 +431,7 @@ impl Database {
                 answering_connection_lost: ActiveValue::set(false),
                 ..Default::default()
             })
-            .exec(&*tx)
+            .exec(tx)
             .await?;
 
         if result.rows_affected == 0 {
