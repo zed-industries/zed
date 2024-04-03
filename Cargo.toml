@@ -102,6 +102,7 @@ members = [
     "extensions/astro",
     "extensions/clojure",
     "extensions/csharp",
+    "extensions/emmet",
     "extensions/erlang",
     "extensions/gleam",
     "extensions/haskell",
