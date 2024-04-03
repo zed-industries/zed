@@ -7,6 +7,7 @@ use crate::{
     ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
     ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
+use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     actions::{Tab, TabPrev},
@@ -25,7 +26,7 @@ use project::{
 };
 use serde::Deserialize;
 use settings::Settings;
-use std::{any::Any, sync::Arc};
+use std::sync::Arc;
 use theme::ThemeSettings;
 
 use ui::{h_flex, prelude::*, IconButton, IconName, ToggleButton, Tooltip};
@@ -70,8 +71,7 @@ pub struct BufferSearchBar {
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
     active_search: Option<Arc<SearchQuery>>,
-    searchable_items_with_matches:
-        HashMap<Box<dyn WeakSearchableItemHandle>, Vec<Box<dyn Any + Send>>>,
+    searchable_items_with_matches: HashMap<Box<dyn WeakSearchableItemHandle>, AnyVec<dyn Send>>,
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
@@ -191,7 +191,7 @@ impl Render for BufferSearchBar {
                 let matches_count = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
-                    .map(Vec::len)
+                    .map(AnyVec::len)
                     .unwrap_or(0);
                 if let Some(match_ix) = self.active_match_index {
                     Some(format!("{}/{}", match_ix + 1, matches_count))
@@ -1067,7 +1067,7 @@ impl BufferSearchBar {
                                 .as_ref()
                                 .clone()
                                 .with_replacement(self.replacement(cx));
-                            searchable_item.replace(&matches[active_index], &query, cx);
+                            searchable_item.replace(matches.at(active_index), &query, cx);
                             self.select_next_match(&SelectNextMatch, cx);
                         }
                         should_propagate = false;

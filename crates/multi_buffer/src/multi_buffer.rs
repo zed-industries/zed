@@ -1,13 +1,12 @@
 mod anchor;
 
-pub use anchor::{Anchor, AnchorRangeExt};
+pub use anchor::{Anchor, AnchorRangeExt, Offset};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
 use git::diff::DiffHunk;
 use gpui::{AppContext, EventEmitter, Model, ModelContext};
-pub use language::Completion;
 use language::{
     char_kind,
     language_settings::{language_settings, LanguageSettings},
