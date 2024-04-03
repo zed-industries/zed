@@ -349,6 +349,17 @@ impl Database {
         .await
     }
 
+    pub async fn stale_room_connection(&self, user_id: UserId) -> Result<Option<ConnectionId>> {
+        self.transaction(|tx| async move {
+            let participant = room_participant::Entity::find()
+                .filter(room_participant::Column::UserId.eq(user_id))
+                .one(&*tx)
+                .await?;
+            Ok(participant.and_then(|p| p.answering_connection()))
+        })
+        .await
+    }
+
     async fn get_next_participant_index_internal(
         &self,
         room_id: RoomId,
