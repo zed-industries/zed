@@ -74,7 +74,6 @@ errors.
 You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
 
 ```json
-
 {
   "lsp": {
     "eslint": {
@@ -86,9 +85,11 @@ You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
 }
 ```
 
-#### Configure ESLint's `problems.shortenToSingleLine`:
+#### Configure ESLint's `problems`:
 
-You can configure ESLint's `problems.shortenToSingleLine` setting (requires Zed `0.130.x`):
+You can configure ESLint's `problems` setting (requires Zed `0.130.x`).
+
+For example, here's how to set `problems.shortenToSingleLine`:
 
 ```json
 {
