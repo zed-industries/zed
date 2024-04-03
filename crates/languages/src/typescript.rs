@@ -273,16 +273,10 @@ impl LspAdapter for EsLintLspAdapter {
             }
         }
 
-        let mut problems = json!({});
-
-        if let Some(problems_settings) = eslint_user_settings
+        let problems = eslint_user_settings
             .get("problems")
-            .and_then(|settings| settings.as_object())
-        {
-            if let Some(shorten_to_single_line) = problems_settings.get("shortenToSingleLine") {
-                problems["shortenToSingleLine"] = shorten_to_single_line.clone();
-            }
-        }
+            .cloned()
+            .unwrap_or_else(|| json!({}));
 
         let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
