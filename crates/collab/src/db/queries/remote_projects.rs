@@ -39,8 +39,34 @@ impl Database {
                 channel_id: remote_project.channel_id.to_proto(),
                 name: remote_project.name,
                 dev_server_id: remote_project.dev_server_id.to_proto(),
+                path: remote_project.path,
             })
             .collect())
+    }
+
+    pub async fn get_remote_projects_for_dev_server(
+        &self,
+        dev_server_id: DevServerId,
+    ) -> crate::Result<Vec<proto::RemoteProject>> {
+        self.transaction(|tx| async move {
+            let servers = remote_project::Entity::find()
+                .filter(remote_project::Column::DevServerId.eq(dev_server_id))
+                .find_also_related(project::Entity)
+                .all(&*tx)
+                .await?;
+            Ok(servers
+                .into_iter()
+                .map(|(remote_project, project)| proto::RemoteProject {
+                    id: remote_project.id.to_proto(),
+                    project_id: project.map(|p| p.id.to_proto()),
+                    channel_id: remote_project.channel_id.to_proto(),
+                    name: remote_project.name,
+                    dev_server_id: remote_project.dev_server_id.to_proto(),
+                    path: remote_project.path,
+                })
+                .collect())
+        })
+        .await
     }
 
     pub async fn create_remote_project(

@@ -923,6 +923,15 @@ impl Server {
                 }
                 update_dev_server_status(dev_server, proto::DevServerStatus::Online, &session)
                     .await;
+                // todo!() allow only one connection.
+
+                let projects = self
+                    .app_state
+                    .db
+                    .get_remote_projects_for_dev_server(dev_server.id)
+                    .await?;
+                self.peer
+                    .send(connection_id, proto::DevServerInstructions { projects })?;
             }
         }
 

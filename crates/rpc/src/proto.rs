@@ -301,6 +301,7 @@ messages!(
     (CreateRemoteProject, Foreground),
     (CreateDevServer, Foreground),
     (CreateDevServerResponse, Foreground),
+    (DevServerInstructions, Foreground),
 );
 
 request_messages!(

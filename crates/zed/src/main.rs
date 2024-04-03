@@ -299,6 +299,16 @@ fn main() {
 
         let mut args = Args::parse();
         if let Some(dev_server_token) = args.dev_server_token.take() {
+            headless::init(
+                client.clone(),
+                headless::AppState {
+                    languages: languages.clone(),
+                    user_store: user_store.clone(),
+                    fs: fs.clone(),
+                    node_runtime,
+                },
+                cx,
+            );
             let dev_server_token = DevServerToken(dev_server_token);
             let server_url = ClientSettings::get_global(&cx).server_url.clone();
             let client = client.clone();

@@ -212,7 +212,9 @@ message Envelope {
 
         CreateRemoteProject create_remote_project = 174;
         CreateDevServer create_dev_server = 175;
-        CreateDevServerResponse create_dev_server_response = 176; // Current max
+        CreateDevServerResponse create_dev_server_response = 176;
+
+        DevServerInstructions dev_server_instructions = 177; // Current max
     }
 
     reserved 158 to 161;
@@ -445,6 +447,10 @@ message CreateDevServerResponse {
     uint64 channel_id = 2;
     string access_token = 3;
     string name = 4;
+}
+
+message DevServerInstructions {
+    repeated RemoteProject projects = 1;
 }
 
 message JoinProjectResponse {
@@ -1122,6 +1128,7 @@ message RemoteProject {
     uint64 channel_id = 3;
     string name = 4;
     uint64 dev_server_id = 5;
+    string path = 6;
 }
 
 message DevServer {

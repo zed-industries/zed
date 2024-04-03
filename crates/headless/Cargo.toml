@@ -1,0 +1,33 @@
+[package]
+name = "headless"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/headless.rs"
+doctest = false
+
+[features]
+test-support = ["gpui/test-support", "rpc/test-support", "client/test-support", "util/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+client.workspace =true
+gpui.workspace = true
+rpc.workspace = true
+util.workspace = true
+node_runtime.workspace = true
+language.workspace = true
+fs.workspace = true
+
+[dev-dependencies]
+client = { workspace = true, features = ["test-support"] }
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+rpc = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

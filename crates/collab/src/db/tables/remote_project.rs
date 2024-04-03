@@ -36,6 +36,7 @@ impl Model {
             channel_id: self.channel_id.to_proto(),
             dev_server_id: self.dev_server_id.to_proto(),
             name: self.name.clone(),
+            path: self.path.clone(),
         }
     }
 }
