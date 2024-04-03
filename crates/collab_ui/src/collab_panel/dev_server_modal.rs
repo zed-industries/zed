@@ -104,7 +104,6 @@ impl DevServerModal {
 
         cx.spawn(|this, mut cx| async move {
             let dev_server = dev_server.await?;
-            dbg!(&dev_server.access_token, &dev_server.name);
             let access_token = dev_server.access_token.clone();
             if let Some(view) = this.upgrade() {
                 view.update(&mut cx, move |this, _| {

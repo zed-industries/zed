@@ -612,7 +612,6 @@ impl CollabPanel {
                 }
 
                 for remote_project in remote_projects {
-                    dbg!("Pushing remote project entry", remote_project.id);
                     self.entries.push(ListEntry::RemoteProject(remote_project));
                 }
             }

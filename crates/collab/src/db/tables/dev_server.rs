@@ -18,12 +18,12 @@ impl ActiveModelBehavior for ActiveModel {}
 pub enum Relation {}
 
 impl Model {
-    pub fn to_proto(&self) -> proto::DevServer {
+    pub fn to_proto(&self, status: proto::DevServerStatus) -> proto::DevServer {
         proto::DevServer {
             dev_server_id: self.id.to_proto(),
             channel_id: self.channel_id.to_proto(),
             name: self.name.clone(),
-            status: proto::DevServerStatus::Offline.into(), //TODO set status correctly
+            status: status as i32,
         }
     }
 }

@@ -10,12 +10,12 @@ use client::{
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, SharedString,
-    Task, WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext,
+    PathPromptOptions, SharedString, Task, WeakModel,
 };
 use language::Capability;
 use rpc::{
-    proto::{self, ChannelRole, ChannelVisibility},
+    proto::{self, ChannelRole, ChannelVisibility, DevServerStatus},
     TypedEnvelope,
 };
 use settings::Settings;
@@ -80,6 +80,7 @@ pub struct DevServer {
     pub id: DevServerId,
     pub channel_id: ChannelId,
     pub name: SharedString,
+    pub status: DevServerStatus,
 }
 
 impl From<proto::DevServer> for DevServer {
@@ -87,6 +88,7 @@ impl From<proto::DevServer> for DevServer {
         Self {
             id: DevServerId(dev_server.dev_server_id),
             channel_id: ChannelId(dev_server.channel_id),
+            status: dev_server.status(),
             name: dev_server.name.into(),
         }
     }
@@ -1175,7 +1177,6 @@ impl ChannelStore {
         payload: proto::UpdateChannels,
         cx: &mut ModelContext<ChannelStore>,
     ) -> Option<Task<Result<()>>> {
-        dbg!(&payload);
         if !payload.remove_channel_invitations.is_empty() {
             self.channel_invitations
                 .retain(|channel| !payload.remove_channel_invitations.contains(&channel.id.0));

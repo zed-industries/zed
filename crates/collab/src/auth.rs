@@ -10,7 +10,7 @@ use axum::{
     response::IntoResponse,
 };
 use prometheus::{exponential_buckets, register_histogram, Histogram};
-use rpc::auth::random_token;
+pub use rpc::auth::random_token;
 use scrypt::{
     password_hash::{PasswordHash, PasswordVerifier},
     Scrypt,
@@ -153,7 +153,7 @@ pub async fn create_access_token(
 /// Hashing prevents anyone with access to the database being able to login.
 /// As the token is randomly generated, we don't need to worry about scrypt-style
 /// protection.
-fn hash_access_token(token: &str) -> String {
+pub fn hash_access_token(token: &str) -> String {
     let digest = sha2::Sha256::digest(token);
     format!(
         "$sha256${}",
@@ -231,14 +231,8 @@ pub async fn verify_access_token(
     })
 }
 
-//TODO dev_servers
-pub fn generate_dev_server_token(dev_server_name: &str) -> String {
-    format!("{}:{}", dev_server_name, random_token())
-}
-
-//TODO dev_servers
-pub fn hash_dev_server_token(token: &str) -> String {
-    hash_access_token(token)
+pub fn generate_dev_server_token(id: usize, access_token: String) -> String {
+    format!("{}.{}", id, access_token)
 }
 
 // a dev_server_token has the format <id>.<base64>. This is to make them

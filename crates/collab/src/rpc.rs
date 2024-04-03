@@ -867,54 +867,65 @@ impl Server {
         )?;
         tracing::info!("sent hello message");
 
-        let Principal::User(user) = principal else {
-            return Ok(());
-        };
+        match principal {
+            Principal::User(user) | Principal::Impersonated { user, admin: _ } => {
+                if let Some(send_connection_id) = send_connection_id.take() {
+                    let _ = send_connection_id.send(connection_id);
+                }
 
-        if let Some(send_connection_id) = send_connection_id.take() {
-            let _ = send_connection_id.send(connection_id);
-        }
+                if !user.connected_once {
+                    self.peer.send(connection_id, proto::ShowContacts {})?;
+                    self.app_state
+                        .db
+                        .set_user_connected_once(user.id, true)
+                        .await?;
+                }
 
-        if !user.connected_once {
-            self.peer.send(connection_id, proto::ShowContacts {})?;
-            self.app_state
-                .db
-                .set_user_connected_once(user.id, true)
+                let (contacts, channels_for_user, channel_invites) = future::try_join3(
+                    self.app_state.db.get_contacts(user.id),
+                    self.app_state.db.get_channels_for_user(user.id),
+                    self.app_state.db.get_channel_invites_for_user(user.id),
+                )
                 .await?;
-        }
 
-        let (contacts, channels_for_user, channel_invites) = future::try_join3(
-            self.app_state.db.get_contacts(user.id),
-            self.app_state.db.get_channels_for_user(user.id),
-            self.app_state.db.get_channel_invites_for_user(user.id),
-        )
-        .await?;
+                {
+                    let mut pool = self.connection_pool.lock();
+                    pool.add_connection(connection_id, user.id, user.admin, zed_version);
+                    for membership in &channels_for_user.channel_memberships {
+                        pool.subscribe_to_channel(user.id, membership.channel_id, membership.role)
+                    }
+                    self.peer.send(
+                        connection_id,
+                        build_initial_contacts_update(contacts, &pool),
+                    )?;
+                    self.peer.send(
+                        connection_id,
+                        build_update_user_channels(&channels_for_user),
+                    )?;
+                    self.peer.send(
+                        connection_id,
+                        build_channels_update(channels_for_user, channel_invites),
+                    )?;
+                }
 
-        {
-            let mut pool = self.connection_pool.lock();
-            pool.add_connection(connection_id, user.id, user.admin, zed_version);
-            for membership in &channels_for_user.channel_memberships {
-                pool.subscribe_to_channel(user.id, membership.channel_id, membership.role)
+                if let Some(incoming_call) =
+                    self.app_state.db.incoming_call_for_user(user.id).await?
+                {
+                    self.peer.send(connection_id, incoming_call)?;
+                }
+
+                update_user_contacts(user.id, &session).await?;
             }
-            self.peer.send(
-                connection_id,
-                build_initial_contacts_update(contacts, &pool),
-            )?;
-            self.peer.send(
-                connection_id,
-                build_update_user_channels(&channels_for_user),
-            )?;
-            self.peer.send(
-                connection_id,
-                build_channels_update(channels_for_user, channel_invites),
-            )?;
+            Principal::DevServer(dev_server) => {
+                {
+                    let mut pool = self.connection_pool.lock();
+                    pool.add_dev_server(connection_id, dev_server.id, zed_version);
+                }
+                update_dev_server_status(dev_server, proto::DevServerStatus::Online, &session)
+                    .await;
+            }
         }
 
-        if let Some(incoming_call) = self.app_state.db.incoming_call_for_user(user.id).await? {
-            self.peer.send(connection_id, incoming_call)?;
-        }
-
-        update_user_contacts(user.id, &session).await?;
         Ok(())
     }
 
@@ -1192,27 +1203,35 @@ async fn connection_lost(
 
     futures::select_biased! {
         _ = executor.sleep(RECONNECT_TIMEOUT).fuse() => {
-            if let Some(session) = session.for_user() {
-                log::info!("connection lost, removing all resources for user:{}, connection:{:?}", session.user_id(), session.connection_id);
-                leave_room_for_session(&session).await.trace_err();
-                leave_channel_buffers_for_session(&session)
-                    .await
-                    .trace_err();
+            match &session.principal {
+                Principal::User(_) | Principal::Impersonated{ user: _, admin:_ } => {
+                    let session = session.for_user().unwrap();
 
-                if !session
-                    .connection_pool()
-                    .await
-                    .is_user_online(session.user_id())
-                {
-                    let db = session.db().await;
-                    if let Some(room) = db.decline_call(None, session.user_id()).await.trace_err().flatten() {
-                        room_updated(&room, &session.peer);
+                    log::info!("connection lost, removing all resources for user:{}, connection:{:?}", session.user_id(), session.connection_id);
+                    leave_room_for_session(&session).await.trace_err();
+                    leave_channel_buffers_for_session(&session)
+                        .await
+                        .trace_err();
+
+                    if !session
+                        .connection_pool()
+                        .await
+                        .is_user_online(session.user_id())
+                    {
+                        let db = session.db().await;
+                        if let Some(room) = db.decline_call(None, session.user_id()).await.trace_err().flatten() {
+                            room_updated(&room, &session.peer);
+                        }
                     }
-                }
 
-                update_user_contacts(session.user_id(), &session).await?;
-            }
+                    update_user_contacts(session.user_id(), &session).await?;
+                },
+            Principal::DevServer(dev_server) => {
+                update_dev_server_status(&dev_server, proto::DevServerStatus::Offline, &session)
+                    .await;
+            },
         }
+        },
         _ = teardown.changed().fuse() => {}
     }
 
@@ -2018,8 +2037,8 @@ async fn create_dev_server(
     response: Response<proto::CreateDevServer>,
     session: UserSession,
 ) -> Result<()> {
-    let access_token = auth::generate_dev_server_token(&request.name);
-    let hashed_access_token = auth::hash_dev_server_token(&access_token);
+    let access_token = auth::random_token();
+    let hashed_access_token = auth::hash_access_token(&access_token);
 
     let (channel, dev_server) = session
         .db()
@@ -2033,7 +2052,7 @@ async fn create_dev_server(
         .await?;
 
     let update = proto::UpdateChannels {
-        dev_servers: vec![dev_server.to_proto()],
+        dev_servers: vec![dev_server.to_proto(proto::DevServerStatus::Offline)],
         ..Default::default()
     };
     let connection_pool = session.connection_pool().await;
@@ -2046,7 +2065,7 @@ async fn create_dev_server(
     response.send(proto::CreateDevServerResponse {
         dev_server_id: dev_server.id.0 as u64,
         channel_id: request.channel_id,
-        access_token,
+        access_token: auth::generate_dev_server_token(dev_server.id.0 as usize, access_token),
         name: request.name.clone(),
     })?;
     Ok(())
@@ -4225,6 +4244,27 @@ fn channel_updated(
             )
         },
     );
+}
+
+async fn update_dev_server_status(
+    dev_server: &dev_server::Model,
+    status: proto::DevServerStatus,
+    session: &Session,
+) {
+    let pool = session.connection_pool().await;
+    let connections = pool.channel_connection_ids(dev_server.channel_id);
+    for (connection_id, _) in connections {
+        session
+            .peer
+            .send(
+                connection_id,
+                proto::UpdateChannels {
+                    dev_servers: vec![dev_server.to_proto(status)],
+                    ..Default::default()
+                },
+            )
+            .trace_err();
+    }
 }
 
 async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> {
