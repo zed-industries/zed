@@ -9616,37 +9616,40 @@ async fn populate_labels_for_symbols(
 
     let mut label_params = Vec::new();
     for (language, mut symbols) in symbols_by_language {
+        label_params.clear();
+        label_params.extend(
+            symbols
+                .iter_mut()
+                .map(|symbol| (mem::take(&mut symbol.name), symbol.kind)),
+        );
+
+        let mut labels = Vec::new();
         if let Some(language) = language {
             let lsp_adapter = lsp_adapter
                 .clone()
                 .or_else(|| language_registry.lsp_adapters(&language).first().cloned());
             if let Some(lsp_adapter) = lsp_adapter {
-                label_params.clear();
-                label_params.extend(
-                    symbols
-                        .iter_mut()
-                        .map(|symbol| (mem::take(&mut symbol.name), symbol.kind)),
-                );
-                let labels = lsp_adapter
+                labels = lsp_adapter
                     .labels_for_symbols(&label_params, &language)
                     .await;
-                for ((symbol, (name, _)), label) in symbols
-                    .into_iter()
-                    .zip(label_params.drain(..))
-                    .zip(labels.into_iter().chain(iter::repeat(None)))
-                {
-                    output.push(Symbol {
-                        language_server_name: symbol.language_server_name,
-                        source_worktree_id: symbol.source_worktree_id,
-                        path: symbol.path,
-                        label: label.unwrap_or_else(|| CodeLabel::plain(name.clone(), None)),
-                        name,
-                        kind: symbol.kind,
-                        range: symbol.range,
-                        signature: symbol.signature,
-                    });
-                }
             }
+        }
+
+        for ((symbol, (name, _)), label) in symbols
+            .into_iter()
+            .zip(label_params.drain(..))
+            .zip(labels.into_iter().chain(iter::repeat(None)))
+        {
+            output.push(Symbol {
+                language_server_name: symbol.language_server_name,
+                source_worktree_id: symbol.source_worktree_id,
+                path: symbol.path,
+                label: label.unwrap_or_else(|| CodeLabel::plain(name.clone(), None)),
+                name,
+                kind: symbol.kind,
+                range: symbol.range,
+                signature: symbol.signature,
+            });
         }
     }
 }
