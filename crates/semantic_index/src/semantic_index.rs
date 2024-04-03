@@ -1,19 +1,11 @@
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{
-    AppContext, BackgroundExecutor, Context, EventEmitter, Global, Model, ModelContext, Task,
-    WeakModel,
-};
+use gpui::{AppContext, Context, EventEmitter, Global, Model, ModelContext, Task, WeakModel};
 use language::{LanguageRegistry, Tree, PARSER};
-use project::{Project, Worktree};
+use project::{Entry, Project, Worktree};
 use smol::channel;
-use std::{
-    cmp,
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{cmp, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
 
 pub struct SemanticIndex {
@@ -94,11 +86,11 @@ impl ProjectIndex {
         let scan = cx.spawn(|this, mut cx| {
             let worktree = worktree.clone();
             async move {
-                let (paths_tx, paths_rx) = channel::bounded(512);
+                let (entries_tx, entries_rx) = channel::bounded(512);
                 let worktree_abs_path = local_worktree.abs_path().clone();
-                let path_producer = cx.background_executor().spawn(async move {
+                let entry_producer = cx.background_executor().spawn(async move {
                     for entry in local_worktree.files(false, 0) {
-                        if paths_tx.send(entry.path.clone()).await.is_err() {
+                        if entries_tx.send(entry.clone()).await.is_err() {
                             break;
                         }
                     }
@@ -108,9 +100,10 @@ impl ProjectIndex {
                     .scoped(|cx| {
                         for _ in 0..cx.num_cpus() {
                             cx.spawn(async {
-                                while let Ok(path) = paths_rx.recv().await {
-                                    index_path(
-                                        worktree_abs_path.join(&path),
+                                while let Ok(entry) = entries_rx.recv().await {
+                                    index_entry(
+                                        worktree_abs_path.clone(),
+                                        entry,
                                         &language_registry,
                                         fs.as_ref(),
                                     )
@@ -121,7 +114,7 @@ impl ProjectIndex {
                         }
                     })
                     .await;
-                path_producer.await;
+                entry_producer.await;
 
                 this.update(&mut cx, |this, cx| {
                     this.worktree_scans.remove(&worktree);
@@ -144,21 +137,26 @@ pub enum StatusEvent {
     Scanning,
 }
 
-async fn index_path(
-    path: PathBuf,
+struct ChunkedFile {
+    worktree_path: Arc<Path>,
+    entry: Entry,
+    contents: String,
+    chunk_ranges: Vec<Range<usize>>,
+}
+
+async fn index_entry(
+    worktree_root: Arc<Path>,
+    entry: Entry,
     language_registry: &Arc<LanguageRegistry>,
     fs: &dyn Fs,
 ) -> Result<()> {
-    // Plan:
-    // Read file contents
-    // Parse with Tree Sitter
-    // Walk the parse tree from the top to find nodes below our embedding threshold
+    let abs_path = worktree_root.join(&entry.path);
 
-    let text = fs.load(&path).await?;
+    let text = fs.load(&abs_path).await?;
     let language = language_registry
-        .language_for_file_path(&path)
+        .language_for_file_path(&entry.path)
         .await
-        .with_context(|| format!("{:?}", path))?;
+        .with_context(|| format!("selecting a language for {:?}", entry.path))?;
     if let Some(grammar) = language.grammar() {
         let tree = PARSER.with(|parser| {
             let mut parser = parser.borrow_mut();
