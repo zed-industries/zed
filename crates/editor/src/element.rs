@@ -2375,7 +2375,8 @@ impl EditorElement {
                 // Refresh scrollbar markers in the background. Below, we paint whatever markers have already been computed.
                 self.refresh_scrollbar_markers(layout, scrollbar_layout, cx);
 
-                for marker in self.editor.read(cx).scrollbar_markers.clone().iter() {
+                let markers = self.editor.read(cx).scrollbar_marker_state.markers.clone();
+                for marker in markers.iter() {
                     let mut marker = marker.clone();
                     marker.bounds.origin += scrollbar_layout.hitbox.origin;
                     cx.paint_quad(marker);
@@ -2492,8 +2493,9 @@ impl EditorElement {
     ) {
         self.editor.update(cx, |editor, cx| {
             if !editor.is_singleton(cx)
-                || !editor.scrollbar_markers_dirty
-                || editor.pending_scrollbar_markers_refresh.is_some()
+                || !editor
+                    .scrollbar_marker_state
+                    .should_refresh(scrollbar_layout.hitbox.size)
             {
                 return;
             }
@@ -2505,9 +2507,10 @@ impl EditorElement {
             let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
             let max_row = layout.max_row;
 
-            editor.scrollbar_markers_dirty = false;
-            editor.pending_scrollbar_markers_refresh =
+            editor.scrollbar_marker_state.dirty = false;
+            editor.scrollbar_marker_state.pending_refresh =
                 Some(cx.spawn(|editor, mut cx| async move {
+                    let scrollbar_size = scrollbar_layout.hitbox.size;
                     let scrollbar_markers = cx
                         .background_executor()
                         .spawn(async move {
@@ -2621,8 +2624,9 @@ impl EditorElement {
                         .await;
 
                     editor.update(&mut cx, |editor, cx| {
-                        editor.scrollbar_markers = scrollbar_markers;
-                        editor.pending_scrollbar_markers_refresh = None;
+                        editor.scrollbar_marker_state.markers = scrollbar_markers;
+                        editor.scrollbar_marker_state.scrollbar_size = scrollbar_size;
+                        editor.scrollbar_marker_state.pending_refresh = None;
                         cx.notify();
                     })?;
 

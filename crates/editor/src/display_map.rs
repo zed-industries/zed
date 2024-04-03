@@ -261,7 +261,10 @@ impl DisplayMap {
                 highlights.insert(highlight.inlay, (style, highlight.clone()))
             });
             if update.is_none() {
-                self.inlay_highlights.insert(type_id, TreeMap::from_ordered_entries([(highlight.inlay, (style, highlight))]));
+                self.inlay_highlights.insert(
+                    type_id,
+                    TreeMap::from_ordered_entries([(highlight.inlay, (style, highlight))]),
+                );
             }
         }
     }

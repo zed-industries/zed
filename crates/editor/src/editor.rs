@@ -64,7 +64,7 @@ use gpui::{
     AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds,
     ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView,
     FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model,
-    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, StrikethroughStyle,
+    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle,
     Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle,
     View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
@@ -358,6 +358,30 @@ type CompletionId = usize;
 
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
 
+struct ScrollbarMarkerState {
+    scrollbar_size: Size<Pixels>,
+    dirty: bool,
+    markers: Arc<[PaintQuad]>,
+    pending_refresh: Option<Task<Result<()>>>,
+}
+
+impl ScrollbarMarkerState {
+    fn should_refresh(&self, scrollbar_size: Size<Pixels>) -> bool {
+        self.pending_refresh.is_none() && (self.scrollbar_size != scrollbar_size || self.dirty)
+    }
+}
+
+impl Default for ScrollbarMarkerState {
+    fn default() -> Self {
+        Self {
+            scrollbar_size: Size::default(),
+            dirty: false,
+            markers: Arc::from([]),
+            pending_refresh: None,
+        }
+    }
+}
+
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
 /// See the [module level documentation](self) for more information.
@@ -396,9 +420,7 @@ pub struct Editor {
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<(usize, Range<Anchor>, Hsla)>>,
     background_highlights: TreeMap<TypeId, BackgroundHighlight>,
-    scrollbar_markers_dirty: bool,
-    scrollbar_markers: Arc<[PaintQuad]>,
-    pending_scrollbar_markers_refresh: Option<Task<Result<()>>>,
+    scrollbar_marker_state: ScrollbarMarkerState,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
@@ -1445,9 +1467,7 @@ impl Editor {
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
             background_highlights: Default::default(),
-            scrollbar_markers_dirty: false,
-            scrollbar_markers: Arc::from([]),
-            pending_scrollbar_markers_refresh: None,
+            scrollbar_marker_state: ScrollbarMarkerState::default(),
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
@@ -9096,7 +9116,7 @@ impl Editor {
 
         self.background_highlights
             .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
-        self.scrollbar_markers_dirty = true;
+        self.scrollbar_marker_state.dirty = true;
         cx.notify();
     }
 
@@ -9106,7 +9126,7 @@ impl Editor {
     ) -> Option<BackgroundHighlight> {
         let text_highlights = self.background_highlights.remove(&TypeId::of::<T>())?;
         if !text_highlights.1.is_empty() {
-            self.scrollbar_markers_dirty = true;
+            self.scrollbar_marker_state.dirty = true;
             cx.notify();
         }
         Some(text_highlights)
@@ -9363,7 +9383,7 @@ impl Editor {
             multi_buffer::Event::Edited {
                 singleton_buffer_edited,
             } => {
-                self.scrollbar_markers_dirty = true;
+                self.scrollbar_marker_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 if self.has_active_inline_completion(cx) {
@@ -9432,14 +9452,14 @@ impl Editor {
                 cx.emit(EditorEvent::TitleChanged)
             }
             multi_buffer::Event::DiffBaseChanged => {
-                self.scrollbar_markers_dirty = true;
+                self.scrollbar_marker_state.dirty = true;
                 cx.emit(EditorEvent::DiffBaseChanged);
                 cx.notify();
             }
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
-                self.scrollbar_markers_dirty = true;
+                self.scrollbar_marker_state.dirty = true;
                 cx.notify();
             }
             _ => {}
