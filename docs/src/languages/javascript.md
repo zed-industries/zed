@@ -85,3 +85,21 @@ You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
   }
 }
 ```
+
+#### Configure ESLint's `problems.shortenToSingleLine`:
+
+You can configure ESLint's `problems.shortenToSingleLine` setting (requires Zed `0.130.x`):
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "problems": {
+          "shortenToSingleLine": true
+        }
+      }
+    }
+  }
+}
+```
