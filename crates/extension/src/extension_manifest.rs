@@ -1,17 +1,18 @@
 use anyhow::{anyhow, Context, Result};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageServerName;
+use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
+    fmt,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::SemanticVersion;
 
 /// This is the old version of the extension manifest, from when it was `extension.json`.
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct OldExtensionManifest {
     pub name: String,
     pub version: Arc<str>,
@@ -31,12 +32,30 @@ pub struct OldExtensionManifest {
     pub grammars: BTreeMap<Arc<str>, PathBuf>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+/// The schema version of the [`ExtensionManifest`].
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
+pub struct SchemaVersion(pub i32);
+
+impl fmt::Display for SchemaVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl SchemaVersion {
+    pub const ZERO: Self = Self(0);
+
+    pub fn is_v0(&self) -> bool {
+        self == &Self::ZERO
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct ExtensionManifest {
     pub id: Arc<str>,
     pub name: String,
     pub version: Arc<str>,
-    pub schema_version: i32,
+    pub schema_version: SchemaVersion,
 
     #[serde(default)]
     pub description: Option<String>,
@@ -73,11 +92,15 @@ pub struct GrammarManifestEntry {
     pub repository: String,
     #[serde(alias = "commit")]
     pub rev: String,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
     pub language: Arc<str>,
+    #[serde(default)]
+    pub language_ids: HashMap<String, String>,
 }
 
 impl ExtensionManifest {
@@ -122,7 +145,7 @@ fn manifest_from_old_manifest(
         description: manifest_json.description,
         repository: manifest_json.repository,
         authors: manifest_json.authors,
-        schema_version: 0,
+        schema_version: SchemaVersion::ZERO,
         lib: Default::default(),
         themes: {
             let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();

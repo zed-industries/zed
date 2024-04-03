@@ -3116,7 +3116,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
             ])
         });
-        view.duplicate_line(&DuplicateLine::default(), cx);
+        view.duplicate_line_down(&DuplicateLineDown, cx);
         assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -3140,7 +3140,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
             ])
         });
-        view.duplicate_line(&DuplicateLine::default(), cx);
+        view.duplicate_line_down(&DuplicateLineDown, cx);
         assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -3166,7 +3166,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
             ])
         });
-        view.duplicate_line(&DuplicateLine { move_upwards: true }, cx);
+        view.duplicate_line_up(&DuplicateLineUp, cx);
         assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -3190,7 +3190,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
             ])
         });
-        view.duplicate_line(&DuplicateLine { move_upwards: true }, cx);
+        view.duplicate_line_up(&DuplicateLineUp, cx);
         assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
         assert_eq!(
             view.selections.display_ranges(cx),
@@ -4085,6 +4085,47 @@ let «fooˇ» = 2;
 let foo = 2;
 let foo = «2ˇ»;"#,
     );
+}
+
+#[gpui::test]
+async fn test_select_previous_multibuffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new_multibuffer(
+        cx,
+        [
+            indoc! {
+                "aaa\n«bbb\nccc\n»ddd"
+            },
+            indoc! {
+                "aaa\n«bbb\nccc\n»ddd"
+            },
+        ],
+    );
+
+    cx.assert_editor_state(indoc! {"
+        ˇbbb
+        ccc
+
+        bbb
+        ccc
+        "});
+    cx.dispatch_action(SelectPrevious::default());
+    cx.assert_editor_state(indoc! {"
+                «bbbˇ»
+                ccc
+
+                bbb
+                ccc
+                "});
+    cx.dispatch_action(SelectPrevious::default());
+    cx.assert_editor_state(indoc! {"
+                «bbbˇ»
+                ccc
+
+                «bbbˇ»
+                ccc
+                "});
 }
 
 #[gpui::test]
@@ -8455,105 +8496,6 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         buffer_text.to_string() + prettier_format_suffix + "\n" + prettier_format_suffix,
         "Autoformatting (via test prettier) was not applied to the original buffer text",
     );
-}
-
-#[gpui::test]
-async fn test_find_all_references(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            document_formatting_provider: Some(lsp::OneOf::Left(true)),
-            ..Default::default()
-        },
-        cx,
-    )
-    .await;
-
-    cx.set_state(indoc! {"
-        fn foo(«paramˇ»: i64) {
-            println!(param);
-        }
-    "});
-
-    cx.lsp
-        .handle_request::<lsp::request::References, _, _>(move |_, _| async move {
-            Ok(Some(vec![
-                lsp::Location {
-                    uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-                    range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 12)),
-                },
-                lsp::Location {
-                    uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-                    range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 18)),
-                },
-            ]))
-        });
-
-    let references = cx
-        .update_editor(|editor, cx| editor.find_all_references(&FindAllReferences, cx))
-        .unwrap();
-
-    cx.executor().run_until_parked();
-
-    cx.executor().start_waiting();
-    references.await.unwrap();
-
-    cx.assert_editor_state(indoc! {"
-        fn foo(param: i64) {
-            println!(«paramˇ»);
-        }
-    "});
-
-    let references = cx
-        .update_editor(|editor, cx| editor.find_all_references(&FindAllReferences, cx))
-        .unwrap();
-
-    cx.executor().run_until_parked();
-
-    cx.executor().start_waiting();
-    references.await.unwrap();
-
-    cx.assert_editor_state(indoc! {"
-        fn foo(«paramˇ»: i64) {
-            println!(param);
-        }
-    "});
-
-    cx.set_state(indoc! {"
-        fn foo(param: i64) {
-            let a = param;
-            let aˇ = param;
-            let a = param;
-            println!(param);
-        }
-    "});
-
-    cx.lsp
-        .handle_request::<lsp::request::References, _, _>(move |_, _| async move {
-            Ok(Some(vec![lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-                range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 9)),
-            }]))
-        });
-
-    let references = cx
-        .update_editor(|editor, cx| editor.find_all_references(&FindAllReferences, cx))
-        .unwrap();
-
-    cx.executor().run_until_parked();
-
-    cx.executor().start_waiting();
-    references.await.unwrap();
-
-    cx.assert_editor_state(indoc! {"
-        fn foo(param: i64) {
-            let a = param;
-            let «aˇ» = param;
-            let a = param;
-            println!(param);
-        }
-    "});
 }
 
 #[gpui::test]

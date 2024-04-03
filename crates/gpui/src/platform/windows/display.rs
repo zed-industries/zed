@@ -33,12 +33,12 @@ impl WindowsDisplay {
             display_id,
             bounds: Bounds {
                 origin: Point {
-                    x: DevicePixels(size.left as i32),
-                    y: DevicePixels(size.top as i32),
+                    x: DevicePixels(size.left),
+                    y: DevicePixels(size.top),
                 },
                 size: Size {
-                    width: DevicePixels((size.right - size.left) as i32),
-                    height: DevicePixels((size.bottom - size.top) as i32),
+                    width: DevicePixels(size.right - size.left),
+                    height: DevicePixels(size.bottom - size.top),
                 },
             },
             uuid,

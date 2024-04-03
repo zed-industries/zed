@@ -376,6 +376,7 @@ impl Copilot {
         use node_runtime::FakeNodeRuntime;
 
         let (server, fake_server) = FakeLanguageServer::new(
+            LanguageServerId(0),
             LanguageServerBinary {
                 path: "path/to/copilot".into(),
                 arguments: vec![],
@@ -797,7 +798,7 @@ impl Copilot {
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
-            Err(error) => return Task::ready(Err(error)),
+            Err(_) => return Task::ready(Ok(())),
         };
         let request =
             server

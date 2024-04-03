@@ -432,7 +432,7 @@ impl TerminalBuilder {
             last_mouse_position: None,
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
-            cmd_pressed: false,
+            secondary_pressed: false,
             hovered_word: false,
             url_regex,
             word_regex,
@@ -585,7 +585,7 @@ pub struct Terminal {
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
-    cmd_pressed: bool,
+    secondary_pressed: bool,
     hovered_word: bool,
     url_regex: RegexSearch,
     word_regex: RegexSearch,
@@ -595,8 +595,34 @@ pub struct Terminal {
 pub struct TaskState {
     pub id: TaskId,
     pub label: String,
-    pub completed: bool,
+    pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
+}
+
+/// A status of the current terminal tab's task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskStatus {
+    /// The task had been started, but got cancelled or somehow otherwise it did not
+    /// report its exit code before the terminal event loop was shut down.
+    Unknown,
+    /// The task is started and running currently.
+    Running,
+    /// After the start, the task stopped running and reported its error code back.
+    Completed { success: bool },
+}
+
+impl TaskStatus {
+    fn register_terminal_exit(&mut self) {
+        if self == &Self::Running {
+            *self = Self::Unknown;
+        }
+    }
+
+    fn register_task_exit(&mut self, error_code: i32) {
+        *self = TaskStatus::Completed {
+            success: error_code == 0,
+        };
+    }
 }
 
 impl Terminal {
@@ -630,7 +656,7 @@ impl Terminal {
             }
             AlacTermEvent::Exit => match &mut self.task {
                 Some(task) => {
-                    task.completed = true;
+                    task.status.register_terminal_exit();
                     self.completion_tx.try_send(()).ok();
                 }
                 None => cx.emit(Event::CloseTerminal),
@@ -649,8 +675,11 @@ impl Terminal {
                 self.events
                     .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
             }
-            AlacTermEvent::ChildExit(_) => {
-                // TODO: Handle child exit
+            AlacTermEvent::ChildExit(error_code) => {
+                if let Some(task) = &mut self.task {
+                    task.status.register_task_exit(*error_code);
+                    self.completion_tx.try_send(()).ok();
+                }
             }
         }
     }
@@ -1000,11 +1029,11 @@ impl Terminal {
     }
 
     pub fn try_modifiers_change(&mut self, modifiers: &Modifiers) -> bool {
-        let changed = self.cmd_pressed != modifiers.command;
-        if !self.cmd_pressed && modifiers.command {
+        let changed = self.secondary_pressed != modifiers.secondary();
+        if !self.secondary_pressed && modifiers.secondary() {
             self.refresh_hovered_word();
         }
-        self.cmd_pressed = modifiers.command;
+        self.secondary_pressed = modifiers.secondary();
         changed
     }
 
@@ -1107,7 +1136,7 @@ impl Terminal {
                     self.pty_tx.notify(bytes);
                 }
             }
-        } else if self.cmd_pressed {
+        } else if self.secondary_pressed {
             self.word_from_position(Some(position));
         }
     }
@@ -1237,7 +1266,7 @@ impl Terminal {
                 let mouse_cell_index = content_index_for_mouse(position, &self.last_content.size);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
                     cx.open_url(link.uri());
-                } else if self.cmd_pressed {
+                } else if self.secondary_pressed {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));
                 }
@@ -1373,7 +1402,7 @@ impl Terminal {
     }
 
     pub fn can_navigate_to_selected_word(&self) -> bool {
-        self.cmd_pressed && self.hovered_word
+        self.secondary_pressed && self.hovered_word
     }
 
     pub fn task(&self) -> Option<&TaskState> {
@@ -1381,19 +1410,15 @@ impl Terminal {
     }
 
     pub fn wait_for_completed_task(&self, cx: &mut AppContext) -> Task<()> {
-        match self.task() {
-            Some(task) => {
-                if task.completed {
-                    Task::ready(())
-                } else {
-                    let mut completion_receiver = task.completion_rx.clone();
-                    cx.spawn(|_| async move {
-                        completion_receiver.next().await;
-                    })
-                }
+        if let Some(task) = self.task() {
+            if task.status == TaskStatus::Running {
+                let mut completion_receiver = task.completion_rx.clone();
+                return cx.spawn(|_| async move {
+                    completion_receiver.next().await;
+                });
             }
-            None => Task::ready(()),
         }
+        Task::ready(())
     }
 }
 

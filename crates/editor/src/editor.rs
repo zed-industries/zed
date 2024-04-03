@@ -38,6 +38,7 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
+use ::git::permalink::{build_permalink, BuildPermalinkParams};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -56,15 +57,16 @@ pub use element::{
 };
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
+use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
-    AnyElement, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem, Context,
-    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
-    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton,
-    ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled, StyledText,
-    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
-    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+    AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds,
+    ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView,
+    FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model,
+    MouseButton, ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled,
+    StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View,
+    ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -92,8 +94,7 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
-use project::Item;
-use project::{FormatTrigger, Location, Project, ProjectPath, ProjectTransaction};
+use project::{FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction};
 use rand::prelude::*;
 use rpc::proto::*;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
@@ -124,7 +125,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
     Tooltip,
 };
-use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::Toast;
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
@@ -432,6 +433,9 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
+    show_git_blame: bool,
+    blame: Option<Model<GitBlame>>,
+    blame_subscription: Option<Subscription>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -443,6 +447,7 @@ pub struct Editor {
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
+    show_git_blame: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
@@ -450,11 +455,14 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
 }
 
+const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
+
 pub struct GutterDimensions {
     pub left_padding: Pixels,
     pub right_padding: Pixels,
     pub width: Pixels,
     pub margin: Pixels,
+    pub git_blame_entries_width: Option<Pixels>,
 }
 
 impl Default for GutterDimensions {
@@ -464,6 +472,7 @@ impl Default for GutterDimensions {
             right_padding: Pixels::ZERO,
             width: Pixels::ZERO,
             margin: Pixels::ZERO,
+            git_blame_entries_width: None,
         }
     }
 }
@@ -1471,6 +1480,9 @@ impl Editor {
             vim_replace_map: Default::default(),
             show_inline_completions: mode == EditorMode::Full,
             custom_context_menu: None,
+            show_git_blame: false,
+            blame: None,
+            blame_subscription: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1616,6 +1628,10 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
+            show_git_blame: self
+                .blame
+                .as_ref()
+                .map_or(false, |blame| blame.read(cx).has_generated_entries()),
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
@@ -1676,7 +1692,9 @@ impl Editor {
     ) {
         self.inline_completion_provider = Some(RegisteredInlineCompletionProvider {
             _subscription: cx.observe(&provider, |this, _, cx| {
-                this.update_visible_inline_completion(cx);
+                if this.focus_handle.is_focused(cx) {
+                    this.update_visible_inline_completion(cx);
+                }
             }),
             provider: Arc::new(provider),
         });
@@ -3740,19 +3758,17 @@ impl Editor {
             let actions = if let Ok(code_actions) = project.update(&mut cx, |project, cx| {
                 project.code_actions(&start_buffer, start..end, cx)
             }) {
-                code_actions.await.log_err()
+                code_actions.await
             } else {
-                None
+                Vec::new()
             };
 
             this.update(&mut cx, |this, cx| {
-                this.available_code_actions = actions.and_then(|actions| {
-                    if actions.is_empty() {
-                        None
-                    } else {
-                        Some((start_buffer, actions.into()))
-                    }
-                });
+                this.available_code_actions = if actions.is_empty() {
+                    None
+                } else {
+                    Some((start_buffer, actions.into()))
+                };
                 cx.notify();
             })
             .log_err();
@@ -4553,6 +4569,7 @@ impl Editor {
         }
 
         let mut delta_for_end_row = 0;
+        let has_multiple_rows = start_row + 1 != end_row;
         for row in start_row..end_row {
             let current_indent = snapshot.indent_size_for_line(row);
             let indent_delta = match (current_indent.kind, indent_kind) {
@@ -4564,7 +4581,12 @@ impl Editor {
                 (_, IndentKind::Tab) => IndentSize::tab(),
             };
 
-            let row_start = Point::new(row, 0);
+            let start = if has_multiple_rows || current_indent.len < selection.start.column {
+                0
+            } else {
+                selection.start.column
+            };
+            let row_start = Point::new(row, start);
             edits.push((
                 row_start..row_start,
                 indent_delta.chars().collect::<String>(),
@@ -4610,7 +4632,7 @@ impl Editor {
                         rows.start += 1;
                     }
                 }
-
+                let has_multiple_rows = rows.len() > 1;
                 for row in rows {
                     let indent_size = snapshot.indent_size_for_line(row);
                     if indent_size.len > 0 {
@@ -4625,7 +4647,16 @@ impl Editor {
                             }
                             IndentKind::Tab => 1,
                         };
-                        deletion_ranges.push(Point::new(row, 0)..Point::new(row, deletion_len));
+                        let start = if has_multiple_rows
+                            || deletion_len > selection.start.column
+                            || indent_size.len < selection.start.column
+                        {
+                            0
+                        } else {
+                            selection.start.column - deletion_len
+                        };
+                        deletion_ranges
+                            .push(Point::new(row, start)..Point::new(row, start + deletion_len));
                         last_outdent = Some(row);
                     }
                 }
@@ -5121,7 +5152,7 @@ impl Editor {
         });
     }
 
-    pub fn duplicate_line(&mut self, action: &DuplicateLine, cx: &mut ViewContext<Self>) {
+    pub fn duplicate_line(&mut self, upwards: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let selections = self.selections.all::<Point>(cx);
@@ -5150,7 +5181,7 @@ impl Editor {
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
-            let insert_location = if action.move_upwards {
+            let insert_location = if upwards {
                 Point::new(rows.end, 0)
             } else {
                 start
@@ -5165,6 +5196,14 @@ impl Editor {
 
             this.request_autoscroll(Autoscroll::fit(), cx);
         });
+    }
+
+    pub fn duplicate_line_up(&mut self, _: &DuplicateLineUp, cx: &mut ViewContext<Self>) {
+        self.duplicate_line(true, cx);
+    }
+
+    pub fn duplicate_line_down(&mut self, _: &DuplicateLineDown, cx: &mut ViewContext<Self>) {
+        self.duplicate_line(false, cx);
     }
 
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
@@ -7644,7 +7683,7 @@ impl Editor {
                         let range = target.range.to_offset(target.buffer.read(cx));
                         let range = editor.range_for_match(&range);
                         if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
-                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            editor.change_selections(Some(Autoscroll::focused()), cx, |s| {
                                 s.select_ranges([range]);
                             });
                         } else {
@@ -7664,7 +7703,7 @@ impl Editor {
                                     // to avoid creating a history entry at the previous cursor location.
                                     pane.update(cx, |pane, _| pane.disable_history());
                                     target_editor.change_selections(
-                                        Some(Autoscroll::fit()),
+                                        Some(Autoscroll::focused()),
                                         cx,
                                         |s| {
                                             s.select_ranges([range]);
@@ -7814,9 +7853,10 @@ impl Editor {
                 Bias::Left
             },
         );
+
         match self
             .find_all_references_task_sources
-            .binary_search_by(|task_anchor| task_anchor.cmp(&head_anchor, &multi_buffer_snapshot))
+            .binary_search_by(|anchor| anchor.cmp(&head_anchor, &multi_buffer_snapshot))
         {
             Ok(_) => {
                 log::info!(
@@ -7834,66 +7874,27 @@ impl Editor {
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        let open_task = cx.spawn(|editor, mut cx| async move {
-            let mut locations = references.await?;
-            let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-            let head_offset = text::ToOffset::to_offset(&head, &snapshot);
-
-            // LSP may return references that contain the item itself we requested `find_all_references` for (eg. rust-analyzer)
-            // So we will remove it from locations
-            // If there is only one reference, we will not do this filter cause it may make locations empty
-            if locations.len() > 1 {
-                cx.update(|cx| {
-                    locations.retain(|location| {
-                        // fn foo(x : i64) {
-                        //         ^
-                        //  println!(x);
-                        // }
-                        // It is ok to find reference when caret being at ^ (the end of the word)
-                        // So we turn offset into inclusive to include the end of the word
-                        !location
-                            .range
-                            .to_offset(location.buffer.read(cx))
-                            .to_inclusive()
-                            .contains(&head_offset)
-                    });
-                })?;
-            }
-
-            if locations.is_empty() {
-                return Ok(());
-            }
-
-            // If there is one reference, just open it directly
-            if locations.len() == 1 {
-                let target = locations.pop().unwrap();
-
-                return editor.update(&mut cx, |editor, cx| {
-                    let range = target.range.to_offset(target.buffer.read(cx));
-                    let range = editor.range_for_match(&range);
-
-                    if Some(&target.buffer) == editor.buffer().read(cx).as_singleton().as_ref() {
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                            s.select_ranges([range]);
-                        });
-                    } else {
-                        cx.window_context().defer(move |cx| {
-                            let target_editor: View<Self> =
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.open_project_item(
-                                        workspace.active_pane().clone(),
-                                        target.buffer.clone(),
-                                        cx,
-                                    )
-                                });
-                            target_editor.update(cx, |target_editor, cx| {
-                                target_editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                                    s.select_ranges([range]);
+        Some(cx.spawn(|editor, mut cx| async move {
+            let _cleanup = defer({
+                let mut cx = cx.clone();
+                move || {
+                    let _ = editor.update(&mut cx, |editor, _| {
+                        if let Ok(i) =
+                            editor
+                                .find_all_references_task_sources
+                                .binary_search_by(|anchor| {
+                                    anchor.cmp(&head_anchor, &multi_buffer_snapshot)
                                 })
-                            })
-                        })
-                    }
-                });
+                        {
+                            editor.find_all_references_task_sources.remove(i);
+                        }
+                    });
+                }
+            });
+
+            let locations = references.await?;
+            if locations.is_empty() {
+                return anyhow::Ok(());
             }
 
             workspace.update(&mut cx, |workspace, cx| {
@@ -7913,24 +7914,7 @@ impl Editor {
                 Self::open_locations_in_multibuffer(
                     workspace, locations, replica_id, title, false, cx,
                 );
-            })?;
-
-            Ok(())
-        });
-        Some(cx.spawn(|editor, mut cx| async move {
-            open_task.await?;
-            editor.update(&mut cx, |editor, _| {
-                if let Ok(i) =
-                    editor
-                        .find_all_references_task_sources
-                        .binary_search_by(|task_anchor| {
-                            task_anchor.cmp(&head_anchor, &multi_buffer_snapshot)
-                        })
-                {
-                    editor.find_all_references_task_sources.remove(i);
-                }
-            })?;
-            anyhow::Ok(())
+            })
         }))
     }
 
@@ -8822,9 +8806,42 @@ impl Editor {
         }
     }
 
-    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
-        use git::permalink::{build_permalink, BuildPermalinkParams};
+    pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
+        if !self.show_git_blame {
+            if let Err(error) = self.show_git_blame_internal(cx) {
+                log::error!("failed to toggle on 'git blame': {}", error);
+                return;
+            }
+            self.show_git_blame = true
+        } else {
+            self.blame_subscription.take();
+            self.blame.take();
+            self.show_git_blame = false
+        }
 
+        cx.notify();
+    }
+
+    fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Result<()> {
+        if let Some(project) = self.project.as_ref() {
+            let Some(buffer) = self.buffer().read(cx).as_singleton() else {
+                anyhow::bail!("git blame not available in multi buffers")
+            };
+
+            let project = project.clone();
+            let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
+            self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
+            self.blame = Some(blame);
+        }
+
+        Ok(())
+    }
+
+    pub fn blame(&self) -> Option<&Model<GitBlame>> {
+        self.blame.as_ref()
+    }
+
+    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         let (path, repo) = maybe!({
             let project_handle = self.project.as_ref()?.clone();
             let project = project_handle.read(cx);
@@ -8857,7 +8874,12 @@ impl Editor {
             remote_url: &origin_url,
             sha: &sha,
             path: &path,
-            selection: selection.map(|selection| selection.range()),
+            selection: selection.map(|selection| {
+                let range = selection.range();
+                let start = range.start.row;
+                let end = range.end.row;
+                start..end
+            }),
         })
     }
 
@@ -9440,6 +9462,7 @@ impl Editor {
         path: ProjectPath,
         position: Point,
         anchor: language::Anchor,
+        offset_from_top: u32,
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace();
@@ -9467,9 +9490,13 @@ impl Editor {
                 };
 
                 let nav_history = editor.nav_history.take();
-                editor.change_selections(Some(Autoscroll::newest()), cx, |s| {
-                    s.select_ranges([cursor..cursor]);
-                });
+                editor.change_selections(
+                    Some(Autoscroll::top_relative(offset_from_top as usize)),
+                    cx,
+                    |s| {
+                        s.select_ranges([cursor..cursor]);
+                    },
+                );
                 editor.nav_history = nav_history;
 
                 anyhow::Ok(())
@@ -9968,7 +9995,12 @@ impl EditorSnapshot {
             0.0.into()
         };
 
-        let left_padding = if gutter_settings.code_actions {
+        let git_blame_entries_width = self
+            .show_git_blame
+            .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
+
+        let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
+        left_padding += if gutter_settings.code_actions {
             em_width * 3.0
         } else if show_git_gutter && gutter_settings.line_numbers {
             em_width * 2.0
@@ -9993,6 +10025,7 @@ impl EditorSnapshot {
             right_padding,
             width: line_gutter_width + left_padding + right_padding,
             margin: -descent,
+            git_blame_entries_width,
         }
     }
 }
@@ -10499,6 +10532,41 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, true, cx.theme().status());
 
+        let multi_line_diagnostic = diagnostic.message.contains('\n');
+
+        let buttons = |diagnostic: &Diagnostic, block_id: usize| {
+            if multi_line_diagnostic {
+                v_flex()
+            } else {
+                h_flex()
+            }
+            .children(diagnostic.is_primary.then(|| {
+                IconButton::new(("close-block", block_id), IconName::XCircle)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Transparent)
+                    .visible_on_hover(group_id.clone())
+                    .on_click(move |_click, cx| cx.dispatch_action(Box::new(Cancel)))
+                    .tooltip(|cx| Tooltip::for_action("Close Diagnostics", &Cancel, cx))
+            }))
+            .child(
+                IconButton::new(("copy-block", block_id), IconName::Copy)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Transparent)
+                    .visible_on_hover(group_id.clone())
+                    .on_click({
+                        let message = diagnostic.message.clone();
+                        move |_click, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
+                    })
+                    .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
+            )
+        };
+
+        let icon_size = buttons(&diagnostic, cx.block_id)
+            .into_any_element()
+            .measure(AvailableSpace::min_size(), cx);
+
         h_flex()
             .id(cx.block_id)
             .group(group_id.clone())
@@ -10509,9 +10577,10 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
             .child(
                 div()
                     .flex()
-                    .w(cx.anchor_x - cx.gutter_dimensions.width)
+                    .w(cx.anchor_x - cx.gutter_dimensions.width - icon_size.width)
                     .flex_shrink(),
             )
+            .child(buttons(&diagnostic, cx.block_id))
             .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_highlights(
                     &text_style,
@@ -10526,18 +10595,6 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
                     }),
                 ),
             ))
-            .child(
-                IconButton::new(("copy-block", cx.block_id), IconName::Copy)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Transparent)
-                    .visible_on_hover(group_id)
-                    .on_click({
-                        let message = diagnostic.message.clone();
-                        move |_click, cx| cx.write_to_clipboard(ClipboardItem::new(message.clone()))
-                    })
-                    .tooltip(|cx| Tooltip::text("Copy diagnostic message", cx)),
-            )
             .into_any_element()
     })
 }

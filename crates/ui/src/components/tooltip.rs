@@ -1,4 +1,4 @@
-use gpui::{overlay, Action, AnyView, IntoElement, Render, VisualContext};
+use gpui::{anchored, Action, AnyView, IntoElement, Render, VisualContext};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -90,8 +90,8 @@ pub fn tooltip_container<V>(
     f: impl FnOnce(Div, &mut ViewContext<V>) -> Div,
 ) -> impl IntoElement {
     let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-    overlay().child(
-        // padding to avoid mouse cursor
+    // padding to avoid mouse cursor
+    anchored().child(
         div().pl_2().pt_2p5().child(
             v_flex()
                 .elevation_2(cx)

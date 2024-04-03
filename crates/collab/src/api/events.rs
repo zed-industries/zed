@@ -10,6 +10,7 @@ use axum::{
     Extension, Router, TypedHeader,
 };
 use rpc::ExtensionMetadata;
+use semantic_version::SemanticVersion;
 use serde::{Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
@@ -17,7 +18,6 @@ use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, CopilotEvent, CpuEvent, EditEvent,
     EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent, SettingEvent,
 };
-use util::SemanticVersion;
 
 pub fn router() -> Router {
     Router::new()
@@ -459,6 +459,12 @@ impl ToUpload {
             }
 
             insert.end().await?;
+
+            let event_count = rows.len();
+            log::info!(
+                "wrote {event_count} {event_specifier} to '{table}'",
+                event_specifier = if event_count == 1 { "event" } else { "events" }
+            );
         }
 
         Ok(())
@@ -522,9 +528,9 @@ impl EditorEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -584,9 +590,9 @@ impl CopilotEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             os_name: body.os_name.clone(),
             os_version: body.os_version.clone().unwrap_or_default(),
@@ -639,9 +645,9 @@ impl CallEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone().unwrap_or_default(),
             session_id: body.session_id.clone(),
@@ -688,9 +694,9 @@ impl AssistantEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
@@ -732,9 +738,9 @@ impl CpuEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
@@ -779,9 +785,9 @@ impl MemoryEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
@@ -825,9 +831,9 @@ impl AppEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
@@ -870,9 +876,9 @@ impl SettingEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
@@ -921,9 +927,9 @@ impl ExtensionEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
@@ -985,9 +991,9 @@ impl EditEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),
@@ -1034,9 +1040,9 @@ impl ActionEventRow {
 
         Self {
             app_version: body.app_version.clone(),
-            major: semver.map(|s| s.major as i32),
-            minor: semver.map(|s| s.minor as i32),
-            patch: semver.map(|s| s.patch as i32),
+            major: semver.map(|v| v.major() as i32),
+            minor: semver.map(|v| v.minor() as i32),
+            patch: semver.map(|v| v.patch() as i32),
             release_channel: body.release_channel.clone().unwrap_or_default(),
             installation_id: body.installation_id.clone(),
             session_id: body.session_id.clone(),

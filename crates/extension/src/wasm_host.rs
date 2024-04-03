@@ -14,11 +14,12 @@ use futures::{
 use gpui::BackgroundExecutor;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
+use semantic_version::SemanticVersion;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::{http::HttpClient, SemanticVersion};
+use util::http::HttpClient;
 use wasmtime::{
     component::{Component, ResourceTable},
     Engine, Store,
@@ -203,11 +204,11 @@ pub fn parse_wasm_extension_version(
 
 fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {
     if data.len() == 6 {
-        Some(SemanticVersion {
-            major: u16::from_be_bytes([data[0], data[1]]) as _,
-            minor: u16::from_be_bytes([data[2], data[3]]) as _,
-            patch: u16::from_be_bytes([data[4], data[5]]) as _,
-        })
+        Some(SemanticVersion::new(
+            u16::from_be_bytes([data[0], data[1]]) as _,
+            u16::from_be_bytes([data[2], data[3]]) as _,
+            u16::from_be_bytes([data[4], data[5]]) as _,
+        ))
     } else {
         None
     }
