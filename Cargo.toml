@@ -106,7 +106,6 @@ members = [
     "extensions/gleam",
     "extensions/haskell",
     "extensions/html",
-    "extensions/ocaml",
     "extensions/php",
     "extensions/prisma",
     "extensions/purescript",
