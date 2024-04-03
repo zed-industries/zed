@@ -1147,11 +1147,11 @@ impl SearchableItem for Editor {
 
     fn active_match_index(
         &mut self,
-        matches: Vec<Range<Anchor>>,
+        matches: &[Range<Anchor>],
         cx: &mut ViewContext<Self>,
     ) -> Option<usize> {
         active_match_index(
-            &matches,
+            matches,
             &self.selections.newest_anchor().head(),
             &self.buffer().read(cx).snapshot(cx),
         )

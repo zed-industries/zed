@@ -1,5 +1,6 @@
 use std::{any::Any, sync::Arc};
 
+use any_vec::AnyVec;
 use gpui::{
     AnyView, AnyWeakView, AppContext, EventEmitter, Subscription, Task, View, ViewContext,
     WeakView, WindowContext,
@@ -82,7 +83,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     ) -> Task<Vec<Self::Match>>;
     fn active_match_index(
         &mut self,
-        matches: Vec<Self::Match>,
+        matches: &[Self::Match],
         cx: &mut ViewContext<Self>,
     ) -> Option<usize>;
 }
@@ -97,19 +98,19 @@ pub trait SearchableItemHandle: ItemHandle {
         handler: Box<dyn Fn(&SearchEvent, &mut WindowContext) + Send>,
     ) -> Subscription;
     fn clear_matches(&self, cx: &mut WindowContext);
-    fn update_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut WindowContext);
+    fn update_matches(&self, matches: &AnyVec, cx: &mut WindowContext);
     fn query_suggestion(&self, cx: &mut WindowContext) -> String;
     fn activate_match(
         &self,
         index: usize,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: &AnyVec,
         cx: &mut WindowContext,
     );
-    fn select_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut WindowContext);
-    fn replace(&self, _: &Box<dyn Any + Send>, _: &SearchQuery, _: &mut WindowContext);
+    fn select_matches(&self, matches: &AnyVec, cx: &mut WindowContext);
+    fn replace(&self, _: any_vec::element::ElementRef<'_, dyn Send>, _: &SearchQuery, _: &mut WindowContext);
     fn match_index_for_direction(
         &self,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: &AnyVec,
         current_index: usize,
         direction: Direction,
         count: usize,
@@ -119,10 +120,10 @@ pub trait SearchableItemHandle: ItemHandle {
         &self,
         query: Arc<SearchQuery>,
         cx: &mut WindowContext,
-    ) -> Task<Vec<Box<dyn Any + Send>>>;
+    ) -> Task<AnyVec>;
     fn active_match_index(
         &self,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: &AnyVec,
         cx: &mut WindowContext,
     ) -> Option<usize>;
 }
@@ -151,7 +152,7 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
     fn clear_matches(&self, cx: &mut WindowContext) {
         self.update(cx, |this, cx| this.clear_matches(cx));
     }
-    fn update_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut WindowContext) {
+    fn update_matches(&self, matches: &AnyVec, cx: &mut WindowContext) {
         let matches = downcast_matches(matches);
         self.update(cx, |this, cx| this.update_matches(matches, cx));
     }
@@ -161,21 +162,21 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
     fn activate_match(
         &self,
         index: usize,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: &AnyVec,
         cx: &mut WindowContext,
     ) {
         let matches = downcast_matches(matches);
         self.update(cx, |this, cx| this.activate_match(index, matches, cx));
     }
 
-    fn select_matches(&self, matches: &Vec<Box<dyn Any + Send>>, cx: &mut WindowContext) {
+    fn select_matches(&self, matches: &AnyVec, cx: &mut WindowContext) {
         let matches = downcast_matches(matches);
         self.update(cx, |this, cx| this.select_matches(matches, cx));
     }
 
     fn match_index_for_direction(
         &self,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: &AnyVec,
         current_index: usize,
         direction: Direction,
         count: usize,
@@ -190,39 +191,33 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
         &self,
         query: Arc<SearchQuery>,
         cx: &mut WindowContext,
-    ) -> Task<Vec<Box<dyn Any + Send>>> {
+    ) -> Task<AnyVec> {
         let matches = self.update(cx, |this, cx| this.find_matches(query, cx));
         cx.spawn(|_| async {
             let matches = matches.await;
-            matches
-                .into_iter()
-                .map::<Box<dyn Any + Send>, _>(|range| Box::new(range))
-                .collect()
+            let mut any_matches = AnyVec::with_capacity::<T::Match>(matches.len());
+            {
+                let mut any_matches = any_matches.downcast_mut::<T::Match>().unwrap();
+                for mat in matches {
+                    any_matches.push(mat);
+                }
+            }
+            any_matches
         })
     }
     fn active_match_index(
         &self,
-        matches: &Vec<Box<dyn Any + Send>>,
+        matches: &AnyVec,
         cx: &mut WindowContext,
     ) -> Option<usize> {
-        let matches = downcast_matches(matches);
-        self.update(cx, |this, cx| this.active_match_index(matches, cx))
+        let matches = matches.downcast_ref()?;
+        self.update(cx, |this, cx| this.active_match_index(matches.as_slice(), cx))
     }
 
-    fn replace(&self, matches: &Box<dyn Any + Send>, query: &SearchQuery, cx: &mut WindowContext) {
-        let matches = matches.downcast_ref().unwrap();
-        self.update(cx, |this, cx| this.replace(matches, query, cx))
+    fn replace(&self, mat: any_vec::element::ElementRef<'_, dyn Send>, query: &SearchQuery, cx: &mut WindowContext) {
+        let mat = mat.downcast_ref().unwrap();
+        self.update(cx, |this, cx| this.replace(mat, query, cx))
     }
-}
-
-fn downcast_matches<T: Any + Clone>(matches: &Vec<Box<dyn Any + Send>>) -> Vec<T> {
-    matches
-        .iter()
-        .map(|range| range.downcast_ref::<T>().cloned())
-        .collect::<Option<Vec<_>>>()
-        .expect(
-            "SearchableItemHandle function called with vec of matches of a different type than expected",
-        )
 }
 
 impl From<Box<dyn SearchableItemHandle>> for AnyView {

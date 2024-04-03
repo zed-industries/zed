@@ -592,11 +592,13 @@ impl ProjectSearchView {
             }
             if let Some(active_index) = self.active_match_index {
                 let query = query.clone().with_replacement(self.replacement(cx));
-                self.results_editor.replace(
-                    &(Box::new(model.match_ranges[active_index].clone()) as _),
-                    &query,
-                    cx,
-                );
+                self.results_editor.update(cx, |editor, cx| {
+                    editor.replace(
+                        &model.match_ranges[active_index],
+                        &query,
+                        cx,
+                    );
+                });
                 self.select_match(Direction::Next, cx)
             }
         }
@@ -612,14 +614,11 @@ impl ProjectSearchView {
             }
             if self.active_match_index.is_some() {
                 let query = query.clone().with_replacement(self.replacement(cx));
-                let matches = model
-                    .match_ranges
-                    .iter()
-                    .map(|item| Box::new(item.clone()) as _)
-                    .collect::<Vec<_>>();
-                for item in matches {
-                    self.results_editor.replace(&item, &query, cx);
-                }
+                self.results_editor.update(cx, |editor, cx| {
+                    for item in &model.match_ranges {
+                        editor.replace(item, &query, cx);
+                    }
+                });
             }
         }
     }
