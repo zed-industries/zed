@@ -906,7 +906,7 @@ async fn load_login_shell_environment() -> Result<()> {
     // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
     // do that, but it does, and `exit 0` helps.
     let shell_cmd = format!(
-        "{}echo {marker}; /usr/bin/env -0; exit 0;",
+        "{}printf '%s' {marker}; /usr/bin/env -0; exit 0;",
         shell_cmd_prefix.as_deref().unwrap_or("")
     );
 
