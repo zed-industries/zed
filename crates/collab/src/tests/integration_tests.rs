@@ -4934,9 +4934,35 @@ async fn test_lsp_hover(
         .await;
 
     client_a.language_registry().add(rust_lang());
+    let language_server_names = ["rust-analyzer", "CrabLang-ls"];
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_specific_fake_lsp_adapter(
+            "Rust",
+            true,
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        );
+    let _other_server = client_a
+        .language_registry()
+        .register_specific_fake_lsp_adapter(
+            "Rust",
+            false,
+            FakeLspAdapter {
+                name: "CrabLang-ls",
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        );
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
     let project_id = active_call_a
@@ -4949,66 +4975,133 @@ async fn test_lsp_hover(
     let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx));
     let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
-    // Request hover information as the guest.
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::HoverRequest, _, _>(
-        |params, _| async move {
-            assert_eq!(
-                params
-                    .text_document_position_params
-                    .text_document
-                    .uri
-                    .as_str(),
-                "file:///root-1/main.rs"
-            );
-            assert_eq!(
-                params.text_document_position_params.position,
-                lsp::Position::new(0, 22)
-            );
-            Ok(Some(lsp::Hover {
-                contents: lsp::HoverContents::Array(vec![
-                    lsp::MarkedString::String("Test hover content.".to_string()),
-                    lsp::MarkedString::LanguageString(lsp::LanguageString {
-                        language: "Rust".to_string(),
-                        value: "let foo = 42;".to_string(),
-                    }),
-                ]),
-                range: Some(lsp::Range::new(
-                    lsp::Position::new(0, 22),
-                    lsp::Position::new(0, 29),
-                )),
-            }))
-        },
-    );
+    let mut servers_with_hover_requests = HashMap::default();
+    for i in 0..language_server_names.len() {
+        let new_server = fake_language_servers.next().await.unwrap_or_else(|| {
+            panic!(
+                "Failed to get language server #{i} with name {}",
+                &language_server_names[i]
+            )
+        });
+        let new_server_name = new_server.server.name();
+        assert!(
+            !servers_with_hover_requests.contains_key(new_server_name),
+            "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
+        );
+        let new_server_name = new_server_name.to_string();
+        match new_server_name.as_str() {
+            "CrabLang-ls" => {
+                servers_with_hover_requests.insert(
+                    new_server_name.clone(),
+                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                        move |params, _| {
+                            assert_eq!(
+                                params
+                                    .text_document_position_params
+                                    .text_document
+                                    .uri
+                                    .as_str(),
+                                "file:///root-1/main.rs"
+                            );
+                            let name = new_server_name.clone();
+                            async move {
+                                Ok(Some(lsp::Hover {
+                                    contents: lsp::HoverContents::Scalar(
+                                        lsp::MarkedString::String(format!("{name} hover")),
+                                    ),
+                                    range: None,
+                                }))
+                            }
+                        },
+                    ),
+                );
+            }
+            "rust-analyzer" => {
+                servers_with_hover_requests.insert(
+                    new_server_name.clone(),
+                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                        |params, _| async move {
+                            assert_eq!(
+                                params
+                                    .text_document_position_params
+                                    .text_document
+                                    .uri
+                                    .as_str(),
+                                "file:///root-1/main.rs"
+                            );
+                            assert_eq!(
+                                params.text_document_position_params.position,
+                                lsp::Position::new(0, 22)
+                            );
+                            Ok(Some(lsp::Hover {
+                                contents: lsp::HoverContents::Array(vec![
+                                    lsp::MarkedString::String("Test hover content.".to_string()),
+                                    lsp::MarkedString::LanguageString(lsp::LanguageString {
+                                        language: "Rust".to_string(),
+                                        value: "let foo = 42;".to_string(),
+                                    }),
+                                ]),
+                                range: Some(lsp::Range::new(
+                                    lsp::Position::new(0, 22),
+                                    lsp::Position::new(0, 29),
+                                )),
+                            }))
+                        },
+                    ),
+                );
+            }
+            unexpected => panic!("Unexpected server name: {unexpected}"),
+        }
+    }
 
-    let hovers = project_b
+    // Request hover information as the guest.
+    let mut hovers = project_b
         .update(cx_b, |p, cx| p.hover(&buffer_b, 22, cx))
         .await;
     assert_eq!(
         hovers.len(),
-        1,
-        "Expected exactly one hover but got: {hovers:?}"
+        2,
+        "Expected two hovers from both language servers, but got: {hovers:?}"
     );
-    let hover_info = hovers.into_iter().next().unwrap();
 
+    let _: Vec<()> = futures::future::join_all(servers_with_hover_requests.into_values().map(
+        |mut hover_request| async move {
+            hover_request
+                .next()
+                .await
+                .expect("All hover requests should have been triggered")
+        },
+    ))
+    .await;
+
+    hovers.sort_by_key(|hover| hover.contents.len());
+    let first_hover = hovers.first().cloned().unwrap();
+    assert_eq!(
+        first_hover.contents,
+        vec![project::HoverBlock {
+            text: "CrabLang-ls hover".to_string(),
+            kind: HoverBlockKind::Markdown,
+        },]
+    );
+    let second_hover = hovers.last().cloned().unwrap();
+    assert_eq!(
+        second_hover.contents,
+        vec![
+            project::HoverBlock {
+                text: "Test hover content.".to_string(),
+                kind: HoverBlockKind::Markdown,
+            },
+            project::HoverBlock {
+                text: "let foo = 42;".to_string(),
+                kind: HoverBlockKind::Code {
+                    language: "Rust".to_string()
+                },
+            }
+        ]
+    );
     buffer_b.read_with(cx_b, |buffer, _| {
         let snapshot = buffer.snapshot();
-        assert_eq!(hover_info.range.unwrap().to_offset(&snapshot), 22..29);
-        assert_eq!(
-            hover_info.contents,
-            vec![
-                project::HoverBlock {
-                    text: "Test hover content.".to_string(),
-                    kind: HoverBlockKind::Markdown,
-                },
-                project::HoverBlock {
-                    text: "let foo = 42;".to_string(),
-                    kind: HoverBlockKind::Code {
-                        language: "Rust".to_string()
-                    },
-                }
-            ]
-        );
+        assert_eq!(second_hover.range.unwrap().to_offset(&snapshot), 22..29);
     });
 }
 
