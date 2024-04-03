@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 use windows::{
     core::{implement, HRESULT, HSTRING, PCWSTR},
     Win32::{
-        Foundation::{BOOL, COLORREF},
+        Foundation::{BOOL, COLORREF, E_NOTIMPL},
         Globalization::GetUserDefaultLocaleName,
         Graphics::{Direct2D::Common::D2D_POINT_2F, DirectWrite::*},
         System::SystemServices::LOCALE_NAME_MAX_LENGTH,
@@ -961,7 +961,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
         _clientdrawingeffect: Option<&windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
         Err(windows::core::Error::new(
-            HRESULT(-1),
+            E_NOTIMPL,
             "DrawUnderline unimplemented",
         ))
     }
@@ -975,7 +975,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
         _clientdrawingeffect: Option<&windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
         Err(windows::core::Error::new(
-            HRESULT(-1),
+            E_NOTIMPL,
             "DrawStrikethrough unimplemented",
         ))
     }
@@ -991,7 +991,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
         _clientdrawingeffect: Option<&windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
         Err(windows::core::Error::new(
-            HRESULT(-1),
+            E_NOTIMPL,
             "DrawInlineObject unimplemented",
         ))
     }
