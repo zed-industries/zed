@@ -93,6 +93,7 @@
   "while"
   "union"
   "unsafe"
+  "yield"
   (mutable_specifier)
   (super)
 ] @keyword
