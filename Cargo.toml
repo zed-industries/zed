@@ -105,6 +105,7 @@ members = [
     "extensions/erlang",
     "extensions/gleam",
     "extensions/haskell",
+    "extensions/html",
     "extensions/php",
     "extensions/prisma",
     "extensions/purescript",

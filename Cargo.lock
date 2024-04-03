@@ -5348,7 +5348,6 @@ dependencies = [
  "tree-sitter-gowork",
  "tree-sitter-hcl",
  "tree-sitter-heex",
- "tree-sitter-html",
  "tree-sitter-jsdoc",
  "tree-sitter-json 0.20.0",
  "tree-sitter-lua",
@@ -12532,6 +12531,13 @@ dependencies = [
 
 [[package]]
 name = "zed_haskell"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4",
+]
+
+[[package]]
+name = "zed_html"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4",
