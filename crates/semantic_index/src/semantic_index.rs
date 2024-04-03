@@ -171,7 +171,10 @@ async fn index_path(
         let chunks = chunk_parse_tree(tree, &text);
 
         for chunk in chunks {
-            println!("-- CHUNKY --\n{}", &text[chunk]);
+            println!(
+                "=====================================================================\n{}",
+                &text[chunk]
+            );
         }
     } else {
         return Err(anyhow!("plain text is not yet supported"));
@@ -180,7 +183,7 @@ async fn index_path(
     Ok(())
 }
 
-const CHUNK_THRESHOLD: usize = 3200;
+const CHUNK_THRESHOLD: usize = 1500;
 
 fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Range<usize>> {
     let mut chunk_ranges = Vec::new();
@@ -190,22 +193,20 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Range<usize>> {
     loop {
         let node = cursor.node();
 
-        // If we can't fit the entire node into the current chunk, we flush the current chunk.
+        // If adding the node to the current chunk exceeds the threshold
         if node.end_byte() - range.start > CHUNK_THRESHOLD {
-            if !range.is_empty() {
+            // Try to descend into its first child, and if we can't flush the current
+            // range and try again.
+            if cursor.goto_first_child() {
+                continue;
+            } else if !range.is_empty() {
                 chunk_ranges.push(range);
                 range = cursor.node().start_byte()..cursor.node().start_byte();
-            }
-        }
-
-        // If the node can't fit into a chunk, we recurse into its children.
-        // Otherwise we extend the range and advance to the next sibling at the current level of the tree.
-        if node.end_byte() - node.start_byte() > CHUNK_THRESHOLD {
-            if cursor.goto_first_child() {
                 continue;
             }
 
-            // If the node is too big but has no children, we chunk its text arbitrarily.
+            // If we get here, the node itself has no children but is larger than the threshold.
+            // Break its text into arbitrary chunks.
             while range.start < node.end_byte() {
                 range.end = cmp::min(range.start + CHUNK_THRESHOLD, node.end_byte());
                 while !text.is_char_boundary(range.end) {
@@ -215,16 +216,16 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Range<usize>> {
                 range.start = range.end;
             }
         } else {
+            // The current node fits the threshold, so we include wholesale.
             range.end = node.end_byte();
         }
 
+        // If we get here, we consumed the node. Advance to the next child, ascending if there isn't one.
         while !cursor.goto_next_sibling() {
-            if !range.is_empty() {
-                chunk_ranges.push(range);
-                range = cursor.node().end_byte()..cursor.node().end_byte();
-            }
-
             if !cursor.goto_parent() {
+                if !range.is_empty() {
+                    chunk_ranges.push(range);
+                }
                 return chunk_ranges;
             }
         }
