@@ -555,8 +555,7 @@ impl Vim {
         cx: &mut WindowContext,
     ) {
         let state = self.state();
-        if (state.mode == Mode::Insert || state.mode == Mode::Replace) && state.current_tx.is_some()
-        {
+        if state.mode == Mode::Insert && state.current_tx.is_some() {
             if state.current_anchor.is_none() {
                 self.update_state(|state| state.current_anchor = Some(newest));
             } else if state.current_anchor.as_ref().unwrap() != &newest {
