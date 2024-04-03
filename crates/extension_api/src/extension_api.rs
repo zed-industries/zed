@@ -1,7 +1,22 @@
 use core::fmt;
 
-pub use wit::*;
+use wit::*;
+pub use wit::{
+    current_platform, download_file, latest_github_release, make_file_executable, node_binary_path,
+    npm_install_package, npm_package_installed_version, npm_package_latest_version,
+    zed::extension::lsp, Architecture, CodeLabel, Command, Completion, DownloadedFileType, EnvVars,
+    FixedCodeLabel, GithubRelease, GithubReleaseAsset, GithubReleaseOptions, Guest,
+    LanguageServerInstallationStatus, Os, ParsedCodeLabel, Range, Worktree,
+};
+
 pub type Result<T, E = String> = core::result::Result<T, E>;
+
+pub fn set_language_server_installation_status(
+    language_server_id: &LanguageServerId,
+    status: &LanguageServerInstallationStatus,
+) {
+    wit::set_language_server_installation_status(&language_server_id.0, status)
+}
 
 pub trait Extension: Send + Sync {
     fn new() -> Self
