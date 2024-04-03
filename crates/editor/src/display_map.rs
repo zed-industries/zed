@@ -257,9 +257,12 @@ impl DisplayMap {
         style: HighlightStyle,
     ) {
         for highlight in highlights {
-            self.inlay_highlights.update(&type_id, |highlights| {
-                highlights.insert(highlight.inlay, (style, highlight))
+            let update = self.inlay_highlights.update(&type_id, |highlights| {
+                highlights.insert(highlight.inlay, (style, highlight.clone()))
             });
+            if update.is_none() {
+                self.inlay_highlights.insert(type_id, TreeMap::from_ordered_entries([(highlight.inlay, (style, highlight))]));
+            }
         }
     }
 
