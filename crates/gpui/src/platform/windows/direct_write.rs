@@ -157,7 +157,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         _font_size: Pixels,
         _width: Pixels,
     ) -> Vec<usize> {
-        // self.0.read().wrap_line(text, font_id, font_size, width)
         unimplemented!()
     }
 }
@@ -908,11 +907,15 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
         _baselineoriginy: f32,
         _measuringmode: DWRITE_MEASURING_MODE,
         glyphrun: *const DWRITE_GLYPH_RUN,
-        _glyphrundescription: *const DWRITE_GLYPH_RUN_DESCRIPTION,
+        glyphrundescription: *const DWRITE_GLYPH_RUN_DESCRIPTION,
         _clientdrawingeffect: Option<&windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
         unsafe {
             let glyphrun = &*glyphrun;
+            let desc = &*glyphrundescription;
+            let glyph_count = glyphrun.glyphCount as usize;
+            let utf16_length_per_glyph = desc.stringLength as usize / glyph_count;
+
             if glyphrun.fontFace.is_none() {
                 return Ok(());
             }
@@ -927,19 +930,15 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             let mut global_index = self.inner.read().index;
             let mut position = self.inner.read().width;
             let mut glyphs = SmallVec::new();
-            for index in 0..glyphrun.glyphCount {
-                let id = GlyphId(*glyphrun.glyphIndices.add(index as _) as u32);
+            for index in 0..glyph_count {
+                let id = GlyphId(*glyphrun.glyphIndices.add(index) as u32);
                 glyphs.push(RendererShapedGlyph {
                     id,
                     position: point(px(position), px(0.0)),
                     index: global_index,
                 });
-                position += *glyphrun.glyphAdvances.add(index as _);
-                if is_emoji {
-                    global_index += 2;
-                } else {
-                    global_index += 1;
-                }
+                position += *glyphrun.glyphAdvances.add(index);
+                global_index += utf16_length_per_glyph;
             }
             self.inner.write().index = global_index;
             self.inner.write().width = position;
