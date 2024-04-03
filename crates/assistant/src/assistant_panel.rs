@@ -695,7 +695,7 @@ impl AssistantPanel {
                 editor.clear_background_highlights::<PendingInlineAssist>(cx);
             } else {
                 editor.highlight_background::<PendingInlineAssist>(
-                    background_ranges,
+                    &background_ranges,
                     |theme| theme.editor_active_line_background, // todo!("use the appropriate color")
                     cx,
                 );

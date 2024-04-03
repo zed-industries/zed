@@ -585,41 +585,47 @@ impl ProjectSearchView {
         cx.notify();
     }
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
-        let model = self.model.read(cx);
-        if let Some(query) = model.active_query.as_ref() {
-            if model.match_ranges.is_empty() {
-                return;
-            }
-            if let Some(active_index) = self.active_match_index {
-                let query = query.clone().with_replacement(self.replacement(cx));
-                self.results_editor.update(cx, |editor, cx| {
-                    editor.replace(
-                        &model.match_ranges[active_index],
-                        &query,
-                        cx,
-                    );
-                });
-                self.select_match(Direction::Next, cx)
-            }
+        if self.model.read(cx).match_ranges.is_empty() {
+            return;
+        }
+        let Some(active_index) = self.active_match_index else {
+            return;
+        };
+
+        let query = self.model.read(cx).active_query.clone();
+        if let Some(query) = query {
+            let query = query.with_replacement(self.replacement(cx));
+
+            // TODO: Do we need the clone here?
+            let mat = self.model.read(cx).match_ranges[active_index].clone();
+            self.results_editor.update(cx, |editor, cx| {
+                editor.replace(&mat, &query, cx);
+            });
+            self.select_match(Direction::Next, cx)
         }
     }
     pub fn replacement(&self, cx: &AppContext) -> String {
         self.replacement_editor.read(cx).text(cx)
     }
     fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
-        let model = self.model.read(cx);
-        if let Some(query) = model.active_query.as_ref() {
-            if model.match_ranges.is_empty() {
-                return;
-            }
-            if self.active_match_index.is_some() {
-                let query = query.clone().with_replacement(self.replacement(cx));
-                self.results_editor.update(cx, |editor, cx| {
-                    for item in &model.match_ranges {
-                        editor.replace(item, &query, cx);
-                    }
-                });
-            }
+        if self.model.read(cx).match_ranges.is_empty() {
+            return;
+        }
+        if self.active_match_index.is_none() {
+            return;
+        };
+
+        let query = self.model.read(cx).active_query.clone();
+        if let Some(query) = query {
+            let query = query.clone().with_replacement(self.replacement(cx));
+
+            // TODO: Bad clone here
+            let match_ranges = self.model.read(cx).match_ranges.clone();
+            self.results_editor.update(cx, |editor, cx| {
+                for item in match_ranges {
+                    editor.replace(&item, &query, cx);
+                }
+            });
         }
     }
 
@@ -1059,7 +1065,7 @@ impl ProjectSearchView {
                     editor.scroll(Point::default(), Some(Axis::Vertical), cx);
                 }
                 editor.highlight_background::<Self>(
-                    match_ranges,
+                    &match_ranges,
                     |theme| theme.search_match_background,
                     cx,
                 );

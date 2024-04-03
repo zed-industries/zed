@@ -26,7 +26,7 @@ use project::{
 };
 use serde::Deserialize;
 use settings::Settings;
-use std::{any::Any, sync::Arc};
+use std::sync::Arc;
 use theme::ThemeSettings;
 
 use ui::{h_flex, prelude::*, IconButton, IconName, ToggleButton, Tooltip};

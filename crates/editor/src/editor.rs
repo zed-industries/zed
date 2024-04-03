@@ -3738,7 +3738,7 @@ impl Editor {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
-                    ranges_to_highlight,
+                    &ranges_to_highlight,
                     |theme| theme.editor_highlighted_line_background,
                     cx,
                 );
@@ -3868,12 +3868,12 @@ impl Editor {
                     }
 
                     this.highlight_background::<DocumentHighlightRead>(
-                        read_ranges,
+                        &read_ranges,
                         |theme| theme.editor_document_highlight_read_background,
                         cx,
                     );
                     this.highlight_background::<DocumentHighlightWrite>(
-                        write_ranges,
+                        &write_ranges,
                         |theme| theme.editor_document_highlight_write_background,
                         cx,
                     );
@@ -8030,7 +8030,7 @@ impl Editor {
         });
         editor.update(cx, |editor, cx| {
             editor.highlight_background::<Self>(
-                ranges_to_highlight,
+                &ranges_to_highlight,
                 |theme| theme.editor_highlighted_line_background,
                 cx,
             );
@@ -9079,13 +9079,13 @@ impl Editor {
 
     pub fn highlight_background<T: 'static>(
         &mut self,
-        ranges: Vec<Range<Anchor>>,
+        ranges: &[Range<Anchor>],
         color_fetcher: fn(&ThemeColors) -> Hsla,
         cx: &mut ViewContext<Self>,
     ) {
         let snapshot = self.snapshot(cx);
         // this is to try and catch a panic sooner
-        for range in &ranges {
+        for range in ranges {
             snapshot
                 .buffer_snapshot
                 .summary_for_anchor::<usize>(&range.start);

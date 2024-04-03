@@ -7263,7 +7263,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
 
         editor.highlight_background::<Type1>(
-            vec![
+            &[
                 anchor_range(Point::new(2, 1)..Point::new(2, 3)),
                 anchor_range(Point::new(4, 2)..Point::new(4, 4)),
                 anchor_range(Point::new(6, 3)..Point::new(6, 5)),
@@ -7273,7 +7273,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             cx,
         );
         editor.highlight_background::<Type2>(
-            vec![
+            &[
                 anchor_range(Point::new(3, 2)..Point::new(3, 5)),
                 anchor_range(Point::new(5, 3)..Point::new(5, 6)),
                 anchor_range(Point::new(7, 4)..Point::new(7, 7)),

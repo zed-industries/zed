@@ -342,7 +342,7 @@ fn show_hover(
                 } else {
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
-                        hover_highlights,
+                        &hover_highlights,
                         |theme| theme.element_hover, // todo update theme
                         cx,
                     );
