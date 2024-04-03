@@ -183,6 +183,51 @@ async fn test_open_with_single_item(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/root",
+            json!({
+                "1.txt": "First file",
+                "2.txt": "Second file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+    let tab_1 = open_buffer("1.txt", &workspace, cx).await;
+    let tab_2 = open_buffer("2.txt", &workspace, cx).await;
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    let tab_switcher = open_tab_switcher(false, &workspace, cx);
+    tab_switcher.update(cx, |tab_switcher, _| {
+        assert_eq!(tab_switcher.delegate.matches.len(), 2);
+        assert_match_at_position(tab_switcher, 0, tab_2.boxed_clone());
+        assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
+    });
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    cx.dispatch_action(CloseSelectedItem);
+    tab_switcher.update(cx, |tab_switcher, _| {
+        assert_eq!(tab_switcher.delegate.matches.len(), 1);
+        assert_match_selection(tab_switcher, 0, tab_2);
+    });
+
+    // Still switches tab on modifiers release
+    cx.simulate_modifiers_change(Modifiers::none());
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "2.txt");
+    });
+    assert_tab_switcher_is_closed(workspace, cx);
+}
+
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);

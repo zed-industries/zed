@@ -64,9 +64,9 @@ use gpui::{
     AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds,
     ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView,
     FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model,
-    MouseButton, ParentElement, Pixels, Render, SharedString, StrikethroughStyle, Styled,
-    StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View,
-    ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle,
+    Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle,
+    View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -116,6 +116,7 @@ use std::{
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
+use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{
     observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
@@ -355,7 +356,31 @@ type CompletionId = usize;
 // type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
-type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Vec<Range<Anchor>>);
+type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
+
+struct ScrollbarMarkerState {
+    scrollbar_size: Size<Pixels>,
+    dirty: bool,
+    markers: Arc<[PaintQuad]>,
+    pending_refresh: Option<Task<Result<()>>>,
+}
+
+impl ScrollbarMarkerState {
+    fn should_refresh(&self, scrollbar_size: Size<Pixels>) -> bool {
+        self.pending_refresh.is_none() && (self.scrollbar_size != scrollbar_size || self.dirty)
+    }
+}
+
+impl Default for ScrollbarMarkerState {
+    fn default() -> Self {
+        Self {
+            scrollbar_size: Size::default(),
+            dirty: false,
+            markers: Arc::from([]),
+            pending_refresh: None,
+        }
+    }
+}
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
@@ -394,7 +419,8 @@ pub struct Editor {
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<(usize, Range<Anchor>, Hsla)>>,
-    background_highlights: BTreeMap<TypeId, BackgroundHighlight>,
+    background_highlights: TreeMap<TypeId, BackgroundHighlight>,
+    scrollbar_marker_state: ScrollbarMarkerState,
     nav_history: Option<ItemNavHistory>,
     context_menu: RwLock<Option<ContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
@@ -444,6 +470,7 @@ pub struct Editor {
     >,
 }
 
+#[derive(Clone)]
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
@@ -1440,6 +1467,7 @@ impl Editor {
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
             background_highlights: Default::default(),
+            scrollbar_marker_state: ScrollbarMarkerState::default(),
             nav_history: None,
             context_menu: RwLock::new(None),
             mouse_context_menu: None,
@@ -3730,7 +3758,7 @@ impl Editor {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
-                    ranges_to_highlight,
+                    &ranges_to_highlight,
                     |theme| theme.editor_highlighted_line_background,
                     cx,
                 );
@@ -3860,12 +3888,12 @@ impl Editor {
                     }
 
                     this.highlight_background::<DocumentHighlightRead>(
-                        read_ranges,
+                        &read_ranges,
                         |theme| theme.editor_document_highlight_read_background,
                         cx,
                     );
                     this.highlight_background::<DocumentHighlightWrite>(
-                        write_ranges,
+                        &write_ranges,
                         |theme| theme.editor_document_highlight_write_background,
                         cx,
                     );
@@ -7967,7 +7995,7 @@ impl Editor {
         });
         editor.update(cx, |editor, cx| {
             editor.highlight_background::<Self>(
-                ranges_to_highlight,
+                &ranges_to_highlight,
                 |theme| theme.editor_highlighted_line_background,
                 cx,
             );
@@ -8058,15 +8086,15 @@ impl Editor {
                         editor
                     });
 
-                    let ranges = this
-                        .clear_background_highlights::<DocumentHighlightWrite>(cx)
-                        .into_iter()
-                        .flat_map(|(_, ranges)| ranges.into_iter())
-                        .chain(
-                            this.clear_background_highlights::<DocumentHighlightRead>(cx)
-                                .into_iter()
-                                .flat_map(|(_, ranges)| ranges.into_iter()),
-                        )
+                    let write_highlights =
+                        this.clear_background_highlights::<DocumentHighlightWrite>(cx);
+                    let read_highlights =
+                        this.clear_background_highlights::<DocumentHighlightRead>(cx);
+                    let ranges = write_highlights
+                        .iter()
+                        .flat_map(|(_, ranges)| ranges.iter())
+                        .chain(read_highlights.iter().flat_map(|(_, ranges)| ranges.iter()))
+                        .cloned()
                         .collect();
 
                     this.highlight_text::<Rename>(
@@ -8084,7 +8112,7 @@ impl Editor {
                             style: BlockStyle::Flex,
                             position: range.start,
                             height: 1,
-                            render: Arc::new({
+                            render: Box::new({
                                 let rename_editor = rename_editor.clone();
                                 move |cx: &mut BlockContext| {
                                     let mut text_style = cx.editor_style.text.clone();
@@ -9016,13 +9044,13 @@ impl Editor {
 
     pub fn highlight_background<T: 'static>(
         &mut self,
-        ranges: Vec<Range<Anchor>>,
+        ranges: &[Range<Anchor>],
         color_fetcher: fn(&ThemeColors) -> Hsla,
         cx: &mut ViewContext<Self>,
     ) {
         let snapshot = self.snapshot(cx);
         // this is to try and catch a panic sooner
-        for range in &ranges {
+        for range in ranges {
             snapshot
                 .buffer_snapshot
                 .summary_for_anchor::<usize>(&range.start);
@@ -9032,16 +9060,21 @@ impl Editor {
         }
 
         self.background_highlights
-            .insert(TypeId::of::<T>(), (color_fetcher, ranges));
+            .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
+        self.scrollbar_marker_state.dirty = true;
         cx.notify();
     }
 
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
-        _cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<BackgroundHighlight> {
-        let text_highlights = self.background_highlights.remove(&TypeId::of::<T>());
-        text_highlights
+        let text_highlights = self.background_highlights.remove(&TypeId::of::<T>())?;
+        if !text_highlights.1.is_empty() {
+            self.scrollbar_marker_state.dirty = true;
+            cx.notify();
+        }
+        Some(text_highlights)
     }
 
     #[cfg(feature = "test-support")]
@@ -9295,6 +9328,7 @@ impl Editor {
             multi_buffer::Event::Edited {
                 singleton_buffer_edited,
             } => {
+                self.scrollbar_marker_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(cx);
                 if self.has_active_inline_completion(cx) {
@@ -9362,10 +9396,16 @@ impl Editor {
             multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
                 cx.emit(EditorEvent::TitleChanged)
             }
-            multi_buffer::Event::DiffBaseChanged => cx.emit(EditorEvent::DiffBaseChanged),
+            multi_buffer::Event::DiffBaseChanged => {
+                self.scrollbar_marker_state.dirty = true;
+                cx.emit(EditorEvent::DiffBaseChanged);
+                cx.notify();
+            }
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
+                self.scrollbar_marker_state.dirty = true;
+                cx.notify();
             }
             _ => {}
         };
@@ -10526,7 +10566,7 @@ impl InvalidationRegion for SnippetState {
 pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> RenderBlock {
     let (text_without_backticks, code_ranges) = highlight_diagnostic_message(&diagnostic);
 
-    Arc::new(move |cx: &mut BlockContext| {
+    Box::new(move |cx: &mut BlockContext| {
         let group_id: SharedString = cx.block_id.to_string().into();
 
         let mut text_style = cx.text_style().clone();

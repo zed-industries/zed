@@ -19,8 +19,6 @@ extend-exclude = [
     "extensions/clojure/languages/clojure/config.toml",
     # Windows likes its abbreviations
     "crates/gpui/src/platform/windows/",
-    # False positive in one of the configuration values.
-    "crates/collab/basic.conf"
 ]
 
 [default]

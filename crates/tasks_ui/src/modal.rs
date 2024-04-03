@@ -75,6 +75,10 @@ impl TasksModalDelegate {
     }
 
     fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<Arc<dyn Task>> {
+        if self.prompt.trim().is_empty() {
+            return None;
+        }
+
         self.inventory
             .update(cx, |inventory, _| inventory.source::<OneshotSource>())?
             .update(cx, |oneshot_source, _| {
@@ -373,6 +377,7 @@ impl PickerDelegate for TasksModalDelegate {
         }
         Some(spawn_prompt.command)
     }
+
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
         let Some(task) = self.spawn_oneshot(cx) else {
             return;

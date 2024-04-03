@@ -26,7 +26,7 @@ use futures::{
         mpsc::{self, UnboundedReceiver},
         oneshot,
     },
-    future::{try_join_all, Shared},
+    future::{join_all, try_join_all, Shared},
     select,
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
@@ -55,7 +55,7 @@ use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    MessageActionItem, OneOf, ServerHealthStatus, ServerStatus,
+    MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus, ServerStatus,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -463,7 +463,7 @@ pub enum HoverBlockKind {
     Code { language: String },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Hover {
     pub contents: Vec<HoverBlock>,
     pub range: Option<Range<language::Anchor>>,
@@ -601,6 +601,7 @@ impl Project {
         client.add_model_message_handler(Self::handle_update_diff_base);
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_model_request_handler(Self::handle_blame_buffer);
+        client.add_model_request_handler(Self::handle_multi_lsp_query);
     }
 
     pub fn local(
@@ -4538,93 +4539,27 @@ impl Project {
                 buffer.end_transaction(cx)
             })?;
 
-            for (lsp_adapter, language_server) in adapters_and_servers.iter() {
-                // Apply the code actions on
-                let code_actions: Vec<lsp::CodeActionKind> = settings
-                    .code_actions_on_format
-                    .iter()
-                    .flat_map(|(kind, enabled)| {
-                        if *enabled {
-                            Some(kind.clone().into())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                #[allow(clippy::nonminimal_bool)]
-                if !code_actions.is_empty()
-                    && !(trigger == FormatTrigger::Save
-                        && settings.format_on_save == FormatOnSave::Off)
-                {
-                    let actions = project
-                        .update(&mut cx, |this, cx| {
-                            this.request_lsp(
-                                buffer.clone(),
-                                LanguageServerToQuery::Other(language_server.server_id()),
-                                GetCodeActions {
-                                    range: text::Anchor::MIN..text::Anchor::MAX,
-                                    kinds: Some(code_actions),
-                                },
-                                cx,
-                            )
-                        })?
-                        .await?;
-
-                    for mut action in actions {
-                        Self::try_resolve_code_action(&language_server, &mut action)
-                            .await
-                            .context("resolving a formatting code action")?;
-                        if let Some(edit) = action.lsp_action.edit {
-                            if edit.changes.is_none() && edit.document_changes.is_none() {
-                                continue;
-                            }
-
-                            let new = Self::deserialize_workspace_edit(
-                                project
-                                    .upgrade()
-                                    .ok_or_else(|| anyhow!("project dropped"))?,
-                                edit,
-                                push_to_history,
-                                lsp_adapter.clone(),
-                                language_server.clone(),
-                                &mut cx,
-                            )
-                            .await?;
-                            project_transaction.0.extend(new.0);
-                        }
-
-                        if let Some(command) = action.lsp_action.command {
-                            project.update(&mut cx, |this, _| {
-                                this.last_workspace_edits_by_language_server
-                                    .remove(&language_server.server_id());
-                            })?;
-
-                            language_server
-                                .request::<lsp::request::ExecuteCommand>(
-                                    lsp::ExecuteCommandParams {
-                                        command: command.command,
-                                        arguments: command.arguments.unwrap_or_default(),
-                                        ..Default::default()
-                                    },
-                                )
-                                .await?;
-
-                            project.update(&mut cx, |this, _| {
-                                project_transaction.0.extend(
-                                    this.last_workspace_edits_by_language_server
-                                        .remove(&language_server.server_id())
-                                        .unwrap_or_default()
-                                        .0,
-                                )
-                            })?;
-                        }
-                    }
-                }
+            // Apply the `code_actions_on_format` before we run the formatter.
+            let code_actions = deserialize_code_actions(&settings.code_actions_on_format);
+            #[allow(clippy::nonminimal_bool)]
+            if !code_actions.is_empty()
+                && !(trigger == FormatTrigger::Save && settings.format_on_save == FormatOnSave::Off)
+            {
+                Self::execute_code_actions_on_servers(
+                    &project,
+                    &adapters_and_servers,
+                    code_actions,
+                    buffer,
+                    push_to_history,
+                    &mut project_transaction,
+                    &mut cx,
+                )
+                .await?;
             }
 
             // Apply language-specific formatting using either the primary language server
             // or external command.
+            // Except for code actions, which are applied with all connected language servers.
             let primary_language_server = adapters_and_servers
                 .first()
                 .cloned()
@@ -4637,6 +4572,22 @@ impl Project {
             match (&settings.formatter, &settings.format_on_save) {
                 (_, FormatOnSave::Off) if trigger == FormatTrigger::Save => {}
 
+                (Formatter::CodeActions(code_actions), FormatOnSave::On | FormatOnSave::Off)
+                | (_, FormatOnSave::CodeActions(code_actions)) => {
+                    let code_actions = deserialize_code_actions(code_actions);
+                    if !code_actions.is_empty() {
+                        Self::execute_code_actions_on_servers(
+                            &project,
+                            &adapters_and_servers,
+                            code_actions,
+                            buffer,
+                            push_to_history,
+                            &mut project_transaction,
+                            &mut cx,
+                        )
+                        .await?;
+                    }
+                }
                 (Formatter::LanguageServer, FormatOnSave::On | FormatOnSave::Off)
                 | (_, FormatOnSave::LanguageServer) => {
                     if let Some((language_server, buffer_abs_path)) = server_and_buffer {
@@ -5215,74 +5166,78 @@ impl Project {
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<Hover>> {
-        fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
-            hover
-                .contents
-                .retain(|hover_block| !hover_block.text.trim().is_empty());
-            if hover.contents.is_empty() {
-                None
-            } else {
-                Some(hover)
-            }
-        }
-
         if self.is_local() {
-            let snapshot = buffer.read(cx).snapshot();
-            let offset = position.to_offset(&snapshot);
-            let scope = snapshot.language_scope_at(offset);
-
-            let mut hover_responses = self
-                .language_servers_for_buffer(buffer.read(cx), cx)
-                .filter(|(_, server)| match server.capabilities().hover_provider {
+            let all_actions_task = self.request_multiple_lsp_locally(
+                &buffer,
+                Some(position),
+                |server_capabilities| match server_capabilities.hover_provider {
                     Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
                     Some(lsp::HoverProviderCapability::Options(_)) => true,
                     None => false,
-                })
-                .filter(|(adapter, _)| {
-                    scope
-                        .as_ref()
-                        .map(|scope| scope.language_allowed(&adapter.name))
-                        .unwrap_or(true)
-                })
-                .map(|(_, server)| server.server_id())
-                .map(|server_id| {
-                    self.request_lsp(
-                        buffer.clone(),
-                        LanguageServerToQuery::Other(server_id),
-                        GetHover { position },
-                        cx,
-                    )
-                })
-                .collect::<FuturesUnordered<_>>();
-
-            cx.spawn(|_, _| async move {
-                let mut hovers = Vec::with_capacity(hover_responses.len());
-                while let Some(hover_response) = hover_responses.next().await {
-                    if let Some(hover) = hover_response
-                        .log_err()
-                        .flatten()
-                        .and_then(remove_empty_hover_blocks)
-                    {
-                        hovers.push(hover);
-                    }
-                }
-                hovers
-            })
-        } else if self.is_remote() {
-            let request_task = self.request_lsp(
-                buffer.clone(),
-                LanguageServerToQuery::Primary,
+                },
                 GetHover { position },
                 cx,
             );
             cx.spawn(|_, _| async move {
-                request_task
+                all_actions_task
                     .await
-                    .log_err()
-                    .flatten()
-                    .and_then(remove_empty_hover_blocks)
-                    .map(|hover| vec![hover])
-                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|hover| remove_empty_hover_blocks(hover?))
+                    .collect()
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let request_task = self.client().request(proto::MultiLspQuery {
+                buffer_id: buffer.read(cx).remote_id().into(),
+                version: serialize_version(&buffer.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetHover(
+                    GetHover { position }.to_proto(project_id, buffer.read(cx)),
+                )),
+            });
+            let buffer = buffer.clone();
+            cx.spawn(|weak_project, cx| async move {
+                let Some(project) = weak_project.upgrade() else {
+                    return Vec::new();
+                };
+                join_all(
+                    request_task
+                        .await
+                        .log_err()
+                        .map(|response| response.responses)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetHoverResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|hover_response| {
+                            let response = GetHover { position }.response_from_proto(
+                                hover_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            );
+                            async move {
+                                response
+                                    .await
+                                    .log_err()
+                                    .flatten()
+                                    .and_then(remove_empty_hover_blocks)
+                            }
+                        }),
+                )
+                .await
+                .into_iter()
+                .flatten()
+                .collect()
             })
         } else {
             log::error!("cannot show hovers: project does not have a remote id");
@@ -5651,48 +5606,73 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<CodeAction>> {
         if self.is_local() {
-            let snapshot = buffer_handle.read(cx).snapshot();
-            let offset = range.start.to_offset(&snapshot);
-            let scope = snapshot.language_scope_at(offset);
-
-            let mut hover_responses = self
-                .language_servers_for_buffer(buffer_handle.read(cx), cx)
-                .filter(|(_, server)| GetCodeActions::supports_code_actions(server.capabilities()))
-                .filter(|(adapter, _)| {
-                    scope
-                        .as_ref()
-                        .map(|scope| scope.language_allowed(&adapter.name))
-                        .unwrap_or(true)
-                })
-                .map(|(_, server)| server.server_id())
-                .map(|server_id| {
-                    self.request_lsp(
-                        buffer_handle.clone(),
-                        LanguageServerToQuery::Other(server_id),
-                        GetCodeActions {
-                            range: range.clone(),
-                            kinds: None,
-                        },
-                        cx,
-                    )
-                })
-                .collect::<FuturesUnordered<_>>();
-
-            cx.spawn(|_, _| async move {
-                let mut hovers = Vec::with_capacity(hover_responses.len());
-                while let Some(hover_response) = hover_responses.next().await {
-                    hovers.extend(hover_response.log_err().unwrap_or_default());
-                }
-                hovers
-            })
-        } else if self.is_remote() {
-            let request_task = self.request_lsp(
-                buffer_handle.clone(),
-                LanguageServerToQuery::Primary,
-                GetCodeActions { range, kinds: None },
+            let all_actions_task = self.request_multiple_lsp_locally(
+                &buffer_handle,
+                Some(range.start),
+                GetCodeActions::supports_code_actions,
+                GetCodeActions {
+                    range: range.clone(),
+                    kinds: None,
+                },
                 cx,
             );
-            cx.spawn(|_, _| async move { request_task.await.log_err().unwrap_or_default() })
+            cx.spawn(|_, _| async move { all_actions_task.await.into_iter().flatten().collect() })
+        } else if let Some(project_id) = self.remote_id() {
+            let request_task = self.client().request(proto::MultiLspQuery {
+                buffer_id: buffer_handle.read(cx).remote_id().into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetCodeActions(
+                    GetCodeActions {
+                        range: range.clone(),
+                        kinds: None,
+                    }
+                    .to_proto(project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(|weak_project, cx| async move {
+                let Some(project) = weak_project.upgrade() else {
+                    return Vec::new();
+                };
+                join_all(
+                    request_task
+                        .await
+                        .log_err()
+                        .map(|response| response.responses)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetCodeActionsResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|code_actions_response| {
+                            let response = GetCodeActions {
+                                range: range.clone(),
+                                kinds: None,
+                            }
+                            .response_from_proto(
+                                code_actions_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            );
+                            async move { response.await.log_err().unwrap_or_default() }
+                        }),
+                )
+                .await
+                .into_iter()
+                .flatten()
+                .collect()
+            })
         } else {
             log::error!("cannot fetch actions: project does not have a remote id");
             Task::ready(Vec::new())
@@ -6671,6 +6651,57 @@ impl Project {
         Task::ready(Ok(Default::default()))
     }
 
+    fn request_multiple_lsp_locally<P, R>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: Option<P>,
+        server_capabilities_check: fn(&ServerCapabilities) -> bool,
+        request: R,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> Task<Vec<R::Response>>
+    where
+        P: ToOffset,
+        R: LspCommand + Clone,
+        <R::LspRequest as lsp::request::Request>::Result: Send,
+        <R::LspRequest as lsp::request::Request>::Params: Send,
+    {
+        if !self.is_local() {
+            debug_panic!("Should not request multiple lsp commands in non-local project");
+            return Task::ready(Vec::new());
+        }
+        let snapshot = buffer.read(cx).snapshot();
+        let scope = position.and_then(|position| snapshot.language_scope_at(position));
+        let mut response_results = self
+            .language_servers_for_buffer(buffer.read(cx), cx)
+            .filter(|(_, server)| server_capabilities_check(server.capabilities()))
+            .filter(|(adapter, _)| {
+                scope
+                    .as_ref()
+                    .map(|scope| scope.language_allowed(&adapter.name))
+                    .unwrap_or(true)
+            })
+            .map(|(_, server)| server.server_id())
+            .map(|server_id| {
+                self.request_lsp(
+                    buffer.clone(),
+                    LanguageServerToQuery::Other(server_id),
+                    request.clone(),
+                    cx,
+                )
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        return cx.spawn(|_, _| async move {
+            let mut responses = Vec::with_capacity(response_results.len());
+            while let Some(response_result) = response_results.next().await {
+                if let Some(response) = response_result.log_err() {
+                    responses.push(response);
+                }
+            }
+            responses
+        });
+    }
+
     fn send_lsp_proto_request<R: LspCommand>(
         &self,
         buffer: Model<Buffer>,
@@ -6772,10 +6803,12 @@ impl Project {
                         project
                             .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))?;
 
-                        cx.update(|cx| {
-                            cx.add_recent_document(&path);
-                        })
-                        .log_err();
+                        if visible {
+                            cx.update(|cx| {
+                                cx.add_recent_document(&path);
+                            })
+                            .log_err();
+                        }
 
                         Ok(worktree)
                     }
@@ -7612,6 +7645,118 @@ impl Project {
             .await?;
 
         Ok(serialize_blame_buffer_response(blame))
+    }
+
+    async fn handle_multi_lsp_query(
+        project: Model<Self>,
+        envelope: TypedEnvelope<proto::MultiLspQuery>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::MultiLspQueryResponse> {
+        let sender_id = envelope.original_sender_id()?;
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let version = deserialize_version(&envelope.payload.version);
+        let buffer = project.update(&mut cx, |project, _cx| {
+            project
+                .opened_buffers
+                .get(&buffer_id)
+                .and_then(|buffer| buffer.upgrade())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
+        })??;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(version.clone())
+            })?
+            .await?;
+        let buffer_version = buffer.update(&mut cx, |buffer, _| buffer.version())?;
+        match envelope
+            .payload
+            .strategy
+            .context("invalid request without the strategy")?
+        {
+            proto::multi_lsp_query::Strategy::All(_) => {
+                // currently, there's only one multiple language servers query strategy,
+                // so just ensure it's specified correctly
+            }
+        }
+        match envelope.payload.request {
+            Some(proto::multi_lsp_query::Request::GetHover(get_hover)) => {
+                let get_hover =
+                    GetHover::from_proto(get_hover, project.clone(), buffer.clone(), cx.clone())
+                        .await?;
+                let all_hovers = project
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_hover.position),
+                            |server_capabilities| match server_capabilities.hover_provider {
+                                Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
+                                Some(lsp::HoverProviderCapability::Options(_)) => true,
+                                None => false,
+                            },
+                            get_hover,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter()
+                    .filter_map(|hover| remove_empty_hover_blocks(hover?));
+                project.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: all_hovers
+                        .map(|hover| proto::LspResponse {
+                            response: Some(proto::lsp_response::Response::GetHoverResponse(
+                                GetHover::response_to_proto(
+                                    Some(hover),
+                                    project,
+                                    sender_id,
+                                    &buffer_version,
+                                    cx,
+                                ),
+                            )),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetCodeActions(get_code_actions)) => {
+                let get_code_actions = GetCodeActions::from_proto(
+                    get_code_actions,
+                    project.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let all_actions = project
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_code_actions.range.start),
+                            GetCodeActions::supports_code_actions,
+                            get_code_actions,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                project.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: all_actions
+                        .map(|code_actions| proto::LspResponse {
+                            response: Some(proto::lsp_response::Response::GetCodeActionsResponse(
+                                GetCodeActions::response_to_proto(
+                                    code_actions,
+                                    project,
+                                    sender_id,
+                                    &buffer_version,
+                                    cx,
+                                ),
+                            )),
+                        })
+                        .collect(),
+                })
+            }
+            None => anyhow::bail!("empty multi lsp query request"),
+        }
     }
 
     async fn handle_unshare_project(
@@ -8637,6 +8782,82 @@ impl Project {
         anyhow::Ok(())
     }
 
+    async fn execute_code_actions_on_servers(
+        project: &WeakModel<Project>,
+        adapters_and_servers: &Vec<(Arc<CachedLspAdapter>, Arc<LanguageServer>)>,
+        code_actions: Vec<lsp::CodeActionKind>,
+        buffer: &Model<Buffer>,
+        push_to_history: bool,
+        project_transaction: &mut ProjectTransaction,
+        cx: &mut AsyncAppContext,
+    ) -> Result<(), anyhow::Error> {
+        for (lsp_adapter, language_server) in adapters_and_servers.iter() {
+            let code_actions = code_actions.clone();
+
+            let actions = project
+                .update(cx, move |this, cx| {
+                    let request = GetCodeActions {
+                        range: text::Anchor::MIN..text::Anchor::MAX,
+                        kinds: Some(code_actions),
+                    };
+                    let server = LanguageServerToQuery::Other(language_server.server_id());
+                    this.request_lsp(buffer.clone(), server, request, cx)
+                })?
+                .await?;
+
+            for mut action in actions {
+                Self::try_resolve_code_action(&language_server, &mut action)
+                    .await
+                    .context("resolving a formatting code action")?;
+
+                if let Some(edit) = action.lsp_action.edit {
+                    if edit.changes.is_none() && edit.document_changes.is_none() {
+                        continue;
+                    }
+
+                    let new = Self::deserialize_workspace_edit(
+                        project
+                            .upgrade()
+                            .ok_or_else(|| anyhow!("project dropped"))?,
+                        edit,
+                        push_to_history,
+                        lsp_adapter.clone(),
+                        language_server.clone(),
+                        cx,
+                    )
+                    .await?;
+                    project_transaction.0.extend(new.0);
+                }
+
+                if let Some(command) = action.lsp_action.command {
+                    project.update(cx, |this, _| {
+                        this.last_workspace_edits_by_language_server
+                            .remove(&language_server.server_id());
+                    })?;
+
+                    language_server
+                        .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
+                            command: command.command,
+                            arguments: command.arguments.unwrap_or_default(),
+                            ..Default::default()
+                        })
+                        .await?;
+
+                    project.update(cx, |this, _| {
+                        project_transaction.0.extend(
+                            this.last_workspace_edits_by_language_server
+                                .remove(&language_server.server_id())
+                                .unwrap_or_default()
+                                .0,
+                        )
+                    })?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     async fn handle_refresh_inlay_hints(
         this: Model<Self>,
         _: TypedEnvelope<proto::RefreshInlayHints>,
@@ -9476,6 +9697,19 @@ impl Project {
     }
 }
 
+fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::CodeActionKind> {
+    code_actions
+        .iter()
+        .flat_map(|(kind, enabled)| {
+            if *enabled {
+                Some(kind.clone().into())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn search_snapshots(
     snapshots: &Vec<LocalSnapshot>,
@@ -10017,7 +10251,7 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
         });
 
     let command = format!(
-        "cd '{}';{} echo {marker}; /usr/bin/env -0; exit 0;",
+        "cd '{}';{} printf '%s' {marker}; /usr/bin/env -0; exit 0;",
         dir.display(),
         additional_command.unwrap_or("")
     );
@@ -10147,5 +10381,16 @@ fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> gi
         entries,
         permalinks,
         messages,
+    }
+}
+
+fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
+    hover
+        .contents
+        .retain(|hover_block| !hover_block.text.trim().is_empty());
+    if hover.contents.is_empty() {
+        None
+    } else {
+        Some(hover)
     }
 }

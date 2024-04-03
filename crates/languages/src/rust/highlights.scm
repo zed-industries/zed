@@ -71,11 +71,11 @@
   "else"
   "enum"
   "extern"
-  "for"
   "fn"
+  "for"
   "if"
-  "in"
   "impl"
+  "in"
   "let"
   "loop"
   "macro_rules!"
@@ -89,12 +89,13 @@
   "struct"
   "trait"
   "type"
+  "union"
+  "unsafe"
   "use"
   "where"
   "while"
-  "union"
-  "unsafe"
   "yield"
+  (crate)
   (mutable_specifier)
   (super)
 ] @keyword

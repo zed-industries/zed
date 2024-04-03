@@ -952,7 +952,7 @@ impl Terminal {
         }
     }
 
-    pub fn select_matches(&mut self, matches: Vec<RangeInclusive<AlacPoint>>) {
+    pub fn select_matches(&mut self, matches: &[RangeInclusive<AlacPoint>]) {
         let matches_to_select = self
             .matches
             .iter()

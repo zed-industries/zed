@@ -61,6 +61,9 @@ pub trait PickerDelegate: Sized + 'static {
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+        "No matches".into()
+    }
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
 
     // Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
@@ -524,7 +527,9 @@ impl<D: PickerDelegate> Render for Picker<D> {
                             .inset(true)
                             .spacing(ListItemSpacing::Sparse)
                             .disabled(true)
-                            .child(Label::new("No matches").color(Color::Muted)),
+                            .child(
+                                Label::new(self.delegate.no_matches_text(cx)).color(Color::Muted),
+                            ),
                     ),
                 )
             })

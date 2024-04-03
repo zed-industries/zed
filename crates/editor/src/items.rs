@@ -976,7 +976,7 @@ impl SearchableItem for Editor {
         self.clear_background_highlights::<BufferSearchHighlights>(cx);
     }
 
-    fn update_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
+    fn update_matches(&mut self, matches: &[Range<Anchor>], cx: &mut ViewContext<Self>) {
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.search_match_background,
@@ -1013,7 +1013,7 @@ impl SearchableItem for Editor {
     fn activate_match(
         &mut self,
         index: usize,
-        matches: Vec<Range<Anchor>>,
+        matches: &[Range<Anchor>],
         cx: &mut ViewContext<Self>,
     ) {
         self.unfold_ranges([matches[index].clone()], false, true, cx);
@@ -1023,10 +1023,10 @@ impl SearchableItem for Editor {
         })
     }
 
-    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-        self.unfold_ranges(matches.clone(), false, false, cx);
+    fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
+        self.unfold_ranges(matches.to_vec(), false, false, cx);
         let mut ranges = Vec::new();
-        for m in &matches {
+        for m in matches {
             ranges.push(self.range_for_match(&m))
         }
         self.change_selections(None, cx, |s| s.select_ranges(ranges));
@@ -1055,7 +1055,7 @@ impl SearchableItem for Editor {
     }
     fn match_index_for_direction(
         &mut self,
-        matches: &Vec<Range<Anchor>>,
+        matches: &[Range<Anchor>],
         current_index: usize,
         direction: Direction,
         count: usize,
@@ -1147,11 +1147,11 @@ impl SearchableItem for Editor {
 
     fn active_match_index(
         &mut self,
-        matches: Vec<Range<Anchor>>,
+        matches: &[Range<Anchor>],
         cx: &mut ViewContext<Self>,
     ) -> Option<usize> {
         active_match_index(
-            &matches,
+            matches,
             &self.selections.newest_anchor().head(),
             &self.buffer().read(cx).snapshot(cx),
         )
