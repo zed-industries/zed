@@ -31,7 +31,9 @@ pub fn prettier_plugins_for_language<'a>(
 ) -> Option<&'a Vec<Arc<str>>> {
     match &language_settings.formatter {
         Formatter::Prettier { .. } | Formatter::Auto => {}
-        Formatter::LanguageServer | Formatter::External { .. } => return None,
+        Formatter::LanguageServer | Formatter::External { .. } | Formatter::CodeActions(_) => {
+            return None
+        }
     };
     if language.prettier_parser_name().is_some() {
         Some(language.prettier_plugins())
