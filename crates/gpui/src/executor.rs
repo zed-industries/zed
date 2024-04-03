@@ -372,7 +372,7 @@ impl BackgroundExecutor {
         self.dispatcher.as_test().unwrap().rng()
     }
 
-    /// How many CPUs are available to the dispatcher
+    /// How many CPUs are available to the dispatcher.
     pub fn num_cpus(&self) -> usize {
         num_cpus::get()
     }
@@ -438,6 +438,11 @@ impl<'a> Scope<'a> {
             futures: Default::default(),
             lifetime: PhantomData,
         }
+    }
+
+    /// How many CPUs are available to the dispatcher.
+    pub fn num_cpus(&self) -> usize {
+        self.executor.num_cpus()
     }
 
     /// Spawn a future into this scope.

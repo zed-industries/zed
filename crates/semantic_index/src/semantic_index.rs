@@ -1,9 +1,17 @@
+use anyhow::{self, Context as _, Result};
 use collections::HashMap;
-use gpui::{AppContext, Context, Entity, Global, Model, ModelContext, Task, WeakModel};
+use fs::Fs;
+use gpui::{AppContext, Context, EventEmitter, Global, Model, ModelContext, Task, WeakModel};
+use language::LanguageRegistry;
 use project::{Project, Worktree};
-use std::path::Path;
+use settings::SettingsStore;
+use smol::channel;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-struct SemanticIndex {
+pub struct SemanticIndex {
     db: lmdb::Database,
     project_indices: HashMap<WeakModel<Project>, Model<ProjectIndex>>,
 }
@@ -11,9 +19,14 @@ struct SemanticIndex {
 impl Global for SemanticIndex {}
 
 impl SemanticIndex {
-    pub fn new(path: &Path) -> Result<Self, lmdb::Error> {
-        let env = lmdb::Environment::new().open(path)?;
-        let db = env.create_db(None, lmdb::DatabaseFlags::empty())?;
+    pub fn new(db_path: &Path) -> Result<Self> {
+        dbg!(&db_path);
+        let env = lmdb::Environment::new()
+            .open(db_path)
+            .context("failed to open environment")?;
+        let db = env
+            .create_db(None, lmdb::DatabaseFlags::empty())
+            .context("failed to create db")?;
 
         Ok(SemanticIndex {
             db,
@@ -33,18 +46,24 @@ impl SemanticIndex {
     }
 }
 
-struct ProjectIndex {
+pub struct ProjectIndex {
     db: lmdb::Database,
     project: WeakModel<Project>,
     worktree_scans: HashMap<WeakModel<Worktree>, Task<()>>,
+    language_registry: Arc<LanguageRegistry>,
+    fs: Arc<dyn Fs>,
 }
 
 impl ProjectIndex {
     fn new(project: Model<Project>, db: lmdb::Database, cx: &mut ModelContext<Self>) -> Self {
+        let language_registry = project.read(cx).languages().clone();
+        let fs = project.read(cx).fs().clone();
         let mut this = ProjectIndex {
             db,
             project: project.downgrade(),
             worktree_scans: HashMap::default(),
+            language_registry,
+            fs,
         };
 
         for worktree in project.read(cx).worktrees().collect::<Vec<_>>() {
@@ -55,16 +74,81 @@ impl ProjectIndex {
     }
 
     fn add_worktree(&mut self, worktree: Model<Worktree>, cx: &mut ModelContext<Self>) {
-        if let Some(local_worktree) = worktree.read(cx).as_local() {
-            let snapshot = local_worktree.snapshot();
-            let scan = cx.spawn(|this, cx| async move {
-                snapshot;
-            });
-            self.worktree_scans.insert(worktree.downgrade(), scan);
-        }
-    }
+        let Some(local_worktree) = worktree.read(cx).as_local() else {
+            return;
+        };
+        let local_worktree = local_worktree.snapshot();
 
-    fn remove_worktree(&mut self, worktree: Model<Worktree>, cx: &mut ModelContext<Self>) {
-        self.worktree_scans.remove(&worktree.downgrade());
+        if self.worktree_scans.is_empty() {
+            cx.emit(StatusEvent::Scanning);
+        }
+
+        let language_registry = self.language_registry.clone();
+        let fs = self.fs.clone();
+        let worktree = worktree.downgrade();
+        let scan = cx.spawn(|this, mut cx| {
+            let worktree = worktree.clone();
+            async move {
+                let (paths_tx, paths_rx) = channel::bounded(512);
+                let worktree_abs_path = local_worktree.abs_path().clone();
+                let path_producer = cx.background_executor().spawn(async move {
+                    for entry in local_worktree.files(false, 0) {
+                        if paths_tx.send(entry.path.clone()).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+
+                cx.background_executor()
+                    .scoped(|cx| {
+                        for _ in 0..cx.num_cpus() {
+                            cx.spawn(async {
+                                while let Ok(path) = paths_rx.recv().await {
+                                    index_path(
+                                        worktree_abs_path.join(&path),
+                                        &language_registry,
+                                        fs.as_ref(),
+                                    )
+                                    .await;
+                                }
+                            });
+                        }
+                    })
+                    .await;
+                path_producer.await;
+
+                this.update(&mut cx, |this, cx| {
+                    this.worktree_scans.remove(&worktree);
+                    if this.worktree_scans.is_empty() {
+                        cx.emit(StatusEvent::Idle);
+                    }
+                })
+                .ok();
+            }
+        });
+        self.worktree_scans.insert(worktree, scan);
     }
+}
+
+impl EventEmitter<StatusEvent> for ProjectIndex {}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum StatusEvent {
+    Idle,
+    Scanning,
+}
+
+async fn index_path(path: PathBuf, _language_registry: &Arc<LanguageRegistry>, _fs: &dyn Fs) {
+    dbg!(&path);
+    // if let Ok(contents) = fs.read(&path).await {
+    //     if let Some(language) = language_registry.get_language_for_path(&path) {
+    //         // Process the contents with the determined language
+    //         // This is a placeholder for actual indexing logic
+    //         println!("Indexing {:?} with language {:?}", path, language);
+    //     } else {
+    //         println!("No language found for {:?}", path);
+    //     }
+    // } else {
+    //     println!("Failed to read {:?}", path);
+    // }
 }

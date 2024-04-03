@@ -8525,11 +8525,17 @@ checksum = "58bf37232d3bb9a2c4e641ca2a11d83b5062066f88df7fed36c28772046d65ba"
 name = "semantic_index"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "collections",
+ "fs",
+ "futures 0.3.28",
  "gpui",
  "language",
  "lmdb",
  "project",
+ "settings",
+ "smol",
+ "tempfile",
  "worktree",
 ]
 

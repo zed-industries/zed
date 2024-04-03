@@ -9,17 +9,24 @@ edition = "2021"
 path = "src/semantic_index.rs"
 
 [dependencies]
+anyhow.workspace = true
 collections.workspace = true
+fs.workspace = true
 gpui.workspace = true
 language.workspace = true
 lmdb = "0.8.0"
 project.workspace = true
+settings.workspace = true
+smol.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
+futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 worktree = { workspace = true, features = ["test-support"] }
 
 [lints]
