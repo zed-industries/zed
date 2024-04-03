@@ -1,15 +1,18 @@
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, Context, EventEmitter, Global, Model, ModelContext, Task, WeakModel};
-use language::{LanguageRegistry, Node, Tree, TreeCursor, PARSER};
+use gpui::{
+    AppContext, BackgroundExecutor, Context, EventEmitter, Global, Model, ModelContext, Task,
+    WeakModel,
+};
+use language::{LanguageRegistry, Tree, PARSER};
 use project::{Project, Worktree};
 use smol::channel;
 use std::{
     cmp,
     ops::Range,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::Arc,
 };
 use util::ResultExt;
 

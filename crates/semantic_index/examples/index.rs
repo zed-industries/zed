@@ -32,7 +32,16 @@ fn main() {
         });
 
         cx.spawn(|mut cx| async move {
-            let project = Project::example([Path::new("/Users/as-cii/dev/zed")], &mut cx).await;
+            let args: Vec<String> = std::env::args().collect();
+            if args.len() < 2 {
+                eprintln!("Usage: cargo run --example index -p semantic_index -- <project_path>");
+                cx.update(|cx| cx.quit()).unwrap(); // Exiting if no path is provided
+                return;
+            }
+
+            let project_path = Path::new(&args[1]);
+
+            let project = Project::example([project_path], &mut cx).await;
 
             cx.update(|cx| {
                 let language_registry = project.read(cx).languages().clone();
