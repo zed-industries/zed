@@ -74,7 +74,6 @@ errors.
 You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
 
 ```json
-
 {
   "lsp": {
     "eslint": {
@@ -86,16 +85,20 @@ You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):
 }
 ```
 
-#### Configure ESLint's `workingDirectories`:
+#### Configure ESLint's `problems`:
 
-You can configure ESLint's `workingDirectories` setting (requires Zed `0.130.x`):
+You can configure ESLint's `problems` setting (requires Zed `0.130.x`).
+
+For example, here's how to set `problems.shortenToSingleLine`:
 
 ```json
 {
   "lsp": {
     "eslint": {
       "settings": {
-        "workingDirectories": ["./client", "./server"]
+        "problems": {
+          "shortenToSingleLine": true
+        }
       }
     }
   }

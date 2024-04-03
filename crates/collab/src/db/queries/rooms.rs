@@ -349,6 +349,17 @@ impl Database {
         .await
     }
 
+    pub async fn stale_room_connection(&self, user_id: UserId) -> Result<Option<ConnectionId>> {
+        self.transaction(|tx| async move {
+            let participant = room_participant::Entity::find()
+                .filter(room_participant::Column::UserId.eq(user_id))
+                .one(&*tx)
+                .await?;
+            Ok(participant.and_then(|p| p.answering_connection()))
+        })
+        .await
+    }
+
     async fn get_next_participant_index_internal(
         &self,
         room_id: RoomId,
@@ -403,39 +414,50 @@ impl Database {
             .get_next_participant_index_internal(room_id, tx)
             .await?;
 
-        room_participant::Entity::insert_many([room_participant::ActiveModel {
-            room_id: ActiveValue::set(room_id),
-            user_id: ActiveValue::set(user_id),
-            answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
-            answering_connection_server_id: ActiveValue::set(Some(ServerId(
-                connection.owner_id as i32,
-            ))),
-            answering_connection_lost: ActiveValue::set(false),
-            calling_user_id: ActiveValue::set(user_id),
-            calling_connection_id: ActiveValue::set(connection.id as i32),
-            calling_connection_server_id: ActiveValue::set(Some(ServerId(
-                connection.owner_id as i32,
-            ))),
-            participant_index: ActiveValue::Set(Some(participant_index)),
-            role: ActiveValue::set(Some(role)),
-            id: ActiveValue::NotSet,
-            location_kind: ActiveValue::NotSet,
-            location_project_id: ActiveValue::NotSet,
-            initial_project_id: ActiveValue::NotSet,
-        }])
-        .on_conflict(
-            OnConflict::columns([room_participant::Column::UserId])
-                .update_columns([
-                    room_participant::Column::AnsweringConnectionId,
-                    room_participant::Column::AnsweringConnectionServerId,
-                    room_participant::Column::AnsweringConnectionLost,
-                    room_participant::Column::ParticipantIndex,
-                    room_participant::Column::Role,
-                ])
-                .to_owned(),
-        )
-        .exec(tx)
-        .await?;
+        // If someone has been invited into the room, accept the invite instead of inserting
+        let result = room_participant::Entity::update_many()
+            .filter(
+                Condition::all()
+                    .add(room_participant::Column::RoomId.eq(room_id))
+                    .add(room_participant::Column::UserId.eq(user_id))
+                    .add(room_participant::Column::AnsweringConnectionId.is_null()),
+            )
+            .set(room_participant::ActiveModel {
+                participant_index: ActiveValue::Set(Some(participant_index)),
+                answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
+                answering_connection_server_id: ActiveValue::set(Some(ServerId(
+                    connection.owner_id as i32,
+                ))),
+                answering_connection_lost: ActiveValue::set(false),
+                ..Default::default()
+            })
+            .exec(tx)
+            .await?;
+
+        if result.rows_affected == 0 {
+            room_participant::Entity::insert(room_participant::ActiveModel {
+                room_id: ActiveValue::set(room_id),
+                user_id: ActiveValue::set(user_id),
+                answering_connection_id: ActiveValue::set(Some(connection.id as i32)),
+                answering_connection_server_id: ActiveValue::set(Some(ServerId(
+                    connection.owner_id as i32,
+                ))),
+                answering_connection_lost: ActiveValue::set(false),
+                calling_user_id: ActiveValue::set(user_id),
+                calling_connection_id: ActiveValue::set(connection.id as i32),
+                calling_connection_server_id: ActiveValue::set(Some(ServerId(
+                    connection.owner_id as i32,
+                ))),
+                participant_index: ActiveValue::Set(Some(participant_index)),
+                role: ActiveValue::set(Some(role)),
+                id: ActiveValue::NotSet,
+                location_kind: ActiveValue::NotSet,
+                location_project_id: ActiveValue::NotSet,
+                initial_project_id: ActiveValue::NotSet,
+            })
+            .exec(tx)
+            .await?;
+        }
 
         let (channel, room) = self.get_channel_room(room_id, &tx).await?;
         let channel = channel.ok_or_else(|| anyhow!("no channel for room"))?;

@@ -1,10 +1,9 @@
 id = "haskell"
 name = "Haskell"
-description = "Haskell support for Zed"
+description = "Haskell support."
 version = "0.0.1"
 schema_version = 1
 authors = [
-    "Marshall Bowers <elliott.codes@gmail.com>",
     "Pseudomata <pseudomata@proton.me>",
     "Lei <45155667+leifu1128@users.noreply.github.com>"
 ]

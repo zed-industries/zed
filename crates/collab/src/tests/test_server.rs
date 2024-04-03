@@ -19,7 +19,6 @@ use futures::{channel::oneshot, StreamExt as _};
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
 use language::LanguageRegistry;
 use node_runtime::FakeNodeRuntime;
-
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
@@ -27,6 +26,7 @@ use rpc::{
     proto::{self, ChannelRole},
     RECEIVE_TIMEOUT,
 };
+use semantic_version::SemanticVersion;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
@@ -39,7 +39,7 @@ use std::{
         Arc,
     },
 };
-use util::{http::FakeHttpClient, SemanticVersion};
+use util::http::FakeHttpClient;
 use workspace::{Workspace, WorkspaceId, WorkspaceStore};
 
 pub struct TestServer {
@@ -135,9 +135,10 @@ impl TestServer {
         (server, client_a, client_b, channel_id)
     }
 
-    pub async fn start1(cx: &mut TestAppContext) -> TestClient {
+    pub async fn start1(cx: &mut TestAppContext) -> (TestServer, TestClient) {
         let mut server = Self::start(cx.executor().clone()).await;
-        server.create_client(cx, "user_a").await
+        let client = server.create_client(cx, "user_a").await;
+        (server, client)
     }
 
     pub async fn reset(&self) {
@@ -512,6 +513,7 @@ impl TestServer {
                 blob_store_bucket: None,
                 openai_api_key: None,
                 google_ai_api_key: None,
+                anthropic_api_key: None,
                 clickhouse_url: None,
                 clickhouse_user: None,
                 clickhouse_password: None,

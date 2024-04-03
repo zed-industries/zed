@@ -195,7 +195,13 @@ impl ExtensionBuilder {
             &grammar_metadata.rev,
         )?;
 
-        let src_path = grammar_repo_dir.join("src");
+        let base_grammar_path = grammar_metadata
+            .path
+            .as_ref()
+            .map(|path| grammar_repo_dir.join(path))
+            .unwrap_or(grammar_repo_dir);
+
+        let src_path = base_grammar_path.join("src");
         let parser_path = src_path.join("parser.c");
         let scanner_path = src_path.join("scanner.c");
 
@@ -533,6 +539,8 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                     struct GrammarConfigToml {
                         pub repository: String,
                         pub commit: String,
+                        #[serde(default)]
+                        pub path: Option<String>,
                     }
 
                     let grammar_config = fs::read_to_string(&grammar_path)?;
@@ -548,6 +556,7 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                             GrammarManifestEntry {
                                 repository: grammar_config.repository,
                                 rev: grammar_config.commit,
+                                path: grammar_config.path,
                             },
                         );
                     }

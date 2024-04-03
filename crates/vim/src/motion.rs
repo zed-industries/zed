@@ -1283,21 +1283,21 @@ pub(crate) fn first_non_whitespace(
     display_lines: bool,
     from: DisplayPoint,
 ) -> DisplayPoint {
-    let mut last_point = start_of_line(map, display_lines, from);
+    let mut start_offset = start_of_line(map, display_lines, from).to_offset(map, Bias::Left);
     let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
-    for (ch, point) in map.chars_at(last_point) {
+    for (ch, offset) in map.buffer_chars_at(start_offset) {
         if ch == '\n' {
             return from;
         }
 
-        last_point = point;
+        start_offset = offset;
 
         if char_kind(&scope, ch) != CharKind::Whitespace {
             break;
         }
     }
 
-    map.clip_point(last_point, Bias::Left)
+    start_offset.to_display_point(map)
 }
 
 pub(crate) fn start_of_line(
@@ -1354,6 +1354,7 @@ fn end_of_document(
 
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
+    let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot);
 
@@ -2106,6 +2107,25 @@ mod test {
           123 234 34ˇ5
           4;5.6 567 678
           789 890 901
+        "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_match_eol(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            fn aˇ() {
+              return
+            }
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "$", "%"]).await;
+        cx.assert_shared_state(indoc! {"
+            fn a«() {
+              return
+            }ˇ»
         "})
             .await;
     }

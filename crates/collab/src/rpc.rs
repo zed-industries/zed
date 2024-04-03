@@ -46,6 +46,7 @@ use rpc::{
     },
     Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
 };
+use semantic_version::SemanticVersion;
 use serde::{Serialize, Serializer};
 use std::{
     any::TypeId,
@@ -68,7 +69,7 @@ use tracing::{
     field::{self},
     info_span, instrument, Instrument,
 };
-use util::{http::IsahcHttpClient, SemanticVersion};
+use util::http::IsahcHttpClient;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -366,6 +367,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::ExpandProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
+            .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
+            .add_request_handler(forward_mutating_project_request::<proto::MultiLspQuery>)
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
@@ -417,6 +420,7 @@ impl Server {
                         session,
                         app_state.config.openai_api_key.clone(),
                         app_state.config.google_ai_api_key.clone(),
+                        app_state.config.anthropic_api_key.clone(),
                     )
                 }
             })
@@ -731,7 +735,13 @@ impl Server {
         executor: Executor,
     ) -> impl Future<Output = ()> {
         let this = self.clone();
-        let span = info_span!("handle connection", %address, impersonator = field::Empty, connection_id = field::Empty);
+        let span = info_span!("handle connection", %address,
+            connection_id=field::Empty,
+            user_id=field::Empty,
+            login=field::Empty,
+            impersonator=field::Empty,
+            dev_server_id=field::Empty
+        );
         principal.update_span(&span);
 
         let mut teardown = self.teardown.subscribe();
@@ -809,7 +819,12 @@ impl Server {
                             let type_name = message.payload_type_name();
                             // note: we copy all the fields from the parent span so we can query them in the logs.
                             // (https://github.com/tokio-rs/tracing/issues/2670).
-                            let span = tracing::info_span!("receive message", %connection_id, %address, type_name);
+                            let span = tracing::info_span!("receive message", %connection_id, %address, type_name,
+                                user_id=field::Empty,
+                                login=field::Empty,
+                                impersonator=field::Empty,
+                                dev_server_id=field::Empty
+                            );
                             principal.update_span(&span);
                             let span_enter = span.enter();
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
@@ -1189,7 +1204,7 @@ async fn connection_lost(
         _ = executor.sleep(RECONNECT_TIMEOUT).fuse() => {
             if let Some(session) = session.for_user() {
                 log::info!("connection lost, removing all resources for user:{}, connection:{:?}", session.user_id(), session.connection_id);
-                leave_room_for_session(&session).await.trace_err();
+                leave_room_for_session(&session, session.connection_id).await.trace_err();
                 leave_channel_buffers_for_session(&session)
                     .await
                     .trace_err();
@@ -1525,7 +1540,7 @@ async fn leave_room(
     response: Response<proto::LeaveRoom>,
     session: UserSession,
 ) -> Result<()> {
-    leave_room_for_session(&session).await?;
+    leave_room_for_session(&session, session.connection_id).await?;
     response.send(proto::Ack {})?;
     Ok(())
 }
@@ -3009,8 +3024,19 @@ async fn join_channel_internal(
     session: UserSession,
 ) -> Result<()> {
     let joined_room = {
-        leave_room_for_session(&session).await?;
-        let db = session.db().await;
+        let mut db = session.db().await;
+        // If zed quits without leaving the room, and the user re-opens zed before the
+        // RECONNECT_TIMEOUT, we need to make sure that we kick the user out of the previous
+        // room they were in.
+        if let Some(connection) = db.stale_room_connection(session.user_id()).await? {
+            tracing::info!(
+                stale_connection_id = %connection,
+                "cleaning up stale connection",
+            );
+            drop(db);
+            leave_room_for_session(&session, connection).await?;
+            db = session.db().await;
+        }
 
         let (joined_room, membership_updated, role) = db
             .join_channel(channel_id, session.user_id(), session.connection_id)
@@ -3363,14 +3389,30 @@ async fn remove_channel_message(
 ) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
     let message_id = MessageId::from_proto(request.message_id);
-    let connection_ids = session
+    let (connection_ids, existing_notification_ids) = session
         .db()
         .await
         .remove_channel_message(channel_id, message_id, session.user_id())
         .await?;
-    broadcast(Some(session.connection_id), connection_ids, |connection| {
-        session.peer.send(connection, request.clone())
-    });
+
+    broadcast(
+        Some(session.connection_id),
+        connection_ids,
+        move |connection| {
+            session.peer.send(connection, request.clone())?;
+
+            for notification_id in &existing_notification_ids {
+                session.peer.send(
+                    connection,
+                    proto::DeleteNotification {
+                        notification_id: (*notification_id).to_proto(),
+                    },
+                )?;
+            }
+
+            Ok(())
+        },
+    );
     response.send(proto::Ack {})?;
     Ok(())
 }
@@ -3389,6 +3431,8 @@ async fn update_channel_message(
         notifications,
         reply_to_message_id,
         timestamp,
+        deleted_mention_notification_ids,
+        updated_mention_notifications,
     } = session
         .db()
         .await
@@ -3431,7 +3475,27 @@ async fn update_channel_message(
                     channel_id: channel_id.to_proto(),
                     message: Some(message.clone()),
                 },
-            )
+            )?;
+
+            for notification_id in &deleted_mention_notification_ids {
+                session.peer.send(
+                    connection,
+                    proto::DeleteNotification {
+                        notification_id: (*notification_id).to_proto(),
+                    },
+                )?;
+            }
+
+            for notification in &updated_mention_notifications {
+                session.peer.send(
+                    connection,
+                    proto::UpdateNotification {
+                        notification: Some(notification.clone()),
+                    },
+                )?;
+            }
+
+            Ok(())
         },
     );
 
@@ -3504,6 +3568,7 @@ async fn complete_with_language_model(
     session: Session,
     open_ai_api_key: Option<Arc<str>>,
     google_ai_api_key: Option<Arc<str>>,
+    anthropic_api_key: Option<Arc<str>>,
 ) -> Result<()> {
     let Some(session) = session.for_user() else {
         return Err(anyhow!("user not found"))?;
@@ -3522,6 +3587,10 @@ async fn complete_with_language_model(
         let api_key = google_ai_api_key
             .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
         complete_with_google_ai(request, response, session, api_key).await?;
+    } else if request.model.starts_with("claude") {
+        let api_key = anthropic_api_key
+            .ok_or_else(|| anyhow!("no Anthropic AI API key configured on the server"))?;
+        complete_with_anthropic(request, response, session, api_key).await?;
     }
 
     Ok(())
@@ -3614,6 +3683,121 @@ async fn complete_with_google_ai(
                 })
                 .collect(),
         })?;
+    }
+
+    Ok(())
+}
+
+async fn complete_with_anthropic(
+    request: proto::CompleteWithLanguageModel,
+    response: StreamingResponse<proto::CompleteWithLanguageModel>,
+    session: UserSession,
+    api_key: Arc<str>,
+) -> Result<()> {
+    let model = anthropic::Model::from_id(&request.model)?;
+
+    let mut system_message = String::new();
+    let messages = request
+        .messages
+        .into_iter()
+        .filter_map(|message| match message.role() {
+            LanguageModelRole::LanguageModelUser => Some(anthropic::RequestMessage {
+                role: anthropic::Role::User,
+                content: message.content,
+            }),
+            LanguageModelRole::LanguageModelAssistant => Some(anthropic::RequestMessage {
+                role: anthropic::Role::Assistant,
+                content: message.content,
+            }),
+            // Anthropic's API breaks system instructions out as a separate field rather
+            // than having a system message role.
+            LanguageModelRole::LanguageModelSystem => {
+                if !system_message.is_empty() {
+                    system_message.push_str("\n\n");
+                }
+                system_message.push_str(&message.content);
+
+                None
+            }
+        })
+        .collect();
+
+    let mut stream = anthropic::stream_completion(
+        &session.http_client,
+        "https://api.anthropic.com",
+        &api_key,
+        anthropic::Request {
+            model,
+            messages,
+            stream: true,
+            system: system_message,
+            max_tokens: 4092,
+        },
+    )
+    .await?;
+
+    let mut current_role = proto::LanguageModelRole::LanguageModelAssistant;
+
+    while let Some(event) = stream.next().await {
+        let event = event?;
+
+        match event {
+            anthropic::ResponseEvent::MessageStart { message } => {
+                if let Some(role) = message.role {
+                    if role == "assistant" {
+                        current_role = proto::LanguageModelRole::LanguageModelAssistant;
+                    } else if role == "user" {
+                        current_role = proto::LanguageModelRole::LanguageModelUser;
+                    }
+                }
+            }
+            anthropic::ResponseEvent::ContentBlockStart { content_block, .. } => {
+                match content_block {
+                    anthropic::ContentBlock::Text { text } => {
+                        if !text.is_empty() {
+                            response.send(proto::LanguageModelResponse {
+                                choices: vec![proto::LanguageModelChoiceDelta {
+                                    index: 0,
+                                    delta: Some(proto::LanguageModelResponseMessage {
+                                        role: Some(current_role as i32),
+                                        content: Some(text),
+                                    }),
+                                    finish_reason: None,
+                                }],
+                            })?;
+                        }
+                    }
+                }
+            }
+            anthropic::ResponseEvent::ContentBlockDelta { delta, .. } => match delta {
+                anthropic::TextDelta::TextDelta { text } => {
+                    response.send(proto::LanguageModelResponse {
+                        choices: vec![proto::LanguageModelChoiceDelta {
+                            index: 0,
+                            delta: Some(proto::LanguageModelResponseMessage {
+                                role: Some(current_role as i32),
+                                content: Some(text),
+                            }),
+                            finish_reason: None,
+                        }],
+                    })?;
+                }
+            },
+            anthropic::ResponseEvent::MessageDelta { delta, .. } => {
+                if let Some(stop_reason) = delta.stop_reason {
+                    response.send(proto::LanguageModelResponse {
+                        choices: vec![proto::LanguageModelChoiceDelta {
+                            index: 0,
+                            delta: None,
+                            finish_reason: Some(stop_reason),
+                        }],
+                    })?;
+                }
+            }
+            anthropic::ResponseEvent::ContentBlockStop { .. } => {}
+            anthropic::ResponseEvent::MessageStop {} => {}
+            anthropic::ResponseEvent::Ping {} => {}
+        }
     }
 
     Ok(())
@@ -4065,7 +4249,7 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
     Ok(())
 }
 
-async fn leave_room_for_session(session: &UserSession) -> Result<()> {
+async fn leave_room_for_session(session: &UserSession, connection_id: ConnectionId) -> Result<()> {
     let mut contacts_to_update = HashSet::default();
 
     let room_id;
@@ -4075,7 +4259,7 @@ async fn leave_room_for_session(session: &UserSession) -> Result<()> {
     let room;
     let channel;
 
-    if let Some(mut left_room) = session.db().await.leave_room(session.connection_id).await? {
+    if let Some(mut left_room) = session.db().await.leave_room(connection_id).await? {
         contacts_to_update.insert(session.user_id());
 
         for project in left_room.left_projects.values() {

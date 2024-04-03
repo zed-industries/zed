@@ -23,7 +23,7 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point,
-    PromptLevel, Size, WindowAppearance, WindowParams,
+    PromptLevel, Size, WindowAppearance, WindowBackgroundAppearance, WindowParams,
 };
 
 #[derive(Default)]
@@ -353,6 +353,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn set_title(&mut self, title: &str) {
         self.0.toplevel.set_title(title.to_string());
+    }
+
+    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
+        // todo(linux)
     }
 
     fn set_edited(&mut self, edited: bool) {

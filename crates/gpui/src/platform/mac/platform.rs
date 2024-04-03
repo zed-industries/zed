@@ -279,7 +279,7 @@ impl MacPlatform {
                         let mut mask = NSEventModifierFlags::empty();
                         for (modifier, flag) in &[
                             (
-                                keystroke.modifiers.command,
+                                keystroke.modifiers.platform,
                                 NSEventModifierFlags::NSCommandKeyMask,
                             ),
                             (
@@ -718,11 +718,11 @@ impl Platform for MacPlatform {
         unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
             let version = process_info.operatingSystemVersion();
-            Ok(SemanticVersion {
-                major: version.majorVersion as usize,
-                minor: version.minorVersion as usize,
-                patch: version.patchVersion as usize,
-            })
+            Ok(SemanticVersion::new(
+                version.majorVersion as usize,
+                version.minorVersion as usize,
+                version.patchVersion as usize,
+            ))
         }
     }
 
@@ -764,26 +764,14 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn add_recent_documents(&self, paths: &[PathBuf]) {
-        for path in paths {
-            let Some(path_str) = path.to_str() else {
-                log::error!("Not adding to recent documents a non-unicode path: {path:?}");
-                continue;
-            };
+    fn add_recent_document(&self, path: &Path) {
+        if let Some(path_str) = path.to_str() {
             unsafe {
                 let document_controller: id =
                     msg_send![class!(NSDocumentController), sharedDocumentController];
                 let url: id = NSURL::fileURLWithPath_(nil, ns_string(path_str));
                 let _: () = msg_send![document_controller, noteNewRecentDocumentURL:url];
             }
-        }
-    }
-
-    fn clear_recent_documents(&self) {
-        unsafe {
-            let document_controller: id =
-                msg_send![class!(NSDocumentController), sharedDocumentController];
-            let _: () = msg_send![document_controller, clearRecentDocuments:nil];
         }
     }
 

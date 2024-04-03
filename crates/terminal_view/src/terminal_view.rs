@@ -6,9 +6,9 @@ use collections::HashSet;
 use editor::{scroll::Autoscroll, Editor};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    div, impl_actions, overlay, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton, MouseDownEvent, Pixels,
-    Render, Styled, Subscription, Task, View, VisualContext, WeakView,
+    anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
+    MouseDownEvent, Pixels, Render, Styled, Subscription, Task, View, VisualContext, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -765,10 +765,13 @@ impl Render for TerminalView {
                 )),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                overlay()
-                    .position(*position)
-                    .anchor(gpui::AnchorCorner::TopLeft)
-                    .child(menu.clone())
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::AnchorCorner::TopLeft)
+                        .child(menu.clone()),
+                )
+                .with_priority(1)
             }))
     }
 }
@@ -940,8 +943,9 @@ impl SearchableItem for TerminalView {
     }
 
     /// Store matches returned from find_matches somewhere for rendering
-    fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-        self.terminal().update(cx, |term, _| term.matches = matches)
+    fn update_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
+        self.terminal()
+            .update(cx, |term, _| term.matches = matches.to_vec())
     }
 
     /// Returns the selection content to pre-load into this search
@@ -955,14 +959,14 @@ impl SearchableItem for TerminalView {
     }
 
     /// Focus match at given index into the Vec of matches
-    fn activate_match(&mut self, index: usize, _: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+    fn activate_match(&mut self, index: usize, _: &[Self::Match], cx: &mut ViewContext<Self>) {
         self.terminal()
             .update(cx, |term, _| term.activate_match(index));
         cx.notify();
     }
 
     /// Add selections for all matches given.
-    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+    fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
         self.terminal()
             .update(cx, |term, _| term.select_matches(matches));
         cx.notify();
@@ -1000,7 +1004,7 @@ impl SearchableItem for TerminalView {
     /// Reports back to the search toolbar what the active match should be (the selection)
     fn active_match_index(
         &mut self,
-        matches: Vec<Self::Match>,
+        matches: &[Self::Match],
         cx: &mut ViewContext<Self>,
     ) -> Option<usize> {
         // Selection head might have a value if there's a selection that isn't
