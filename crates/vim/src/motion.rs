@@ -708,22 +708,23 @@ impl Motion {
         (new_point != point || infallible).then_some((new_point, goal))
     }
 
+    // Get the range value after if self is applied to the specified selection.
     pub fn range(
         &self,
         map: &DisplaySnapshot,
-        cur_selection: &mut Selection<DisplayPoint>,
+        selection: Selection<DisplayPoint>,
         times: Option<usize>,
         expand_to_surrounding_newline: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Range<DisplayPoint>> {
         if let Some((new_head, goal)) = self.move_point(
             map,
-            cur_selection.head(),
-            cur_selection.goal,
+            selection.head(),
+            selection.goal,
             times,
             &text_layout_details,
         ) {
-            let mut selection = cur_selection.clone();
+            let mut selection = selection.clone();
             selection.set_head(new_head, goal);
 
             if self.linewise() {
@@ -790,7 +791,7 @@ impl Motion {
         }
     }
 
-    // Expands a selection using self motion for an operator
+    // Expands a selection using self for an operator
     pub fn expand_selection(
         &self,
         map: &DisplaySnapshot,
@@ -801,7 +802,7 @@ impl Motion {
     ) -> bool {
         if let Some(range) = self.range(
             map,
-            selection,
+            selection.clone(),
             times,
             expand_to_surrounding_newline,
             text_layout_details,
