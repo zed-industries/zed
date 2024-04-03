@@ -2,12 +2,14 @@ use channel::ChannelStore;
 use client::{ChannelId, DevServerId};
 use editor::Editor;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, View, ViewContext,
+    AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, View,
+    ViewContext,
 };
-use ui::{prelude::*, CheckboxWithLabel};
+use ui::{prelude::*, CheckboxWithLabel, Tooltip};
 use workspace::{notifications::DetachAndPromptErr, ModalView};
 
 pub struct DevServerModal {
+    mode: Mode,
     focus_handle: FocusHandle,
     channel_store: Model<ChannelStore>,
     channel_id: ChannelId,
@@ -15,7 +17,13 @@ pub struct DevServerModal {
     remote_project_path_editor: View<Editor>,
     dev_server_name_editor: View<Editor>,
     selected_dev_server_id: Option<DevServerId>,
-    creating_dev_server: bool,
+    access_token: Option<String>,
+}
+
+#[derive(PartialEq)]
+enum Mode {
+    CreateRemoteProject,
+    CreateDevServer,
 }
 
 impl DevServerModal {
@@ -33,6 +41,7 @@ impl DevServerModal {
         });
 
         Self {
+            mode: Mode::CreateRemoteProject,
             focus_handle: cx.focus_handle(),
             channel_store,
             channel_id,
@@ -40,7 +49,7 @@ impl DevServerModal {
             remote_project_path_editor: path_editor,
             dev_server_name_editor,
             selected_dev_server_id: None,
-            creating_dev_server: false,
+            access_token: None,
         }
     }
 
@@ -93,9 +102,15 @@ impl DevServerModal {
             store.create_dev_server(self.channel_id, name, cx)
         });
 
-        cx.spawn(|_, _| async move {
+        cx.spawn(|this, mut cx| async move {
             let dev_server = dev_server.await?;
-            dbg!(dev_server.access_token, dev_server.name);
+            dbg!(&dev_server.access_token, &dev_server.name);
+            let access_token = dev_server.access_token.clone();
+            if let Some(view) = this.upgrade() {
+                view.update(&mut cx, move |this, _| {
+                    this.access_token = Some(access_token)
+                })?;
+            }
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -107,6 +122,103 @@ impl DevServerModal {
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         self.create_remote_project(cx);
+    }
+
+    fn render_create_remote_project(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let channel_store = self.channel_store.read(cx);
+        let dev_servers = channel_store.dev_servers_for_id(self.channel_id);
+
+        v_flex()
+            .px_1()
+            .pt_0p5()
+            .gap_px()
+            .child(
+                v_flex()
+                    .py_0p5()
+                    .px_1()
+                    .child(div().px_1().py_0p5().child("Add Remote Project")),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child("Name")
+                    .child(self.remote_project_name_editor.clone()),
+            )
+            .child("Dev Server")
+            .children(dev_servers.iter().map(|dev_server| {
+                let dev_server_id = dev_server.id;
+                CheckboxWithLabel::new(
+                    ("selected-dev-server", dev_server.id.0),
+                    Label::new(dev_server.name.clone()),
+                    if Some(dev_server.id) == self.selected_dev_server_id {
+                        Selection::Selected
+                    } else {
+                        Selection::Unselected
+                    },
+                    cx.listener(move |this, _, cx| {
+                        if this.selected_dev_server_id == Some(dev_server_id) {
+                            this.selected_dev_server_id = None;
+                        } else {
+                            this.selected_dev_server_id = Some(dev_server_id);
+                        }
+                        cx.notify();
+                    }),
+                )
+            }))
+            .child(
+                Button::new("toggle-create-dev-server-button", "Create dev server").on_click(
+                    cx.listener(|this, _, cx| {
+                        this.mode = Mode::CreateDevServer;
+                        this.access_token = None;
+                        this.dev_server_name_editor
+                            .read(cx)
+                            .focus_handle(cx)
+                            .focus(cx);
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child("Path")
+                    .child(self.remote_project_path_editor.clone()),
+            )
+    }
+
+    fn render_create_dev_server(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .px_1()
+            .pt_0p5()
+            .gap_px()
+            .child(
+                v_flex()
+                    .py_0p5()
+                    .px_1()
+                    .child(div().px_1().py_0p5().child("Add Dev Server")),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child("Name")
+                    .child(self.dev_server_name_editor.clone()),
+            )
+            .when_some(self.access_token.clone(), |this, access_token| {
+                this.child(
+                    div()
+                        .child("Server created!")
+                        .child("Access token: ")
+                        .child(access_token.clone())
+                        .child(
+                            IconButton::new("copy-access-token", IconName::Copy)
+                                .on_click(cx.listener(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new(access_token.clone()))
+                                }))
+                                .icon_size(IconSize::Small)
+                                .tooltip(|cx| Tooltip::text("Copy access token", cx)),
+                        ),
+                )
+            })
     }
 }
 impl ModalView for DevServerModal {}
@@ -121,8 +233,11 @@ impl EventEmitter<DismissEvent> for DevServerModal {}
 
 impl Render for DevServerModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let channel_store = self.channel_store.read(cx);
-        let dev_servers = channel_store.dev_servers_for_id(self.channel_id);
+        let modal_content = match self.mode {
+            Mode::CreateRemoteProject => self.render_create_remote_project(cx).into_any_element(),
+            Mode::CreateDevServer => self.render_create_dev_server(cx).into_any_element(),
+        };
+
         div()
             .track_focus(&self.focus_handle)
             .elevation_2(cx)
@@ -130,94 +245,33 @@ impl Render for DevServerModal {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .w_96()
+            .child(modal_content)
             .child(
-                v_flex()
-                    .px_1()
-                    .pt_0p5()
-                    .gap_px()
-                    .child(
-                        v_flex()
-                            .py_0p5()
-                            .px_1()
-                            .child(div().px_1().py_0p5().child("Add Remote Project:")),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child("Name")
-                            .child(self.remote_project_name_editor.clone()),
-                    )
-                    .child("Dev Server")
-                    .children(dev_servers.iter().map(|dev_server| {
-                        let dev_server_id = dev_server.id;
-                        CheckboxWithLabel::new(
-                            ("selected-dev-server", dev_server.id.0),
-                            Label::new(dev_server.name.clone()),
-                            if Some(dev_server.id) == self.selected_dev_server_id {
-                                Selection::Selected
-                            } else {
-                                Selection::Unselected
-                            },
-                            cx.listener(move |this, _, cx| {
-                                if this.selected_dev_server_id == Some(dev_server_id) {
-                                    this.selected_dev_server_id = None;
-                                } else {
-                                    this.selected_dev_server_id = Some(dev_server_id);
-                                }
+                div()
+                    .flex()
+                    .w_full()
+                    .flex_row_reverse()
+                    .child(Button::new("create-button", "Create").on_click(cx.listener(
+                        |this, _event, cx| match this.mode {
+                            Mode::CreateRemoteProject => this.create_remote_project(cx),
+                            Mode::CreateDevServer => this.create_dev_server(cx),
+                        },
+                    )))
+                    .when(self.mode == Mode::CreateDevServer, |this| {
+                        this.child(Button::new("cancel-button", "Cancel").on_click(cx.listener(
+                            |this, _, cx| {
+                                this.access_token = None;
+                                this.dev_server_name_editor
+                                    .update(cx, |editor, cx| editor.set_text("", cx));
+                                this.mode = Mode::CreateRemoteProject;
+                                this.remote_project_name_editor
+                                    .read(cx)
+                                    .focus_handle(cx)
+                                    .focus(cx);
                                 cx.notify();
-                            }),
-                        )
-                    }))
-                    .when(!self.creating_dev_server, |container| {
-                        container.child(
-                            Button::new("toggle-create-dev-server-button", "Create dev server")
-                                .on_click(cx.listener(|this, _, cx| {
-                                    this.creating_dev_server = true;
-                                    this.dev_server_name_editor
-                                        .read(cx)
-                                        .focus_handle(cx)
-                                        .focus(cx);
-                                })),
-                        )
-                    })
-                    .when(self.creating_dev_server, |container| {
-                        container.child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .w_full()
-                                .gap_2()
-                                .child(self.dev_server_name_editor.clone())
-                                .child(Button::new("create-dev-server-button", "Create").on_click(
-                                    cx.listener(|this, _, cx| {
-                                        this.create_dev_server(cx);
-                                        this.creating_dev_server = false;
-                                        this.dev_server_name_editor
-                                            .update(cx, |editor, cx| editor.set_text("", cx));
-                                    }),
-                                ))
-                                .child(
-                                    Button::new("cancel-create-dev-server-button", "Cancel")
-                                        .on_click(cx.listener(|this, _, cx| {
-                                            this.creating_dev_server = false;
-                                            this.dev_server_name_editor
-                                                .update(cx, |editor, cx| editor.set_text("", cx))
-                                        })),
-                                ),
-                        )
-                    })
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child("Path")
-                            .child(self.remote_project_path_editor.clone()),
-                    )
-                    .child(
-                        Button::new("create-remote-project-button", "Create remote project")
-                            .on_click(
-                                cx.listener(|this, _event, cx| this.create_remote_project(cx)),
-                            ),
-                    ),
+                            },
+                        )))
+                    }),
             )
     }
 }
