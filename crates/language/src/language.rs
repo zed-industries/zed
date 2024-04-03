@@ -205,27 +205,26 @@ impl CachedLspAdapter {
         self.adapter.process_diagnostics(params)
     }
 
-    pub async fn process_completion(&self, completion_item: &mut lsp::CompletionItem) {
-        self.adapter.process_completion(completion_item).await
+    pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
+        self.adapter.process_completions(completion_items).await
     }
 
-    pub async fn label_for_completion(
+    pub async fn labels_for_completions(
         &self,
-        completion_item: &lsp::CompletionItem,
+        completion_items: &[lsp::CompletionItem],
         language: &Arc<Language>,
-    ) -> Option<CodeLabel> {
+    ) -> Vec<Option<CodeLabel>> {
         self.adapter
-            .label_for_completion(completion_item, language)
+            .labels_for_completions(completion_items, language)
             .await
     }
 
-    pub async fn label_for_symbol(
+    pub async fn labels_for_symbols(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbols: &[(String, lsp::SymbolKind)],
         language: &Arc<Language>,
-    ) -> Option<CodeLabel> {
-        self.adapter.label_for_symbol(name, kind, language).await
+    ) -> Vec<Option<CodeLabel>> {
+        self.adapter.labels_for_symbols(symbols, language).await
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -382,10 +381,24 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    /// A callback called for each [`lsp::CompletionItem`] obtained from LSP server.
-    /// Some LspAdapter implementations might want to modify the obtained item to
-    /// change how it's displayed.
-    async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
+    /// Post-processes completions provided by the language server.
+    async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
+
+    async fn labels_for_completions(
+        &self,
+        completions: &[lsp::CompletionItem],
+        language: &Arc<Language>,
+    ) -> Vec<Option<CodeLabel>> {
+        let mut labels = Vec::new();
+        for (ix, completion) in completions.into_iter().enumerate() {
+            let label = self.label_for_completion(completion, language).await;
+            if let Some(label) = label {
+                labels.resize(ix + 1, None);
+                *labels.last_mut().unwrap() = Some(label);
+            }
+        }
+        labels
+    }
 
     async fn label_for_completion(
         &self,
@@ -393,6 +406,22 @@ pub trait LspAdapter: 'static + Send + Sync {
         _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
+    }
+
+    async fn labels_for_symbols(
+        &self,
+        symbols: &[(String, lsp::SymbolKind)],
+        language: &Arc<Language>,
+    ) -> Vec<Option<CodeLabel>> {
+        let mut labels = Vec::new();
+        for (ix, (name, kind)) in symbols.into_iter().enumerate() {
+            let label = self.label_for_symbol(name, *kind, language).await;
+            if let Some(label) = label {
+                labels.resize(ix + 1, None);
+                *labels.last_mut().unwrap() = Some(label);
+            }
+        }
+        labels
     }
 
     async fn label_for_symbol(

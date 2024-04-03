@@ -74,12 +74,12 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
-use language::{char_kind, CharKind};
 use language::{
+    char_kind,
     language_settings::{self, all_language_settings, InlayHintSettings},
-    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CodeAction,
-    CodeLabel, Completion, CursorShape, Diagnostic, Documentation, IndentKind, IndentSize,
-    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
+    CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
+    Point, Selection, SelectionGoal, TransactionId,
 };
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
@@ -94,7 +94,9 @@ pub use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
-use project::{FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction};
+use project::{
+    CodeAction, Completion, FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction,
+};
 use rand::prelude::*;
 use rpc::proto::*;
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
