@@ -608,25 +608,31 @@ impl ProjectSearchView {
         self.replacement_editor.read(cx).text(cx)
     }
     fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
-        if self.model.read(cx).match_ranges.is_empty() {
-            return;
-        }
         if self.active_match_index.is_none() {
             return;
-        };
-
-        let query = self.model.read(cx).active_query.clone();
-        if let Some(query) = query {
-            let query = query.clone().with_replacement(self.replacement(cx));
-
-            // TODO: Bad clone here
-            let match_ranges = self.model.read(cx).match_ranges.clone();
-            self.results_editor.update(cx, |editor, cx| {
-                for item in match_ranges {
-                    editor.replace(&item, &query, cx);
-                }
-            });
         }
+
+        let Some(query) = self.model.read(cx).active_query.as_ref() else {
+            return;
+        };
+        let query = query.clone().with_replacement(self.replacement(cx));
+
+        let match_ranges = self
+            .model
+            .update(cx, |model, _| mem::take(&mut model.match_ranges));
+        if match_ranges.is_empty() {
+            return;
+        }
+
+        self.results_editor.update(cx, |editor, cx| {
+            for item in &match_ranges {
+                editor.replace(item, &query, cx);
+            }
+        });
+
+        self.model.update(cx, |model, _cx| {
+            model.match_ranges = match_ranges;
+        });
     }
 
     fn new(
