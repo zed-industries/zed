@@ -100,13 +100,15 @@ world extension {
 
     record fixed-code-label {
         text: string,
+        filter-range: range,
+        highlight-range: range,
         highlight-name: string,
     }
 
     record parsed-code-label {
-        code: string,
-        language-id: string,
-        range: range,
+        text: string,
+        filter-range: range,
+        display-range: range,
     }
 
     record range {

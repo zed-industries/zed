@@ -18,7 +18,10 @@ use super::{wasm_engine, WasmState};
 
 use since_v0_0_6 as latest;
 
-pub use latest::{CodeLabel, Command};
+pub use latest::{
+    zed::extension::lsp::{Completion, CompletionItemKind, InsertTextFormat},
+    CodeLabel, Command, Range,
+};
 pub use since_v0_0_4::LanguageServerConfig;
 
 pub fn new_linker(
@@ -150,18 +153,13 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
-        completions: &[lsp::CompletionItem],
+        completions: Vec<latest::Completion>,
     ) -> Result<Result<Vec<Option<CodeLabel>>, String>> {
         match self {
             Extension::V001(_) | Extension::V004(_) => {
                 bail!("unsupported function: 'labels_for_completions'")
             }
             Extension::V006(ext) => {
-                let completions = completions
-                    .into_iter()
-                    .map(lsp_completion_item_to_wit_completion)
-                    .collect::<Vec<_>>();
-
                 ext.call_labels_for_completions(store, &language_server_id.0, &completions)
                     .await
             }
@@ -176,75 +174,5 @@ trait ToWasmtimeResult<T> {
 impl<T> ToWasmtimeResult<T> for Result<T> {
     fn to_wasmtime_result(self) -> wasmtime::Result<Result<T, String>> {
         Ok(self.map_err(|error| error.to_string()))
-    }
-}
-
-fn lsp_completion_item_to_wit_completion(completion: &lsp::CompletionItem) -> latest::Completion {
-    latest::Completion {
-        label: completion.label.clone(),
-        detail: completion.detail.clone(),
-        kind: completion
-            .kind
-            .map(lsp_completion_item_to_wit_completion_kind),
-        insert_text_format: completion
-            .insert_text_format
-            .map(lsp_insert_text_format_to_wit_insert_text_format),
-    }
-}
-
-fn lsp_completion_item_to_wit_completion_kind(
-    value: lsp::CompletionItemKind,
-) -> latest::zed::extension::lsp::CompletionItemKind {
-    use latest::zed::extension::lsp::CompletionItemKind;
-
-    match value {
-        lsp::CompletionItemKind::TEXT => CompletionItemKind::Text,
-        lsp::CompletionItemKind::METHOD => CompletionItemKind::Method,
-        lsp::CompletionItemKind::FUNCTION => CompletionItemKind::Function,
-        lsp::CompletionItemKind::CONSTRUCTOR => CompletionItemKind::Constructor,
-        lsp::CompletionItemKind::FIELD => CompletionItemKind::Field,
-        lsp::CompletionItemKind::VARIABLE => CompletionItemKind::Variable,
-        lsp::CompletionItemKind::CLASS => CompletionItemKind::Class,
-        lsp::CompletionItemKind::INTERFACE => CompletionItemKind::Interface,
-        lsp::CompletionItemKind::MODULE => CompletionItemKind::Module,
-        lsp::CompletionItemKind::PROPERTY => CompletionItemKind::Property,
-        lsp::CompletionItemKind::UNIT => CompletionItemKind::Unit,
-        lsp::CompletionItemKind::VALUE => CompletionItemKind::Value,
-        lsp::CompletionItemKind::ENUM => CompletionItemKind::Enum,
-        lsp::CompletionItemKind::KEYWORD => CompletionItemKind::Keyword,
-        lsp::CompletionItemKind::SNIPPET => CompletionItemKind::Snippet,
-        lsp::CompletionItemKind::COLOR => CompletionItemKind::Color,
-        lsp::CompletionItemKind::FILE => CompletionItemKind::File,
-        lsp::CompletionItemKind::REFERENCE => CompletionItemKind::Reference,
-        lsp::CompletionItemKind::FOLDER => CompletionItemKind::Folder,
-        lsp::CompletionItemKind::ENUM_MEMBER => CompletionItemKind::EnumMember,
-        lsp::CompletionItemKind::CONSTANT => CompletionItemKind::Constant,
-        lsp::CompletionItemKind::STRUCT => CompletionItemKind::Struct,
-        lsp::CompletionItemKind::EVENT => CompletionItemKind::Event,
-        lsp::CompletionItemKind::OPERATOR => CompletionItemKind::Operator,
-        lsp::CompletionItemKind::TYPE_PARAMETER => CompletionItemKind::TypeParameter,
-        _ => {
-            // TODO: Make sure this works and deal with `.unwrap`s properly.
-            let kind = serde_json::to_string(&value).unwrap();
-            let value: i32 = serde_json::from_str(&kind).unwrap();
-            CompletionItemKind::Other(value)
-        }
-    }
-}
-
-fn lsp_insert_text_format_to_wit_insert_text_format(
-    value: lsp::InsertTextFormat,
-) -> latest::zed::extension::lsp::InsertTextFormat {
-    use latest::zed::extension::lsp::InsertTextFormat;
-
-    match value {
-        lsp::InsertTextFormat::PLAIN_TEXT => InsertTextFormat::PlainText,
-        lsp::InsertTextFormat::SNIPPET => InsertTextFormat::Snippet,
-        _ => {
-            // TODO: Make sure this works and deal with `.unwrap`s properly.
-            let kind = serde_json::to_string(&value).unwrap();
-            let value: i32 = serde_json::from_str(&kind).unwrap();
-            InsertTextFormat::Other(value)
-        }
     }
 }
