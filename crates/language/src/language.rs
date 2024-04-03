@@ -84,7 +84,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 thread_local! {
-    static PARSER: RefCell<Parser> = {
+    pub static PARSER: RefCell<Parser> = {
         let mut parser = Parser::new();
         parser.set_wasm_store(WasmStore::new(WASM_ENGINE.clone()).unwrap()).unwrap();
         RefCell::new(parser)

@@ -1,15 +1,15 @@
-use anyhow::{self, Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, Context, EventEmitter, Global, Model, ModelContext, Task, WeakModel};
-use language::LanguageRegistry;
+use language::{LanguageRegistry, PARSER};
 use project::{Project, Worktree};
-use settings::SettingsStore;
 use smol::channel;
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
 };
+use util::ResultExt;
 
 pub struct SemanticIndex {
     db: lmdb::Database,
@@ -98,18 +98,25 @@ impl ProjectIndex {
                         }
                     }
                 });
+                let path_count = AtomicUsize::new(0);
 
                 cx.background_executor()
                     .scoped(|cx| {
                         for _ in 0..cx.num_cpus() {
                             cx.spawn(async {
                                 while let Ok(path) = paths_rx.recv().await {
-                                    index_path(
+                                    if index_path(
                                         worktree_abs_path.join(&path),
                                         &language_registry,
                                         fs.as_ref(),
                                     )
-                                    .await;
+                                    .await
+                                    .log_err()
+                                    .is_some()
+                                    {
+                                        path_count
+                                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                    }
                                 }
                             });
                         }
@@ -122,6 +129,7 @@ impl ProjectIndex {
                     if this.worktree_scans.is_empty() {
                         cx.emit(StatusEvent::Idle);
                     }
+                    dbg!(path_count.load(std::sync::atomic::Ordering::SeqCst));
                 })
                 .ok();
             }
@@ -138,8 +146,36 @@ pub enum StatusEvent {
     Scanning,
 }
 
-async fn index_path(path: PathBuf, _language_registry: &Arc<LanguageRegistry>, _fs: &dyn Fs) {
-    dbg!(&path);
+async fn index_path(
+    path: PathBuf,
+    language_registry: &Arc<LanguageRegistry>,
+    fs: &dyn Fs,
+) -> Result<()> {
+    // Plan:
+    // Read file contents
+    // Parse with Tree Sitter
+    // Walk the parse tree from the top to find nodes below our embedding threshold
+
+    let text = fs.load(&path).await?;
+    let language = language_registry
+        .language_for_file_path(&path)
+        .await
+        .with_context(|| format!("{:?}", path))?;
+    if let Some(grammar) = language.grammar() {
+        let tree = PARSER.with(|parser| {
+            let mut parser = parser.borrow_mut();
+            parser
+                .set_language(&grammar.ts_language)
+                .expect("incompatible grammar");
+            parser.parse(&text, None).expect("invalid language")
+        });
+        dbg!(tree.root_node().start_byte()..tree.root_node().end_byte());
+    } else {
+        return Err(anyhow!("plain text"));
+    }
+
+    Ok(())
+
     // if let Ok(contents) = fs.read(&path).await {
     //     if let Some(language) = language_registry.get_language_for_path(&path) {
     //         // Process the contents with the determined language

@@ -20,6 +20,8 @@ pub fn init_test(cx: &mut TestAppContext) {
 }
 
 fn main() {
+    env_logger::init();
+
     App::new().run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
@@ -32,6 +34,13 @@ fn main() {
         cx.spawn(|mut cx| async move {
             let project = Project::example([Path::new("/Users/as-cii/dev/zed")], &mut cx).await;
 
+            cx.update(|cx| {
+                let language_registry = project.read(cx).languages().clone();
+                let node_runtime = project.read(cx).node_runtime().unwrap().clone();
+                languages::init(language_registry, node_runtime, cx);
+            })
+            .unwrap();
+
             let temp_dir = tempdir().unwrap();
             let mut semantic_index = SemanticIndex::new(temp_dir.path()).unwrap();
 
@@ -39,7 +48,7 @@ fn main() {
                 .update(|cx| semantic_index.project_index(project.clone(), cx))
                 .unwrap();
 
-            let (tx, mut rx) = oneshot::channel();
+            let (tx, rx) = oneshot::channel();
             let mut tx = Some(tx);
             let subscription = cx.update(|cx| {
                 cx.subscribe(&project_index, move |_, event, _| {
@@ -49,9 +58,11 @@ fn main() {
                 })
             });
 
+            let t0 = std::time::Instant::now();
             let event = rx.await.expect("no event emitted");
             drop(subscription);
-            dbg!(event);
+            dbg!(t0.elapsed());
+            cx.update(|cx| cx.quit());
         })
         .detach();
     });

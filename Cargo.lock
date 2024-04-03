@@ -8527,15 +8527,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "env_logger",
  "fs",
  "futures 0.3.28",
  "gpui",
  "language",
+ "languages",
  "lmdb",
  "project",
  "settings",
  "smol",
  "tempfile",
+ "util",
  "worktree",
 ]
 

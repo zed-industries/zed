@@ -18,15 +18,19 @@ lmdb = "0.8.0"
 project.workspace = true
 settings.workspace = true
 smol.workspace = true
+util = { workspace = true }
 worktree.workspace = true
 
 [dev-dependencies]
+env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+languages.workspace = true
 project = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
+util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 
 [lints]

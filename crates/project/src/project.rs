@@ -1170,6 +1170,10 @@ impl Project {
         self.user_store.clone()
     }
 
+    pub fn node_runtime(&self) -> Option<&Arc<dyn NodeRuntime>> {
+        self.node.as_ref()
+    }
+
     pub fn opened_buffers(&self) -> Vec<Model<Buffer>> {
         self.opened_buffers
             .values()
