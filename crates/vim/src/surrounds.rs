@@ -109,9 +109,9 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
 
                 for selection in &display_selections {
                     let start = selection.start.to_offset(&display_map, Bias::Left);
-                    if let Some(range) =
-                        pair_object.range(&display_map, selection.clone().head(), true)
-                    {
+                    if let Some(range) = pair_object.range(&display_map, selection.clone(), true) {
+                        // If the current parenthesis object is single-line,
+                        // then we need to filter whether it is the current line or not
                         if !pair_object.is_multiline() {
                             let is_same_row = selection.start.row() == range.start.row()
                                 && selection.end.row() == range.end.row();
@@ -124,13 +124,15 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                         // hello«ˇ  "hello in a word"  »again.
                         // Sometimes the expand_selection will not be matched at both ends, and there will be extra spaces
                         // In order to be able to accurately match and replace in this case, some cumbersome methods are used
-                        let mut chars_and_points = display_map.chars_at(range.start).peekable();
-                        while let Some((ch, point)) = chars_and_points.next() {
+                        let mut chars_and_offset = display_map
+                            .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
+                            .peekable();
+                        while let Some((ch, offset)) = chars_and_offset.next() {
                             if ch.to_string() == pair.start {
-                                let start = point.to_offset(&display_map, Bias::Left);
+                                let start = offset;
                                 let mut end = start + 1;
                                 if surround {
-                                    match chars_and_points.peek() {
+                                    match chars_and_offset.peek() {
                                         Some((next_ch, _)) => {
                                             if next_ch.to_string() == " " {
                                                 end += 1;
@@ -144,12 +146,12 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                                 break;
                             }
                         }
-
-                        let mut reverse_chars_and_points =
-                            display_map.reverse_chars_at(range.end).peekable();
+                        let mut reverse_chars_and_points = display_map
+                            .reverse_buffer_chars_at(range.end.to_offset(&display_map, Bias::Left))
+                            .peekable();
                         while let Some((ch, point)) = reverse_chars_and_points.next() {
                             if ch.to_string() == pair.end {
-                                let mut start = point.to_offset(&display_map, Bias::Left);
+                                let mut start = point;
                                 let end = start + 1;
                                 if surround {
                                     match reverse_chars_and_points.peek() {
@@ -201,18 +203,13 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                         },
                     };
                     let surround = pair.end != text.to_string();
-
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut edits = Vec::new();
                     let mut anchors = Vec::new();
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) =
-                            target.range(&display_map, selection.clone().head(), true)
-                        {
-                            // If the current parenthesis object is single-line,
-                            // then we need to filter whether it is the current line or not
+                        if let Some(range) = target.range(&display_map, selection.clone(), true) {
                             if !target.is_multiline() {
                                 let is_same_row = selection.start.row() == range.start.row()
                                     && selection.end.row() == range.end.row();
@@ -221,17 +218,15 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                                     continue;
                                 }
                             }
-                            // This is a bit cumbersome, and it is written to deal with some special cases, as shown below
-                            // hello«ˇ  "hello in a word"  »again.
-                            // Sometimes the expand_selection will not be matched at both ends, and there will be extra spaces
-                            // In order to be able to accurately match and replace in this case, some cumbersome methods are used
-                            let mut chars_and_points = display_map.chars_at(range.start).peekable();
-                            while let Some((ch, point)) = chars_and_points.next() {
+                            let mut chars_and_offset = display_map
+                                .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
+                                .peekable();
+                            while let Some((ch, offset)) = chars_and_offset.next() {
                                 if ch.to_string() == will_replace_pair.start {
                                     let mut open_str = pair.start.clone();
-                                    let start = point.to_offset(&display_map, Bias::Left);
+                                    let start = offset;
                                     let mut end = start + 1;
-                                    match chars_and_points.peek() {
+                                    match chars_and_offset.peek() {
                                         Some((next_ch, _)) => {
                                             if next_ch.to_string() != " " && surround {
                                                 open_str.push_str(" ");
@@ -247,14 +242,17 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                                 }
                             }
 
-                            let mut reverse_chars_and_points =
-                                display_map.reverse_chars_at(range.end).peekable();
-                            while let Some((ch, point)) = reverse_chars_and_points.next() {
+                            let mut reverse_chars_and_offsets = display_map
+                                .reverse_buffer_chars_at(
+                                    range.end.to_offset(&display_map, Bias::Left),
+                                )
+                                .peekable();
+                            while let Some((ch, offset)) = reverse_chars_and_offsets.next() {
                                 if ch.to_string() == will_replace_pair.end {
                                     let mut close_str = pair.end.clone();
-                                    let mut start = point.to_offset(&display_map, Bias::Left);
+                                    let mut start = offset;
                                     let end = start + 1;
-                                    match reverse_chars_and_points.peek() {
+                                    match reverse_chars_and_offsets.peek() {
                                         Some((next_ch, _)) => {
                                             if next_ch.to_string() != " " && surround {
                                                 close_str.insert_str(0, " ")
@@ -318,8 +316,7 @@ pub fn check_and_move_to_valid_bracket_pair(
 
                 for selection in &selections {
                     let start = selection.start.to_offset(&display_map, Bias::Left);
-                    if let Some(range) = object.range(&display_map, selection.clone().head(), true)
-                    {
+                    if let Some(range) = object.range(&display_map, selection.clone(), true) {
                         // If the current parenthesis object is single-line,
                         // then we need to filter whether it is the current line or not
                         if object.is_multiline()
@@ -328,11 +325,12 @@ pub fn check_and_move_to_valid_bracket_pair(
                                 && selection.end.row() == range.end.row())
                         {
                             valid = true;
-                            let mut chars_and_points = display_map.chars_at(range.start).peekable();
-                            while let Some((ch, point)) = chars_and_points.next() {
+                            let mut chars_and_offset = display_map
+                                .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
+                                .peekable();
+                            while let Some((ch, offset)) = chars_and_offset.next() {
                                 if ch.to_string() == pair.start {
-                                    let cur_point = point.to_offset(&display_map, Bias::Left);
-                                    anchors.push(cur_point..cur_point);
+                                    anchors.push(offset..offset);
                                     break;
                                 }
                             }
