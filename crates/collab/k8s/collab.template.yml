@@ -47,19 +47,6 @@ spec:
     metadata:
       labels:
         app: ${ZED_SERVICE_NAME}
-      annotations:
-        ad.datadoghq.com/collab.check_names: |
-          ["openmetrics"]
-        ad.datadoghq.com/collab.init_configs: |
-          [{}]
-        ad.datadoghq.com/collab.instances: |
-          [
-              {
-              "openmetrics_endpoint": "http://%%host%%:%%port%%/metrics",
-              "namespace": "collab_${ZED_KUBE_NAMESPACE}",
-              "metrics": [".*"]
-              }
-          ]
     spec:
       containers:
         - name: ${ZED_SERVICE_NAME}
