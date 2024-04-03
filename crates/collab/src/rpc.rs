@@ -5,8 +5,8 @@ use crate::{
     db::{
         self, dev_server, BufferId, Channel, ChannelId, ChannelRole, ChannelsForUser,
         CreatedChannelMessage, Database, DevServerId, InviteMemberResult, MembershipUpdated,
-        MessageId, NotificationId, Project, ProjectId, RemoveChannelMemberResult, ReplicaId,
-        RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
+        MessageId, NotificationId, Project, ProjectId, RemoteProjectId, RemoveChannelMemberResult,
+        ReplicaId, RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
     AppState, Error, RateLimit, RateLimiter, Result,
@@ -172,11 +172,22 @@ impl Session {
         UserSession::new(self)
     }
 
+    fn for_dev_server(self) -> Option<DevServerSession> {
+        DevServerSession::new(self)
+    }
+
     fn user_id(&self) -> Option<UserId> {
         match &self.principal {
             Principal::User(user) => Some(user.id),
             Principal::Impersonated { user, .. } => Some(user.id),
             Principal::DevServer(_) => None,
+        }
+    }
+
+    fn dev_server_id(&self) -> Option<DevServerId> {
+        match &self.principal {
+            Principal::User(_) | Principal::Impersonated { .. } => None,
+            Principal::DevServer(dev_server) => Some(dev_server.id),
         }
     }
 }
@@ -224,6 +235,30 @@ impl DerefMut for UserSession {
     }
 }
 
+struct DevServerSession(Session);
+
+impl DevServerSession {
+    pub fn new(s: Session) -> Option<Self> {
+        s.dev_server_id().map(|_| DevServerSession(s))
+    }
+    pub fn dev_server_id(&self) -> DevServerId {
+        self.0.dev_server_id().unwrap()
+    }
+}
+
+impl Deref for DevServerSession {
+    type Target = Session;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for DevServerSession {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 fn user_handler<M: RequestMessage, Fut>(
     handler: impl 'static + Send + Sync + Fn(M, Response<M>, UserSession) -> Fut,
 ) -> impl 'static + Send + Sync + Fn(M, Response<M>, Session) -> BoxFuture<'static, Result<()>>
@@ -238,6 +273,25 @@ where
                 Ok(handler(message, response, user_session).await?)
             } else {
                 Err(Error::Internal(anyhow!("must be a user")))
+            }
+        })
+    }
+}
+
+fn dev_server_handler<M: RequestMessage, Fut>(
+    handler: impl 'static + Send + Sync + Fn(M, Response<M>, DevServerSession) -> Fut,
+) -> impl 'static + Send + Sync + Fn(M, Response<M>, Session) -> BoxFuture<'static, Result<()>>
+where
+    Fut: Send + Future<Output = Result<()>>,
+{
+    let handler = Arc::new(handler);
+    move |message, response, session| {
+        let handler = handler.clone();
+        Box::pin(async move {
+            if let Some(dev_server_session) = session.for_dev_server() {
+                Ok(handler(message, response, dev_server_session).await?)
+            } else {
+                Err(Error::Internal(anyhow!("must be a dev server")))
             }
         })
     }
@@ -324,12 +378,13 @@ impl Server {
             .add_request_handler(user_handler(cancel_call))
             .add_message_handler(user_message_handler(decline_call))
             .add_request_handler(user_handler(update_participant_location))
-            .add_request_handler(share_project)
+            .add_request_handler(user_handler(share_project))
             .add_message_handler(unshare_project)
             .add_request_handler(user_handler(join_project))
             .add_request_handler(user_handler(join_hosted_project))
             .add_request_handler(user_handler(create_remote_project))
             .add_request_handler(user_handler(create_dev_server))
+            .add_request_handler(dev_server_handler(share_remote_project))
             .add_message_handler(user_message_handler(leave_project))
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
@@ -1775,7 +1830,7 @@ async fn update_participant_location(
 async fn share_project(
     request: proto::ShareProject,
     response: Response<proto::ShareProject>,
-    session: Session,
+    session: UserSession,
 ) -> Result<()> {
     let (project_id, room) = &*session
         .db()
@@ -1810,6 +1865,29 @@ async fn unshare_project(message: proto::UnshareProject, session: Session) -> Re
         |conn_id| session.peer.send(conn_id, message.clone()),
     );
     room_updated(&room, &session.peer);
+
+    Ok(())
+}
+
+/// Share a project into the room.
+async fn share_remote_project(
+    request: proto::ShareRemoteProject,
+    response: Response<proto::ShareRemoteProject>,
+    session: DevServerSession,
+) -> Result<()> {
+    let remote_project = session
+        .db()
+        .await
+        .share_remote_project(
+            RemoteProjectId::from_proto(request.remote_project_id),
+            session.dev_server_id(),
+            session.connection_id,
+            &request.worktrees,
+        )
+        .await?;
+    response.send(proto::ShareProjectResponse {
+        project_id: project_id.to_proto(),
+    })?;
 
     Ok(())
 }

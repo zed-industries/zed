@@ -302,6 +302,7 @@ messages!(
     (CreateDevServer, Foreground),
     (CreateDevServerResponse, Foreground),
     (DevServerInstructions, Foreground),
+    (ShareRemoteProject, Foreground),
 );
 
 request_messages!(
@@ -395,6 +396,7 @@ request_messages!(
     (BlameBuffer, BlameBufferResponse),
     (CreateRemoteProject, Ack),
     (CreateDevServer, CreateDevServerResponse),
+    (ShareRemoteProject, ShareProjectResponse),
 );
 
 entity_messages!(

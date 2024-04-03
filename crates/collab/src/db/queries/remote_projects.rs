@@ -1,8 +1,12 @@
-use rpc::proto;
-use sea_orm::{ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+use anyhow::anyhow;
+use rpc::{proto, ConnectionId};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
+};
 
 use super::{
-    channel, project, remote_project, ChannelId, Database, DevServerId, RemoteProjectId, UserId,
+    channel, project, remote_project, worktree, ChannelId, Database, DevServerId, ProjectId,
+    RemoteProjectId, ServerId, UserId,
 };
 
 impl Database {
@@ -14,9 +18,7 @@ impl Database {
             Ok(remote_project::Entity::find_by_id(remote_project_id)
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| {
-                    anyhow::anyhow!("no remote project with id {}", remote_project_id)
-                })?)
+                .ok_or_else(|| anyhow!("no remote project with id {}", remote_project_id))?)
         })
         .await
     }
@@ -93,6 +95,58 @@ impl Database {
             .await?;
 
             Ok((channel, project))
+        })
+        .await
+    }
+
+    pub async fn share_remote_project(
+        &self,
+        remote_project_id: RemoteProjectId,
+        dev_server_id: DevServerId,
+        connection: ConnectionId,
+        worktrees: &[proto::WorktreeMetadata],
+    ) -> crate::Result<proto::RemoteProject> {
+        self.transaction(|tx| async move {
+            let remote_project = remote_project::Entity::find_by_id(remote_project_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no remote project with id {}", remote_project_id))?;
+
+            if remote_project.dev_server_id != dev_server_id {
+                return Err(anyhow!("remote project shared from wrong server"))?;
+            }
+
+            let project = project::ActiveModel {
+                room_id: ActiveValue::Set(None),
+                host_user_id: ActiveValue::Set(None),
+                host_connection_id: ActiveValue::set(Some(connection.id as i32)),
+                host_connection_server_id: ActiveValue::set(Some(ServerId(
+                    connection.owner_id as i32,
+                ))),
+                id: ActiveValue::NotSet,
+                hosted_project_id: ActiveValue::Set(None),
+                remote_project_id: ActiveValue::Set(Some(remote_project_id)),
+            }
+            .insert(&*tx)
+            .await?;
+
+            if !worktrees.is_empty() {
+                worktree::Entity::insert_many(worktrees.iter().map(|worktree| {
+                    worktree::ActiveModel {
+                        id: ActiveValue::set(worktree.id as i64),
+                        project_id: ActiveValue::set(project.id),
+                        abs_path: ActiveValue::set(worktree.abs_path.clone()),
+                        root_name: ActiveValue::set(worktree.root_name.clone()),
+                        visible: ActiveValue::set(worktree.visible),
+                        scan_id: ActiveValue::set(0),
+                        completed_scan_id: ActiveValue::set(0),
+                    }
+                }))
+                .exec(&*tx)
+                .await?;
+            }
+
+            Ok(remote_project.to_proto(Some(project)))
         })
         .await
     }

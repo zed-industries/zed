@@ -214,7 +214,8 @@ message Envelope {
         CreateDevServer create_dev_server = 175;
         CreateDevServerResponse create_dev_server_response = 176;
 
-        DevServerInstructions dev_server_instructions = 177; // Current max
+        DevServerInstructions dev_server_instructions = 177;
+        ShareRemoteProject share_remote_project = 178; // Current max
     }
 
     reserved 158 to 161;
@@ -451,6 +452,11 @@ message CreateDevServerResponse {
 
 message DevServerInstructions {
     repeated RemoteProject projects = 1;
+}
+
+message ShareRemoteProject {
+    uint64 remote_project_id = 1;
+    repeated WorktreeMetadata worktrees = 2;
 }
 
 message JoinProjectResponse {

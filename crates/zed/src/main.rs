@@ -255,7 +255,7 @@ fn main() {
             fs: fs.clone(),
             build_window_options,
             workspace_store,
-            node_runtime,
+            node_runtime: node_runtime.clone(),
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
@@ -305,7 +305,7 @@ fn main() {
                     languages: languages.clone(),
                     user_store: user_store.clone(),
                     fs: fs.clone(),
-                    node_runtime,
+                    node_runtime: node_runtime.clone(),
                 },
                 cx,
             );

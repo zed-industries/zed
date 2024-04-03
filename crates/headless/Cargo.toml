@@ -12,9 +12,6 @@ workspace = true
 path = "src/headless.rs"
 doctest = false
 
-[features]
-test-support = ["gpui/test-support", "rpc/test-support", "client/test-support", "util/test-support"]
-
 [dependencies]
 anyhow.workspace = true
 client.workspace =true
@@ -23,6 +20,7 @@ rpc.workspace = true
 util.workspace = true
 node_runtime.workspace = true
 language.workspace = true
+project.workspace = true
 fs.workspace = true
 
 [dev-dependencies]
