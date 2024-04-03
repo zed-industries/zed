@@ -4,7 +4,7 @@ use editor::Editor;
 use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, View, ViewContext,
 };
-use ui::{prelude::*, Checkbox};
+use ui::{prelude::*, CheckboxWithLabel};
 use workspace::{notifications::DetachAndPromptErr, ModalView};
 
 pub struct DevServerModal {
@@ -100,6 +100,14 @@ impl DevServerModal {
         })
         .detach_and_log_err(cx);
     }
+
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(DismissEvent)
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        self.create_remote_project(cx);
+    }
 }
 impl ModalView for DevServerModal {}
 
@@ -119,8 +127,8 @@ impl Render for DevServerModal {
             .track_focus(&self.focus_handle)
             .elevation_2(cx)
             .key_context("DevServerModal")
-            // .on_action(cx.listener(Self::cancel))
-            // .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
             .w_96()
             .child(
                 v_flex()
@@ -142,24 +150,23 @@ impl Render for DevServerModal {
                     .child("Dev Server")
                     .children(dev_servers.iter().map(|dev_server| {
                         let dev_server_id = dev_server.id;
-                        h_flex()
-                            .gap_2()
-                            .child(Checkbox::new(
-                                ("selected-dev-server", dev_server.id.0),
-                                if Some(dev_server.id) == self.selected_dev_server_id {
-                                    Selection::Selected
+                        CheckboxWithLabel::new(
+                            ("selected-dev-server", dev_server.id.0),
+                            Label::new(dev_server.name.clone()),
+                            if Some(dev_server.id) == self.selected_dev_server_id {
+                                Selection::Selected
+                            } else {
+                                Selection::Unselected
+                            },
+                            cx.listener(move |this, _, cx| {
+                                if this.selected_dev_server_id == Some(dev_server_id) {
+                                    this.selected_dev_server_id = None;
                                 } else {
-                                    Selection::Unselected
-                                },
-                            ))
-                            .child(dev_server.name.clone())
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(move |this, _, cx| {
                                     this.selected_dev_server_id = Some(dev_server_id);
-                                    cx.notify();
-                                }),
-                            )
+                                }
+                                cx.notify();
+                            }),
+                        )
                     }))
                     .when(!self.creating_dev_server, |container| {
                         container.child(
