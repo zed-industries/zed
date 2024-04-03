@@ -26,7 +26,7 @@ mod wrap_map;
 use crate::EditorStyle;
 use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
 pub use block_map::{BlockMap, BlockPoint};
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle};
 use inlay_map::InlayMap;
@@ -63,7 +63,7 @@ pub trait ToDisplayPoint {
 }
 
 type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
-type InlayHighlights = BTreeMap<TypeId, HashMap<InlayId, (HighlightStyle, InlayHighlight)>>;
+type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
@@ -257,10 +257,15 @@ impl DisplayMap {
         style: HighlightStyle,
     ) {
         for highlight in highlights {
-            self.inlay_highlights
-                .entry(type_id)
-                .or_default()
-                .insert(highlight.inlay, (style, highlight));
+            let update = self.inlay_highlights.update(&type_id, |highlights| {
+                highlights.insert(highlight.inlay, (style, highlight.clone()))
+            });
+            if update.is_none() {
+                self.inlay_highlights.insert(
+                    type_id,
+                    TreeMap::from_ordered_entries([(highlight.inlay, (style, highlight))]),
+                );
+            }
         }
     }
 
@@ -354,6 +359,7 @@ pub struct HighlightedChunk<'a> {
     pub is_tab: bool,
 }
 
+#[derive(Clone)]
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
     pub fold_snapshot: fold_map::FoldSnapshot,
@@ -872,7 +878,7 @@ impl DisplaySnapshot {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn inlay_highlights<Tag: ?Sized + 'static>(
         &self,
-    ) -> Option<&HashMap<InlayId, (HighlightStyle, InlayHighlight)>> {
+    ) -> Option<&TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
         let type_id = TypeId::of::<Tag>();
         self.inlay_highlights.get(&type_id)
     }
@@ -1093,7 +1099,7 @@ pub mod tests {
                                         position,
                                         height,
                                         disposition,
-                                        render: Arc::new(|_| div().into_any()),
+                                        render: Box::new(|_| div().into_any()),
                                     }
                                 })
                                 .collect::<Vec<_>>();
