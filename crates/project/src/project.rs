@@ -4559,7 +4559,7 @@ impl Project {
 
             // Apply language-specific formatting using either the primary language server
             // or external command.
-            // Except for cod
+            // Except for code actions, which are applied with all connected language servers.
             let primary_language_server = adapters_and_servers
                 .first()
                 .cloned()
