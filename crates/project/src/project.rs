@@ -55,7 +55,7 @@ use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    MessageActionItem, OneOf, ServerHealthStatus, ServerStatus,
+    MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus, ServerStatus,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -5216,58 +5216,24 @@ impl Project {
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<Hover>> {
-        fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
-            hover
-                .contents
-                .retain(|hover_block| !hover_block.text.trim().is_empty());
-            if hover.contents.is_empty() {
-                None
-            } else {
-                Some(hover)
-            }
-        }
-
         if self.is_local() {
-            let snapshot = buffer.read(cx).snapshot();
-            let offset = position.to_offset(&snapshot);
-            let scope = snapshot.language_scope_at(offset);
-
-            let mut hover_responses = self
-                .language_servers_for_buffer(buffer.read(cx), cx)
-                .filter(|(_, server)| match server.capabilities().hover_provider {
+            let all_actions_task = self.request_multiple_lsp_locally(
+                &buffer,
+                Some(position),
+                |server_capabilities| match server_capabilities.hover_provider {
                     Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
                     Some(lsp::HoverProviderCapability::Options(_)) => true,
                     None => false,
-                })
-                .filter(|(adapter, _)| {
-                    scope
-                        .as_ref()
-                        .map(|scope| scope.language_allowed(&adapter.name))
-                        .unwrap_or(true)
-                })
-                .map(|(_, server)| server.server_id())
-                .map(|server_id| {
-                    self.request_lsp(
-                        buffer.clone(),
-                        LanguageServerToQuery::Other(server_id),
-                        GetHover { position },
-                        cx,
-                    )
-                })
-                .collect::<FuturesUnordered<_>>();
-
+                },
+                GetHover { position },
+                cx,
+            );
             cx.spawn(|_, _| async move {
-                let mut hovers = Vec::with_capacity(hover_responses.len());
-                while let Some(hover_response) = hover_responses.next().await {
-                    if let Some(hover) = hover_response
-                        .log_err()
-                        .flatten()
-                        .and_then(remove_empty_hover_blocks)
-                    {
-                        hovers.push(hover);
-                    }
-                }
-                hovers
+                all_actions_task
+                    .await
+                    .into_iter()
+                    .filter_map(|hover| remove_empty_hover_blocks(hover?))
+                    .collect()
             })
         } else if let Some(project_id) = self.remote_id() {
             let request_task = self.client().request(proto::MultiLspQuery {
@@ -5690,40 +5656,17 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<CodeAction>> {
         if self.is_local() {
-            let snapshot = buffer_handle.read(cx).snapshot();
-            let offset = range.start.to_offset(&snapshot);
-            let scope = snapshot.language_scope_at(offset);
-
-            let mut code_action_responses = self
-                .language_servers_for_buffer(buffer_handle.read(cx), cx)
-                .filter(|(_, server)| GetCodeActions::supports_code_actions(server.capabilities()))
-                .filter(|(adapter, _)| {
-                    scope
-                        .as_ref()
-                        .map(|scope| scope.language_allowed(&adapter.name))
-                        .unwrap_or(true)
-                })
-                .map(|(_, server)| server.server_id())
-                .map(|server_id| {
-                    self.request_lsp(
-                        buffer_handle.clone(),
-                        LanguageServerToQuery::Other(server_id),
-                        GetCodeActions {
-                            range: range.clone(),
-                            kinds: None,
-                        },
-                        cx,
-                    )
-                })
-                .collect::<FuturesUnordered<_>>();
-
-            cx.spawn(|_, _| async move {
-                let mut code_actions = Vec::with_capacity(code_action_responses.len());
-                while let Some(code_action_response) = code_action_responses.next().await {
-                    code_actions.extend(code_action_response.log_err().unwrap_or_default());
-                }
-                code_actions
-            })
+            let all_actions_task = self.request_multiple_lsp_locally(
+                &buffer_handle,
+                Some(range.start),
+                GetCodeActions::supports_code_actions,
+                GetCodeActions {
+                    range: range.clone(),
+                    kinds: None,
+                },
+                cx,
+            );
+            cx.spawn(|_, _| async move { all_actions_task.await.into_iter().flatten().collect() })
         } else if let Some(project_id) = self.remote_id() {
             let request_task = self.client().request(proto::MultiLspQuery {
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
@@ -6758,6 +6701,57 @@ impl Project {
         Task::ready(Ok(Default::default()))
     }
 
+    fn request_multiple_lsp_locally<P, R>(
+        &self,
+        buffer: &Model<Buffer>,
+        position: Option<P>,
+        server_capabilities_check: fn(&ServerCapabilities) -> bool,
+        request: R,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> Task<Vec<R::Response>>
+    where
+        P: ToOffset,
+        R: LspCommand + Clone,
+        <R::LspRequest as lsp::request::Request>::Result: Send,
+        <R::LspRequest as lsp::request::Request>::Params: Send,
+    {
+        if !self.is_local() {
+            debug_panic!("Should not request multiple lsp commands in non-local project");
+            return Task::ready(Vec::new());
+        }
+        let snapshot = buffer.read(cx).snapshot();
+        let scope = position.and_then(|position| snapshot.language_scope_at(position));
+        let mut response_results = self
+            .language_servers_for_buffer(buffer.read(cx), cx)
+            .filter(|(_, server)| server_capabilities_check(server.capabilities()))
+            .filter(|(adapter, _)| {
+                scope
+                    .as_ref()
+                    .map(|scope| scope.language_allowed(&adapter.name))
+                    .unwrap_or(true)
+            })
+            .map(|(_, server)| server.server_id())
+            .map(|server_id| {
+                self.request_lsp(
+                    buffer.clone(),
+                    LanguageServerToQuery::Other(server_id),
+                    request.clone(),
+                    cx,
+                )
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        return cx.spawn(|_, _| async move {
+            let mut responses = Vec::with_capacity(response_results.len());
+            while let Some(response_result) = response_results.next().await {
+                if let Some(response) = response_result.log_err() {
+                    responses.push(response);
+                }
+            }
+            responses
+        });
+    }
+
     fn send_lsp_proto_request<R: LspCommand>(
         &self,
         buffer: Model<Buffer>,
@@ -7702,15 +7696,17 @@ impl Project {
     }
 
     async fn handle_multi_lsp_query(
-        this: Model<Self>,
+        project: Model<Self>,
         envelope: TypedEnvelope<proto::MultiLspQuery>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::MultiLspQueryResponse> {
+        let sender_id = envelope.original_sender_id()?;
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
-        let buffer = this.update(&mut cx, |this, _cx| {
-            this.opened_buffers
+        let buffer = project.update(&mut cx, |project, _cx| {
+            project
+                .opened_buffers
                 .get(&buffer_id)
                 .and_then(|buffer| buffer.upgrade())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
@@ -7720,13 +7716,95 @@ impl Project {
                 buffer.wait_for_version(version.clone())
             })?
             .await?;
-
+        let buffer_version = buffer.update(&mut cx, |buffer, _| buffer.version())?;
+        match envelope
+            .payload
+            .strategy
+            .context("invalid request without the strategy")?
+        {
+            proto::multi_lsp_query::Strategy::All(_) => {
+                // currently, there's only one multiple language servers query strategy,
+                // so just ensure it's specified correctly
+            }
+        }
         match envelope.payload.request {
-            Some(proto::multi_lsp_query::Request::GetHover(get_hover)) => {}
-            Some(proto::multi_lsp_query::Request::GetCodeActions(get_code_actions)) => {}
+            Some(proto::multi_lsp_query::Request::GetHover(get_hover)) => {
+                let get_hover =
+                    GetHover::from_proto(get_hover, project.clone(), buffer.clone(), cx.clone())
+                        .await?;
+                let all_hovers = project
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_hover.position),
+                            |server_capabilities| match server_capabilities.hover_provider {
+                                Some(lsp::HoverProviderCapability::Simple(enabled)) => enabled,
+                                Some(lsp::HoverProviderCapability::Options(_)) => true,
+                                None => false,
+                            },
+                            get_hover,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter()
+                    .filter_map(|hover| remove_empty_hover_blocks(hover?));
+                project.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: all_hovers
+                        .map(|hover| proto::LspResponse {
+                            response: Some(proto::lsp_response::Response::GetHoverResponse(
+                                GetHover::response_to_proto(
+                                    Some(hover),
+                                    project,
+                                    sender_id,
+                                    &buffer_version,
+                                    cx,
+                                ),
+                            )),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetCodeActions(get_code_actions)) => {
+                let get_code_actions = GetCodeActions::from_proto(
+                    get_code_actions,
+                    project.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let all_actions = project
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(get_code_actions.range.start),
+                            GetCodeActions::supports_code_actions,
+                            get_code_actions,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                project.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: all_actions
+                        .map(|code_actions| proto::LspResponse {
+                            response: Some(proto::lsp_response::Response::GetCodeActionsResponse(
+                                GetCodeActions::response_to_proto(
+                                    code_actions,
+                                    project,
+                                    sender_id,
+                                    &buffer_version,
+                                    cx,
+                                ),
+                            )),
+                        })
+                        .collect(),
+                })
+            }
             None => anyhow::bail!("empty multi lsp query request"),
         }
-        todo!("TODO kb use something similar to what hovers and code actions use, deduplicate it")
     }
 
     async fn handle_unshare_project(
@@ -10262,5 +10340,16 @@ fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> gi
         entries,
         permalinks,
         messages,
+    }
+}
+
+fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
+    hover
+        .contents
+        .retain(|hover_block| !hover_block.text.trim().is_empty());
+    if hover.contents.is_empty() {
+        None
+    } else {
+        Some(hover)
     }
 }
