@@ -12,4 +12,4 @@ language = "HTML"
 
 [grammars.html]
 repository = "https://github.com/tree-sitter/tree-sitter-html"
-commit = "d93af487cc75120c89257195e6be46c999c6ba18"
+commit = "bfa075d83c6b97cd48440b3829ab8d24a2319809"
