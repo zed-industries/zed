@@ -9,7 +9,7 @@ impl zed::Extension for OcamlExtension {
 
     fn language_server_command(
         &mut self,
-        _config: zed::LanguageServerConfig,
+        _language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let path = worktree
@@ -21,6 +21,15 @@ impl zed::Extension for OcamlExtension {
             args: Vec::new(),
             env: Default::default(),
         })
+    }
+
+    fn label_for_completion(
+        &self,
+        _language_server_id: &zed::LanguageServerId,
+        _completion: zed::Completion,
+    ) -> Option<zed::CodeLabel> {
+        // TODO: Add implementation.
+        None
     }
 }
 

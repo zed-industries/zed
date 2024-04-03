@@ -1,3 +1,5 @@
+use core::fmt;
+
 pub use wit::*;
 pub type Result<T, E = String> = core::result::Result<T, E>;
 
@@ -8,16 +10,24 @@ pub trait Extension: Send + Sync {
 
     fn language_server_command(
         &mut self,
-        config: LanguageServerConfig,
+        language_server_id: &LanguageServerId,
         worktree: &Worktree,
     ) -> Result<Command>;
 
     fn language_server_initialization_options(
         &mut self,
-        _config: LanguageServerConfig,
+        _language_server_id: &LanguageServerId,
         _worktree: &Worktree,
     ) -> Result<Option<String>> {
         Ok(None)
+    }
+
+    fn label_for_completion(
+        &self,
+        _language_server_id: &LanguageServerId,
+        _completion: Completion,
+    ) -> Option<CodeLabel> {
+        None
     }
 }
 
@@ -53,7 +63,7 @@ pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "
 mod wit {
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.0.4",
+        path: "./wit/since_v0.0.6",
     });
 }
 
@@ -63,16 +73,43 @@ struct Component;
 
 impl wit::Guest for Component {
     fn language_server_command(
-        config: wit::LanguageServerConfig,
+        language_server_id: String,
         worktree: &wit::Worktree,
     ) -> Result<wit::Command> {
-        extension().language_server_command(config, worktree)
+        let language_server_id = LanguageServerId(language_server_id);
+        extension().language_server_command(&language_server_id, worktree)
     }
 
     fn language_server_initialization_options(
-        config: LanguageServerConfig,
+        language_server_id: String,
         worktree: &Worktree,
     ) -> Result<Option<String>, String> {
-        extension().language_server_initialization_options(config, worktree)
+        let language_server_id = LanguageServerId(language_server_id);
+        extension().language_server_initialization_options(&language_server_id, worktree)
+    }
+
+    fn labels_for_completions(
+        language_server_id: String,
+        completions: Vec<Completion>,
+    ) -> Result<Vec<Option<CodeLabel>>, String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        let mut labels = Vec::new();
+        for (ix, completion) in completions.into_iter().enumerate() {
+            let label = extension().label_for_completion(&language_server_id, completion);
+            if let Some(label) = label {
+                labels.resize(ix + 1, None);
+                *labels.last_mut().unwrap() = Some(label);
+            }
+        }
+        Ok(labels)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+pub struct LanguageServerId(String);
+
+impl fmt::Display for LanguageServerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
