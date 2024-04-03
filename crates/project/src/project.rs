@@ -6853,10 +6853,12 @@ impl Project {
                         project
                             .update(&mut cx, |project, cx| project.add_worktree(&worktree, cx))?;
 
-                        cx.update(|cx| {
-                            cx.add_recent_document(&path);
-                        })
-                        .log_err();
+                        if visible {
+                            cx.update(|cx| {
+                                cx.add_recent_document(&path);
+                            })
+                            .log_err();
+                        }
 
                         Ok(worktree)
                     }
