@@ -5,6 +5,7 @@ use crate::{
     platform::blade::BladeRenderer, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
     Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams,
+    X11Client, X11ClientState,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
@@ -17,7 +18,7 @@ use x11rb::{
 };
 
 use std::{
-    cell::RefCell,
+    cell::{Ref, RefCell, RefMut},
     ffi::c_void,
     mem,
     num::NonZeroU32,
@@ -288,9 +289,8 @@ impl X11WindowState {
             }
         }
 
-        let mut callbacks = self.callbacks.borrow_mut();
         if let Some((content_size, scale_factor)) = resize_args {
-            if let Some(ref mut fun) = callbacks.resize {
+            if let Some(ref mut fun) = state.callbacks.resize {
                 fun(content_size, scale_factor)
             }
         }

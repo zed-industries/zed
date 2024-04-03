@@ -37,12 +37,11 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::super::DOUBLE_CLICK_INTERVAL;
-use crate::platform::linux::client::Client;
-use crate::platform::linux::util::is_within_click_distance;
+use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::{WaylandDecorationState, WaylandWindow};
-use crate::platform::{LinuxPlatformInner, PlatformWindow};
-use crate::WindowParams;
+use crate::platform::linux::LinuxClient;
+use crate::platform::PlatformWindow;
 use crate::{
     platform::linux::wayland::window::WaylandWindowState, AnyWindowHandle, CursorStyle, DisplayId,
     KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
@@ -50,6 +49,7 @@ use crate::{
     PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase,
 };
 use crate::{point, px};
+use crate::{LinuxCommon, WindowParams};
 
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
@@ -63,7 +63,7 @@ pub(crate) struct WaylandClientStateInner {
     decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     windows: Vec<(xdg_surface::XdgSurface, Rc<WaylandWindowState>)>,
     outputs: Vec<(wl_output::WlOutput, Rc<RefCell<OutputState>>)>,
-    platform_inner: Rc<LinuxPlatformInner>,
+    platform_inner: LinuxCommon,
     keymap_state: Option<xkb::State>,
     click_state: ClickState,
     repeat: KeyRepeat,
@@ -103,10 +103,10 @@ pub(crate) struct KeyRepeat {
     current_keysym: Option<xkb::Keysym>,
 }
 
-pub(crate) struct WaylandClient {
-    platform_inner: Rc<LinuxPlatformInner>,
-    state: WaylandClientState,
-    qh: Arc<QueueHandle<WaylandClientState>>,
+pub struct WaylandClient {
+    // platform_inner: Rc<LinuxPlatformInner>,
+    // state: WaylandClientState,
+    // qh: Arc<QueueHandle<WaylandClientState>>,
 }
 
 const WL_SEAT_MIN_VERSION: u32 = 4;
@@ -126,111 +126,111 @@ fn wl_seat_version(version: u32) -> u32 {
 }
 
 impl WaylandClient {
-    pub(crate) fn new(linux_platform_inner: Rc<LinuxPlatformInner>) -> Self {
-        let conn = Connection::connect_to_env().unwrap();
+    pub(crate) fn new() -> Self {
+        // let conn = Connection::connect_to_env().unwrap();
 
-        let (globals, mut event_queue) = registry_queue_init::<WaylandClientState>(&conn).unwrap();
-        let qh = event_queue.handle();
-        let mut outputs = Vec::new();
+        // let (globals, mut event_queue) = registry_queue_init::<WaylandClientState>(&conn).unwrap();
+        // let qh = event_queue.handle();
+        // let mut outputs = Vec::new();
 
-        globals.contents().with_list(|list| {
-            for global in list {
-                match &global.interface[..] {
-                    "wl_seat" => {
-                        globals.registry().bind::<wl_seat::WlSeat, _, _>(
-                            global.name,
-                            wl_seat_version(global.version),
-                            &qh,
-                            (),
-                        );
-                    }
-                    "wl_output" => outputs.push((
-                        globals.registry().bind::<wl_output::WlOutput, _, _>(
-                            global.name,
-                            WL_OUTPUT_VERSION,
-                            &qh,
-                            (),
-                        ),
-                        Rc::new(RefCell::new(OutputState::default())),
-                    )),
-                    _ => {}
-                }
-            }
-        });
+        // globals.contents().with_list(|list| {
+        //     for global in list {
+        //         match &global.interface[..] {
+        //             "wl_seat" => {
+        //                 globals.registry().bind::<wl_seat::WlSeat, _, _>(
+        //                     global.name,
+        //                     wl_seat_version(global.version),
+        //                     &qh,
+        //                     (),
+        //                 );
+        //             }
+        //             "wl_output" => outputs.push((
+        //                 globals.registry().bind::<wl_output::WlOutput, _, _>(
+        //                     global.name,
+        //                     WL_OUTPUT_VERSION,
+        //                     &qh,
+        //                     (),
+        //                 ),
+        //                 Rc::new(RefCell::new(OutputState::default())),
+        //             )),
+        //             _ => {}
+        //         }
+        //     }
+        // });
 
-        let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
-        let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
+        // let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
+        // let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
-        let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
-            compositor: globals
-                .bind(&qh, 1..=wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE, ())
-                .unwrap(),
-            wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
-            shm: globals.bind(&qh, 1..=1, ()).unwrap(),
-            outputs,
-            viewporter: globals.bind(&qh, 1..=1, ()).ok(),
-            fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
-            decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
-            windows: Vec::new(),
-            platform_inner: Rc::clone(&linux_platform_inner),
-            keymap_state: None,
-            click_state: ClickState {
-                last_click: Instant::now(),
-                last_location: Point::new(px(0.0), px(0.0)),
-                current_count: 0,
-            },
-            repeat: KeyRepeat {
-                characters_per_second: 16,
-                delay: Duration::from_millis(500),
-                current_id: 0,
-                current_keysym: None,
-            },
-            modifiers: Modifiers {
-                shift: false,
-                control: false,
-                alt: false,
-                function: false,
-                platform: false,
-            },
-            scroll_direction: -1.0,
-            axis_source: AxisSource::Wheel,
-            mouse_location: point(px(0.0), px(0.0)),
-            button_pressed: None,
-            mouse_focused_window: None,
-            keyboard_focused_window: None,
-            loop_handle: Rc::clone(&linux_platform_inner.loop_handle),
-        }));
+        // let mut state_inner = Rc::new(RefCell::new(WaylandClientStateInner {
+        //     compositor: globals
+        //         .bind(&qh, 1..=wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE, ())
+        //         .unwrap(),
+        //     wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
+        //     shm: globals.bind(&qh, 1..=1, ()).unwrap(),
+        //     outputs,
+        //     viewporter: globals.bind(&qh, 1..=1, ()).ok(),
+        //     fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
+        //     decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
+        //     windows: Vec::new(),
+        //     platform_inner: Rc::clone(&linux_platform_inner),
+        //     keymap_state: None,
+        //     click_state: ClickState {
+        //         last_click: Instant::now(),
+        //         last_location: Point::new(px(0.0), px(0.0)),
+        //         current_count: 0,
+        //     },
+        //     repeat: KeyRepeat {
+        //         characters_per_second: 16,
+        //         delay: Duration::from_millis(500),
+        //         current_id: 0,
+        //         current_keysym: None,
+        //     },
+        //     modifiers: Modifiers {
+        //         shift: false,
+        //         control: false,
+        //         alt: false,
+        //         function: false,
+        //         platform: false,
+        //     },
+        //     scroll_direction: -1.0,
+        //     axis_source: AxisSource::Wheel,
+        //     mouse_location: point(px(0.0), px(0.0)),
+        //     button_pressed: None,
+        //     mouse_focused_window: None,
+        //     keyboard_focused_window: None,
+        //     loop_handle: Rc::clone(&linux_platform_inner.loop_handle),
+        // }));
 
-        let mut cursor_state = Rc::new(RefCell::new(CursorState {
-            cursor_icon_name: "arrow".to_string(),
-            cursor: None,
-        }));
+        // let mut cursor_state = Rc::new(RefCell::new(CursorState {
+        //     cursor_icon_name: "arrow".to_string(),
+        //     cursor: None,
+        // }));
 
-        let source = WaylandSource::new(conn, event_queue);
+        // let source = WaylandSource::new(conn, event_queue);
 
-        let mut state = WaylandClientState {
-            client_state_inner: Rc::clone(&state_inner),
-            cursor_state: Rc::clone(&cursor_state),
-            clipboard: Rc::new(RefCell::new(clipboard)),
-            primary: Rc::new(RefCell::new(primary)),
-        };
-        let mut state_loop = state.clone();
-        linux_platform_inner
-            .loop_handle
-            .insert_source(source, move |_, queue, _| {
-                queue.dispatch_pending(&mut state_loop)
-            })
-            .unwrap();
+        // let mut state = WaylandClientState {
+        //     client_state_inner: Rc::clone(&state_inner),
+        //     cursor_state: Rc::clone(&cursor_state),
+        //     clipboard: Rc::new(RefCell::new(clipboard)),
+        //     primary: Rc::new(RefCell::new(primary)),
+        // };
+        // let mut state_loop = state.clone();
+        // linux_platform_inner
+        //     .loop_handle
+        //     .insert_source(source, move |_, queue, _| {
+        //         queue.dispatch_pending(&mut state_loop)
+        //     })
+        //     .unwrap();
 
         Self {
-            platform_inner: linux_platform_inner,
-            state,
-            qh: Arc::new(qh),
+            // platform_inner: linux_platform_inner,
+            // state,
+            // qh: Arc::new(qh),
         }
     }
 }
 
-impl Client for WaylandClient {
+impl LinuxClient for WaylandClient {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         Vec::new()
     }
@@ -248,59 +248,60 @@ impl Client for WaylandClient {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
-        let mut state = self.state.client_state_inner.borrow_mut();
+        todo!()
+        // let mut state = self.state.client_state_inner.borrow_mut();
 
-        let wl_surface = state.compositor.create_surface(&self.qh, ());
-        let xdg_surface = state.wm_base.get_xdg_surface(&wl_surface, &self.qh, ());
-        let toplevel = xdg_surface.get_toplevel(&self.qh, ());
-        let wl_surface = Arc::new(wl_surface);
+        // let wl_surface = state.compositor.create_surface(&self.qh, ());
+        // let xdg_surface = state.wm_base.get_xdg_surface(&wl_surface, &self.qh, ());
+        // let toplevel = xdg_surface.get_toplevel(&self.qh, ());
+        // let wl_surface = Arc::new(wl_surface);
 
-        // Attempt to set up window decorations based on the requested configuration
-        //
-        // Note that wayland compositors may either not support decorations at all, or may
-        // support them but not allow clients to choose whether they are enabled or not.
-        // We attempt to account for these cases here.
+        // // Attempt to set up window decorations based on the requested configuration
+        // //
+        // // Note that wayland compositors may either not support decorations at all, or may
+        // // support them but not allow clients to choose whether they are enabled or not.
+        // // We attempt to account for these cases here.
 
-        if let Some(decoration_manager) = state.decoration_manager.as_ref() {
-            // The protocol for managing decorations is present at least, but that doesn't
-            // mean that the compositor will allow us to use it.
+        // if let Some(decoration_manager) = state.decoration_manager.as_ref() {
+        //     // The protocol for managing decorations is present at least, but that doesn't
+        //     // mean that the compositor will allow us to use it.
 
-            let decoration =
-                decoration_manager.get_toplevel_decoration(&toplevel, &self.qh, xdg_surface.id());
+        //     let decoration =
+        //         decoration_manager.get_toplevel_decoration(&toplevel, &self.qh, xdg_surface.id());
 
-            // todo(linux) - options.titlebar is lacking information required for wayland.
-            //                Especially, whether a titlebar is wanted in itself.
-            //
-            // Removing the titlebar also removes the entire window frame (ie. the ability to
-            // close, move and resize the window [snapping still works]). This needs additional
-            // handling in Zed, in order to implement drag handlers on a titlebar element.
-            //
-            // Since all of this handling is not present, we request server-side decorations
-            // for now as a stopgap solution.
-            decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ServerSide);
-        }
+        //     // todo(linux) - options.titlebar is lacking information required for wayland.
+        //     //                Especially, whether a titlebar is wanted in itself.
+        //     //
+        //     // Removing the titlebar also removes the entire window frame (ie. the ability to
+        //     // close, move and resize the window [snapping still works]). This needs additional
+        //     // handling in Zed, in order to implement drag handlers on a titlebar element.
+        //     //
+        //     // Since all of this handling is not present, we request server-side decorations
+        //     // for now as a stopgap solution.
+        //     decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ServerSide);
+        // }
 
-        let viewport = state
-            .viewporter
-            .as_ref()
-            .map(|viewporter| viewporter.get_viewport(&wl_surface, &self.qh, ()));
+        // let viewport = state
+        //     .viewporter
+        //     .as_ref()
+        //     .map(|viewporter| viewporter.get_viewport(&wl_surface, &self.qh, ()));
 
-        wl_surface.frame(&self.qh, wl_surface.clone());
-        wl_surface.commit();
+        // wl_surface.frame(&self.qh, wl_surface.clone());
+        // wl_surface.commit();
 
-        let window_state: Rc<WaylandWindowState> = Rc::new(WaylandWindowState::new(
-            wl_surface.clone(),
-            viewport,
-            Arc::new(toplevel),
-            options,
-        ));
+        // let window_state: Rc<WaylandWindowState> = Rc::new(WaylandWindowState::new(
+        //     wl_surface.clone(),
+        //     viewport,
+        //     Arc::new(toplevel),
+        //     options,
+        // ));
 
-        if let Some(fractional_scale_manager) = state.fractional_scale_manager.as_ref() {
-            fractional_scale_manager.get_fractional_scale(&wl_surface, &self.qh, xdg_surface.id());
-        }
+        // if let Some(fractional_scale_manager) = state.fractional_scale_manager.as_ref() {
+        //     fractional_scale_manager.get_fractional_scale(&wl_surface, &self.qh, xdg_surface.id());
+        // }
 
-        state.windows.push((xdg_surface, Rc::clone(&window_state)));
-        Box::new(WaylandWindow(window_state))
+        // state.windows.push((xdg_surface, Rc::clone(&window_state)));
+        // Box::new(WaylandWindow(window_state))
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
@@ -329,15 +330,25 @@ impl Client for WaylandClient {
         }
         .to_string();
 
-        self.state.cursor_state.borrow_mut().cursor_icon_name = cursor_icon_name;
+        todo!()
+        // self.state.cursor_state.borrow_mut().cursor_icon_name = cursor_icon_name;
     }
 
-    fn get_clipboard(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
-        self.state.clipboard.clone()
+    fn get_clipboard(&self) -> &mut dyn ClipboardProvider {
+        // self.state.clipboard.clone()
+        todo!()
     }
 
-    fn get_primary(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
-        self.state.primary.clone()
+    fn get_primary(&self) -> &mut dyn ClipboardProvider {
+        todo!()
+    }
+
+    fn common(&self) -> &mut LinuxCommon {
+        todo!()
+    }
+
+    fn run(&self) {
+        todo!()
     }
 }
 
@@ -579,7 +590,8 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for WaylandClientState {
                     true
                 }
             });
-            state.platform_inner.loop_signal.stop();
+            todo!()
+            // state.platform_inner.loop_signal.stop();
         }
     }
 }

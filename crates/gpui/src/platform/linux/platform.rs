@@ -13,30 +13,49 @@ use std::{
 use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use async_task::Runnable;
+use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
+use copypasta::ClipboardProvider;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use wayland_client::Connection;
+use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
-use crate::platform::linux::client::Client;
 use crate::platform::linux::wayland::WaylandClient;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxTextSystem, Menu, PathPromptOptions, Pixels,
-    Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
-    SemanticVersion, Task, WindowOptions, WindowParams,
+    ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, LinuxTextSystem, Menu, Modifiers,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
+    PlatformWindow, Point, Result, SemanticVersion, Task, WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
 
-pub(super) const SCROLL_LINES: f64 = 3.0;
+pub(crate) const SCROLL_LINES: f64 = 3.0;
 
 // Values match the defaults on GTK.
 // Taken from https://github.com/GNOME/gtk/blob/main/gtk/gtksettings.c#L320
-pub(super) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
-pub(super) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
+pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
+pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
+
+pub trait LinuxClient {
+    fn common(&self) -> &mut LinuxCommon;
+    fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
+    fn open_window(
+        &self,
+        handle: AnyWindowHandle,
+        options: WindowParams,
+    ) -> Box<dyn PlatformWindow>;
+    fn set_cursor_style(&self, style: CursorStyle);
+    fn get_clipboard(&self) -> &mut dyn ClipboardProvider;
+    fn get_primary(&self) -> &mut dyn ClipboardProvider;
+    fn run(&self);
+}
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -51,102 +70,59 @@ pub(crate) struct Callbacks {
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
 
-pub(crate) struct LinuxPlatformInner {
-    pub(crate) event_loop: RefCell<EventLoop<'static, ()>>,
-    pub(crate) loop_handle: Rc<LoopHandle<'static, ()>>,
-    pub(crate) loop_signal: LoopSignal,
+pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<LinuxTextSystem>,
-    pub(crate) callbacks: RefCell<Callbacks>,
+    pub(crate) callbacks: Callbacks,
+    pub(crate) signal: LoopSignal,
 }
 
-pub(crate) struct LinuxPlatform {
-    client: Rc<dyn Client>,
-    inner: Rc<LinuxPlatformInner>,
-}
-
-impl Default for LinuxPlatform {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LinuxPlatform {
-    pub(crate) fn new() -> Self {
-        let wayland_display = env::var_os("WAYLAND_DISPLAY");
-        let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
-
+impl LinuxCommon {
+    pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(LinuxTextSystem::new());
-        let callbacks = RefCell::new(Callbacks::default());
-
-        let event_loop = EventLoop::try_new().unwrap();
-        event_loop
-            .handle()
-            .insert_source(main_receiver, |event, _, _| {
-                if let calloop::channel::Event::Msg(runnable) = event {
-                    runnable.run();
-                }
-            });
+        let callbacks = Callbacks::default();
 
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
 
-        let inner = Rc::new(LinuxPlatformInner {
-            loop_handle: Rc::new(event_loop.handle()),
-            loop_signal: event_loop.get_signal(),
-            event_loop: RefCell::new(event_loop),
+        let common = LinuxCommon {
             background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
             text_system,
             callbacks,
-        });
+            signal,
+        };
 
-        if use_wayland {
-            Self {
-                client: Rc::new(WaylandClient::new(Rc::clone(&inner))),
-                inner,
-            }
-        } else {
-            Self {
-                client: X11Client::new(Rc::clone(&inner)),
-                inner,
-            }
-        }
+        (common, main_receiver)
     }
 }
 
-const KEYRING_LABEL: &str = "zed-github-account";
-
-impl Platform for LinuxPlatform {
+impl<P: LinuxClient + 'static> Platform for P {
     fn background_executor(&self) -> BackgroundExecutor {
-        self.inner.background_executor.clone()
+        self.common().background_executor.clone()
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {
-        self.inner.foreground_executor.clone()
+        self.common().foreground_executor.clone()
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.inner.text_system.clone()
+        self.common().text_system.clone()
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
 
-        self.inner
-            .event_loop
-            .borrow_mut()
-            .run(None, &mut (), |&mut ()| {})
-            .expect("Run loop failed");
+        self.run();
 
-        if let Some(mut fun) = self.inner.callbacks.borrow_mut().quit.take() {
+        if let Some(mut fun) = self.common().callbacks.quit.take() {
             fun();
         }
     }
 
     fn quit(&self) {
-        self.inner.loop_signal.stop();
+        self.common().signal.stop();
     }
 
     fn restart(&self) {
@@ -201,15 +177,15 @@ impl Platform for LinuxPlatform {
     fn unhide_other_apps(&self) {}
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        self.client.primary_display()
+        self.primary_display()
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        self.client.displays()
+        self.displays()
     }
 
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        self.client.display(id)
+        self.display(id)
     }
 
     // todo(linux)
@@ -222,7 +198,7 @@ impl Platform for LinuxPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
-        self.client.open_window(handle, options)
+        self.open_window(handle, options)
     }
 
     fn open_url(&self, url: &str) {
@@ -230,7 +206,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.inner.callbacks.borrow_mut().open_urls = Some(callback);
+        self.common().callbacks.open_urls = Some(callback);
     }
 
     fn prompt_for_paths(
@@ -238,7 +214,7 @@ impl Platform for LinuxPlatform {
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
-        self.inner
+        self.common()
             .foreground_executor
             .spawn(async move {
                 let title = if options.multiple {
@@ -282,7 +258,7 @@ impl Platform for LinuxPlatform {
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
         let (done_tx, done_rx) = oneshot::channel();
         let directory = directory.to_owned();
-        self.inner
+        self.common()
             .foreground_executor
             .spawn(async move {
                 let result = SaveFileRequest::default()
@@ -317,35 +293,35 @@ impl Platform for LinuxPlatform {
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.borrow_mut().become_active = Some(callback);
+        self.common().callbacks.become_active = Some(callback);
     }
 
     fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.borrow_mut().resign_active = Some(callback);
+        self.common().callbacks.resign_active = Some(callback);
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.borrow_mut().quit = Some(callback);
+        self.common().callbacks.quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.borrow_mut().reopen = Some(callback);
+        self.common().callbacks.reopen = Some(callback);
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.inner.callbacks.borrow_mut().event = Some(callback);
+        self.common().callbacks.event = Some(callback);
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.inner.callbacks.borrow_mut().app_menu_action = Some(callback);
+        self.common().callbacks.app_menu_action = Some(callback);
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.borrow_mut().will_open_app_menu = Some(callback);
+        self.common().callbacks.will_open_app_menu = Some(callback);
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.inner.callbacks.borrow_mut().validate_app_menu_command = Some(callback);
+        self.common().callbacks.validate_app_menu_command = Some(callback);
     }
 
     fn os_name(&self) -> &'static str {
@@ -381,7 +357,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        self.client.set_cursor_style(style)
+        self.set_cursor_style(style)
     }
 
     // todo(linux)
@@ -390,13 +366,13 @@ impl Platform for LinuxPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        let clipboard = self.client.get_clipboard();
-        clipboard.borrow_mut().set_contents(item.text);
+        let clipboard = self.get_clipboard();
+        clipboard.set_contents(item.text);
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        let clipboard = self.client.get_clipboard();
-        let contents = clipboard.borrow_mut().get_contents();
+        let clipboard = self.get_clipboard();
+        let contents = clipboard.get_contents();
         match contents {
             Ok(text) => Some(ClipboardItem {
                 metadata: None,
@@ -481,12 +457,126 @@ impl Platform for LinuxPlatform {
     }
 }
 
+pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
+    let diff = a - b;
+    diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
+}
+
+impl Keystroke {
+    pub(super) fn from_xkb(state: &State, modifiers: Modifiers, keycode: Keycode) -> Self {
+        let mut modifiers = modifiers;
+
+        let key_utf32 = state.key_get_utf32(keycode);
+        let key_utf8 = state.key_get_utf8(keycode);
+        let key_sym = state.key_get_one_sym(keycode);
+
+        // The logic here tries to replicate the logic in `../mac/events.rs`
+        // "Consumed" modifiers are modifiers that have been used to translate a key, for example
+        // pressing "shift" and "1" on US layout produces the key `!` but "consumes" the shift.
+        // Notes:
+        //  - macOS gets the key character directly ("."), xkb gives us the key name ("period")
+        //  - macOS logic removes consumed shift modifier for symbols: "{", not "shift-{"
+        //  - macOS logic keeps consumed shift modifiers for letters: "shift-a", not "a" or "A"
+
+        let mut handle_consumed_modifiers = true;
+        let key = match key_sym {
+            Keysym::Return => "enter".to_owned(),
+            Keysym::Prior => "pageup".to_owned(),
+            Keysym::Next => "pagedown".to_owned(),
+
+            Keysym::comma => ",".to_owned(),
+            Keysym::period => ".".to_owned(),
+            Keysym::less => "<".to_owned(),
+            Keysym::greater => ">".to_owned(),
+            Keysym::slash => "/".to_owned(),
+            Keysym::question => "?".to_owned(),
+
+            Keysym::semicolon => ";".to_owned(),
+            Keysym::colon => ":".to_owned(),
+            Keysym::apostrophe => "'".to_owned(),
+            Keysym::quotedbl => "\"".to_owned(),
+
+            Keysym::bracketleft => "[".to_owned(),
+            Keysym::braceleft => "{".to_owned(),
+            Keysym::bracketright => "]".to_owned(),
+            Keysym::braceright => "}".to_owned(),
+            Keysym::backslash => "\\".to_owned(),
+            Keysym::bar => "|".to_owned(),
+
+            Keysym::grave => "`".to_owned(),
+            Keysym::asciitilde => "~".to_owned(),
+            Keysym::exclam => "!".to_owned(),
+            Keysym::at => "@".to_owned(),
+            Keysym::numbersign => "#".to_owned(),
+            Keysym::dollar => "$".to_owned(),
+            Keysym::percent => "%".to_owned(),
+            Keysym::asciicircum => "^".to_owned(),
+            Keysym::ampersand => "&".to_owned(),
+            Keysym::asterisk => "*".to_owned(),
+            Keysym::parenleft => "(".to_owned(),
+            Keysym::parenright => ")".to_owned(),
+            Keysym::minus => "-".to_owned(),
+            Keysym::underscore => "_".to_owned(),
+            Keysym::equal => "=".to_owned(),
+            Keysym::plus => "+".to_owned(),
+
+            Keysym::ISO_Left_Tab => {
+                handle_consumed_modifiers = false;
+                "tab".to_owned()
+            }
+
+            _ => {
+                handle_consumed_modifiers = false;
+                xkb::keysym_get_name(key_sym).to_lowercase()
+            }
+        };
+
+        // Ignore control characters (and DEL) for the purposes of ime_key,
+        // but if key_utf32 is 0 then assume it isn't one
+        let ime_key = ((key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127))
+            && !key_utf8.is_empty())
+        .then_some(key_utf8);
+
+        if handle_consumed_modifiers {
+            let mod_shift_index = state.get_keymap().mod_get_index(xkb::MOD_NAME_SHIFT);
+            let is_shift_consumed = state.mod_index_is_consumed(keycode, mod_shift_index);
+
+            if modifiers.shift && is_shift_consumed {
+                modifiers.shift = false;
+            }
+        }
+
+        Keystroke {
+            modifiers,
+            key,
+            ime_key,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{px, Point};
 
-    fn build_platform() -> LinuxPlatform {
-        let platform = LinuxPlatform::new();
-        platform
+    #[test]
+    fn test_is_within_click_distance() {
+        let zero = Point::new(px(0.0), px(0.0));
+        assert_eq!(
+            is_within_click_distance(zero, Point::new(px(5.0), px(5.0))),
+            true
+        );
+        assert_eq!(
+            is_within_click_distance(zero, Point::new(px(-4.9), px(5.0))),
+            true
+        );
+        assert_eq!(
+            is_within_click_distance(Point::new(px(3.0), px(2.0)), Point::new(px(-2.0), px(-2.0))),
+            true
+        );
+        assert_eq!(
+            is_within_click_distance(zero, Point::new(px(5.0), px(5.1))),
+            false
+        );
     }
 }

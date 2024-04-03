@@ -2,10 +2,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use calloop::{EventLoop, LoopHandle};
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
 use copypasta::ClipboardProvider;
 
+use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::errors::ConnectionError;
 use x11rb::protocol::randr::ConnectionExt as _;
@@ -16,16 +18,16 @@ use x11rb::xcb_ffi::XCBConnection;
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb as xkbc;
 
-use crate::platform::linux::client::Client;
-use crate::platform::{LinuxPlatformInner, PlatformWindow};
+use crate::platform::linux::LinuxClient;
+use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Pixels, PlatformDisplay, PlatformInput,
     Point, ScrollDelta, Size, TouchPhase, WindowParams,
 };
 
 use super::{super::SCROLL_LINES, X11Display, X11Window, X11WindowState, XcbAtoms};
+use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
-use crate::platform::linux::util::is_within_click_distance;
 use calloop::{
     generic::{FdWrapper, Generic},
     RegistrationToken,
@@ -36,30 +38,42 @@ struct WindowRef {
     refresh_event_token: RegistrationToken,
 }
 
-struct X11ClientState {
-    windows: HashMap<xproto::Window, WindowRef>,
-    xkb: xkbc::State,
-    clipboard: Rc<RefCell<X11ClipboardContext<Clipboard>>>,
-    primary: Rc<RefCell<X11ClipboardContext<Primary>>>,
-    click_state: ClickState,
+pub struct X11ClientState {
+    pub(crate) loop_handle: LoopHandle<'static, X11Client>,
+    pub(crate) event_loop: Option<calloop::EventLoop<'static, X11Client>>,
+
+    pub(crate) last_click: Instant,
+    pub(crate) last_location: Point<Pixels>,
+    pub(crate) current_count: usize,
+
+    pub(crate) xcb_connection: Rc<XCBConnection>,
+    pub(crate) x_root_index: usize,
+    pub(crate) atoms: XcbAtoms,
+    pub(crate) windows: HashMap<xproto::Window, WindowRef>,
+    pub(crate) xkb: xkbc::State,
+
+    pub(crate) common: LinuxCommon,
+    pub(crate) clipboard: X11ClipboardContext<Clipboard>,
+    pub(crate) primary: X11ClipboardContext<Primary>,
 }
 
-struct ClickState {
-    last_click: Instant,
-    last_location: Point<Pixels>,
-    current_count: usize,
-}
-
-pub(crate) struct X11Client {
-    platform_inner: Rc<LinuxPlatformInner>,
-    xcb_connection: Rc<XCBConnection>,
-    x_root_index: usize,
-    atoms: XcbAtoms,
-    state: RefCell<X11ClientState>,
-}
+#[derive(Clone)]
+pub(crate) struct X11Client(Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
-    pub(crate) fn new(inner: Rc<LinuxPlatformInner>) -> Rc<Self> {
+    pub(crate) fn new() -> Self {
+        let event_loop = EventLoop::try_new().unwrap();
+
+        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+
+        let handle = event_loop.handle();
+
+        handle.insert_source(main_receiver, |event, _, _: &mut X11Client| {
+            if let calloop::channel::Event::Msg(runnable) = event {
+                runnable.run();
+            }
+        });
+
         let (xcb_connection, x_root_index) = XCBConnection::connect(None).unwrap();
         xcb_connection
             .prefetch_extension_information(xkb::X11_EXTENSION_NAME)
@@ -94,30 +108,10 @@ impl X11Client {
 
         let xcb_connection = Rc::new(xcb_connection);
 
-        let click_state = ClickState {
-            last_click: Instant::now(),
-            last_location: Point::new(px(0.0), px(0.0)),
-            current_count: 0,
-        };
-        let client: Rc<X11Client> = Rc::new(Self {
-            platform_inner: inner.clone(),
-            xcb_connection: Rc::clone(&xcb_connection),
-            x_root_index,
-            atoms,
-            state: RefCell::new(X11ClientState {
-                windows: HashMap::default(),
-                xkb: xkb_state,
-                clipboard: Rc::new(RefCell::new(clipboard)),
-                primary: Rc::new(RefCell::new(primary)),
-                click_state,
-            }),
-        });
-
         // Safety: Safe if xcb::Connection always returns a valid fd
         let fd = unsafe { FdWrapper::new(Rc::clone(&xcb_connection)) };
 
-        inner
-            .loop_handle
+        handle
             .insert_source(
                 Generic::new_with_error::<ConnectionError>(
                     fd,
@@ -125,8 +119,7 @@ impl X11Client {
                     calloop::Mode::Level,
                 ),
                 {
-                    let client = Rc::clone(&client);
-                    move |_readiness, _, _| {
+                    move |_readiness, _, client| {
                         while let Some(event) = xcb_connection.poll_for_event()? {
                             client.handle_event(event);
                         }
@@ -136,34 +129,43 @@ impl X11Client {
             )
             .expect("Failed to initialize x11 event source");
 
-        client
+        X11Client(Rc::new(RefCell::new(X11ClientState {
+            event_loop: Some(event_loop),
+            loop_handle: handle,
+            common,
+            last_click: Instant::now(),
+            last_location: Point::new(px(0.0), px(0.0)),
+            current_count: 0,
+
+            xcb_connection: Rc::clone(&xcb_connection),
+            x_root_index,
+            atoms,
+            windows: HashMap::default(),
+            xkb: xkb_state,
+            clipboard,
+            primary,
+        })))
     }
 
     fn get_window(&self, win: xproto::Window) -> Option<Rc<X11WindowState>> {
-        let state = self.state.borrow();
+        let state = self.0.borrow();
         state.windows.get(&win).map(|wr| Rc::clone(&wr.state))
     }
 
     fn handle_event(&self, event: Event) -> Option<()> {
+        let mut state = self.0.borrow_mut();
         match event {
             Event::ClientMessage(event) => {
                 let [atom, ..] = event.data.as_data32();
-                if atom == self.atoms.WM_DELETE_WINDOW {
+                if atom == state.atoms.WM_DELETE_WINDOW {
                     // window "x" button clicked by user, we gracefully exit
-                    let window_ref = self
-                        .state
-                        .borrow_mut()
-                        .windows
-                        .remove(&event.window)
-                        .unwrap();
+                    let window_ref = state.windows.remove(&event.window)?;
 
-                    self.platform_inner
-                        .loop_handle
-                        .remove(window_ref.refresh_event_token);
+                    state.loop_handle.remove(window_ref.refresh_event_token);
                     window_ref.state.destroy();
 
-                    if self.state.borrow().windows.is_empty() {
-                        self.platform_inner.loop_signal.stop();
+                    if state.windows.is_empty() {
+                        state.common.signal.stop();
                     }
                 }
             }
@@ -198,7 +200,6 @@ impl X11Client {
                 let modifiers = super::modifiers_from_state(event.state);
                 let keystroke = {
                     let code = event.detail.into();
-                    let mut state = self.state.borrow_mut();
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     state.xkb.update_key(code, xkbc::KeyDirection::Down);
                     keystroke
@@ -214,7 +215,6 @@ impl X11Client {
                 let modifiers = super::modifiers_from_state(event.state);
                 let keystroke = {
                     let code = event.detail.into();
-                    let mut state = self.state.borrow_mut();
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     state.xkb.update_key(code, xkbc::KeyDirection::Up);
                     keystroke
@@ -228,25 +228,24 @@ impl X11Client {
                 let position =
                     Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
                 if let Some(button) = super::button_of_key(event.detail) {
-                    let mut state = self.state.borrow_mut();
-                    let click_elapsed = state.click_state.last_click.elapsed();
+                    let click_elapsed = state.last_click.elapsed();
 
                     if click_elapsed < DOUBLE_CLICK_INTERVAL
-                        && is_within_click_distance(state.click_state.last_location, position)
+                        && is_within_click_distance(state.last_location, position)
                     {
-                        state.click_state.current_count += 1;
+                        state.current_count += 1;
                     } else {
-                        state.click_state.current_count = 1;
+                        state.current_count = 1;
                     }
 
-                    state.click_state.last_click = Instant::now();
-                    state.click_state.last_location = position;
+                    state.last_click = Instant::now();
+                    state.last_location = position;
 
                     window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
                         button,
                         position,
                         modifiers,
-                        click_count: state.click_state.current_count,
+                        click_count: state.current_count,
                         first_mouse: false,
                     }));
                 } else if event.detail >= 4 && event.detail <= 5 {
@@ -268,13 +267,12 @@ impl X11Client {
                 let modifiers = super::modifiers_from_state(event.state);
                 let position =
                     Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
-                let state = self.state.borrow();
                 if let Some(button) = super::button_of_key(event.detail) {
                     window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
                         button,
                         position,
                         modifiers,
-                        click_count: state.click_state.current_count,
+                        click_count: state.current_count,
                     }));
                 }
             }
@@ -309,30 +307,35 @@ impl X11Client {
     }
 }
 
-impl Client for X11Client {
+impl LinuxClient for X11Client {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
-        let setup = self.xcb_connection.setup();
+        let state = self.0.borrow();
+        let setup = state.xcb_connection.setup();
         setup
             .roots
             .iter()
             .enumerate()
             .filter_map(|(root_id, _)| {
-                Some(Rc::new(X11Display::new(&self.xcb_connection, root_id)?)
+                Some(Rc::new(X11Display::new(&state.xcb_connection, root_id)?)
                     as Rc<dyn PlatformDisplay>)
             })
             .collect()
     }
 
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+        let state = self.0.borrow();
+
         Some(Rc::new(X11Display::new(
-            &self.xcb_connection,
+            &state.xcb_connection,
             id.0 as usize,
         )?))
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
+        let state = self.0.borrow();
+
         Some(Rc::new(
-            X11Display::new(&self.xcb_connection, self.x_root_index)
+            X11Display::new(&state.xcb_connection, state.x_root_index)
                 .expect("There should always be a root index"),
         ))
     }
@@ -342,28 +345,29 @@ impl Client for X11Client {
         _handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
-        let x_window = self.xcb_connection.generate_id().unwrap();
+        let mut state = self.0.borrow();
+        let x_window = state.xcb_connection.generate_id().unwrap();
 
         let window_ptr = Rc::new(X11WindowState::new(
             options,
-            &self.xcb_connection,
-            self.x_root_index,
+            &state.xcb_connection,
+            state.x_root_index,
             x_window,
-            &self.atoms,
+            &state.atoms,
         ));
 
-        let screen_resources = self
+        let screen_resources = state
             .xcb_connection
             .randr_get_screen_resources(x_window)
             .unwrap()
             .reply()
-            .expect("TODO");
+            .expect("Could not find available screens");
 
         let mode = screen_resources
             .crtcs
             .iter()
             .find_map(|crtc| {
-                let crtc_info = self
+                let crtc_info = state
                     .xcb_connection
                     .randr_get_crtc_info(*crtc, x11rb::CURRENT_TIME)
                     .ok()?
@@ -377,16 +381,14 @@ impl Client for X11Client {
             })
             .expect("Unable to find screen refresh rate");
 
-        // .expect("Missing screen mode for crtc specified mode id");
-
-        let refresh_event_token = self
-            .platform_inner
+        let refresh_event_token = state
             .loop_handle
             .insert_source(calloop::timer::Timer::immediate(), {
                 let refresh_duration = mode_refresh_rate(mode);
-                let xcb_connection = Rc::clone(&self.xcb_connection);
-                move |mut instant, (), _| {
-                    xcb_connection
+                move |mut instant, (), client| {
+                    let state = client.0.borrow_mut();
+                    state
+                        .xcb_connection
                         .send_event(
                             false,
                             x_window,
@@ -403,7 +405,7 @@ impl Client for X11Client {
                             },
                         )
                         .unwrap();
-                    let _ = xcb_connection.flush().unwrap();
+                    let _ = state.xcb_connection.flush().unwrap();
                     // Take into account that some frames have been skipped
                     let now = time::Instant::now();
                     while instant < now {
@@ -418,19 +420,34 @@ impl Client for X11Client {
             state: Rc::clone(&window_ptr),
             refresh_event_token,
         };
-        self.state.borrow_mut().windows.insert(x_window, window_ref);
+        state.windows.insert(x_window, window_ref);
         Box::new(X11Window(window_ptr))
     }
 
     //todo(linux)
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
-    fn get_clipboard(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
-        self.state.borrow().clipboard.clone()
+    fn get_clipboard(&self) -> &mut dyn ClipboardProvider {
+        &mut self.0.borrow_mut().clipboard
     }
 
-    fn get_primary(&self) -> Rc<RefCell<dyn ClipboardProvider>> {
-        self.state.borrow().primary.clone()
+    fn get_primary(&self) -> &mut dyn ClipboardProvider {
+        &mut self.0.borrow_mut().primary
+    }
+
+    fn common(&self) -> &mut LinuxCommon {
+        &mut self.0.borrow_mut().common
+    }
+
+    fn run(&self) {
+        let mut event_loop = self
+            .0
+            .borrow_mut()
+            .event_loop
+            .take()
+            .expect("App is already running");
+
+        event_loop.run(None, &mut self.clone(), |_| {}).log_err();
     }
 }
 
