@@ -329,6 +329,7 @@ impl Server {
             .add_request_handler(user_handler(join_project))
             .add_request_handler(user_handler(join_hosted_project))
             .add_request_handler(user_handler(create_remote_project))
+            .add_request_handler(user_handler(create_dev_server))
             .add_message_handler(user_message_handler(leave_project))
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
@@ -2009,6 +2010,45 @@ async fn create_remote_project(
     }
 
     response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn create_dev_server(
+    request: proto::CreateDevServer,
+    response: Response<proto::CreateDevServer>,
+    session: UserSession,
+) -> Result<()> {
+    let access_token = auth::generate_dev_server_token(&request.name);
+    let hashed_access_token = auth::hash_dev_server_token(&access_token);
+
+    let (channel, dev_server) = session
+        .db()
+        .await
+        .create_dev_server(
+            ChannelId(request.channel_id as i32),
+            &request.name,
+            &hashed_access_token,
+            session.user_id(),
+        )
+        .await?;
+
+    let update = proto::UpdateChannels {
+        dev_servers: vec![dev_server.to_proto()],
+        ..Default::default()
+    };
+    let connection_pool = session.connection_pool().await;
+    for (connection_id, role) in connection_pool.channel_connection_ids(channel.root_id()) {
+        if role.can_see_channel(channel.visibility) {
+            session.peer.send(connection_id, update.clone())?;
+        }
+    }
+
+    response.send(proto::CreateDevServerResponse {
+        dev_server_id: dev_server.id.0 as u64,
+        channel_id: request.channel_id,
+        access_token,
+        name: request.name.clone(),
+    })?;
     Ok(())
 }
 

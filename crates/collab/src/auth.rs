@@ -230,6 +230,15 @@ pub async fn verify_access_token(
     })
 }
 
+pub fn generate_dev_server_token(dev_server_name: &str) -> String {
+    //TODO
+    format!("{}:{}", dev_server_name, 123456789)
+}
+
+pub fn hash_dev_server_token(token: &str) -> String {
+    hash_access_token(token)
+}
+
 // a dev_server_token has the format <id>.<base64>. This is to make them
 // relatively easy to copy/paste around.
 pub async fn verify_dev_server_token(

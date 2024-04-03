@@ -33,7 +33,7 @@ impl DevServerModal {
         }
     }
 
-    pub fn on_create(&self, cx: &mut ViewContext<Self>) {
+    pub fn create_remote_project(&self, cx: &mut ViewContext<Self>) {
         let channel_id = self.channel_id;
         let name = self.name_editor.read(cx).text(cx).trim().to_string();
         let path = self.path_editor.read(cx).text(cx).trim().to_string();
@@ -50,6 +50,25 @@ impl DevServerModal {
         });
 
         task.detach_and_prompt_err("Failed to create remote project", cx, |_, _| None);
+    }
+
+    pub fn create_dev_server(&self, cx: &mut ViewContext<Self>) {
+        let name = self.name_editor.read(cx).text(cx).trim().to_string();
+
+        if name == "" {
+            return;
+        }
+
+        let dev_server = self.channel_store.update(cx, |store, cx| {
+            store.create_dev_server(self.channel_id, name, cx)
+        });
+
+        cx.spawn(|_, _| async move {
+            let dev_server = dev_server.await?;
+            dbg!(dev_server.access_token, dev_server.name);
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 }
 impl ModalView for DevServerModal {}
@@ -89,8 +108,14 @@ impl Render for DevServerModal {
                     .children(dev_servers.iter().map(|dev_server| dev_server.name.clone()))
                     .child(h_flex().child("Path:").child(self.path_editor.clone()))
                     .child(
-                        Button::new("create-button", "Create")
-                            .on_click(cx.listener(|this, _event, cx| this.on_create(cx))),
+                        Button::new("create-dev-server-button", "Create dev server")
+                            .on_click(cx.listener(|this, _event, cx| this.create_dev_server(cx))),
+                    )
+                    .child(
+                        Button::new("create-remote-project-button", "Create remote project")
+                            .on_click(
+                                cx.listener(|this, _event, cx| this.create_remote_project(cx)),
+                            ),
                     ),
             )
     }

@@ -906,6 +906,24 @@ impl ChannelStore {
         })
     }
 
+    pub fn create_dev_server(
+        &mut self,
+        channel_id: ChannelId,
+        name: String,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<proto::CreateDevServerResponse>> {
+        let client = self.client.clone();
+        cx.background_executor().spawn(async move {
+            let result = client
+                .request(proto::CreateDevServer {
+                    channel_id: channel_id.0,
+                    name,
+                })
+                .await?;
+            Ok(result)
+        })
+    }
+
     pub fn get_channel_member_details(
         &self,
         channel_id: ChannelId,

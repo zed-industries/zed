@@ -1,7 +1,7 @@
 use rpc::proto;
-use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+use sea_orm::{ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
 
-use super::{dev_server, ChannelId, Database, DevServerId};
+use super::{channel, dev_server, ChannelId, Database, DevServerId, UserId};
 
 impl Database {
     pub async fn get_dev_server(
@@ -35,5 +35,31 @@ impl Database {
                 status: proto::DevServerStatus::Online.into(),
             })
             .collect())
+    }
+
+    pub async fn create_dev_server(
+        &self,
+        channel_id: ChannelId,
+        name: &str,
+        hashed_access_token: &str,
+        user_id: UserId,
+    ) -> crate::Result<(channel::Model, dev_server::Model)> {
+        self.transaction(|tx| async move {
+            let channel = self.get_channel_internal(channel_id, &*tx).await?;
+            self.check_user_is_channel_admin(&channel, user_id, &*tx)
+                .await?;
+
+            let dev_server = dev_server::Entity::insert(dev_server::ActiveModel {
+                id: ActiveValue::NotSet,
+                hashed_token: ActiveValue::Set(hashed_access_token.to_string()),
+                channel_id: ActiveValue::Set(channel_id),
+                name: ActiveValue::Set(name.to_string()),
+            })
+            .exec_with_returning(&*tx)
+            .await?;
+
+            Ok((channel, dev_server))
+        })
+        .await
     }
 }

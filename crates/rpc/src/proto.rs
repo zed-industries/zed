@@ -299,6 +299,8 @@ messages!(
     (BlameBuffer, Foreground),
     (BlameBufferResponse, Foreground),
     (CreateRemoteProject, Foreground),
+    (CreateDevServer, Foreground),
+    (CreateDevServerResponse, Foreground),
 );
 
 request_messages!(
@@ -391,6 +393,7 @@ request_messages!(
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
     (CreateRemoteProject, Ack),
+    (CreateDevServer, CreateDevServerResponse),
 );
 
 entity_messages!(

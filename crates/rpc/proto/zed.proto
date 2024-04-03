@@ -210,7 +210,9 @@ message Envelope {
         BlameBuffer blame_buffer = 172;
         BlameBufferResponse blame_buffer_response = 173;
 
-        CreateRemoteProject create_remote_project = 174; // Current max
+        CreateRemoteProject create_remote_project = 174;
+        CreateDevServer create_dev_server = 175;
+        CreateDevServerResponse create_dev_server_response = 176; // Current max
     }
 
     reserved 158 to 161;
@@ -431,6 +433,18 @@ message CreateRemoteProject {
     string name = 2;
     uint64 dev_server_id = 3;
     string path = 4;
+}
+
+message CreateDevServer {
+    uint64 channel_id = 1;
+    string name = 2;
+}
+
+message CreateDevServerResponse {
+    uint64 dev_server_id = 1;
+    uint64 channel_id = 2;
+    string access_token = 3;
+    string name = 4;
 }
 
 message JoinProjectResponse {
