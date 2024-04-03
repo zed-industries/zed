@@ -10,6 +10,7 @@ use axum::{
     response::IntoResponse,
 };
 use prometheus::{exponential_buckets, register_histogram, Histogram};
+use rpc::auth::random_token;
 use scrypt::{
     password_hash::{PasswordHash, PasswordVerifier},
     Scrypt,
@@ -230,11 +231,12 @@ pub async fn verify_access_token(
     })
 }
 
+//TODO dev_servers
 pub fn generate_dev_server_token(dev_server_name: &str) -> String {
-    //TODO
-    format!("{}:{}", dev_server_name, 123456789)
+    format!("{}:{}", dev_server_name, random_token())
 }
 
+//TODO dev_servers
 pub fn hash_dev_server_token(token: &str) -> String {
     hash_access_token(token)
 }
