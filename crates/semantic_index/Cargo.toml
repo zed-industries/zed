@@ -1,0 +1,26 @@
+[package]
+name = "semantic_index"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+path = "src/semantic_index.rs"
+
+[dependencies]
+collections.workspace = true
+gpui.workspace = true
+language.workspace = true
+lmdb = "0.8.0"
+project.workspace = true
+worktree.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+worktree = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

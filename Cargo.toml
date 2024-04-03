@@ -72,6 +72,7 @@ members = [
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
+    "crates/semantic_index",
     "crates/semantic_version",
     "crates/settings",
     "crates/snippet",
