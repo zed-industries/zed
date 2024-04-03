@@ -390,7 +390,7 @@ impl Vim {
             {
                 visual_block_motion(true, editor, cx, |_, point, goal| Some((point, goal)))
             }
-            if last_mode == Mode::Insert {
+            if last_mode == Mode::Insert || last_mode == Mode::Replace {
                 if let Some(prior_tx) = prior_tx {
                     editor.group_until_transaction(prior_tx, cx)
                 }
@@ -502,7 +502,9 @@ impl Vim {
 
     fn transaction_begun(&mut self, transaction_id: TransactionId, _: &mut WindowContext) {
         self.update_state(|state| {
-            let mode = if (state.mode == Mode::Insert || state.mode == Mode::Normal)
+            let mode = if (state.mode == Mode::Insert
+                || state.mode == Mode::Replace
+                || state.mode == Mode::Normal)
                 && state.current_tx.is_none()
             {
                 state.current_tx = Some(transaction_id);
