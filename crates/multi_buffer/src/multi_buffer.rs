@@ -1,6 +1,6 @@
 mod anchor;
 
-pub use anchor::{Anchor, AnchorRangeExt};
+pub use anchor::{Anchor, AnchorRangeExt, Offset};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};

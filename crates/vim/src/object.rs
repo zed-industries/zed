@@ -347,11 +347,10 @@ fn around_word(
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
-    let scope = map
-        .buffer_snapshot
-        .language_scope_at(relative_to.to_point(map));
+    let offset = relative_to.to_offset(map, Bias::Left);
+    let scope = map.buffer_snapshot.language_scope_at(offset);
     let in_word = map
-        .chars_at(relative_to)
+        .buffer_chars_at(offset)
         .next()
         .map(|(c, _)| char_kind(&scope, c) != CharKind::Whitespace)
         .unwrap_or(false);
@@ -565,51 +564,52 @@ fn sentence(
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
     let mut start = None;
-    let mut previous_end = relative_to;
+    let relative_offset = relative_to.to_offset(map, Bias::Left);
+    let mut previous_end = relative_offset;
 
-    let mut chars = map.chars_at(relative_to).peekable();
+    let mut chars = map.buffer_chars_at(previous_end).peekable();
 
     // Search backwards for the previous sentence end or current sentence start. Include the character under relative_to
-    for (char, point) in chars
+    for (char, offset) in chars
         .peek()
         .cloned()
         .into_iter()
-        .chain(map.reverse_chars_at(relative_to))
+        .chain(map.reverse_buffer_chars_at(previous_end))
     {
-        if is_sentence_end(map, point) {
+        if is_sentence_end(map, offset) {
             break;
         }
 
         if is_possible_sentence_start(char) {
-            start = Some(point);
+            start = Some(offset);
         }
 
-        previous_end = point;
+        previous_end = offset;
     }
 
     // Search forward for the end of the current sentence or if we are between sentences, the start of the next one
-    let mut end = relative_to;
-    for (char, point) in chars {
+    let mut end = relative_offset;
+    for (char, offset) in chars {
         if start.is_none() && is_possible_sentence_start(char) {
             if around {
-                start = Some(point);
+                start = Some(offset);
                 continue;
             } else {
-                end = point;
+                end = offset;
                 break;
             }
         }
 
-        end = point;
-        *end.column_mut() += char.len_utf8() as u32;
-        end = map.clip_point(end, Bias::Left);
+        if char != '\n' {
+            end = offset + char.len_utf8();
+        }
 
         if is_sentence_end(map, end) {
             break;
         }
     }
 
-    let mut range = start.unwrap_or(previous_end)..end;
+    let mut range = start.unwrap_or(previous_end).to_display_point(map)..end.to_display_point(map);
     if around {
         range = expand_to_include_whitespace(map, range, false);
     }
@@ -624,8 +624,8 @@ fn is_possible_sentence_start(character: char) -> bool {
 const SENTENCE_END_PUNCTUATION: &[char] = &['.', '!', '?'];
 const SENTENCE_END_FILLERS: &[char] = &[')', ']', '"', '\''];
 const SENTENCE_END_WHITESPACE: &[char] = &[' ', '\t', '\n'];
-fn is_sentence_end(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
-    let mut next_chars = map.chars_at(point).peekable();
+fn is_sentence_end(map: &DisplaySnapshot, offset: usize) -> bool {
+    let mut next_chars = map.buffer_chars_at(offset).peekable();
     if let Some((char, _)) = next_chars.next() {
         // We are at a double newline. This position is a sentence end.
         if char == '\n' && next_chars.peek().map(|(c, _)| c == &'\n').unwrap_or(false) {
@@ -638,7 +638,7 @@ fn is_sentence_end(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
         }
     }
 
-    for (char, _) in map.reverse_chars_at(point) {
+    for (char, _) in map.reverse_buffer_chars_at(offset) {
         if SENTENCE_END_PUNCTUATION.contains(&char) {
             return true;
         }
@@ -655,26 +655,21 @@ fn is_sentence_end(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
 /// whitespace to the end first and falls back to the start if there was none.
 fn expand_to_include_whitespace(
     map: &DisplaySnapshot,
-    mut range: Range<DisplayPoint>,
+    range: Range<DisplayPoint>,
     stop_at_newline: bool,
 ) -> Range<DisplayPoint> {
+    let mut range = range.start.to_offset(map, Bias::Left)..range.end.to_offset(map, Bias::Right);
     let mut whitespace_included = false;
 
-    let mut chars = map.chars_at(range.end).peekable();
-    while let Some((char, point)) = chars.next() {
+    let mut chars = map.buffer_chars_at(range.end).peekable();
+    while let Some((char, offset)) = chars.next() {
         if char == '\n' && stop_at_newline {
             break;
         }
 
         if char.is_whitespace() {
-            // Set end to the next display_point or the character position after the current display_point
-            range.end = chars.peek().map(|(_, point)| *point).unwrap_or_else(|| {
-                let mut end = point;
-                *end.column_mut() += char.len_utf8() as u32;
-                map.clip_point(end, Bias::Left)
-            });
-
             if char != '\n' {
+                range.end = offset + char.len_utf8();
                 whitespace_included = true;
             }
         } else {
@@ -684,7 +679,7 @@ fn expand_to_include_whitespace(
     }
 
     if !whitespace_included {
-        for (char, point) in map.reverse_chars_at(range.start) {
+        for (char, point) in map.reverse_buffer_chars_at(range.start) {
             if char == '\n' && stop_at_newline {
                 break;
             }
@@ -697,7 +692,7 @@ fn expand_to_include_whitespace(
         }
     }
 
-    range
+    range.start.to_display_point(map)..range.end.to_display_point(map)
 }
 
 /// If not `around` (i.e. inner), returns a range that surrounds the paragraph
