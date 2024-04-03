@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
-use language::{CodeLabel, Language, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{
+    CodeLabel, HighlightId, Language, LanguageServerName, LspAdapter, LspAdapterDelegate,
+};
 use lsp::LanguageServerBinary;
 use std::ops::Range;
 use std::{
@@ -183,6 +185,8 @@ impl LspAdapter for ExtensionLspAdapter {
         completions: &[lsp::CompletionItem],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
+        dbg!(completions);
+
         let completions = completions
             .into_iter()
             .map(|completion| wit::Completion::from(completion.clone()))
@@ -211,32 +215,68 @@ impl LspAdapter for ExtensionLspAdapter {
         Ok(labels
             .into_iter()
             .map(|label| {
-                label.map(|label| match label {
-                    crate::wit::CodeLabel::Fixed(label) => {
-                        let highlight_range: Range<usize> = label.highlight_range.into();
-                        let filter_range = label.filter_range.into();
-                        let runs = language
-                            .grammar()
-                            .and_then(|grammar| {
-                                grammar.highlight_id_for_name(&label.highlight_name)
-                            })
-                            .map(|highlight_id| vec![(highlight_range, highlight_id)])
-                            .unwrap_or_default();
-                        CodeLabel {
-                            text: label.text,
-                            runs,
-                            filter_range,
+                label.map(|label| {
+                    let mut text = String::new();
+                    let mut runs = vec![];
+
+                    let parsed_runs =
+                        language.highlight_text(&label.code.as_str().into(), 0..label.code.len());
+
+                    for span in label.spans {
+                        match span {
+                            wit::CodeLabelSpan::CodeRange(range) => {
+                                let range = Range::from(range);
+
+                                let mut input_ix = range.start;
+                                let mut output_ix = text.len();
+                                for (run_range, id) in &parsed_runs {
+                                    if run_range.start >= range.end {
+                                        break;
+                                    }
+                                    if run_range.end <= range.start {
+                                        continue;
+                                    }
+
+                                    if run_range.start > input_ix {
+                                        let len = run_range.start - range.start;
+                                        runs.push((
+                                            output_ix..output_ix + len,
+                                            HighlightId::default(),
+                                        ));
+                                        input_ix += len;
+                                        output_ix += len;
+                                    }
+
+                                    {
+                                        let len = range.end.min(run_range.end)
+                                            - range.start.max(run_range.start);
+                                        runs.push((output_ix..output_ix + len, *id));
+                                        input_ix += len;
+                                        output_ix += len;
+                                    }
+                                }
+
+                                text.push_str(&label.code[range]);
+                            }
+                            wit::CodeLabelSpan::Literal(span) => {
+                                let highlight_id = language
+                                    .grammar()
+                                    .zip(span.highlight_name.as_ref())
+                                    .and_then(|(grammar, highlight_name)| {
+                                        grammar.highlight_id_for_name(&highlight_name)
+                                    })
+                                    .unwrap_or_default();
+                                let ix = text.len();
+                                runs.push((ix..ix + span.text.len(), highlight_id));
+                                text.push_str(&span.text);
+                            }
                         }
                     }
-                    crate::wit::CodeLabel::Parsed(label) => {
-                        let display_range: Range<usize> = label.display_range.into();
-                        let filter_range = label.filter_range.into();
-                        CodeLabel {
-                            text: label.text[display_range.clone()].to_string(),
-                            runs: language
-                                .highlight_text(&label.text.as_str().into(), display_range),
-                            filter_range,
-                        }
+
+                    CodeLabel {
+                        text,
+                        runs,
+                        filter_range: label.filter_range.into(),
                     }
                 })
             })

@@ -590,6 +590,53 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     let expected_server_path = extensions_dir.join("work/gleam/gleam-v1.2.3/gleam");
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
 
+    fake_server.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(lsp::CompletionResponse::Array(vec![
+            lsp::CompletionItem {
+                label: "foo".into(),
+                kind: Some(lsp::CompletionItemKind::FUNCTION),
+                detail: Some("fn() -> Result(Nil, Error)".into()),
+                ..Default::default()
+            },
+            lsp::CompletionItem {
+                label: "bar.baz".into(),
+                kind: Some(lsp::CompletionItemKind::FUNCTION),
+                detail: Some("fn(List(a)) -> a".into()),
+                ..Default::default()
+            },
+            lsp::CompletionItem {
+                label: "Quux".into(),
+                kind: Some(lsp::CompletionItemKind::CONSTRUCTOR),
+                detail: Some("fn(String) -> T".into()),
+                ..Default::default()
+            },
+            lsp::CompletionItem {
+                label: "my_string".into(),
+                kind: Some(lsp::CompletionItemKind::CONSTANT),
+                detail: Some("String".into()),
+                ..Default::default()
+            },
+        ])))
+    });
+
+    let completion_labels = project
+        .update(cx, |project, cx| project.completions(&buffer, 0, cx))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.label.text)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        completion_labels,
+        &[
+            "foo() -> Result(Nil, Error)".to_string(),
+            "bar.baz(List(a)) -> a".to_string(),
+            "Quux(String) -> T".to_string(),
+            "B: U".to_string(),
+        ]
+    );
+
     assert_eq!(fake_server.binary.path, expected_server_path);
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
     assert_eq!(

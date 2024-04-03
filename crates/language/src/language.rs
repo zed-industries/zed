@@ -1256,6 +1256,48 @@ impl Language {
         result
     }
 
+    pub fn highlight_discontinuous_text<'a>(
+        self: &'a Arc<Self>,
+        text: &'a Rope,
+        ranges: &[Range<usize>],
+    ) -> Vec<(Range<usize>, HighlightId)> {
+        if ranges.is_empty() {
+            return vec![];
+        }
+
+        // also bail out if ranges are overlapping or unordered
+
+        let outer_range = ranges.first().unwrap().start..ranges.last().unwrap().end;
+
+        let mut result = Vec::new();
+        if let Some(grammar) = &self.grammar {
+            let tree = grammar.parse_text(text, None);
+            let captures =
+                SyntaxSnapshot::single_tree_captures(outer_range.clone(), text, &tree, self, |grammar| {
+                    grammar.highlights_query.as_ref()
+                });
+            let highlight_maps = vec![grammar.highlight_map()];
+            let mut offset = 0;
+            let mut chunks = BufferChunks::new(text, outer_range, Some((captures, highlight_maps)), vec![]);
+
+            for range in ranges {
+                chunks.seek(range.start);
+                //
+            }
+
+            for chunk in chunks {
+                let end_offset = offset + chunk.text.len();
+                if let Some(highlight_id) = chunk.syntax_highlight_id {
+                    if !highlight_id.is_default() {
+                        result.push((offset..end_offset, highlight_id));
+                    }
+                }
+                offset = end_offset;
+            }
+        }
+        result
+    }
+
     pub fn path_suffixes(&self) -> &[String] {
         &self.config.matcher.path_suffixes
     }

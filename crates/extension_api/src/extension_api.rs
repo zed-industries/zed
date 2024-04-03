@@ -4,9 +4,9 @@ use wit::*;
 pub use wit::{
     current_platform, download_file, latest_github_release, make_file_executable, node_binary_path,
     npm_install_package, npm_package_installed_version, npm_package_latest_version,
-    zed::extension::lsp, Architecture, CodeLabel, Command, Completion, DownloadedFileType, EnvVars,
-    FixedCodeLabel, GithubRelease, GithubReleaseAsset, GithubReleaseOptions, Guest,
-    LanguageServerInstallationStatus, Os, ParsedCodeLabel, Range, Worktree,
+    zed::extension::lsp, Architecture, CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command,
+    Completion, DownloadedFileType, EnvVars, GithubRelease, GithubReleaseAsset,
+    GithubReleaseOptions, Guest, LanguageServerInstallationStatus, Os, Range, Worktree,
 };
 
 pub type Result<T, E = String> = core::result::Result<T, E>;

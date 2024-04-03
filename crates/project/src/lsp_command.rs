@@ -1485,6 +1485,9 @@ impl LspCommand for GetCompletions {
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
 
             let mut range_for_token = None;
+
+            dbg!(&completions);
+
             completions.retain_mut(|lsp_completion| {
                 let edit = match lsp_completion.text_edit.as_ref() {
                     // If the language server provides a range to overwrite, then

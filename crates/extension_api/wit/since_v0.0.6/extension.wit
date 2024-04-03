@@ -93,22 +93,22 @@ world extension {
     export language-server-command: func(language-server-id: string, worktree: borrow<worktree>) -> result<command, string>;
     export language-server-initialization-options: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 
-    variant code-label {
-        fixed(fixed-code-label),
-        parsed(parsed-code-label),
+    record code-label {
+        /// The source code to parse with Tree-sitter.
+        code: string,
+        spans: list<code-label-span>,
+        filter-range: range,
     }
 
-    record fixed-code-label {
-        text: string,
-        filter-range: range,
-        highlight-range: range,
-        highlight-name: string,
+    variant code-label-span {
+        /// A range into the parsed code.
+        code-range(range),
+        literal(code-label-span-literal),
     }
 
-    record parsed-code-label {
+    record code-label-span-literal {
         text: string,
-        filter-range: range,
-        display-range: range,
+        highlight-name: option<string>,
     }
 
     record range {

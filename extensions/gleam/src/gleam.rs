@@ -1,5 +1,5 @@
 use std::fs;
-use zed::{lsp, CodeLabel, LanguageServerId};
+use zed::{lsp, CodeLabel, CodeLabelSpan, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
 struct GleamExtension {
@@ -105,6 +105,43 @@ impl zed::Extension for GleamExtension {
             args: vec!["lsp".to_string()],
             env: Default::default(),
         })
+    }
+
+    fn label_for_completion(
+        &self,
+        _language_server_id: &LanguageServerId,
+        completion: zed::Completion,
+    ) -> Option<zed::CodeLabel> {
+        match completion.kind.zip(completion.detail.as_ref()) {
+            Some((lsp::CompletionItemKind::Function, detail)) => {
+                let name = &completion.label;
+                let signature = detail.trim_start_matches("fn");
+                let const_decl = "const a: T = ";
+                let ty_alias = "type T = fn";
+                let code = format!("{const_decl}{name}()\n{ty_alias}{signature}");
+
+                dbg!(&code);
+
+                Some(CodeLabel {
+                    spans: vec![
+                        CodeLabelSpan::CodeRange(zed::Range {
+                            start: const_decl.len() as u32,
+                            end: const_decl.len() as u32 + name.len() as u32,
+                        }),
+                        CodeLabelSpan::CodeRange(zed::Range {
+                            start: code.len() as u32 - signature.len() as u32,
+                            end: code.len() as u32,
+                        }),
+                    ],
+                    filter_range: zed::Range {
+                        start: 0,
+                        end: name.len() as u32,
+                    },
+                    code,
+                })
+            }
+            _ => None,
+        }
     }
 }
 

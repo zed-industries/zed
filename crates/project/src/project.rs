@@ -5339,6 +5339,8 @@ impl Project {
                 let mut completions = Vec::new();
                 for (lsp_adapter, task) in tasks {
                     if let Ok(new_completions) = task.await {
+                        dbg!(&new_completions);
+
                         populate_labels_for_completions(
                             new_completions,
                             &language_registry,
