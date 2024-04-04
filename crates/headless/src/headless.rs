@@ -109,7 +109,7 @@ impl DevServer {
         remote_project: &proto::RemoteProject,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let (client, project, worktrees) = this.update(cx, |this, cx| {
+        let (client, project) = this.update(cx, |this, cx| {
             let project = Project::local(
                 this.client.clone(),
                 this.app_state.node_runtime.clone(),
@@ -118,9 +118,18 @@ impl DevServer {
                 this.app_state.fs.clone(),
                 cx,
             );
-            let worktrees = project.read(cx).worktree_metadata_protos(cx);
-            (this.client.clone(), project, worktrees)
+
+            (this.client.clone(), project)
         })?;
+
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_local_worktree(&remote_project.path, true, cx)
+            })?
+            .await?;
+
+        let worktrees =
+            project.read_with(cx, |project, cx| project.worktree_metadata_protos(cx))?;
 
         let response = client
             .request(proto::ShareRemoteProject {

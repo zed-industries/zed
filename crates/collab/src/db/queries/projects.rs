@@ -140,7 +140,7 @@ impl Database {
         project_id: ProjectId,
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
-    ) -> Result<TransactionGuard<(proto::Room, Vec<ConnectionId>)>> {
+    ) -> Result<TransactionGuard<(Option<proto::Room>, Vec<ConnectionId>)>> {
         self.project_transaction(project_id, |tx| async move {
             let project = project::Entity::find_by_id(project_id)
                 .filter(
@@ -157,12 +157,14 @@ impl Database {
             self.update_project_worktrees(project.id, worktrees, &tx)
                 .await?;
 
-            let room_id = project
-                .room_id
-                .ok_or_else(|| anyhow!("project not in a room"))?;
-
             let guest_connection_ids = self.project_guest_connection_ids(project.id, &tx).await?;
-            let room = self.get_room(room_id, &tx).await?;
+
+            let room = if let Some(room_id) = project.room_id {
+                Some(self.get_room(room_id, &tx).await?)
+            } else {
+                None
+            };
+
             Ok((room, guest_connection_ids))
         })
         .await

@@ -236,6 +236,7 @@ enum BufferOrderedMessage {
     Resync,
 }
 
+#[derive(Debug)]
 enum LocalProjectUpdate {
     WorktreesChanged,
     CreateBufferForPeer {
@@ -1517,7 +1518,7 @@ impl Project {
                                     })
                                 })?
                                 .await;
-                            if update_project.is_ok() {
+                            if update_project.log_err().is_some() {
                                 for worktree in worktrees {
                                     worktree.update(&mut cx, |worktree, cx| {
                                         let worktree = worktree.as_local_mut().unwrap();

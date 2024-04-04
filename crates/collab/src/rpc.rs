@@ -2289,7 +2289,9 @@ async fn update_project(
                 .forward_send(session.connection_id, connection_id, request.clone())
         },
     );
-    room_updated(&room, &session.peer);
+    if let Some(room) = room {
+        room_updated(&room, &session.peer);
+    }
     response.send(proto::Ack {})?;
 
     Ok(())
