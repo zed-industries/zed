@@ -55,6 +55,7 @@ pub(crate) struct TasksModalDelegate {
     workspace: WeakView<Workspace>,
     prompt: String,
     task_context: TaskContext,
+    placeholder_text: Arc<str>,
 }
 
 impl TasksModalDelegate {
@@ -71,6 +72,7 @@ impl TasksModalDelegate {
             selected_index: 0,
             prompt: String::default(),
             task_context,
+            placeholder_text: Arc::from("Run a task..."),
         }
     }
 
@@ -197,13 +199,8 @@ impl PickerDelegate for TasksModalDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
-        Arc::from(format!(
-            "{} use task name as prompt, {} spawns a bash-like task from the prompt, {} runs the selected task",
-            cx.keystroke_text_for(&picker::UseSelectedQuery),
-            cx.keystroke_text_for(&picker::ConfirmInput {secondary: false}),
-            cx.keystroke_text_for(&menu::Confirm),
-        ))
+    fn placeholder_text(&self, _: &mut WindowContext) -> Arc<str> {
+        self.placeholder_text.clone()
     }
 
     fn update_matches(
