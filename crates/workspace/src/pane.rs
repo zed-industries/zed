@@ -10,7 +10,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
     AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
-    EventEmitter, ExternalPaths, FocusHandle, FocusableView, Model, MouseButton,
+    EventEmitter, ExternalPaths, FocusHandle, FocusableView, KeyContext, Model, MouseButton,
     NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle, Subscription, Task,
     View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
@@ -1733,8 +1733,14 @@ impl FocusableView for Pane {
 
 impl Render for Pane {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let mut key_context = KeyContext::default();
+        key_context.add("Pane");
+        if self.active_item().is_none() {
+            key_context.add("EmptyPane");
+        }
+
         v_flex()
-            .key_context("Pane")
+            .key_context(key_context)
             .track_focus(&self.focus_handle)
             .size_full()
             .flex_none()
