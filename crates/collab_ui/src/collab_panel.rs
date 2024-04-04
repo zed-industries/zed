@@ -26,7 +26,7 @@ use gpui::{
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
 use rpc::{
-    proto::{self, ChannelVisibility, PeerId},
+    proto::{self, ChannelVisibility, DevServerStatus, PeerId},
     ErrorCode, ErrorExt,
 };
 use serde_derive::{Deserialize, Serialize};
@@ -1094,6 +1094,14 @@ impl CollabPanel {
             None => "Open Remote Project".to_string(),
         });
 
+        let dev_server_is_online = dev_server.map(|s| s.status) == Some(DevServerStatus::Online);
+
+        let dev_server_text_color = if dev_server_is_online {
+            Color::Default
+        } else {
+            Color::Disabled
+        };
+
         ListItem::new(ElementId::NamedInteger(
             "remote-project".into(),
             id.0 as usize,
@@ -1102,17 +1110,20 @@ impl CollabPanel {
         .indent_step_size(px(20.))
         .selected(is_selected)
         .on_click(cx.listener(move |this, _, cx| {
-            if let Some(project_id) = maybe_project_id {
-                this.join_remote_project(project_id, cx);
+            //TODO display error message if dev server is offline
+            if dev_server_is_online {
+                if let Some(project_id) = maybe_project_id {
+                    this.join_remote_project(project_id, cx);
+                }
             }
         }))
         .start_slot(
             h_flex()
                 .relative()
                 .gap_1()
-                .child(IconButton::new(0, IconName::FileTree)),
+                .child(IconButton::new(0, IconName::FileTree).icon_color(dev_server_text_color)),
         )
-        .child(Label::new(name.clone()))
+        .child(Label::new(name.clone()).color(dev_server_text_color))
         .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
     }
 

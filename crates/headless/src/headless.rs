@@ -6,7 +6,7 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use project::Project;
 use rpc::{proto, TypedEnvelope};
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 pub struct DevServer {
     client: Arc<Client>,
