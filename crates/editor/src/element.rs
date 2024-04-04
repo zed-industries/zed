@@ -3875,7 +3875,7 @@ impl ScrollbarLayout {
             .into_iter()
             .map(|range| {
                 let start_y = self.first_row_y_offset + range.start as f32 * self.row_height;
-                let mut end_y = self.first_row_y_offset + (range.end + 1) as f32 * self.row_height;
+                let end_y = self.first_row_y_offset + (range.end + 1) as f32 * self.row_height;
                 ColoredRange {
                     start: start_y,
                     end: end_y,
