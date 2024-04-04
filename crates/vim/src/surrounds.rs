@@ -162,7 +162,7 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                 editor.change_selections(None, cx, |s| {
                     s.select_ranges(anchors);
                 });
-                edits.sort_by_key(|&(ref range, _)| range.start);
+                edits.sort_by_key(|(range, _)| range.start);
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
@@ -266,7 +266,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                             start..start
                         })
                         .collect::<Vec<_>>();
-                    edits.sort_by_key(|&(ref range, _)| range.start);
+                    edits.sort_by_key(|(range, _)| range.start);
                     editor.buffer().update(cx, |buffer, cx| {
                         buffer.edit(edits, None, cx);
                     });

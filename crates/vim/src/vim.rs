@@ -67,7 +67,7 @@ struct Number(usize);
 
 actions!(
     vim,
-    [Tab, Enter, Object, InnerObject, FindForward, FindBackward,]
+    [Tab, Enter, Object, InnerObject, FindForward, FindBackward]
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.

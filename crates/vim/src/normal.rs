@@ -53,7 +53,7 @@ actions!(
         ConvertToLowerCase,
         JoinLines,
         Indent,
-        Outdent
+        Outdent,
     ]
 );
 
