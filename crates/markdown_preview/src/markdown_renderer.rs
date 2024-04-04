@@ -332,7 +332,10 @@ fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> 
         link_ranges,
         move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
             Link::Web { url } => window_cx.open_url(url),
-            Link::Path { path } => {
+            Link::Path {
+                path,
+                display_path: _,
+            } => {
                 if let Some(workspace) = &workspace {
                     _ = workspace.update(window_cx, |workspace, cx| {
                         workspace.open_abs_path(path.clone(), false, cx).detach();
