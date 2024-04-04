@@ -44,7 +44,7 @@ pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
 pub trait LinuxClient {
-    fn common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
+    fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
@@ -102,15 +102,15 @@ impl LinuxCommon {
 
 impl<P: LinuxClient + 'static> Platform for P {
     fn background_executor(&self) -> BackgroundExecutor {
-        self.common(|common| common.background_executor.clone())
+        self.with_common(|common| common.background_executor.clone())
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {
-        self.common(|common| common.foreground_executor.clone())
+        self.with_common(|common| common.foreground_executor.clone())
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.common(|common| common.text_system.clone())
+        self.with_common(|common| common.text_system.clone())
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
@@ -118,7 +118,7 @@ impl<P: LinuxClient + 'static> Platform for P {
 
         LinuxClient::run(self);
 
-        self.common(|common| {
+        self.with_common(|common| {
             if let Some(mut fun) = common.callbacks.quit.take() {
                 fun();
             }
@@ -126,7 +126,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn quit(&self) {
-        self.common(|common| common.signal.stop());
+        self.with_common(|common| common.signal.stop());
     }
 
     fn restart(&self) {
@@ -211,7 +211,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.common(|common| common.callbacks.open_urls = Some(callback));
+        self.with_common(|common| common.callbacks.open_urls = Some(callback));
     }
 
     fn prompt_for_paths(
@@ -297,49 +297,49 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.common(|common| {
+        self.with_common(|common| {
             common.callbacks.become_active = Some(callback);
         });
     }
 
     fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.common(|common| {
+        self.with_common(|common| {
             common.callbacks.resign_active = Some(callback);
         });
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.common(|common| {
+        self.with_common(|common| {
             common.callbacks.quit = Some(callback);
         });
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.common(|common| {
+        self.with_common(|common| {
             common.callbacks.reopen = Some(callback);
         });
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.common(|common| {
+        self.with_common(|common| {
             common.callbacks.event = Some(callback);
         });
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.common(|common| {
+        self.with_common(|common| {
             common.callbacks.app_menu_action = Some(callback);
         });
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.common(|common| {
+        self.with_common(|common| {
             common.callbacks.will_open_app_menu = Some(callback);
         });
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.common(|common| {
+        self.with_common(|common| {
             common.callbacks.validate_app_menu_command = Some(callback);
         });
     }

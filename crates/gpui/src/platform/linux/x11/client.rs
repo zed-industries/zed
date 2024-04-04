@@ -337,7 +337,7 @@ impl X11Client {
 }
 
 impl LinuxClient for X11Client {
-    fn common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
+    fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
     }
 

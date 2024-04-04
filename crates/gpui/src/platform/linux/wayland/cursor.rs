@@ -1,4 +1,5 @@
 use crate::platform::linux::wayland::WaylandClientState;
+use crate::WaylandClient;
 use wayland_backend::client::InvalidId;
 use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_pointer::WlPointer;
@@ -18,7 +19,7 @@ impl Cursor {
     pub fn new(
         connection: &Connection,
         compositor: &WlCompositor,
-        qh: &QueueHandle<WaylandClientState>,
+        qh: &QueueHandle<WaylandClient>,
         shm: &WlShm,
         size: u32,
     ) -> Self {
@@ -34,8 +35,7 @@ impl Cursor {
         self.serial_id = serial_id;
     }
 
-    pub fn set_icon(&mut self, wl_pointer: &WlPointer, cursor_icon_name: String) {
-        let mut cursor_icon_name = cursor_icon_name.clone();
+    pub fn set_icon(&mut self, wl_pointer: &WlPointer, mut cursor_icon_name: &str) {
         if self.current_icon_name != cursor_icon_name {
             if let Ok(theme) = &mut self.theme {
                 let mut buffer: Option<&CursorImageBuffer>;
@@ -44,7 +44,7 @@ impl Cursor {
                     buffer = Some(&cursor[0]);
                 } else if let Some(cursor) = theme.get_cursor("default") {
                     buffer = Some(&cursor[0]);
-                    cursor_icon_name = "default".to_string();
+                    cursor_icon_name = "default";
                     log::warn!(
                         "Linux: Wayland: Unable to get cursor icon: {}. Using default cursor icon",
                         cursor_icon_name
@@ -68,7 +68,7 @@ impl Cursor {
                     self.surface.damage(0, 0, width as i32, height as i32);
                     self.surface.commit();
 
-                    self.current_icon_name = cursor_icon_name;
+                    self.current_icon_name = cursor_icon_name.to_string();
                 }
             } else {
                 log::warn!("Linux: Wayland: Unable to load cursor themes");
