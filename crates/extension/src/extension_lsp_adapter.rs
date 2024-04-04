@@ -11,6 +11,7 @@ use language::{
     CodeLabel, HighlightId, Language, LanguageServerName, LspAdapter, LspAdapterDelegate,
 };
 use lsp::LanguageServerBinary;
+use serde::Serialize;
 use std::ops::Range;
 use std::{
     any::Any,
@@ -210,19 +211,59 @@ impl LspAdapter for ExtensionLspAdapter {
             })
             .await?;
 
-        Ok(labels
-            .into_iter()
-            .map(|label| {
-                label.map(|label| {
-                    build_code_label(
-                        &label,
-                        &language.highlight_text(&label.code.as_str().into(), 0..label.code.len()),
-                        &language,
-                    )
-                })
-            })
-            .collect())
+        Ok(labels_from_wit(labels, language))
     }
+
+    async fn labels_for_symbols(
+        self: Arc<Self>,
+        symbols: &[(String, lsp::SymbolKind)],
+        language: &Arc<Language>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        let symbols = symbols
+            .into_iter()
+            .cloned()
+            .map(|(name, kind)| wit::Symbol {
+                name,
+                kind: kind.into(),
+            })
+            .collect::<Vec<_>>();
+
+        let labels = self
+            .extension
+            .call({
+                let this = self.clone();
+                |extension, store| {
+                    async move {
+                        extension
+                            .call_labels_for_symbols(store, &this.language_server_id, symbols)
+                            .await?
+                            .map_err(|e| anyhow!("{}", e))
+                    }
+                    .boxed()
+                }
+            })
+            .await?;
+
+        Ok(labels_from_wit(labels, language))
+    }
+}
+
+fn labels_from_wit(
+    labels: Vec<Option<wit::CodeLabel>>,
+    language: &Arc<Language>,
+) -> Vec<Option<CodeLabel>> {
+    labels
+        .into_iter()
+        .map(|label| {
+            label.map(|label| {
+                build_code_label(
+                    &label,
+                    &language.highlight_text(&label.code.as_str().into(), 0..label.code.len()),
+                    &language,
+                )
+            })
+        })
+        .collect()
 }
 
 fn build_code_label(
@@ -332,14 +373,7 @@ impl From<lsp::CompletionItemKind> for wit::CompletionKind {
             lsp::CompletionItemKind::EVENT => Self::Event,
             lsp::CompletionItemKind::OPERATOR => Self::Operator,
             lsp::CompletionItemKind::TYPE_PARAMETER => Self::TypeParameter,
-            _ => {
-                let value = maybe!({
-                    let kind = serde_json::to_value(&value)?;
-                    serde_json::from_value(kind)
-                });
-
-                Self::Other(value.log_err().unwrap_or(-1))
-            }
+            _ => Self::Other(extract_int(value)),
         }
     }
 }
@@ -349,16 +383,52 @@ impl From<lsp::InsertTextFormat> for wit::InsertTextFormat {
         match value {
             lsp::InsertTextFormat::PLAIN_TEXT => Self::PlainText,
             lsp::InsertTextFormat::SNIPPET => Self::Snippet,
-            _ => {
-                let value = maybe!({
-                    let kind = serde_json::to_value(&value)?;
-                    serde_json::from_value(kind)
-                });
-
-                Self::Other(value.log_err().unwrap_or(-1))
-            }
+            _ => Self::Other(extract_int(value)),
         }
     }
+}
+
+impl From<lsp::SymbolKind> for wit::SymbolKind {
+    fn from(value: lsp::SymbolKind) -> Self {
+        match value {
+            lsp::SymbolKind::FILE => Self::File,
+            lsp::SymbolKind::MODULE => Self::Module,
+            lsp::SymbolKind::NAMESPACE => Self::Namespace,
+            lsp::SymbolKind::PACKAGE => Self::Package,
+            lsp::SymbolKind::CLASS => Self::Class,
+            lsp::SymbolKind::METHOD => Self::Method,
+            lsp::SymbolKind::PROPERTY => Self::Property,
+            lsp::SymbolKind::FIELD => Self::Field,
+            lsp::SymbolKind::CONSTRUCTOR => Self::Constructor,
+            lsp::SymbolKind::ENUM => Self::Enum,
+            lsp::SymbolKind::INTERFACE => Self::Interface,
+            lsp::SymbolKind::FUNCTION => Self::Function,
+            lsp::SymbolKind::VARIABLE => Self::Variable,
+            lsp::SymbolKind::CONSTANT => Self::Constant,
+            lsp::SymbolKind::STRING => Self::String,
+            lsp::SymbolKind::NUMBER => Self::Number,
+            lsp::SymbolKind::BOOLEAN => Self::Boolean,
+            lsp::SymbolKind::ARRAY => Self::Array,
+            lsp::SymbolKind::OBJECT => Self::Object,
+            lsp::SymbolKind::KEY => Self::Key,
+            lsp::SymbolKind::NULL => Self::Null,
+            lsp::SymbolKind::ENUM_MEMBER => Self::EnumMember,
+            lsp::SymbolKind::STRUCT => Self::Struct,
+            lsp::SymbolKind::EVENT => Self::Event,
+            lsp::SymbolKind::OPERATOR => Self::Operator,
+            lsp::SymbolKind::TYPE_PARAMETER => Self::TypeParameter,
+            _ => Self::Other(extract_int(value)),
+        }
+    }
+}
+
+fn extract_int<T: Serialize>(value: T) -> i32 {
+    maybe!({
+        let kind = serde_json::to_value(&value)?;
+        serde_json::from_value(kind)
+    })
+    .log_err()
+    .unwrap_or(-1)
 }
 
 #[test]

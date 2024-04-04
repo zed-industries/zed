@@ -41,4 +41,39 @@ interface lsp {
         snippet,
         other(s32),
     }
+
+    record symbol {
+        kind: symbol-kind,
+        name: string,
+    }
+
+    variant symbol-kind {
+        file,
+        module,
+        namespace,
+        %package,
+        class,
+        method,
+        property,
+        field,
+        %constructor,
+        %enum,
+        %interface,
+        function,
+        variable,
+        constant,
+        %string,
+        number,
+        boolean,
+        array,
+        object,
+        key,
+        null,
+        enum-member,
+        struct,
+        event,
+        operator,
+        type-parameter,
+        other(s32),
+    }
 }

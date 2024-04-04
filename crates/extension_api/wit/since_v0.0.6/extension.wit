@@ -3,7 +3,7 @@ package zed:extension;
 world extension {
     import lsp;
 
-    use lsp.{completion};
+    use lsp.{completion, symbol};
 
     export init-extension: func();
 
@@ -117,4 +117,5 @@ world extension {
     }
 
     export labels-for-completions: func(language-server-id: string, completions: list<completion>) -> result<list<option<code-label>>, string>;
+    export labels-for-symbols: func(language-server-id: string, symbols: list<symbol>) -> result<list<option<code-label>>, string>;
 }
