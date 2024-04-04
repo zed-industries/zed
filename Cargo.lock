@@ -5680,6 +5680,7 @@ dependencies = [
  "editor",
  "gpui",
  "language",
+ "linkify",
  "pretty_assertions",
  "pulldown-cmark",
  "theme",
