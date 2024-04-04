@@ -156,7 +156,7 @@ impl ChatPanel {
                             }
                         }
                     }
-                    room::Event::Left { channel_id } => {
+                    room::Event::RoomLeft { channel_id } => {
                         if channel_id == &this.channel_id(cx) {
                             cx.emit(PanelEvent::Close)
                         }
