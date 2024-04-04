@@ -63,7 +63,6 @@
   "async"
   "await"
   "break"
-  "crate"
   "const"
   "continue"
   "default"
