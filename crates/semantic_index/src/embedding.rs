@@ -30,26 +30,6 @@ pub enum Embedding {
     OpenaiTextEmbedding3Large([f32; EMBEDDING_SIZE_LARGE]),
 }
 
-pub trait EmbeddingProvider {
-    async fn get_embedding(&self, text: String) -> Result<Embedding>;
-}
-
-pub struct OllamaEmbeddingProvider {
-    client: Arc<HttpClientWithUrl>,
-    model: EmbeddingModel,
-}
-
-#[derive(Serialize)]
-struct OllamaEmbeddingRequest {
-    model: String,
-    prompt: String,
-}
-
-#[derive(Deserialize)]
-struct OllamaEmbeddingResponse {
-    embedding: Vec<f32>,
-}
-
 pub(crate) fn normalize_vector(embedding: Vec<f32>) -> Vec<f32> {
     // TODO: Either use ndarray directly like this:
     //         let array = ndarray::Array1::from(self.embedding.clone());
@@ -105,6 +85,27 @@ pub fn normalize_embedding(
         }
         _ => Err(anyhow!("Invalid or mismatched embedding size")),
     }
+}
+
+/// Trait for embedding providers. Text in, vector out.
+pub trait EmbeddingProvider {
+    async fn get_embedding(&self, text: String) -> Result<Embedding>;
+}
+
+pub struct OllamaEmbeddingProvider {
+    client: Arc<HttpClientWithUrl>,
+    model: EmbeddingModel,
+}
+
+#[derive(Serialize)]
+struct OllamaEmbeddingRequest {
+    model: String,
+    prompt: String,
+}
+
+#[derive(Deserialize)]
+struct OllamaEmbeddingResponse {
+    embedding: Vec<f32>,
 }
 
 impl OllamaEmbeddingProvider {
