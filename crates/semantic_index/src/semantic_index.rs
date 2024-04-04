@@ -53,7 +53,6 @@ pub struct ProjectIndex {
     db: lmdb::Database,
     project: WeakModel<Project>,
     worktree_scans: HashMap<WeakModel<Worktree>, Task<()>>,
-    chunked_files_tx: Sender<ChunkedFile>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
 }
@@ -62,14 +61,10 @@ impl ProjectIndex {
     fn new(project: Model<Project>, db: lmdb::Database, cx: &mut ModelContext<Self>) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let fs = project.read(cx).fs().clone();
-
-        let (chunked_files_tx, chunked_files_rx) = mpsc::channel(2048);
-
         let mut this = ProjectIndex {
             db,
             project: project.downgrade(),
             worktree_scans: HashMap::default(),
-            chunked_files_tx,
             language_registry,
             fs,
         };
@@ -77,8 +72,6 @@ impl ProjectIndex {
         for worktree in project.read(cx).worktrees().collect::<Vec<_>>() {
             this.add_worktree(worktree, cx);
         }
-
-        embed_chunks(chunked_files_rx, cx);
 
         this
     }
@@ -95,21 +88,24 @@ impl ProjectIndex {
 
         let language_registry = self.language_registry.clone();
         let fs = self.fs.clone();
-        let chunked_files_tx = self.chunked_files_tx.clone();
+
+        let (entries_tx, entries_rx) = channel::bounded(512);
+        let worktree_abs_path = local_worktree.abs_path().clone();
+        let scan_entries = cx.background_executor().spawn(async move {
+            for entry in local_worktree.files(false, 0) {
+                if entries_tx.send(entry.clone()).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let (chunked_files_tx, chunked_files_rx) = mpsc::channel(2048);
+        let embed_chunks = embed_chunks(chunked_files_rx, cx);
+
         let worktree = worktree.downgrade();
         let scan = cx.spawn(|this, mut cx| {
             let worktree = worktree.clone();
             async move {
-                let (entries_tx, entries_rx) = channel::bounded(512);
-                let worktree_abs_path = local_worktree.abs_path().clone();
-                let entry_producer = cx.background_executor().spawn(async move {
-                    for entry in local_worktree.files(false, 0) {
-                        if entries_tx.send(entry.clone()).await.is_err() {
-                            break;
-                        }
-                    }
-                });
-
                 cx.background_executor()
                     .scoped(|cx| {
                         for _ in 0..cx.num_cpus() {
@@ -129,7 +125,8 @@ impl ProjectIndex {
                         }
                     })
                     .await;
-                entry_producer.await;
+                scan_entries.await;
+                embed_chunks.await;
 
                 this.update(&mut cx, |this, cx| {
                     this.worktree_scans.remove(&worktree);
@@ -220,8 +217,8 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
             if cursor.goto_first_child() {
                 continue;
             } else if !range.is_empty() {
-                chunk_ranges.push(range);
-                range = cursor.node().start_byte()..cursor.node().start_byte();
+                chunk_ranges.push(range.clone());
+                range.start = range.end;
                 continue;
             }
 
@@ -236,7 +233,7 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
                 range.start = range.end;
             }
         } else {
-            // The current node fits the threshold, so we include wholesale.
+            // The current node fits the threshold, so we include it wholesale.
             range.end = node.end_byte();
         }
 
@@ -262,14 +259,14 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
     }
 }
 
-fn embed_chunks(chunked_files: Receiver<ChunkedFile>, cx: &mut ModelContext<ProjectIndex>) {
+fn embed_chunks(
+    chunked_files: Receiver<ChunkedFile>,
+    cx: &mut ModelContext<ProjectIndex>,
+) -> Task<()> {
     cx.spawn(|this, cx| async move {
-        let mut chunked_file_batches =
-            chunked_files.chunks_timeout(512, Duration::from_millis(2000));
-
+        let mut chunked_file_batches = chunked_files.chunks_timeout(512, Duration::from_secs(2));
         while let Some(batch) = chunked_file_batches.next().await {
             dbg!(batch.len());
         }
     })
-    .detach();
 }
