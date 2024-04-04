@@ -103,7 +103,7 @@ fn copy_selections_content_internal(
     }
 
     editor.highlight_background::<HighlightOnYank>(
-        ranges_to_highlight,
+        &ranges_to_highlight,
         |colors| colors.editor_document_highlight_read_background,
         cx,
     );

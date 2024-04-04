@@ -598,7 +598,10 @@
   },
   {
     "context": "TabSwitcher",
-    "bindings": { "ctrl-shift-tab": "menu::SelectPrev" }
+    "bindings": {
+      "ctrl-shift-tab": "menu::SelectPrev",
+      "ctrl-backspace": "tab_switcher::CloseSelectedItem"
+    }
   },
   {
     "context": "Terminal",

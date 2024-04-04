@@ -37,6 +37,7 @@ pub struct BlockMap {
 
 pub struct BlockMapWriter<'a>(&'a mut BlockMap);
 
+#[derive(Clone)]
 pub struct BlockSnapshot {
     wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
@@ -54,7 +55,7 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Arc<dyn Fn(&mut BlockContext) -> AnyElement>;
+pub type RenderBlock = Box<dyn Send + Fn(&mut BlockContext) -> AnyElement>;
 
 pub struct Block {
     id: BlockId,
@@ -65,15 +66,11 @@ pub struct Block {
     disposition: BlockDisposition,
 }
 
-#[derive(Clone)]
-pub struct BlockProperties<P>
-where
-    P: Clone,
-{
+pub struct BlockProperties<P> {
     pub position: P,
     pub height: u8,
     pub style: BlockStyle,
-    pub render: Arc<dyn Fn(&mut BlockContext) -> AnyElement>,
+    pub render: Box<dyn Send + Fn(&mut BlockContext) -> AnyElement>,
     pub disposition: BlockDisposition,
 }
 
@@ -1041,21 +1038,21 @@ mod tests {
                 position: buffer_snapshot.anchor_after(Point::new(1, 0)),
                 height: 1,
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| div().into_any()),
+                render: Box::new(|_| div().into_any()),
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 2)),
                 height: 2,
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| div().into_any()),
+                render: Box::new(|_| div().into_any()),
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(3, 3)),
                 height: 3,
                 disposition: BlockDisposition::Below,
-                render: Arc::new(|_| div().into_any()),
+                render: Box::new(|_| div().into_any()),
             },
         ]);
 
@@ -1209,14 +1206,14 @@ mod tests {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 12)),
                 disposition: BlockDisposition::Above,
-                render: Arc::new(|_| div().into_any()),
+                render: Box::new(|_| div().into_any()),
                 height: 1,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 position: buffer_snapshot.anchor_after(Point::new(1, 1)),
                 disposition: BlockDisposition::Below,
-                render: Arc::new(|_| div().into_any()),
+                render: Box::new(|_| div().into_any()),
                 height: 1,
             },
         ]);
@@ -1311,7 +1308,7 @@ mod tests {
                                 position,
                                 height,
                                 disposition,
-                                render: Arc::new(|_| div().into_any()),
+                                render: Box::new(|_| div().into_any()),
                             }
                         })
                         .collect::<Vec<_>>();
@@ -1325,7 +1322,14 @@ mod tests {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
-                    let block_ids = block_map.insert(block_properties.clone());
+                    let block_ids =
+                        block_map.insert(block_properties.iter().map(|props| BlockProperties {
+                            position: props.position,
+                            height: props.height,
+                            style: props.style,
+                            render: Box::new(|_| div().into_any()),
+                            disposition: props.disposition,
+                        }));
                     for (block_id, props) in block_ids.into_iter().zip(block_properties) {
                         custom_blocks.push((block_id, props));
                     }

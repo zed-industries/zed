@@ -24,7 +24,7 @@ use gpui::{
     transparent_black, Action, AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds,
     ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
     ElementContext, ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
     ViewContext, WindowContext,
@@ -2370,150 +2370,15 @@ impl EditorElement {
                     },
                     cx.theme().colors().scrollbar_track_border,
                 ));
-                let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-                let is_singleton = self.editor.read(cx).is_singleton(cx);
-                let left = scrollbar_layout.hitbox.left();
-                let right = scrollbar_layout.hitbox.right();
-                let column_width =
-                    px(((right - left - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
-                if is_singleton && scrollbar_settings.selections {
-                    let start_anchor = Anchor::min();
-                    let end_anchor = Anchor::max();
-                    let background_ranges = self
-                        .editor
-                        .read(cx)
-                        .background_highlight_row_ranges::<BufferSearchHighlights>(
-                            start_anchor..end_anchor,
-                            &layout.position_map.snapshot,
-                            50000,
-                        );
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
-                    let right_x = left_x + column_width;
-                    for range in background_ranges {
-                        let (start_y, end_y) =
-                            scrollbar_layout.ys_for_marker(range.start().row(), range.end().row());
-                        let bounds =
-                            Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            cx.theme().status().info,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
-                    }
-                }
 
-                if is_singleton && scrollbar_settings.symbols_selections {
-                    let selection_ranges = self.editor.read(cx).background_highlights_in_range(
-                        Anchor::min()..Anchor::max(),
-                        &layout.position_map.snapshot,
-                        cx.theme().colors(),
-                    );
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + column_width;
-                    let right_x = left_x + column_width;
-                    for hunk in selection_ranges {
-                        let start_display = Point::new(hunk.0.start.row(), 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let end_display = Point::new(hunk.0.end.row(), 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let (start_y, end_y) =
-                            scrollbar_layout.ys_for_marker(start_display.row(), end_display.row());
-                        let bounds =
-                            Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            cx.theme().status().info,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
-                    }
-                }
+                // Refresh scrollbar markers in the background. Below, we paint whatever markers have already been computed.
+                self.refresh_scrollbar_markers(layout, scrollbar_layout, cx);
 
-                if is_singleton && scrollbar_settings.git_diff {
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH;
-                    let right_x = left_x + column_width;
-                    for hunk in layout
-                        .position_map
-                        .snapshot
-                        .buffer_snapshot
-                        .git_diff_hunks_in_range(0..layout.max_row)
-                    {
-                        let start_display_row = Point::new(hunk.associated_range.start, 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot)
-                            .row();
-                        let mut end_display_row = Point::new(hunk.associated_range.end, 0)
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot)
-                            .row();
-                        if end_display_row != start_display_row {
-                            end_display_row -= 1;
-                        }
-                        let (start_y, end_y) =
-                            scrollbar_layout.ys_for_marker(start_display_row, end_display_row);
-                        let bounds =
-                            Bounds::from_corners(point(left_x, start_y), point(right_x, end_y));
-                        let color = match hunk.status() {
-                            DiffHunkStatus::Added => cx.theme().status().created,
-                            DiffHunkStatus::Modified => cx.theme().status().modified,
-                            DiffHunkStatus::Removed => cx.theme().status().deleted,
-                        };
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            color,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
-                    }
-                }
-
-                if is_singleton && scrollbar_settings.diagnostics {
-                    let max_point = layout
-                        .position_map
-                        .snapshot
-                        .display_snapshot
-                        .buffer_snapshot
-                        .max_point();
-
-                    let diagnostics = layout
-                        .position_map
-                        .snapshot
-                        .buffer_snapshot
-                        .diagnostics_in_range::<_, Point>(Point::zero()..max_point, false)
-                        // We want to sort by severity, in order to paint the most severe diagnostics last.
-                        .sorted_by_key(|diagnostic| {
-                            std::cmp::Reverse(diagnostic.diagnostic.severity)
-                        });
-
-                    let left_x = left + ScrollbarLayout::BORDER_WIDTH + 2.0 * column_width;
-                    for diagnostic in diagnostics {
-                        let start_display = diagnostic
-                            .range
-                            .start
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let end_display = diagnostic
-                            .range
-                            .end
-                            .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                        let (start_y, end_y) =
-                            scrollbar_layout.ys_for_marker(start_display.row(), end_display.row());
-                        let bounds =
-                            Bounds::from_corners(point(left_x, start_y), point(right, end_y));
-                        let color = match diagnostic.diagnostic.severity {
-                            DiagnosticSeverity::ERROR => cx.theme().status().error,
-                            DiagnosticSeverity::WARNING => cx.theme().status().warning,
-                            DiagnosticSeverity::INFORMATION => cx.theme().status().info,
-                            _ => cx.theme().status().hint,
-                        };
-                        cx.paint_quad(quad(
-                            bounds,
-                            Corners::default(),
-                            color,
-                            Edges::default(),
-                            cx.theme().colors().scrollbar_thumb_border,
-                        ));
-                    }
+                let markers = self.editor.read(cx).scrollbar_marker_state.markers.clone();
+                for marker in markers.iter() {
+                    let mut marker = marker.clone();
+                    marker.bounds.origin += scrollbar_layout.hitbox.origin;
+                    cx.paint_quad(marker);
                 }
 
                 cx.paint_quad(quad(
@@ -2617,6 +2482,156 @@ impl EditorElement {
                 }
             });
         }
+    }
+
+    fn refresh_scrollbar_markers(
+        &self,
+        layout: &EditorLayout,
+        scrollbar_layout: &ScrollbarLayout,
+        cx: &mut ElementContext,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            if !editor.is_singleton(cx)
+                || !editor
+                    .scrollbar_marker_state
+                    .should_refresh(scrollbar_layout.hitbox.size)
+            {
+                return;
+            }
+
+            let scrollbar_layout = scrollbar_layout.clone();
+            let background_highlights = editor.background_highlights.clone();
+            let snapshot = layout.position_map.snapshot.clone();
+            let theme = cx.theme().clone();
+            let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+            let max_row = layout.max_row;
+
+            editor.scrollbar_marker_state.dirty = false;
+            editor.scrollbar_marker_state.pending_refresh =
+                Some(cx.spawn(|editor, mut cx| async move {
+                    let scrollbar_size = scrollbar_layout.hitbox.size;
+                    let scrollbar_markers = cx
+                        .background_executor()
+                        .spawn(async move {
+                            let mut marker_quads = Vec::new();
+
+                            if scrollbar_settings.git_diff {
+                                let marker_row_ranges = snapshot
+                                    .buffer_snapshot
+                                    .git_diff_hunks_in_range(0..max_row)
+                                    .map(|hunk| {
+                                        let start_display_row =
+                                            Point::new(hunk.associated_range.start, 0)
+                                                .to_display_point(&snapshot.display_snapshot)
+                                                .row();
+                                        let mut end_display_row =
+                                            Point::new(hunk.associated_range.end, 0)
+                                                .to_display_point(&snapshot.display_snapshot)
+                                                .row();
+                                        if end_display_row != start_display_row {
+                                            end_display_row -= 1;
+                                        }
+                                        let color = match hunk.status() {
+                                            DiffHunkStatus::Added => theme.status().created,
+                                            DiffHunkStatus::Modified => theme.status().modified,
+                                            DiffHunkStatus::Removed => theme.status().deleted,
+                                        };
+                                        ColoredRange {
+                                            start: start_display_row,
+                                            end: end_display_row,
+                                            color,
+                                        }
+                                    });
+
+                                marker_quads.extend(
+                                    scrollbar_layout.marker_quads_for_ranges(marker_row_ranges, 0),
+                                );
+                            }
+
+                            for (background_highlight_id, (_, background_ranges)) in
+                                background_highlights.iter()
+                            {
+                                if (*background_highlight_id
+                                    == TypeId::of::<BufferSearchHighlights>()
+                                    && scrollbar_settings.selections)
+                                    || scrollbar_settings.symbols_selections
+                                {
+                                    let marker_row_ranges =
+                                        background_ranges.into_iter().map(|range| {
+                                            let display_start = range
+                                                .start
+                                                .to_display_point(&snapshot.display_snapshot);
+                                            let display_end = range
+                                                .end
+                                                .to_display_point(&snapshot.display_snapshot);
+                                            ColoredRange {
+                                                start: display_start.row(),
+                                                end: display_end.row(),
+                                                color: theme.status().info,
+                                            }
+                                        });
+                                    marker_quads.extend(
+                                        scrollbar_layout
+                                            .marker_quads_for_ranges(marker_row_ranges, 1),
+                                    );
+                                }
+                            }
+
+                            if scrollbar_settings.diagnostics {
+                                let max_point =
+                                    snapshot.display_snapshot.buffer_snapshot.max_point();
+
+                                let diagnostics = snapshot
+                                    .buffer_snapshot
+                                    .diagnostics_in_range::<_, Point>(
+                                        Point::zero()..max_point,
+                                        false,
+                                    )
+                                    // We want to sort by severity, in order to paint the most severe diagnostics last.
+                                    .sorted_by_key(|diagnostic| {
+                                        std::cmp::Reverse(diagnostic.diagnostic.severity)
+                                    });
+
+                                let marker_row_ranges = diagnostics.into_iter().map(|diagnostic| {
+                                    let start_display = diagnostic
+                                        .range
+                                        .start
+                                        .to_display_point(&snapshot.display_snapshot);
+                                    let end_display = diagnostic
+                                        .range
+                                        .end
+                                        .to_display_point(&snapshot.display_snapshot);
+                                    let color = match diagnostic.diagnostic.severity {
+                                        DiagnosticSeverity::ERROR => theme.status().error,
+                                        DiagnosticSeverity::WARNING => theme.status().warning,
+                                        DiagnosticSeverity::INFORMATION => theme.status().info,
+                                        _ => theme.status().hint,
+                                    };
+                                    ColoredRange {
+                                        start: start_display.row(),
+                                        end: end_display.row(),
+                                        color,
+                                    }
+                                });
+                                marker_quads.extend(
+                                    scrollbar_layout.marker_quads_for_ranges(marker_row_ranges, 2),
+                                );
+                            }
+
+                            Arc::from(marker_quads)
+                        })
+                        .await;
+
+                    editor.update(&mut cx, |editor, cx| {
+                        editor.scrollbar_marker_state.markers = scrollbar_markers;
+                        editor.scrollbar_marker_state.scrollbar_size = scrollbar_size;
+                        editor.scrollbar_marker_state.pending_refresh = None;
+                        cx.notify();
+                    })?;
+
+                    Ok(())
+                }));
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3811,6 +3826,13 @@ impl EditorLayout {
     }
 }
 
+struct ColoredRange<T> {
+    start: T,
+    end: T,
+    color: Hsla,
+}
+
+#[derive(Clone)]
 struct ScrollbarLayout {
     hitbox: Hitbox,
     visible_row_range: Range<f32>,
@@ -3838,13 +3860,60 @@ impl ScrollbarLayout {
         self.hitbox.top() + self.first_row_y_offset + row * self.row_height
     }
 
-    fn ys_for_marker(&self, start_row: u32, end_row: u32) -> (Pixels, Pixels) {
-        let start_y = self.y_for_row(start_row as f32);
-        let mut end_y = self.y_for_row((end_row + 1) as f32);
-        if end_y - start_y < Self::MIN_MARKER_HEIGHT {
-            end_y = start_y + Self::MIN_MARKER_HEIGHT;
+    fn marker_quads_for_ranges(
+        &self,
+        row_ranges: impl IntoIterator<Item = ColoredRange<u32>>,
+        column: usize,
+    ) -> Vec<PaintQuad> {
+        let column_width =
+            px(((self.hitbox.size.width - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
+
+        let left_x = ScrollbarLayout::BORDER_WIDTH + (column as f32 * column_width);
+        let right_x = left_x + column_width;
+
+        let mut background_pixel_ranges = row_ranges
+            .into_iter()
+            .map(|range| {
+                let start_y = self.first_row_y_offset + range.start as f32 * self.row_height;
+                let mut end_y = self.first_row_y_offset + (range.end + 1) as f32 * self.row_height;
+                if end_y - start_y < Self::MIN_MARKER_HEIGHT {
+                    end_y = start_y + Self::MIN_MARKER_HEIGHT;
+                }
+                ColoredRange {
+                    start: start_y,
+                    end: end_y,
+                    color: range.color,
+                }
+            })
+            .peekable();
+
+        let mut quads = Vec::new();
+        while let Some(mut pixel_range) = background_pixel_ranges.next() {
+            while let Some(next_pixel_range) = background_pixel_ranges.peek() {
+                if pixel_range.end >= next_pixel_range.start
+                    && pixel_range.color == next_pixel_range.color
+                {
+                    pixel_range.end = next_pixel_range.end;
+                    background_pixel_ranges.next();
+                } else {
+                    break;
+                }
+            }
+
+            let bounds = Bounds::from_corners(
+                point(left_x, pixel_range.start),
+                point(right_x, pixel_range.end),
+            );
+            quads.push(quad(
+                bounds,
+                Corners::default(),
+                pixel_range.color,
+                Edges::default(),
+                Hsla::transparent_black(),
+            ));
         }
-        (start_y, end_y)
+
+        quads
     }
 }
 
@@ -4241,7 +4310,7 @@ mod tests {
     use gpui::TestAppContext;
     use language::language_settings;
     use log::info;
-    use std::{num::NonZeroU32, sync::Arc};
+    use std::num::NonZeroU32;
     use util::test::sample_text;
 
     #[gpui::test]
@@ -4473,7 +4542,7 @@ mod tests {
                         disposition: BlockDisposition::Above,
                         height: 3,
                         position: Anchor::min(),
-                        render: Arc::new(|_| div().into_any()),
+                        render: Box::new(|_| div().into_any()),
                     }],
                     None,
                     cx,

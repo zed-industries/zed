@@ -222,6 +222,9 @@ impl ChannelChat {
             let message = ChannelMessage::from_proto(response, &user_store, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
                 this.insert_messages(SumTree::from_item(message, &()), cx);
+                if this.first_loaded_message_id.is_none() {
+                    this.first_loaded_message_id = Some(id);
+                }
             })?;
             Ok(id)
         }))

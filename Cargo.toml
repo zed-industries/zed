@@ -102,9 +102,11 @@ members = [
     "extensions/astro",
     "extensions/clojure",
     "extensions/csharp",
+    "extensions/emmet",
     "extensions/erlang",
     "extensions/gleam",
     "extensions/haskell",
+    "extensions/html",
     "extensions/php",
     "extensions/prisma",
     "extensions/purescript",
@@ -220,6 +222,7 @@ zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
 anyhow = "1.0.57"
+any_vec = "0.13"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-fs = "1.6"
 async-recursion = "1.0.0"

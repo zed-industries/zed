@@ -55,6 +55,7 @@ pub(crate) struct TasksModalDelegate {
     workspace: WeakView<Workspace>,
     prompt: String,
     task_context: TaskContext,
+    placeholder_text: Arc<str>,
 }
 
 impl TasksModalDelegate {
@@ -71,10 +72,15 @@ impl TasksModalDelegate {
             selected_index: 0,
             prompt: String::default(),
             task_context,
+            placeholder_text: Arc::from("Run a task..."),
         }
     }
 
     fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<Arc<dyn Task>> {
+        if self.prompt.trim().is_empty() {
+            return None;
+        }
+
         self.inventory
             .update(cx, |inventory, _| inventory.source::<OneshotSource>())?
             .update(cx, |oneshot_source, _| {
@@ -193,13 +199,8 @@ impl PickerDelegate for TasksModalDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
-        Arc::from(format!(
-            "{} use task name as prompt, {} spawns a bash-like task from the prompt, {} runs the selected task",
-            cx.keystroke_text_for(&picker::UseSelectedQuery),
-            cx.keystroke_text_for(&picker::ConfirmInput {secondary: false}),
-            cx.keystroke_text_for(&menu::Confirm),
-        ))
+    fn placeholder_text(&self, _: &mut WindowContext) -> Arc<str> {
+        self.placeholder_text.clone()
     }
 
     fn update_matches(
@@ -303,8 +304,8 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
-        let hit = &self.matches[ix];
-        let (source_kind, _) = &candidates[hit.candidate_id];
+        let hit = &self.matches.get(ix)?;
+        let (source_kind, _) = &candidates.get(hit.candidate_id)?;
         let details = match source_kind {
             TaskSourceKind::UserInput => "user input".to_string(),
             TaskSourceKind::Buffer => "language extension".to_string(),
@@ -362,9 +363,7 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        // .exec doesn't actually spawn anything; it merely prepares a spawning command,
-        // which we can use for substitution.
-        let mut spawn_prompt = task.exec(self.task_context.clone())?;
+        let mut spawn_prompt = task.prepare_exec(self.task_context.clone())?;
         if !spawn_prompt.args.is_empty() {
             spawn_prompt.command.push(' ');
             spawn_prompt
@@ -373,6 +372,7 @@ impl PickerDelegate for TasksModalDelegate {
         }
         Some(spawn_prompt.command)
     }
+
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
         let Some(task) = self.spawn_oneshot(cx) else {
             return;
