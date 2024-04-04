@@ -115,19 +115,23 @@ impl zed::Extension for GleamExtension {
         let name = &completion.label;
         let ty = completion.detail?;
 
-        let const_prefix = "const a";
-        let colon = ": ";
-        let code = format!("{const_prefix}{colon}{ty} = {name}");
+        let const_decl = "const a: T = ";
+        let ty_alias = "type T = ";
+        let code = format!("{const_decl}{name}()\n{ty_alias}{ty}");
 
         Some(CodeLabel {
             spans: vec![
                 CodeLabelSpan::CodeRange(zed::Range {
-                    start: (code.len() - name.len()) as u32,
-                    end: code.len() as u32,
+                    start: const_decl.len() as u32,
+                    end: const_decl.len() as u32 + name.len() as u32,
+                }),
+                CodeLabelSpan::Literal(zed::CodeLabelSpanLiteral {
+                    text: ": ".into(),
+                    highlight_name: None,
                 }),
                 CodeLabelSpan::CodeRange(zed::Range {
-                    start: const_prefix.len() as u32,
-                    end: (const_prefix.len() + colon.len() + ty.len()) as u32,
+                    start: code.len() as u32 - ty.len() as u32,
+                    end: code.len() as u32,
                 }),
             ],
             filter_range: zed::Range {
