@@ -4628,10 +4628,11 @@ impl Project {
                     }
                 }
                 (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
-                    if let Some(new_operation) =
-                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await
-                    {
-                        format_operation = Some(new_operation);
+                    let prettier =
+                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await;
+
+                    if let Some(operation) = prettier {
+                        format_operation = Some(operation?);
                     } else if let Some((language_server, buffer_abs_path)) = server_and_buffer {
                         format_operation = Some(FormatOperation::Lsp(
                             Self::format_via_lsp(
@@ -4648,10 +4649,11 @@ impl Project {
                     }
                 }
                 (Formatter::Prettier, FormatOnSave::On | FormatOnSave::Off) => {
-                    if let Some(new_operation) =
-                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await
-                    {
-                        format_operation = Some(new_operation);
+                    let prettier =
+                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await;
+
+                    if let Some(operation) = prettier {
+                        format_operation = Some(operation?);
                     }
                 }
             };

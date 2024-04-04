@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Context;
+use anyhow::{anyhow, Context, Result};
 use collections::HashSet;
 use fs::Fs;
 use futures::{
@@ -46,51 +46,48 @@ pub(super) async fn format_with_prettier(
     project: &WeakModel<Project>,
     buffer: &Model<Buffer>,
     cx: &mut AsyncAppContext,
-) -> Option<FormatOperation> {
-    if let Some((prettier_path, prettier_task)) = project
+) -> Option<Result<FormatOperation>> {
+    let prettier_instance = project
         .update(cx, |project, cx| {
             project.prettier_instance_for_buffer(buffer, cx)
         })
         .ok()?
-        .await
-    {
-        match prettier_task.await {
-            Ok(prettier) => {
-                let buffer_path = buffer
-                    .update(cx, |buffer, cx| {
-                        File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
-                    })
-                    .ok()?;
-                match prettier.format(buffer, buffer_path, cx).await {
-                    Ok(new_diff) => return Some(FormatOperation::Prettier(new_diff)),
-                    Err(e) => {
-                        match prettier_path {
-                            Some(prettier_path) => log::error!(
-                                "Prettier instance from path {prettier_path:?} failed to format a buffer: {e:#}"
-                            ),
-                            None => log::error!(
-                                "Default prettier instance failed to format a buffer: {e:#}"
-                            ),
-                        }
-                    }
-                }
-            }
-            Err(e) => project
+        .await;
+
+    let Some((prettier_path, prettier_task)) = prettier_instance else {
+        return None;
+    };
+
+    let prettier_description = match prettier_path.as_ref() {
+        Some(path) => format!("prettier at {path:?}"),
+        None => "default prettier instance".to_string(),
+    };
+
+    match prettier_task.await {
+        Ok(prettier) => {
+            let buffer_path = buffer
+                .update(cx, |buffer, cx| {
+                    File::from_dyn(buffer.file()).map(|file| file.abs_path(cx))
+                })
+                .ok()?;
+
+            let format_result = prettier
+                .format(buffer, buffer_path, cx)
+                .await
+                .map(FormatOperation::Prettier)
+                .with_context(|| format!("{} failed to format buffer", prettier_description));
+
+            Some(format_result)
+        }
+        Err(error) => {
+            project
                 .update(cx, |project, _| {
                     let instance_to_update = match prettier_path {
-                        Some(prettier_path) => {
-                            log::error!(
-                            "Prettier instance from path {prettier_path:?} failed to spawn: {e:#}"
-                        );
-                            project.prettier_instances.get_mut(&prettier_path)
-                        }
-                        None => {
-                            log::error!("Default prettier instance failed to spawn: {e:#}");
-                            match &mut project.default_prettier.prettier {
-                                PrettierInstallation::NotInstalled { .. } => None,
-                                PrettierInstallation::Installed(instance) => Some(instance),
-                            }
-                        }
+                        Some(prettier_path) => project.prettier_instances.get_mut(&prettier_path),
+                        None => match &mut project.default_prettier.prettier {
+                            PrettierInstallation::NotInstalled { .. } => None,
+                            PrettierInstallation::Installed(instance) => Some(instance),
+                        },
                     };
 
                     if let Some(instance) = instance_to_update {
@@ -98,11 +95,14 @@ pub(super) async fn format_with_prettier(
                         instance.prettier = None;
                     }
                 })
-                .ok()?,
+                .log_err();
+
+            Some(Err(anyhow!(
+                "{} failed to spawn: {error:#}",
+                prettier_description
+            )))
         }
     }
-
-    None
 }
 
 pub struct DefaultPrettier {
