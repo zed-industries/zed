@@ -736,11 +736,11 @@ mod test {
         cx.simulate_keystrokes(["d", "s", "}"]);
         cx.assert_state(
             indoc! {"
-            fn test_surround() ˇ[
-                if 2 > 1 ˇ[
+            fn test_surround() ˇ
+                if 2 > 1 ˇ
                     println!(\"it is fine\");
-                ];
-            ]"},
+                ;
+            "},
             Mode::Normal,
         );
     }
