@@ -366,9 +366,6 @@ impl Room {
 
     pub(crate) fn leave(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         cx.notify();
-        cx.emit(Event::Left {
-            channel_id: self.channel_id(),
-        });
         self.leave_internal(cx)
     }
 
