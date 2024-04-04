@@ -1,9 +1,8 @@
 use crate::{motion::Motion, object::Object, state::Mode, Vim};
-use editor::{scroll::Autoscroll, Bias};
+use editor::Bias;
 use gpui::WindowContext;
 use language::BracketPair;
 use serde::Deserialize;
-use std::ops::Deref;
 use std::sync::Arc;
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum SurroundsType {
@@ -18,65 +17,60 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.move_with(|map, selection| match &target {
-                        SurroundsType::Object(object) => {
-                            object.expand_selection(map, selection, false);
-                        }
-                        SurroundsType::Motion(motion) => {
-                            motion.expand_selection(
-                                map,
-                                selection,
-                                Some(1),
-                                true,
-                                &text_layout_details,
-                            );
-                        }
-                    });
-                });
 
-                let input_text = text.to_string();
-                let pair = match find_surround_pair(&all_support_surround_pair(), text.deref()) {
-                    Some(pair) => pair,
-                    None => return,
+                let pair = match find_surround_pair(&all_support_surround_pair(), &text) {
+                    Some(pair) => pair.clone(),
+                    None => BracketPair {
+                        start: text.to_string(),
+                        end: text.to_string(),
+                        close: true,
+                        newline: false,
+                    },
                 };
-                let surround = pair.end != input_text;
-                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+                let surround = pair.end != *text;
+                let (display_map, display_selections) = editor.selections.all_adjusted_display(cx);
                 let mut edits = Vec::new();
-                for selection in &selections {
-                    let selection = selection.clone();
-                    let offset_range = selection
-                        .map(|p| p.to_offset(&display_map, Bias::Left))
-                        .range();
-                    let mut select_text = editor
-                        .buffer()
-                        .read(cx)
-                        .snapshot(cx)
-                        .text_for_range(offset_range.clone())
-                        .collect::<String>();
-                    if surround {
-                        select_text = format!("{} {} {}", pair.start, select_text, pair.end);
+                let mut anchors = Vec::new();
+
+                for selection in &display_selections {
+                    let range = match &target {
+                        SurroundsType::Object(object) => {
+                            object.range(&display_map, selection.clone(), false)
+                        }
+                        SurroundsType::Motion(motion) => motion.range(
+                            &display_map,
+                            selection.clone(),
+                            Some(1),
+                            true,
+                            &text_layout_details,
+                        ),
+                    };
+
+                    if let Some(range) = range {
+                        let start = range.start.to_offset(&display_map, Bias::Right);
+                        let end = range.end.to_offset(&display_map, Bias::Left);
+                        let start_cursor_str =
+                            format!("{}{}", pair.start, if surround { " " } else { "" });
+                        let close_cursor_str =
+                            format!("{}{}", if surround { " " } else { "" }, pair.end);
+                        let start_anchor = display_map.buffer_snapshot.anchor_before(start);
+
+                        edits.push((start..start, start_cursor_str));
+                        edits.push((end..end, close_cursor_str));
+                        anchors.push(start_anchor..start_anchor);
                     } else {
-                        select_text = format!("{}{}{}", pair.start, select_text, pair.end);
+                        let start_anchor = display_map
+                            .buffer_snapshot
+                            .anchor_before(selection.head().to_offset(&display_map, Bias::Left));
+                        anchors.push(start_anchor..start_anchor);
                     }
-                    edits.push((offset_range, select_text));
                 }
-                let stable_anchors = editor
-                    .selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| {
-                        let start = selection.start.bias_left(&display_map.buffer_snapshot);
-                        start..start
-                    })
-                    .collect::<Vec<_>>();
+
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(None, cx, |s| {
-                    s.select_anchor_ranges(stable_anchors);
-                });
+                editor.change_selections(None, cx, |s| s.select_anchor_ranges(anchors));
             });
         });
         vim.switch_mode(Mode::Normal, false, cx);
@@ -87,17 +81,16 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.stop_recording();
 
-        let input_text = text.to_string();
         // only legitimate surrounds can be removed
-        let pair = match find_surround_pair(&all_support_surround_pair(), text.deref()) {
-            Some(pair) => pair,
+        let pair = match find_surround_pair(&all_support_surround_pair(), &text) {
+            Some(pair) => pair.clone(),
             None => return,
         };
         let pair_object = match pair_to_object(&pair) {
             Some(pair_object) => pair_object,
             None => return,
         };
-        let surround = pair.end != input_text;
+        let surround = pair.end != *text;
 
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
@@ -132,13 +125,10 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                                 let start = offset;
                                 let mut end = start + 1;
                                 if surround {
-                                    match chars_and_offset.peek() {
-                                        Some((next_ch, _)) => {
-                                            if next_ch.to_string() == " " {
-                                                end += 1;
-                                            }
+                                    if let Some((next_ch, _)) = chars_and_offset.peek() {
+                                        if next_ch.eq(&' ') {
+                                            end += 1;
                                         }
-                                        None => {}
                                     }
                                 }
                                 edits.push((start..end, ""));
@@ -146,21 +136,18 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                                 break;
                             }
                         }
-                        let mut reverse_chars_and_points = display_map
+                        let mut reverse_chars_and_offsets = display_map
                             .reverse_buffer_chars_at(range.end.to_offset(&display_map, Bias::Left))
                             .peekable();
-                        while let Some((ch, point)) = reverse_chars_and_points.next() {
+                        while let Some((ch, offset)) = reverse_chars_and_offsets.next() {
                             if ch.to_string() == pair.end {
-                                let mut start = point;
+                                let mut start = offset;
                                 let end = start + 1;
                                 if surround {
-                                    match reverse_chars_and_points.peek() {
-                                        Some((next_ch, _)) => {
-                                            if next_ch.to_string() == " " {
-                                                start -= 1;
-                                            }
+                                    if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
+                                        if next_ch.eq(&' ') {
+                                            start -= 1;
                                         }
-                                        None => {}
                                     }
                                 }
                                 edits.push((start..end, ""));
@@ -175,6 +162,7 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                 editor.change_selections(None, cx, |s| {
                     s.select_ranges(anchors);
                 });
+                edits.sort_by_key(|&(ref range, _)| range.start);
                 editor.buffer().update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 });
@@ -192,9 +180,8 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                 editor.transact(cx, |editor, cx| {
                     editor.set_clip_at_line_ends(false, cx);
 
-                    let pair = match find_surround_pair(&all_support_surround_pair(), text.deref())
-                    {
-                        Some(pair) => pair,
+                    let pair = match find_surround_pair(&all_support_surround_pair(), &text) {
+                        Some(pair) => pair.clone(),
                         None => BracketPair {
                             start: text.to_string(),
                             end: text.to_string(),
@@ -202,7 +189,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                             newline: false,
                         },
                     };
-                    let surround = pair.end != text.to_string();
+                    let surround = pair.end != *text;
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut edits = Vec::new();
                     let mut anchors = Vec::new();
@@ -228,9 +215,11 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                                     let mut end = start + 1;
                                     match chars_and_offset.peek() {
                                         Some((next_ch, _)) => {
-                                            if next_ch.to_string() != " " && surround {
+                                            // If the next position is already a space or line break,
+                                            // we don't need to splice another space even under arround
+                                            if surround && !next_ch.is_whitespace() {
                                                 open_str.push_str(" ");
-                                            } else if next_ch.to_string() == " " && !surround {
+                                            } else if !surround && next_ch.to_string() == " " {
                                                 end += 1;
                                             }
                                         }
@@ -252,15 +241,12 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                                     let mut close_str = pair.end.clone();
                                     let mut start = offset;
                                     let end = start + 1;
-                                    match reverse_chars_and_offsets.peek() {
-                                        Some((next_ch, _)) => {
-                                            if next_ch.to_string() != " " && surround {
-                                                close_str.insert_str(0, " ")
-                                            } else if next_ch.to_string() == " " && !surround {
-                                                start -= 1;
-                                            }
+                                    if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
+                                        if surround && !next_ch.is_whitespace() {
+                                            close_str.insert_str(0, " ")
+                                        } else if !surround && next_ch.to_string() == " " {
+                                            start -= 1;
                                         }
-                                        None => {}
                                     }
                                     edits.push((start..end, close_str));
                                     break;
@@ -280,9 +266,9 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                             start..start
                         })
                         .collect::<Vec<_>>();
-
+                    edits.sort_by_key(|&(ref range, _)| range.start);
                     editor.buffer().update(cx, |buffer, cx| {
-                        buffer.edit(edits.clone(), None, cx);
+                        buffer.edit(edits, None, cx);
                     });
                     editor.set_clip_at_line_ends(true, cx);
                     editor.change_selections(None, cx, |s| {
@@ -341,7 +327,6 @@ pub fn check_and_move_to_valid_bracket_pair(
                         anchors.push(start..start)
                     }
                 }
-
                 editor.change_selections(None, cx, |s| {
                     s.select_ranges(anchors);
                 });
@@ -352,13 +337,8 @@ pub fn check_and_move_to_valid_bracket_pair(
     return valid;
 }
 
-fn find_surround_pair(pairs: &[BracketPair], ch: &str) -> Option<BracketPair> {
-    for pair in pairs {
-        if pair.start == ch || pair.end == ch {
-            return Some(pair.clone());
-        }
-    }
-    None
+fn find_surround_pair<'a>(pairs: &'a [BracketPair], ch: &str) -> Option<&'a BracketPair> {
+    pairs.iter().find(|pair| pair.start == ch || pair.end == ch)
 }
 
 fn all_support_surround_pair() -> Vec<BracketPair> {
@@ -498,6 +478,7 @@ mod test {
     async fn test_add_surrounds(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
+        // test add surrounds with arround
         cx.set_state(
             indoc! {"
             The quˇick brown
@@ -514,6 +495,7 @@ mod test {
             Mode::Normal,
         );
 
+        // test add surrounds not with arround
         cx.set_state(
             indoc! {"
             The quˇick brown
@@ -547,7 +529,7 @@ mod test {
             Mode::Normal,
         );
 
-        // test multi cursor add surrounds
+        // test add surrounds with multi cursor
         cx.set_state(
             indoc! {"
             The quˇick brown
@@ -580,12 +562,30 @@ mod test {
             the laˇ'zy dog.'"},
             Mode::Normal,
         );
+
+        // test multi cursor add surrounds with motion and custom string
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the laˇzy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["y", "s", "$", "1"]);
+        cx.assert_state(
+            indoc! {"
+            The quˇ1ick brown1
+            fox jumps over
+            the laˇ1zy dog.1"},
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]
     async fn test_delete_surrounds(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
+        // test delete surround
         cx.set_state(
             indoc! {"
             The {quˇick} brown
@@ -619,7 +619,8 @@ mod test {
             Mode::Normal,
         );
 
-        // test delete surround forward
+        // test delete surround forward exist, in the surrounds plugin of other editors,
+        // the bracket pair in front of the current line will be deleted here, which is not implemented at the moment
         cx.set_state(
             indoc! {"
             The {quick} brˇown
@@ -631,6 +632,23 @@ mod test {
         cx.assert_state(
             indoc! {"
             The {quick} brˇown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        // test cursor delete inner surrounds
+        cx.set_state(
+            indoc! {"
+            The { quick brown
+            fox jumˇps over }
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["d", "s", "{"]);
+        cx.assert_state(
+            indoc! {"
+            The ˇquick brown
             fox jumps over
             the lazy dog."},
             Mode::Normal,
@@ -653,9 +671,10 @@ mod test {
             Mode::Normal,
         );
 
+        // test multi cursor delete surrounds with arround
         cx.set_state(
             indoc! {"
-            Tˇhe [quick] brown
+            Tˇhe [ quick ] brown
             fox jumps over
             the [laˇzy] dog."},
             Mode::Normal,
@@ -666,22 +685,6 @@ mod test {
             The ˇquick brown
             fox jumps over
             the ˇlazy dog."},
-            Mode::Normal,
-        );
-
-        cx.set_state(
-            indoc! {"
-            The { quick brown
-            fox jumˇps over }
-            the lazy dog."},
-            Mode::Normal,
-        );
-        cx.simulate_keystrokes(["d", "s", "{"]);
-        cx.assert_state(
-            indoc! {"
-            The ˇquick brown
-            fox jumps over
-            the lazy dog."},
             Mode::Normal,
         );
 
@@ -702,6 +705,8 @@ mod test {
         );
 
         // test multi cursor delete different surrounds
+        // the pair corresponding to the two cursors is the same,
+        // so they are combined into one cursor
         cx.set_state(
             indoc! {"
             The [quˇick] brown
@@ -718,19 +723,24 @@ mod test {
             Mode::Normal,
         );
 
+        // test delete surround with multi cursor and nest surrounds
         cx.set_state(
             indoc! {"
-            The [quˇick] brown
-            fox jumps over
-            the \"laˇzy\" dog."},
+            fn test_surround() {
+                ifˇ 2 > 1 {
+                    ˇprintln!(\"it is fine\");
+                };
+            }"},
             Mode::Normal,
         );
-        cx.simulate_keystrokes(["d", "s", "\""]);
+        cx.simulate_keystrokes(["d", "s", "}"]);
         cx.assert_state(
             indoc! {"
-            The [quˇick] brown
-            fox jumps over
-            the ˇlazy dog."},
+            fn test_surround() ˇ[
+                if 2 > 1 ˇ[
+                    println!(\"it is fine\");
+                ];
+            ]"},
             Mode::Normal,
         );
     }
@@ -755,6 +765,7 @@ mod test {
             Mode::Normal,
         );
 
+        // test multi cursor change surrounds
         cx.set_state(
             indoc! {"
             The {quˇick} brown
@@ -771,6 +782,7 @@ mod test {
             Mode::Normal,
         );
 
+        // test multi cursor delete different surrounds with after cursor
         cx.set_state(
             indoc! {"
             Thˇe {quick} brown
@@ -787,6 +799,7 @@ mod test {
             Mode::Normal,
         );
 
+        // test multi cursor change surrount with not arround
         cx.set_state(
             indoc! {"
             Thˇe { quick } brown
@@ -803,6 +816,7 @@ mod test {
             Mode::Normal,
         );
 
+        // test multi cursor change with not exist surround
         cx.set_state(
             indoc! {"
             The {quˇick} brown
@@ -816,6 +830,27 @@ mod test {
             The {quick} brown
             fox jumps over
             the ˇ'lazy' dog."},
+            Mode::Normal,
+        );
+
+        // test change nesting surrounds
+        cx.set_state(
+            indoc! {"
+            fn test_surround() {
+                ifˇ 2 > 1 {
+                    ˇprintln!(\"it is fine\");
+                }
+            };"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["c", "s", "{", "["]);
+        cx.assert_state(
+            indoc! {"
+            fn test_surround() ˇ[
+                if 2 > 1 ˇ[
+                    println!(\"it is fine\");
+                ]
+            ];"},
             Mode::Normal,
         );
     }
