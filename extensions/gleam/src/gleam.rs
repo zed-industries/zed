@@ -1,5 +1,5 @@
 use std::fs;
-use zed::{lsp, CodeLabel, CodeLabelSpan, LanguageServerId};
+use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
 struct GleamExtension {
