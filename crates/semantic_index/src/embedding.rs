@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt;
 use serde::{Deserialize, Serialize};
@@ -24,7 +26,7 @@ pub trait EmbeddingProvider {
 }
 
 pub struct OllamaEmbeddingProvider {
-    client: HttpClientWithUrl,
+    client: Arc<HttpClientWithUrl>,
     // Model should not change when creating embeddings, otherwise they're incompatible embeddings
     model: String,
 }
@@ -70,7 +72,7 @@ pub fn normalize_embedding(embedding: Vec<f32>) -> Embedding {
 }
 
 impl OllamaEmbeddingProvider {
-    pub fn new(client: HttpClientWithUrl, model: Option<String>) -> Self {
+    pub fn new(client: Arc<HttpClientWithUrl>, model: Option<String>) -> Self {
         Self {
             client,
             model: model.unwrap_or("nomic-embed-text".to_string()),
@@ -111,7 +113,7 @@ mod test {
     async fn test_ollama_embedding_provider(executor: BackgroundExecutor) {
         executor.allow_parking();
 
-        let client = HttpClientWithUrl::new("http://localhost:11434/");
+        let client = Arc(HttpClientWithUrl::new("http://localhost:11434/"));
         let provider = OllamaEmbeddingProvider::new(client.into(), None);
         let embedding = provider
             .get_embedding("Hello, world!".to_string())

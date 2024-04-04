@@ -1,12 +1,12 @@
 mod chunking;
 mod embedding;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use chunking::{chunk_text, Chunk};
 use collections::HashMap;
-use embedding::Embedding;
+use embedding::{Embedding, EmbeddingProvider, OllamaEmbeddingProvider};
 use fs::Fs;
-use futures::StreamExt;
+use futures::stream::{self, StreamExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{
     AppContext, AsyncAppContext, Context, EntityId, EventEmitter, Global, Model, ModelContext,
@@ -329,6 +329,15 @@ impl WorktreeIndex {
         chunked_files: channel::Receiver<ChunkedFile>,
         cx: &mut AsyncAppContext,
     ) -> (channel::Receiver<EmbeddedFile>, Task<()>) {
+        // todo(): Make sure we can get the client
+        let client = this
+            .read_with(cx, |this, cx| client::Client::global(cx).http_client())
+            .context("http client not available")
+            // TODO: handle no client, return a result instead of panicking
+            .unwrap();
+
+        let embedding_provider = OllamaEmbeddingProvider::new(client, None);
+
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
         let embed_chunks = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
@@ -336,18 +345,29 @@ impl WorktreeIndex {
             while let Some(batch) = chunked_file_batches.next().await {
                 // todo!("actually embed the batch")
                 for chunked_file in batch {
+                    let embedded_chunks = stream::iter(chunked_file.chunks.into_iter())
+                        .then(|chunk| {
+                            let embedding_future = embedding_provider
+                                .get_embedding(chunked_file.text[chunk.range.clone()].to_string());
+
+                            async move { (chunk, embedding_future.await) }
+                        })
+                        .collect::<Vec<_>>()
+                        .await
+                        .into_iter()
+                        .filter_map(|(chunk, embedding)| {
+                            embedding
+                                .ok()
+                                .map(|embedding| EmbeddedChunk { chunk, embedding })
+                        })
+                        .collect::<Vec<EmbeddedChunk>>();
+
                     let embedded_file = EmbeddedFile {
                         path: chunked_file.entry.path.clone(),
                         mtime: chunked_file.entry.mtime,
-                        chunks: chunked_file
-                            .chunks
-                            .into_iter()
-                            .map(|chunk| EmbeddedChunk {
-                                chunk,
-                                embedding: Embedding::None,
-                            })
-                            .collect(),
+                        chunks: embedded_chunks,
                     };
+
                     if embedded_files_tx.send(embedded_file).await.is_err() {
                         return;
                     }

@@ -5,7 +5,7 @@ use std::{cmp, ops::Range, sync::Arc};
 const CHUNK_THRESHOLD: usize = 1500;
 
 pub struct Chunk {
-    range: Range<usize>,
+    pub range: Range<usize>,
     digest: [u8; 32],
 }
 
