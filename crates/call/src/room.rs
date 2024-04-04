@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use audio::{Audio, Sound};
 use client::{
     proto::{self, PeerId},
-    ChannelId, Client, ParticipantIndex, RemoteProjectId, TypedEnvelope, User, UserStore,
+    ChannelId, Client, ParticipantIndex, TypedEnvelope, User, UserStore,
 };
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;

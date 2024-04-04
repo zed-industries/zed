@@ -1,7 +1,7 @@
 use crate::db::{ChannelId, ChannelRole, DevServerId, UserId};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
-use rpc::ConnectionId;
+use rpc::{proto, ConnectionId};
 use semantic_version::SemanticVersion;
 use serde::Serialize;
 use std::fmt;
@@ -140,6 +140,18 @@ impl ConnectionPool {
             .into_iter()
             .flat_map(|state| &state.connection_ids)
             .copied()
+    }
+
+    pub fn dev_server_status(&self, dev_server_id: DevServerId) -> proto::DevServerStatus {
+        if self.dev_server_connection_id(dev_server_id).is_some() {
+            proto::DevServerStatus::Online
+        } else {
+            proto::DevServerStatus::Offline
+        }
+    }
+
+    fn dev_server_connection_id(&self, dev_server_id: DevServerId) -> Option<&ConnectionId> {
+        self.connected_dev_servers.get(&dev_server_id)
     }
 
     pub fn channel_user_ids(

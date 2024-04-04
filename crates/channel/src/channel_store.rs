@@ -10,8 +10,8 @@ use client::{
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext,
-    PathPromptOptions, SharedString, Task, WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, SharedString,
+    Task, WeakModel,
 };
 use language::Capability;
 use rpc::{

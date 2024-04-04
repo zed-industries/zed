@@ -1,4 +1,3 @@
-use rpc::proto;
 use sea_orm::{ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
 
 use super::{channel, dev_server, ChannelId, Database, DevServerId, UserId};
@@ -21,20 +20,12 @@ impl Database {
         &self,
         channel_ids: &Vec<ChannelId>,
         tx: &DatabaseTransaction,
-    ) -> crate::Result<Vec<proto::DevServer>> {
+    ) -> crate::Result<Vec<dev_server::Model>> {
         let servers = dev_server::Entity::find()
             .filter(dev_server::Column::ChannelId.is_in(channel_ids.iter().map(|id| id.0)))
             .all(tx)
             .await?;
-        Ok(servers
-            .into_iter()
-            .map(|s| proto::DevServer {
-                channel_id: s.channel_id.to_proto(),
-                name: s.name,
-                dev_server_id: s.id.to_proto(),
-                status: proto::DevServerStatus::Online.into(),
-            })
-            .collect())
+        Ok(servers)
     }
 
     pub async fn create_dev_server(

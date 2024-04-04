@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PeerId},
-    ChannelId, Client, ErrorExt, ProjectId, RemoteProjectId, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, ErrorExt, ProjectId, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};

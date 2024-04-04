@@ -5,8 +5,8 @@ use sea_orm::{
 };
 
 use super::{
-    channel, project, remote_project, worktree, ChannelId, Database, DevServerId, ProjectId,
-    RemoteProjectId, ServerId, UserId,
+    channel, project, remote_project, worktree, ChannelId, Database, DevServerId, RemoteProjectId,
+    ServerId, UserId,
 };
 
 impl Database {

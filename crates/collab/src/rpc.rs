@@ -968,7 +968,7 @@ impl Server {
                     )?;
                     self.peer.send(
                         connection_id,
-                        build_channels_update(channels_for_user, channel_invites),
+                        build_channels_update(channels_for_user, channel_invites, &pool),
                     )?;
                 }
 
@@ -4224,7 +4224,7 @@ fn notify_membership_updated(
         ..Default::default()
     };
 
-    let mut update = build_channels_update(result.new_channels, vec![]);
+    let mut update = build_channels_update(result.new_channels, vec![], connection_pool);
     update.delete_channels = result
         .removed_channels
         .into_iter()
@@ -4257,6 +4257,7 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
 fn build_channels_update(
     channels: ChannelsForUser,
     channel_invites: Vec<db::Channel>,
+    pool: &ConnectionPool,
 ) -> proto::UpdateChannels {
     let mut update = proto::UpdateChannels::default();
 
@@ -4281,7 +4282,11 @@ fn build_channels_update(
     }
 
     update.hosted_projects = channels.hosted_projects;
-    update.dev_servers = channels.dev_servers;
+    update.dev_servers = channels
+        .dev_servers
+        .into_iter()
+        .map(|dev_server| dev_server.to_proto(pool.dev_server_status(dev_server.id)))
+        .collect();
     update.remote_projects = channels.remote_projects;
 
     update
