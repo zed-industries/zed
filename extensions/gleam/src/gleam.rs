@@ -115,25 +115,15 @@ impl zed::Extension for GleamExtension {
         let name = &completion.label;
         let ty = completion.detail?;
 
-        let suffix;
-        match completion.kind {
-            Some(lsp::CompletionItemKind::Function) => {
-                suffix = "()";
-            }
-            _ => {
-                suffix = "";
-            }
-        }
-
         let const_prefix = "const a";
         let colon = ": ";
-        let code = format!("{const_prefix}{colon}{ty} = {name}{suffix}");
+        let code = format!("{const_prefix}{colon}{ty} = {name}");
 
         Some(CodeLabel {
             spans: vec![
                 CodeLabelSpan::CodeRange(zed::Range {
-                    start: (code.len() - suffix.len() - name.len()) as u32,
-                    end: (code.len() - suffix.len()) as u32,
+                    start: (code.len() - name.len()) as u32,
+                    end: code.len() as u32,
                 }),
                 CodeLabelSpan::CodeRange(zed::Range {
                     start: const_prefix.len() as u32,
