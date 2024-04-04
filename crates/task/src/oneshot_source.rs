@@ -50,7 +50,7 @@ impl Task for OneshotTask {
             command: self.id().0.clone(),
             args: vec![],
             cwd,
-            env: task_variables.0,
+            env: task_variables.into_env_variables(),
             use_new_terminal: Default::default(),
             allow_concurrent_runs: Default::default(),
             reveal: RevealStrategy::default(),

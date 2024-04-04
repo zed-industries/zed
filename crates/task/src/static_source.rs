@@ -47,18 +47,19 @@ impl Task for StaticTask {
             cwd,
             task_variables,
         } = cx;
+        let task_variables = task_variables.into_env_variables();
         let cwd = self
             .definition
             .cwd
             .clone()
             .and_then(|path| {
-                subst::substitute(&path, &task_variables.0)
+                subst::substitute(&path, &task_variables)
                     .map(Into::into)
                     .ok()
             })
             .or(cwd);
         let mut definition_env = self.definition.env.clone();
-        definition_env.extend(task_variables.0);
+        definition_env.extend(task_variables);
         Some(SpawnInTerminal {
             id: self.id.clone(),
             cwd,
