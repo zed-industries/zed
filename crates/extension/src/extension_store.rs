@@ -1101,15 +1101,15 @@ impl ExtensionStore {
                 this.reload_complete_senders.clear();
 
                 for (manifest, wasm_extension) in &wasm_extensions {
-                    for (language_server_name, language_server_config) in &manifest.language_servers
-                    {
+                    for (language_server_id, language_server_config) in &manifest.language_servers {
                         this.language_registry.register_lsp_adapter(
                             language_server_config.language.clone(),
                             Arc::new(ExtensionLspAdapter {
                                 extension: wasm_extension.clone(),
                                 host: this.wasm_host.clone(),
+                                language_server_id: language_server_id.clone(),
                                 config: wit::LanguageServerConfig {
-                                    name: language_server_name.0.to_string(),
+                                    name: language_server_id.0.to_string(),
                                     language_name: language_server_config.language.to_string(),
                                 },
                             }),

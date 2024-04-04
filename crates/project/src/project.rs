@@ -9915,6 +9915,8 @@ async fn populate_labels_for_completions(
         lsp_adapter
             .labels_for_completions(&lsp_completions, language)
             .await
+            .log_err()
+            .unwrap_or_default()
     } else {
         Vec::new()
     };

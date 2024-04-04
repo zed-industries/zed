@@ -1,23 +1,13 @@
-use crate::wasm_host::wit::ToWasmtimeResult;
+use super::latest;
 use crate::wasm_host::WasmState;
-use anyhow::{anyhow, Result};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
+use anyhow::Result;
 use async_trait::async_trait;
-use futures::io::BufReader;
-use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
+use language::LspAdapterDelegate;
 use semantic_version::SemanticVersion;
-use std::path::Path;
-use std::{
-    env,
-    path::PathBuf,
-    sync::{Arc, OnceLock},
-};
-use util::maybe;
+use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 4);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 5);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -34,6 +24,93 @@ pub fn linker() -> &'static Linker<WasmState> {
     LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
 }
 
+impl From<latest::Os> for Os {
+    fn from(value: latest::Os) -> Self {
+        match value {
+            latest::Os::Mac => Os::Mac,
+            latest::Os::Linux => Os::Linux,
+            latest::Os::Windows => Os::Windows,
+        }
+    }
+}
+
+impl From<latest::Architecture> for Architecture {
+    fn from(value: latest::Architecture) -> Self {
+        match value {
+            latest::Architecture::Aarch64 => Self::Aarch64,
+            latest::Architecture::X86 => Self::X86,
+            latest::Architecture::X8664 => Self::X8664,
+        }
+    }
+}
+
+impl From<latest::GithubRelease> for GithubRelease {
+    fn from(value: latest::GithubRelease) -> Self {
+        Self {
+            version: value.version,
+            assets: value.assets.into_iter().map(|asset| asset.into()).collect(),
+        }
+    }
+}
+
+impl From<latest::GithubReleaseAsset> for GithubReleaseAsset {
+    fn from(value: latest::GithubReleaseAsset) -> Self {
+        Self {
+            name: value.name,
+            download_url: value.download_url,
+        }
+    }
+}
+
+impl From<GithubReleaseOptions> for latest::GithubReleaseOptions {
+    fn from(value: GithubReleaseOptions) -> Self {
+        Self {
+            require_assets: value.require_assets,
+            pre_release: value.pre_release,
+        }
+    }
+}
+
+impl From<DownloadedFileType> for latest::DownloadedFileType {
+    fn from(value: DownloadedFileType) -> Self {
+        match value {
+            DownloadedFileType::Gzip => latest::DownloadedFileType::Gzip,
+            DownloadedFileType::GzipTar => latest::DownloadedFileType::GzipTar,
+            DownloadedFileType::Zip => latest::DownloadedFileType::Zip,
+            DownloadedFileType::Uncompressed => latest::DownloadedFileType::Uncompressed,
+        }
+    }
+}
+
+impl From<LanguageServerInstallationStatus> for latest::LanguageServerInstallationStatus {
+    fn from(value: LanguageServerInstallationStatus) -> Self {
+        match value {
+            LanguageServerInstallationStatus::None => {
+                latest::LanguageServerInstallationStatus::None
+            }
+            LanguageServerInstallationStatus::Downloading => {
+                latest::LanguageServerInstallationStatus::Downloading
+            }
+            LanguageServerInstallationStatus::CheckingForUpdate => {
+                latest::LanguageServerInstallationStatus::CheckingForUpdate
+            }
+            LanguageServerInstallationStatus::Failed(error) => {
+                latest::LanguageServerInstallationStatus::Failed(error)
+            }
+        }
+    }
+}
+
+impl From<Command> for latest::Command {
+    fn from(value: Command) -> Self {
+        Self {
+            command: value.command,
+            args: value.args,
+            env: value.env,
+        }
+    }
+}
+
 #[async_trait]
 impl HostWorktree for WasmState {
     async fn read_text_file(
@@ -41,19 +118,14 @@ impl HostWorktree for WasmState {
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
         path: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .read_text_file(path.into())
-            .await
-            .map_err(|error| error.to_string()))
+        latest::HostWorktree::read_text_file(self, delegate, path).await
     }
 
     async fn shell_env(
         &mut self,
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> wasmtime::Result<EnvVars> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate.shell_env().await.into_iter().collect())
+        latest::HostWorktree::shell_env(self, delegate).await
     }
 
     async fn which(
@@ -61,15 +133,11 @@ impl HostWorktree for WasmState {
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
         binary_name: String,
     ) -> wasmtime::Result<Option<String>> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .which(binary_name.as_ref())
-            .await
-            .map(|path| path.to_string_lossy().to_string()))
+        latest::HostWorktree::which(self, delegate, binary_name).await
     }
 
     fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
-        // we only ever hand out borrows of worktrees
+        // We only ever hand out borrows of worktrees.
         Ok(())
     }
 }
@@ -77,34 +145,21 @@ impl HostWorktree for WasmState {
 #[async_trait]
 impl ExtensionImports for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .binary_path()
-            .await
-            .map(|path| path.to_string_lossy().to_string())
-            .to_wasmtime_result()
+        latest::ExtensionImports::node_binary_path(self).await
     }
 
     async fn npm_package_latest_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .npm_package_latest_version(&package_name)
-            .await
-            .to_wasmtime_result()
+        latest::ExtensionImports::npm_package_latest_version(self, package_name).await
     }
 
     async fn npm_package_installed_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<Option<String>, String>> {
-        self.host
-            .node_runtime
-            .npm_package_installed_version(&self.work_dir(), &package_name)
-            .await
-            .to_wasmtime_result()
+        latest::ExtensionImports::npm_package_installed_version(self, package_name).await
     }
 
     async fn npm_install_package(
@@ -112,11 +167,7 @@ impl ExtensionImports for WasmState {
         package_name: String,
         version: String,
     ) -> wasmtime::Result<Result<(), String>> {
-        self.host
-            .node_runtime
-            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
-            .await
-            .to_wasmtime_result()
+        latest::ExtensionImports::npm_install_package(self, package_name, version).await
     }
 
     async fn latest_github_release(
@@ -124,45 +175,17 @@ impl ExtensionImports for WasmState {
         repo: String,
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        maybe!(async {
-            let release = util::github::latest_github_release(
-                &repo,
-                options.require_assets,
-                options.pre_release,
-                self.host.http_client.clone(),
-            )
-            .await?;
-            Ok(GithubRelease {
-                version: release.tag_name,
-                assets: release
-                    .assets
-                    .into_iter()
-                    .map(|asset| GithubReleaseAsset {
-                        name: asset.name,
-                        download_url: asset.browser_download_url,
-                    })
-                    .collect(),
-            })
-        })
-        .await
-        .to_wasmtime_result()
+        Ok(
+            latest::ExtensionImports::latest_github_release(self, repo, options.into())
+                .await?
+                .map(|github| github.into()),
+        )
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
-        Ok((
-            match env::consts::OS {
-                "macos" => Os::Mac,
-                "linux" => Os::Linux,
-                "windows" => Os::Windows,
-                _ => panic!("unsupported os"),
-            },
-            match env::consts::ARCH {
-                "aarch64" => Architecture::Aarch64,
-                "x86" => Architecture::X86,
-                "x86_64" => Architecture::X8664,
-                _ => panic!("unsupported architecture"),
-            },
-        ))
+        latest::ExtensionImports::current_platform(self)
+            .await
+            .map(|(os, arch)| (os.into(), arch.into()))
     }
 
     async fn set_language_server_installation_status(
@@ -170,23 +193,12 @@ impl ExtensionImports for WasmState {
         server_name: String,
         status: LanguageServerInstallationStatus,
     ) -> wasmtime::Result<()> {
-        let status = match status {
-            LanguageServerInstallationStatus::CheckingForUpdate => {
-                LanguageServerBinaryStatus::CheckingForUpdate
-            }
-            LanguageServerInstallationStatus::Downloading => {
-                LanguageServerBinaryStatus::Downloading
-            }
-            LanguageServerInstallationStatus::None => LanguageServerBinaryStatus::None,
-            LanguageServerInstallationStatus::Failed(error) => {
-                LanguageServerBinaryStatus::Failed { error }
-            }
-        };
-
-        self.host
-            .language_registry
-            .update_lsp_status(language::LanguageServerName(server_name.into()), status);
-        Ok(())
+        latest::ExtensionImports::set_language_server_installation_status(
+            self,
+            server_name,
+            status.into(),
+        )
+        .await
     }
 
     async fn download_file(
@@ -195,103 +207,10 @@ impl ExtensionImports for WasmState {
         path: String,
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
-        maybe!(async {
-            let path = PathBuf::from(path);
-            let extension_work_dir = self.host.work_dir.join(self.manifest.id.as_ref());
-
-            self.host.fs.create_dir(&extension_work_dir).await?;
-
-            let destination_path = self
-                .host
-                .writeable_path_from_extension(&self.manifest.id, &path)?;
-
-            let mut response = self
-                .host
-                .http_client
-                .get(&url, Default::default(), true)
-                .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
-
-            if !response.status().is_success() {
-                Err(anyhow!(
-                    "download failed with status {}",
-                    response.status().to_string()
-                ))?;
-            }
-            let body = BufReader::new(response.body_mut());
-
-            match file_type {
-                DownloadedFileType::Uncompressed => {
-                    futures::pin_mut!(body);
-                    self.host
-                        .fs
-                        .create_file_with(&destination_path, body)
-                        .await?;
-                }
-                DownloadedFileType::Gzip => {
-                    let body = GzipDecoder::new(body);
-                    futures::pin_mut!(body);
-                    self.host
-                        .fs
-                        .create_file_with(&destination_path, body)
-                        .await?;
-                }
-                DownloadedFileType::GzipTar => {
-                    let body = GzipDecoder::new(body);
-                    futures::pin_mut!(body);
-                    self.host
-                        .fs
-                        .extract_tar_file(&destination_path, Archive::new(body))
-                        .await?;
-                }
-                DownloadedFileType::Zip => {
-                    let file_name = destination_path
-                        .file_name()
-                        .ok_or_else(|| anyhow!("invalid download path"))?
-                        .to_string_lossy();
-                    let zip_filename = format!("{file_name}.zip");
-                    let mut zip_path = destination_path.clone();
-                    zip_path.set_file_name(zip_filename);
-
-                    futures::pin_mut!(body);
-                    self.host.fs.create_file_with(&zip_path, body).await?;
-
-                    let unzip_status = std::process::Command::new("unzip")
-                        .current_dir(&extension_work_dir)
-                        .arg("-d")
-                        .arg(&destination_path)
-                        .arg(&zip_path)
-                        .output()?
-                        .status;
-                    if !unzip_status.success() {
-                        Err(anyhow!("failed to unzip {} archive", path.display()))?;
-                    }
-                }
-            }
-
-            Ok(())
-        })
-        .await
-        .to_wasmtime_result()
+        latest::ExtensionImports::download_file(self, url, path, file_type.into()).await
     }
 
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
-        #[allow(unused)]
-        let path = self
-            .host
-            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
-
-        #[cfg(unix)]
-        {
-            use std::fs::{self, Permissions};
-            use std::os::unix::fs::PermissionsExt;
-
-            return fs::set_permissions(&path, Permissions::from_mode(0o755))
-                .map_err(|error| anyhow!("failed to set permissions for path {path:?}: {error}"))
-                .to_wasmtime_result();
-        }
-
-        #[cfg(not(unix))]
-        Ok(Ok(()))
+        latest::ExtensionImports::make_file_executable(self, path).await
     }
 }

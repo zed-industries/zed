@@ -1,4 +1,5 @@
 use super::latest;
+use crate::wasm_host::wit::since_v0_0_4;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -82,8 +83,8 @@ impl From<DownloadedFileType> for latest::DownloadedFileType {
     }
 }
 
-impl From<latest::LanguageServerConfig> for LanguageServerConfig {
-    fn from(value: latest::LanguageServerConfig) -> Self {
+impl From<since_v0_0_4::LanguageServerConfig> for LanguageServerConfig {
+    fn from(value: since_v0_0_4::LanguageServerConfig) -> Self {
         Self {
             name: value.name,
             language_name: value.language_name,

@@ -213,8 +213,9 @@ impl CachedLspAdapter {
         &self,
         completion_items: &[lsp::CompletionItem],
         language: &Arc<Language>,
-    ) -> Vec<Option<CodeLabel>> {
+    ) -> Result<Vec<Option<CodeLabel>>> {
         self.adapter
+            .clone()
             .labels_for_completions(completion_items, language)
             .await
     }
@@ -385,10 +386,10 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
 
     async fn labels_for_completions(
-        &self,
+        self: Arc<Self>,
         completions: &[lsp::CompletionItem],
         language: &Arc<Language>,
-    ) -> Vec<Option<CodeLabel>> {
+    ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
         for (ix, completion) in completions.into_iter().enumerate() {
             let label = self.label_for_completion(completion, language).await;
@@ -397,7 +398,7 @@ pub trait LspAdapter: 'static + Send + Sync {
                 *labels.last_mut().unwrap() = Some(label);
             }
         }
-        labels
+        Ok(labels)
     }
 
     async fn label_for_completion(

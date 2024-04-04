@@ -1,0 +1,44 @@
+interface lsp {
+    /// An LSP completion.
+    record completion {
+        label: string,
+        detail: option<string>,
+        kind: option<completion-kind>,
+        insert-text-format: option<insert-text-format>,
+    }
+
+    variant completion-kind {
+        text,
+        method,
+        function,
+        %constructor,
+        field,
+        variable,
+        class,
+        %interface,
+        module,
+        property,
+        unit,
+        value,
+        %enum,
+        keyword,
+        snippet,
+        color,
+        file,
+        reference,
+        folder,
+        enum-member,
+        constant,
+        struct,
+        event,
+        operator,
+        type-parameter,
+        other(s32),
+    }
+
+    variant insert-text-format {
+        plain-text,
+        snippet,
+        other(s32),
+    }
+}
