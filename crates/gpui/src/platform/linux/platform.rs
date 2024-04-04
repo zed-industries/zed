@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use std::any::Any;
 use std::cell::RefCell;
 use std::env;
 use std::{
@@ -27,8 +28,9 @@ use crate::platform::linux::wayland::WaylandClient;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, LinuxTextSystem, Menu, Modifiers,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Point, Result, SemanticVersion, Task, WindowOptions, WindowParams,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task,
+    WindowAppearance, WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -42,7 +44,21 @@ pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
 pub trait LinuxClient {
-    fn common(&self) -> &mut LinuxCommon;
+    fn common(&self, f: &dyn Fn(&mut LinuxCommon));
+    fn common_background_executor(&self) -> BackgroundExecutor;
+    fn common_foreground_executor(&self) -> ForegroundExecutor;
+    fn common_text_system(&self) -> Arc<dyn PlatformTextSystem>;
+
+    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
+    fn on_become_active(&self, callback: Box<dyn FnMut()>);
+    fn on_resign_active(&self, callback: Box<dyn FnMut()>);
+    fn on_quit(&self, callback: Box<dyn FnMut()>);
+    fn on_reopen(&self, callback: Box<dyn FnMut()>);
+    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
+    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
+    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
+    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
@@ -52,29 +68,29 @@ pub trait LinuxClient {
         options: WindowParams,
     ) -> Box<dyn PlatformWindow>;
     fn set_cursor_style(&self, style: CursorStyle);
-    fn get_clipboard(&self) -> &mut dyn ClipboardProvider;
-    fn get_primary(&self) -> &mut dyn ClipboardProvider;
+    fn write_to_clipboard(&self, item: ClipboardItem);
+    fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn run(&self);
 }
 
 #[derive(Default)]
-pub(crate) struct Callbacks {
-    open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    become_active: Option<Box<dyn FnMut()>>,
-    resign_active: Option<Box<dyn FnMut()>>,
-    quit: Option<Box<dyn FnMut()>>,
-    reopen: Option<Box<dyn FnMut()>>,
-    event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
-    app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
-    will_open_app_menu: Option<Box<dyn FnMut()>>,
-    validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+pub(crate) struct PlatformHandlers {
+    pub(crate) open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
+    pub(crate) become_active: Option<Box<dyn FnMut()>>,
+    pub(crate) resign_active: Option<Box<dyn FnMut()>>,
+    pub(crate) quit: Option<Box<dyn FnMut()>>,
+    pub(crate) reopen: Option<Box<dyn FnMut()>>,
+    pub(crate) event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
+    pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
+    pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
+    pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
 
 pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     pub(crate) text_system: Arc<LinuxTextSystem>,
-    pub(crate) callbacks: Callbacks,
+    pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
 }
 
@@ -82,7 +98,7 @@ impl LinuxCommon {
     pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
         let text_system = Arc::new(LinuxTextSystem::new());
-        let callbacks = Callbacks::default();
+        let callbacks = PlatformHandlers::default();
 
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
 
@@ -100,29 +116,33 @@ impl LinuxCommon {
 
 impl<P: LinuxClient + 'static> Platform for P {
     fn background_executor(&self) -> BackgroundExecutor {
-        self.common().background_executor.clone()
+        self.common_background_executor()
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {
-        self.common().foreground_executor.clone()
+        self.common_foreground_executor()
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.common().text_system.clone()
+        self.common_text_system()
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
+        dbg!("here");
 
-        self.run();
+        LinuxClient::run(self);
 
-        if let Some(mut fun) = self.common().callbacks.quit.take() {
-            fun();
-        }
+        self.common(&|common| {
+            dbg!("here");
+            if let Some(mut fun) = common.callbacks.quit.take() {
+                fun();
+            }
+        });
     }
 
     fn quit(&self) {
-        self.common().signal.stop();
+        self.common(&|common| common.signal.stop());
     }
 
     fn restart(&self) {
@@ -206,7 +226,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.common().callbacks.open_urls = Some(callback);
+        LinuxClient::on_open_urls(self, callback)
     }
 
     fn prompt_for_paths(
@@ -214,8 +234,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
-        self.common()
-            .foreground_executor
+        self.foreground_executor()
             .spawn(async move {
                 let title = if options.multiple {
                     if !options.files {
@@ -258,8 +277,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
         let (done_tx, done_rx) = oneshot::channel();
         let directory = directory.to_owned();
-        self.common()
-            .foreground_executor
+        self.foreground_executor()
             .spawn(async move {
                 let result = SaveFileRequest::default()
                     .modal(true)
@@ -279,6 +297,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 done_tx.send(result);
             })
             .detach();
+
         done_rx
     }
 
@@ -293,35 +312,35 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.common().callbacks.become_active = Some(callback);
+        LinuxClient::on_become_active(self, callback)
     }
 
     fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.common().callbacks.resign_active = Some(callback);
+        LinuxClient::on_resign_active(self, callback)
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.common().callbacks.quit = Some(callback);
+        LinuxClient::on_quit(self, callback)
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.common().callbacks.reopen = Some(callback);
+        LinuxClient::on_reopen(self, callback)
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.common().callbacks.event = Some(callback);
+        LinuxClient::on_event(self, callback)
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.common().callbacks.app_menu_action = Some(callback);
+        LinuxClient::on_app_menu_action(self, callback)
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.common().callbacks.will_open_app_menu = Some(callback);
+        LinuxClient::on_will_open_app_menu(self, callback)
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.common().callbacks.validate_app_menu_command = Some(callback);
+        LinuxClient::on_validate_app_menu_command(self, callback)
     }
 
     fn os_name(&self) -> &'static str {
@@ -363,23 +382,6 @@ impl<P: LinuxClient + 'static> Platform for P {
     // todo(linux)
     fn should_auto_hide_scrollbars(&self) -> bool {
         false
-    }
-
-    fn write_to_clipboard(&self, item: ClipboardItem) {
-        let clipboard = self.get_clipboard();
-        clipboard.set_contents(item.text);
-    }
-
-    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        let clipboard = self.get_clipboard();
-        let contents = clipboard.get_contents();
-        match contents {
-            Ok(text) => Some(ClipboardItem {
-                metadata: None,
-                text,
-            }),
-            _ => None,
-        }
     }
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
@@ -454,6 +456,14 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
+    }
+
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        self.write_to_clipboard(item)
+    }
+
+    fn read_from_clipboard(&self) -> Option<ClipboardItem> {
+        self.read_from_clipboard()
     }
 }
 
