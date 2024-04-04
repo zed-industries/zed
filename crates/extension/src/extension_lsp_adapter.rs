@@ -236,7 +236,7 @@ fn build_code_label(
     for span in &label.spans {
         match span {
             wit::CodeLabelSpan::CodeRange(range) => {
-                let range = Range::from(range.clone());
+                let range = Range::from(*range);
 
                 let mut input_ix = range.start;
                 let mut output_ix = text.len();
