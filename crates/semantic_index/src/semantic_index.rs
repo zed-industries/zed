@@ -7,8 +7,8 @@ use fs::Fs;
 use futures::StreamExt;
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{
-    AppContext, Context, EntityId, EventEmitter, Global, Model, ModelContext, Subscription, Task,
-    WeakModel,
+    AppContext, AsyncAppContext, Context, EntityId, EventEmitter, Global, Model, ModelContext,
+    Subscription, Task, WeakModel,
 };
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
@@ -149,7 +149,7 @@ impl ProjectIndex {
                     break;
                 }
                 WorktreeIndexHandle::Loaded { index, .. } => {
-                    if index.read(cx).pending_scan.is_some() {
+                    if index.read(cx).status == Status::Scanning {
                         status = Status::Scanning;
                         break;
                     }
@@ -164,13 +164,22 @@ impl ProjectIndex {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Status {
+    Idle,
+    Scanning,
+}
+
+impl EventEmitter<Status> for ProjectIndex {}
+
 struct WorktreeIndex {
     worktree: Model<Worktree>,
-    pending_scan: Option<Task<()>>,
     db_connection: heed::Env,
     db: heed::Database<Str, SerdeBincode<ChunkedFile>>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
+    status: Status,
+    index_entries: Task<Result<()>>,
 }
 
 impl WorktreeIndex {
@@ -206,37 +215,44 @@ impl WorktreeIndex {
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let mut this = Self {
+        Self {
             db_connection,
             db,
             worktree,
-            pending_scan: None,
             language_registry,
             fs,
-        };
-        this.rescan(cx);
-        this
+            status: Status::Idle,
+            index_entries: cx.spawn(Self::index_entries),
+        }
     }
 
-    fn rescan(&mut self, cx: &mut ModelContext<Self>) {
-        let worktree = self.worktree.read(cx).as_local().unwrap().snapshot();
+    async fn index_entries(this: WeakModel<Self>, mut cx: AsyncAppContext) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            this.status = Status::Scanning;
+            cx.notify();
+        })?;
+
+        let worktree = this.read_with(&cx, |this, cx| {
+            this.worktree.read(cx).as_local().unwrap().snapshot()
+        })?;
         let worktree_abs_path = worktree.abs_path().clone();
-        let (entries, scan_entries) = self.scan_entries(worktree, cx);
-        let (chunked_files, chunk_files) = self.chunk_files(worktree_abs_path, entries, cx);
-        let embed_chunks = self.embed_chunks(chunked_files, cx);
-        self.pending_scan = Some(cx.spawn(|this, mut cx| async move {
-            futures::join!(scan_entries, chunk_files, embed_chunks);
-            _ = this.update(&mut cx, |this, cx| {
-                this.pending_scan = None;
-                cx.notify();
-            });
-        }));
+        let (entries, scan_entries) = Self::scan_entries(worktree, &mut cx);
+        let (chunked_files, chunk_files) =
+            Self::chunk_files(&this, worktree_abs_path, entries, &mut cx)?;
+        let embed_chunks = Self::embed_chunks(&this, chunked_files, &mut cx);
+
+        futures::join!(scan_entries, chunk_files, embed_chunks);
+        this.update(&mut cx, |this, cx| {
+            this.status = Status::Idle;
+            cx.notify();
+        })?;
+
+        Ok(())
     }
 
     fn scan_entries(
-        &mut self,
         worktree: LocalSnapshot,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AsyncAppContext,
     ) -> (channel::Receiver<Entry>, Task<()>) {
         let (entries_tx, entries_rx) = channel::bounded(512);
         let scan_entries = cx.background_executor().spawn(async move {
@@ -250,15 +266,15 @@ impl WorktreeIndex {
     }
 
     fn chunk_files(
-        &mut self,
+        this: &WeakModel<Self>,
         worktree_abs_path: Arc<Path>,
         entries: channel::Receiver<Entry>,
-        cx: &mut ModelContext<Self>,
-    ) -> (channel::Receiver<ChunkedFile>, Task<()>) {
-        let language_registry = self.language_registry.clone();
-        let fs = self.fs.clone();
+        cx: &mut AsyncAppContext,
+    ) -> Result<(channel::Receiver<ChunkedFile>, Task<()>)> {
+        let language_registry = this.read_with(cx, |this, _| this.language_registry.clone())?;
+        let fs = this.read_with(cx, |this, _| this.fs.clone())?;
         let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
-        let chunk_files = cx.spawn(|_this, cx| async move {
+        let chunk_files = cx.spawn(|cx| async move {
             cx.background_executor()
                 .scoped(|cx| {
                     for _ in 0..cx.num_cpus() {
@@ -290,15 +306,15 @@ impl WorktreeIndex {
                 })
                 .await;
         });
-        (chunked_files_rx, chunk_files)
+        Ok((chunked_files_rx, chunk_files))
     }
 
     fn embed_chunks(
-        &mut self,
+        this: &WeakModel<Self>,
         chunked_files: channel::Receiver<ChunkedFile>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AsyncAppContext,
     ) -> Task<()> {
-        cx.spawn(|this, cx| async move {
+        cx.spawn(|cx| async move {
             let mut chunked_file_batches =
                 chunked_files.chunks_timeout(512, Duration::from_secs(2));
             while let Some(batch) = chunked_file_batches.next().await {
@@ -307,14 +323,6 @@ impl WorktreeIndex {
         })
     }
 }
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Status {
-    Idle,
-    Scanning,
-}
-
-impl EventEmitter<Status> for ProjectIndex {}
 
 struct ChunkedFile {
     worktree_root: Arc<Path>,
