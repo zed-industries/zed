@@ -8,7 +8,6 @@ pub struct WorkspaceSettings {
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
-    pub show_nav_history_buttons: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -31,6 +30,15 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: off
     pub autosave: Option<AutosaveSetting>,
+}
+
+#[derive(Deserialize)]
+pub struct TabBarSettings {
+    pub show_nav_history_buttons: bool,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct TabBarSettingsContent {
     /// Whether or not to show the navigation history buttons in the tab bar.
     ///
     /// Default: true
@@ -54,6 +62,20 @@ impl Settings for WorkspaceSettings {
     const KEY: Option<&'static str> = None;
 
     type FileContent = WorkspaceSettingsContent;
+
+    fn load(
+        default_value: &Self::FileContent,
+        user_values: &[&Self::FileContent],
+        _: &mut gpui::AppContext,
+    ) -> anyhow::Result<Self> {
+        Self::load_via_json_merge(default_value, user_values)
+    }
+}
+
+impl Settings for TabBarSettings {
+    const KEY: Option<&'static str> = Some("tab_bar");
+
+    type FileContent = TabBarSettingsContent;
 
     fn load(
         default_value: &Self::FileContent,

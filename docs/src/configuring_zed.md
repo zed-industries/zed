@@ -678,16 +678,6 @@ These values take in the same options as the root-level settings with the same n
 
 `boolean` values
 
-## Show Navigation History Buttons
-
-- Description: Whether or not to show the navigation history buttons in the tab bar.
-  -Setting: `show_nav_history_buttons`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
 ## Show Whitespaces
 
 - Description: Whether or not to show render whitespace characters in the editor.
