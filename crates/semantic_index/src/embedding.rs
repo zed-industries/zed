@@ -1,12 +1,14 @@
-use std::sync::Arc;
+use std::{array::TryFromSliceError, sync::Arc};
 
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use futures::AsyncReadExt;
 use serde::{Deserialize, Serialize};
 use util::http::{HttpClient, HttpClientWithUrl};
 
 /// Ollama's embedding via nomic-embed-text is of length 768
 pub const EMBEDDING_SIZE_TINY: usize = 768;
+/// Ollama's embedding via mxbai-embed-large is of length 1024
+pub const EMBEDDING_SIZE_XSMALL: usize = 1024;
 /// OpenAI's text small embeddings are of length 1536
 pub const EMBEDDING_SIZE_SMALL: usize = 1536;
 /// OpenAI's text large embeddings are of length 3072
@@ -14,12 +16,19 @@ pub const EMBEDDING_SIZE_LARGE: usize = 3072;
 
 // TODO: Check out Voyage
 
+pub enum EmbeddingModel {
+    OllamaNomicEmbedText,
+    OllamaMxbaiEmbedLarge,
+    OpenaiTextEmbedding3Small,
+    OpenaiTextEmbedding3Large,
+}
+
 #[derive(Debug, Clone)]
 pub enum Embedding {
-    Tiny([f32; EMBEDDING_SIZE_TINY]),
-    Small([f32; EMBEDDING_SIZE_SMALL]),
-    Large([f32; EMBEDDING_SIZE_LARGE]),
-    None,
+    OllamaNomicEmbedText([f32; EMBEDDING_SIZE_TINY]),
+    OllamaMxbaiEmbedLarge([f32; EMBEDDING_SIZE_XSMALL]),
+    OpenaiTextEmbedding3Small([f32; EMBEDDING_SIZE_SMALL]),
+    OpenaiTextEmbedding3Large([f32; EMBEDDING_SIZE_LARGE]),
 }
 
 pub trait EmbeddingProvider {
@@ -61,14 +70,42 @@ pub(crate) fn normalize_vector(embedding: Vec<f32>) -> Vec<f32> {
     embedding.iter().map(|x| x / norm).collect::<Vec<f32>>()
 }
 
-pub fn normalize_embedding(embedding: Vec<f32>) -> Embedding {
+pub fn normalize_embedding(
+    embedding: Vec<f32>,
+    embedding_type: EmbeddingModel,
+) -> Result<Embedding> {
     let embedding = normalize_vector(embedding);
 
-    match embedding.len() {
-        EMBEDDING_SIZE_TINY => Embedding::Tiny(embedding.try_into().unwrap()),
-        EMBEDDING_SIZE_SMALL => Embedding::Small(embedding.try_into().unwrap()),
-        EMBEDDING_SIZE_LARGE => Embedding::Large(embedding.try_into().unwrap()),
-        _ => panic!("Invalid embedding size"),
+    match embedding_type {
+        EmbeddingModel::OllamaNomicEmbedText if embedding.len() == EMBEDDING_SIZE_TINY => {
+            Ok(Embedding::OllamaNomicEmbedText(
+                embedding
+                    .try_into()
+                    .map_err(|_| anyhow!("Failed to convert to [f32; {}]", EMBEDDING_SIZE_TINY))?,
+            ))
+        }
+        EmbeddingModel::OllamaMxbaiEmbedLarge if embedding.len() == EMBEDDING_SIZE_XSMALL => {
+            Ok(Embedding::OllamaMxbaiEmbedLarge(
+                embedding.try_into().map_err(|_| {
+                    anyhow!("Failed to convert to [f32; {}]", EMBEDDING_SIZE_XSMALL)
+                })?,
+            ))
+        }
+        EmbeddingModel::OpenaiTextEmbedding3Small if embedding.len() == EMBEDDING_SIZE_SMALL => {
+            Ok(Embedding::OpenaiTextEmbedding3Small(
+                embedding
+                    .try_into()
+                    .map_err(|_| anyhow!("Failed to convert to [f32; {}]", EMBEDDING_SIZE_SMALL))?,
+            ))
+        }
+        EmbeddingModel::OpenaiTextEmbedding3Large if embedding.len() == EMBEDDING_SIZE_LARGE => {
+            Ok(Embedding::OpenaiTextEmbedding3Large(
+                embedding
+                    .try_into()
+                    .map_err(|_| anyhow!("Failed to convert to [f32; {}]", EMBEDDING_SIZE_LARGE))?,
+            ))
+        }
+        _ => Err(anyhow!("Invalid or mismatched embedding size")),
     }
 }
 
@@ -101,7 +138,7 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
         let response: OllamaEmbeddingResponse =
             serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
 
-        Ok(normalize_embedding(response.embedding))
+        normalize_embedding(response.embedding, EmbeddingModel::OllamaNomicEmbedText)
     }
 }
 
@@ -114,7 +151,7 @@ mod test {
     async fn test_ollama_embedding_provider(executor: BackgroundExecutor) {
         executor.allow_parking();
 
-        let client = Arc(HttpClientWithUrl::new("http://localhost:11434/"));
+        let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
         let provider = OllamaEmbeddingProvider::new(client.into(), None);
         let embedding = provider
             .get_embedding("Hello, world!".to_string())
@@ -122,7 +159,7 @@ mod test {
             .unwrap();
 
         match embedding {
-            Embedding::Tiny(e) => assert_eq!(e.len(), EMBEDDING_SIZE_TINY),
+            Embedding::OllamaNomicEmbedText(e) => assert_eq!(e.len(), EMBEDDING_SIZE_TINY),
             _ => panic!("Invalid embedding size"),
         }
     }

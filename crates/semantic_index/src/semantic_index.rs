@@ -329,11 +329,10 @@ impl WorktreeIndex {
         chunked_files: channel::Receiver<ChunkedFile>,
         cx: &mut AsyncAppContext,
     ) -> (channel::Receiver<EmbeddedFile>, Task<()>) {
-        // todo(): Make sure we can get the client
         let client = this
             .read_with(cx, |this, cx| client::Client::global(cx).http_client())
             .context("http client not available")
-            // TODO: handle no client, return a result instead of panicking
+            // todo(): handle no client, return a result instead of panicking
             .unwrap();
 
         let embedding_provider = OllamaEmbeddingProvider::new(client, None);
