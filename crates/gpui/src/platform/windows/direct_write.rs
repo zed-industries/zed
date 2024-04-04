@@ -871,6 +871,7 @@ struct GlyphRunResult {
     index: usize,
 }
 
+#[allow(non_snake_case)]
 impl IDWritePixelSnapping_Impl for TextRenderer {
     fn IsPixelSnappingDisabled(
         &self,
