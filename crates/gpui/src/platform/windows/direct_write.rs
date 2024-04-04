@@ -1,11 +1,11 @@
 use std::{borrow::Cow, sync::Arc};
 
-use ::util::ResultExt;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
+use util::ResultExt;
 use windows::{
     core::{implement, HSTRING, PCWSTR},
     Win32::{
@@ -577,8 +577,8 @@ impl DirectWriteState {
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
                 let enumerator = self.components.factory.TranslateColorGlyphRun2(
                     D2D_POINT_2F {
-                        x: (subpixel_shift.x / params.scale_factor) as f32,
-                        y: (subpixel_shift.y / params.scale_factor) as f32,
+                        x: subpixel_shift.x / params.scale_factor,
+                        y: subpixel_shift.y / params.scale_factor,
                     },
                     &glyph_run as _,
                     None,
@@ -598,8 +598,8 @@ impl DirectWriteState {
                     let emoji = &*run;
                     match emoji.glyphImageFormat {
                         DWRITE_GLYPH_IMAGE_FORMATS_COLR => bitmap_render_target.DrawGlyphRun(
-                            (subpixel_shift.x / params.scale_factor) as f32,
-                            (subpixel_shift.y / params.scale_factor) as f32,
+                            subpixel_shift.x / params.scale_factor,
+                            subpixel_shift.y / params.scale_factor,
                             DWRITE_MEASURING_MODE_NATURAL,
                             &emoji.Base.glyphRun,
                             &render_params,
@@ -607,8 +607,8 @@ impl DirectWriteState {
                             None,
                         ),
                         _ => bitmap_render_target.DrawGlyphRunWithColorSupport(
-                            (subpixel_shift.x / params.scale_factor) as f32,
-                            (subpixel_shift.y / params.scale_factor) as f32,
+                            subpixel_shift.x / params.scale_factor,
+                            subpixel_shift.y / params.scale_factor,
                             DWRITE_MEASURING_MODE_NATURAL,
                             &emoji.Base.glyphRun,
                             &render_params,
@@ -634,8 +634,8 @@ impl DirectWriteState {
                 Ok((bitmap_size, raw_bytes))
             } else {
                 bitmap_render_target.DrawGlyphRun(
-                    (subpixel_shift.x / params.scale_factor) as f32,
-                    (subpixel_shift.y / params.scale_factor) as f32,
+                    subpixel_shift.x / params.scale_factor,
+                    subpixel_shift.y / params.scale_factor,
                     DWRITE_MEASURING_MODE_NATURAL,
                     &glyph_run,
                     &render_params,
@@ -668,11 +668,11 @@ impl DirectWriteState {
             let metrics = &metrics[0];
             let advance_width = metrics.advanceWidth as i32;
             let advance_height = metrics.advanceHeight as i32;
-            let left_side_bearing = metrics.leftSideBearing as i32;
-            let right_side_bearing = metrics.rightSideBearing as i32;
-            let top_side_bearing = metrics.topSideBearing as i32;
-            let bottom_side_bearing = metrics.bottomSideBearing as i32;
-            let vertical_origin_y = metrics.verticalOriginY as i32;
+            let left_side_bearing = metrics.leftSideBearing;
+            let right_side_bearing = metrics.rightSideBearing;
+            let top_side_bearing = metrics.topSideBearing;
+            let bottom_side_bearing = metrics.bottomSideBearing;
+            let vertical_origin_y = metrics.verticalOriginY;
 
             let y_offset = vertical_origin_y + bottom_side_bearing - advance_height;
             let width = advance_width - (left_side_bearing + right_side_bearing);
@@ -1104,15 +1104,15 @@ unsafe fn apply_font_features(direct_write_featrues: &IDWriteTypography, feature
     let mut feature_calt = make_direct_write_feature("calt", true);
 
     for (tag, enable) in tag_values {
-        if tag == "liga".to_string() && !enable {
+        if tag == *"liga" && !enable {
             feature_liga.parameter = 0;
             continue;
         }
-        if tag == "clig".to_string() && !enable {
+        if tag == *"clig" && !enable {
             feature_clig.parameter = 0;
             continue;
         }
-        if tag == "calt".to_string() && !enable {
+        if tag == *"calt" && !enable {
             feature_calt.parameter = 0;
             continue;
         }
