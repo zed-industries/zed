@@ -5,7 +5,6 @@ use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
-use util::ResultExt;
 use windows::{
     core::{implement, HSTRING, PCWSTR},
     Win32::{
