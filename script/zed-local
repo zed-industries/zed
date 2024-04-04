@@ -29,6 +29,7 @@ const DIGIT_FLAG_REGEX = /^--?(\d+)$/;
 let instanceCount = 1;
 let isReleaseMode = false;
 let isTop = false;
+let othersOnStable = false;
 
 const args = process.argv.slice(2);
 while (args.length > 0) {
@@ -44,6 +45,8 @@ while (args.length > 0) {
   } else if (arg === "--help") {
     console.log(HELP);
     process.exit(0);
+  } else if (arg === "--stable") {
+    othersOnStable = true;
   } else {
     break;
   }
@@ -123,8 +126,11 @@ setTimeout(() => {
       row * instanceHeight + titleBarHeight,
     ].join(",");
     const size = [instanceWidth, instanceHeight].join(",");
-
-    spawn(zedBinary, i == 0 ? args : [], {
+    let binaryPath = zedBinary;
+    if (i != 0 && othersOnStable) {
+      binaryPath = "/Applications/Zed.app/Contents/MacOS/zed";
+    }
+    spawn(binaryPath, i == 0 ? args : [], {
       stdio: "inherit",
       env: {
         ZED_IMPERSONATE: users[i],
