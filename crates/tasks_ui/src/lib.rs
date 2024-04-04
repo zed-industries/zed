@@ -5,7 +5,7 @@ use gpui::{AppContext, ViewContext, WindowContext};
 use language::Point;
 use modal::{Spawn, TasksModal};
 use project::{Location, WorktreeId};
-use task::{Task, TaskContext, TaskVariables};
+use task::{Task, TaskContext, TaskVariables, VariableName};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -30,7 +30,6 @@ pub fn init(cx: &mut AppContext) {
                         } else {
                             old_context
                         };
-
                         schedule_task(workspace, task.as_ref(), task_context, false, cx)
                     };
                 });
@@ -40,17 +39,17 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
-    let inventory = workspace.project().read(cx).task_inventory().clone();
-    let workspace_handle = workspace.weak_handle();
-    let cwd = task_cwd(workspace, cx).log_err().flatten();
-    let task_context = task_context(workspace, cwd, cx);
-    if let Some(name) = action.task_name.clone() {
-        // Do not actually show the modal.
-        spawn_task_with_name(name.clone(), cx);
-    } else {
-        workspace.toggle_modal(cx, |cx| {
-            TasksModal::new(inventory, task_context, workspace_handle, cx)
-        })
+    match &action.task_name {
+        Some(name) => spawn_task_with_name(name.clone(), cx),
+        None => {
+            let inventory = workspace.project().read(cx).task_inventory().clone();
+            let workspace_handle = workspace.weak_handle();
+            let cwd = task_cwd(workspace, cx).log_err().flatten();
+            let task_context = task_context(workspace, cwd, cx);
+            workspace.toggle_modal(cx, |cx| {
+                TasksModal::new(inventory, task_context, workspace_handle, cx)
+            })
+        }
     }
 }
 
@@ -157,20 +156,18 @@ fn task_context(
                 let selected_text = buffer.read(cx).chars_for_range(selection_range).collect();
 
                 let mut task_variables = TaskVariables::from_iter([
-                    ("ZED_ROW".into(), row.to_string()),
-                    ("ZED_COLUMN".into(), column.to_string()),
-                    ("ZED_SELECTED_TEXT".into(), selected_text),
+                    (VariableName::Row, row.to_string()),
+                    (VariableName::Column, column.to_string()),
+                    (VariableName::SelectedText, selected_text),
                 ]);
                 if let Some(path) = current_file {
-                    task_variables.0.insert("ZED_FILE".into(), path);
+                    task_variables.insert(VariableName::File, path);
                 }
                 if let Some(worktree_path) = worktree_path {
-                    task_variables
-                        .0
-                        .insert("ZED_WORKTREE_ROOT".into(), worktree_path);
+                    task_variables.insert(VariableName::WorktreeRoot, worktree_path);
                 }
                 if let Some(language_context) = context {
-                    task_variables.0.extend(language_context.0);
+                    task_variables.extend(language_context);
                 }
 
                 Some(TaskContext {
@@ -198,7 +195,7 @@ fn schedule_task(
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
-    let spawn_in_terminal = task.exec(task_cx.clone());
+    let spawn_in_terminal = task.prepare_exec(task_cx.clone());
     if let Some(spawn_in_terminal) = spawn_in_terminal {
         if !omit_history {
             workspace.project().update(cx, |project, cx| {
@@ -255,7 +252,7 @@ mod tests {
     use language::{Language, LanguageConfig, SymbolContextProvider};
     use project::{FakeFs, Project, TaskSourceKind};
     use serde_json::json;
-    use task::{oneshot_source::OneshotSource, TaskContext, TaskVariables};
+    use task::{oneshot_source::OneshotSource, TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
     use workspace::{AppState, Workspace};
 
@@ -363,11 +360,11 @@ mod tests {
                 TaskContext {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
-                        ("ZED_FILE".into(), "/dir/rust/b.rs".into()),
-                        ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
-                        ("ZED_ROW".into(), "1".into()),
-                        ("ZED_COLUMN".into(), "1".into()),
-                        ("ZED_SELECTED_TEXT".into(), "".into())
+                        (VariableName::File, "/dir/rust/b.rs".into()),
+                        (VariableName::WorktreeRoot, "/dir".into()),
+                        (VariableName::Row, "1".into()),
+                        (VariableName::Column, "1".into()),
+                        (VariableName::SelectedText, "".into())
                     ])
                 }
             );
@@ -380,12 +377,12 @@ mod tests {
                 TaskContext {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
-                        ("ZED_FILE".into(), "/dir/rust/b.rs".into()),
-                        ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
-                        ("ZED_SYMBOL".into(), "this_is_a_rust_file".into()),
-                        ("ZED_ROW".into(), "1".into()),
-                        ("ZED_COLUMN".into(), "15".into()),
-                        ("ZED_SELECTED_TEXT".into(), "is_i".into()),
+                        (VariableName::File, "/dir/rust/b.rs".into()),
+                        (VariableName::WorktreeRoot, "/dir".into()),
+                        (VariableName::Row, "1".into()),
+                        (VariableName::Column, "15".into()),
+                        (VariableName::SelectedText, "is_i".into()),
+                        (VariableName::Symbol, "this_is_a_rust_file".into()),
                     ])
                 }
             );
@@ -397,12 +394,12 @@ mod tests {
                 TaskContext {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
-                        ("ZED_FILE".into(), "/dir/a.ts".into()),
-                        ("ZED_WORKTREE_ROOT".into(), "/dir".into()),
-                        ("ZED_SYMBOL".into(), "this_is_a_test".into()),
-                        ("ZED_ROW".into(), "1".into()),
-                        ("ZED_COLUMN".into(), "1".into()),
-                        ("ZED_SELECTED_TEXT".into(), "".into()),
+                        (VariableName::File, "/dir/a.ts".into()),
+                        (VariableName::WorktreeRoot, "/dir".into()),
+                        (VariableName::Row, "1".into()),
+                        (VariableName::Column, "1".into()),
+                        (VariableName::SelectedText, "".into()),
+                        (VariableName::Symbol, "this_is_a_test".into()),
                     ])
                 }
             );

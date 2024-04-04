@@ -3,13 +3,17 @@ use crate::{LanguageRegistry, Location};
 use anyhow::Result;
 use gpui::{AppContext, Context, Model};
 use std::sync::Arc;
-use task::{static_source::tasks_for, static_source::TaskDefinitions, TaskSource, TaskVariables};
+use task::{
+    static_source::{tasks_for, TaskDefinitions},
+    TaskSource, TaskVariables, VariableName,
+};
 
 /// Language Contexts are used by Zed tasks to extract information about source file.
 pub trait ContextProvider: Send + Sync {
     fn build_context(&self, _: Location, _: &mut AppContext) -> Result<TaskVariables> {
         Ok(TaskVariables::default())
     }
+
     fn associated_tasks(&self) -> Option<TaskDefinitions> {
         None
     }
@@ -29,18 +33,16 @@ impl ContextProvider for SymbolContextProvider {
             .read(cx)
             .snapshot()
             .symbols_containing(location.range.start, None);
-        let symbol = symbols.and_then(|symbols| {
-            symbols.last().map(|symbol| {
-                let range = symbol
-                    .name_ranges
-                    .last()
-                    .cloned()
-                    .unwrap_or(0..symbol.text.len());
-                symbol.text[range].to_string()
-            })
+        let symbol = symbols.unwrap_or_default().last().map(|symbol| {
+            let range = symbol
+                .name_ranges
+                .last()
+                .cloned()
+                .unwrap_or(0..symbol.text.len());
+            symbol.text[range].to_string()
         });
         Ok(TaskVariables::from_iter(
-            symbol.map(|symbol| ("ZED_SYMBOL".to_string(), symbol)),
+            Some(VariableName::Symbol).zip(symbol),
         ))
     }
 }

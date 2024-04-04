@@ -9,6 +9,7 @@ use collections::HashMap;
 use gpui::ModelContext;
 use static_source::RevealStrategy;
 use std::any::Any;
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 pub use vscode_format::VsCodeTaskFile;
@@ -41,15 +42,78 @@ pub struct SpawnInTerminal {
     pub reveal: RevealStrategy,
 }
 
-type VariableName = String;
-type VariableValue = String;
+/// Variables, available for use in [`TaskContext`] when a Zed's task gets turned into real command.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum VariableName {
+    /// An absolute path of the currently opened file.
+    File,
+    /// An absolute path of the currently opened worktree, that contains the file.
+    WorktreeRoot,
+    /// A symbol text, that contains latest cursor/selection position.
+    Symbol,
+    /// A row with the latest cursor/selection position.
+    Row,
+    /// A column with the latest cursor/selection position.
+    Column,
+    /// Text from the latest selection.
+    SelectedText,
+    /// Custom variable, provided by the plugin or other external source.
+    /// Will be printed with `ZED_` prefix to avoid potential conflicts with other variables.
+    Custom(Cow<'static, str>),
+}
+
+impl VariableName {
+    /// Generates a `$VARIABLE`-like string value to be used in templates.
+    /// Custom variables are wrapped in `${}` to avoid substitution issues with whitespaces.
+    pub fn template_value(&self) -> String {
+        if matches!(self, Self::Custom(_)) {
+            format!("${{{self}}}")
+        } else {
+            format!("${self}")
+        }
+    }
+}
+
+impl std::fmt::Display for VariableName {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::File => write!(f, "ZED_FILE"),
+            Self::WorktreeRoot => write!(f, "ZED_WORKTREE_ROOT"),
+            Self::Symbol => write!(f, "ZED_SYMBOL"),
+            Self::Row => write!(f, "ZED_ROW"),
+            Self::Column => write!(f, "ZED_COLUMN"),
+            Self::SelectedText => write!(f, "ZED_SELECTED_TEXT"),
+            Self::Custom(s) => write!(f, "ZED_{s}"),
+        }
+    }
+}
 
 /// Container for predefined environment variables that describe state of Zed at the time the task was spawned.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TaskVariables(pub HashMap<VariableName, VariableValue>);
+pub struct TaskVariables(HashMap<VariableName, String>);
 
-impl FromIterator<(String, String)> for TaskVariables {
-    fn from_iter<T: IntoIterator<Item = (String, String)>>(iter: T) -> Self {
+impl TaskVariables {
+    /// Converts the container into a map of environment variables and their values.
+    fn into_env_variables(self) -> HashMap<String, String> {
+        self.0
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value))
+            .collect()
+    }
+
+    /// Inserts another variable into the container, overwriting the existing one if it already exists — in this case, the old value is returned.
+    pub fn insert(&mut self, variable: VariableName, value: String) -> Option<String> {
+        self.0.insert(variable, value)
+    }
+
+    /// Extends the container with another one, overwriting the existing variables on collision.
+    pub fn extend(&mut self, other: Self) {
+        self.0.extend(other.0);
+    }
+}
+
+impl FromIterator<(VariableName, String)> for TaskVariables {
+    fn from_iter<T: IntoIterator<Item = (VariableName, String)>>(iter: T) -> Self {
         Self(HashMap::from_iter(iter))
     }
 }
@@ -74,7 +138,7 @@ pub trait Task {
     fn cwd(&self) -> Option<&str>;
     /// Sets up everything needed to spawn the task in the given directory (`cwd`).
     /// If a task is intended to be spawned in the terminal, it should return the corresponding struct filled with the data necessary.
-    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal>;
+    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal>;
 }
 
 /// [`Source`] produces tasks that can be scheduled.

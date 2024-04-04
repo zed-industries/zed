@@ -20,7 +20,10 @@ use std::{
         Arc,
     },
 };
-use task::static_source::{Definition, TaskDefinitions};
+use task::{
+    static_source::{Definition, TaskDefinitions},
+    VariableName,
+};
 use util::{
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
@@ -557,25 +560,32 @@ pub(super) fn elixir_task_context() -> ContextProviderWithTasks {
             label: "Elixir: test suite".to_owned(),
             command: "mix".to_owned(),
             args: vec!["test".to_owned()],
-            ..Default::default()
+            ..Definition::default()
         },
         Definition {
             label: "Elixir: failed tests suite".to_owned(),
             command: "mix".to_owned(),
             args: vec!["test".to_owned(), "--failed".to_owned()],
-            ..Default::default()
+            ..Definition::default()
         },
         Definition {
             label: "Elixir: test file".to_owned(),
             command: "mix".to_owned(),
-            args: vec!["test".to_owned(), "$ZED_FILE".to_owned()],
-            ..Default::default()
+            args: vec!["test".to_owned(), VariableName::Symbol.template_value()],
+            ..Definition::default()
         },
         Definition {
             label: "Elixir: test at current line".to_owned(),
             command: "mix".to_owned(),
-            args: vec!["test".to_owned(), "$ZED_FILE:$ZED_ROW".to_owned()],
-            ..Default::default()
+            args: vec![
+                "test".to_owned(),
+                format!(
+                    "{}:{}",
+                    VariableName::File.template_value(),
+                    VariableName::Row.template_value()
+                ),
+            ],
+            ..Definition::default()
         },
         Definition {
             label: "Elixir: break line".to_owned(),
@@ -585,9 +595,13 @@ pub(super) fn elixir_task_context() -> ContextProviderWithTasks {
                 "mix".to_owned(),
                 "test".to_owned(),
                 "-b".to_owned(),
-                "$ZED_FILE:$ZED_ROW".to_owned(),
+                format!(
+                    "{}:{}",
+                    VariableName::File.template_value(),
+                    VariableName::Row.template_value()
+                ),
             ],
-            ..Default::default()
+            ..Definition::default()
         },
     ]))
 }

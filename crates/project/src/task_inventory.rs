@@ -258,7 +258,7 @@ pub mod test_inventory {
             None
         }
 
-        fn exec(&self, _cwd: TaskContext) -> Option<task::SpawnInTerminal> {
+        fn prepare_exec(&self, _cwd: TaskContext) -> Option<task::SpawnInTerminal> {
             None
         }
     }

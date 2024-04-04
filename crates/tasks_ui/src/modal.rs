@@ -366,9 +366,7 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        // .exec doesn't actually spawn anything; it merely prepares a spawning command,
-        // which we can use for substitution.
-        let mut spawn_prompt = task.exec(self.task_context.clone())?;
+        let mut spawn_prompt = task.prepare_exec(self.task_context.clone())?;
         if !spawn_prompt.args.is_empty() {
             spawn_prompt.command.push(' ');
             spawn_prompt
