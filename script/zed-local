@@ -14,6 +14,7 @@ OPTIONS
   --release        Build Zed in release mode
   -2, -3, -4, ...  Spawn multiple Zed instances, with their windows tiled.
   --top            Arrange the Zed windows so they take up the top half of the screen.
+  --stable         Use stable Zed release installed on local machine for all instances (except for the first one).
 `.trim();
 
 const { spawn, execFileSync } = require("child_process");
