@@ -209,8 +209,9 @@ async fn chunk_file(
     let language = language_registry
         .language_for_file_path(&entry.path)
         .await
-        .with_context(|| format!("selecting a language for {:?}", entry.path))?;
-    if let Some(grammar) = language.grammar() {
+        .ok();
+
+    let chunks = if let Some(grammar) = language.as_ref().and_then(|language| language.grammar()) {
         let tree = PARSER.with(|parser| {
             let mut parser = parser.borrow_mut();
             parser
@@ -219,16 +220,17 @@ async fn chunk_file(
             parser.parse(&text, None).expect("invalid language")
         });
 
-        let chunks = chunk_parse_tree(tree, &text);
-        Ok(ChunkedFile {
-            worktree_root,
-            entry,
-            text,
-            chunks,
-        })
+        chunk_parse_tree(tree, &text)
     } else {
-        Err(anyhow!("plain text is not yet supported"))
-    }
+        chunk_lines(&text)
+    };
+
+    Ok(ChunkedFile {
+        worktree_root,
+        entry,
+        text,
+        chunks,
+    })
 }
 
 const CHUNK_THRESHOLD: usize = 1500;
@@ -243,7 +245,7 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
 
         // If adding the node to the current chunk exceeds the threshold
         if node.end_byte() - range.start > CHUNK_THRESHOLD {
-            // Try to descend into its first child, and if we can't flush the current
+            // Try to descend into its first child. If we can't, flush the current
             // range and try again.
             if cursor.goto_first_child() {
                 continue;
@@ -255,18 +257,9 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
 
             // If we get here, the node itself has no children but is larger than the threshold.
             // Break its text into arbitrary chunks.
-            while range.start < node.end_byte() {
-                range.end = cmp::min(range.start + CHUNK_THRESHOLD, node.end_byte());
-                while !text.is_char_boundary(range.end) {
-                    range.end -= 1;
-                }
-                chunk_ranges.push(range.clone());
-                range.start = range.end;
-            }
-        } else {
-            // The current node fits the threshold, so we include it wholesale.
-            range.end = node.end_byte();
+            chunk_text(text, range.clone(), node.end_byte(), &mut chunk_ranges);
         }
+        range.end = node.end_byte();
 
         // If we get here, we consumed the node. Advance to the next child, ascending if there isn't one.
         while !cursor.goto_next_sibling() {
@@ -287,5 +280,58 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
                     .collect();
             }
         }
+    }
+}
+
+fn chunk_lines(text: &str) -> Vec<Chunk> {
+    let mut chunk_ranges = Vec::new();
+    let mut range = 0..0;
+
+    let mut newlines = text.match_indices('\n').peekable();
+    while let Some((newline_ix, _)) = newlines.peek() {
+        let newline_ix = newline_ix + 1;
+        if newline_ix - range.start <= CHUNK_THRESHOLD {
+            range.end = newline_ix;
+            newlines.next();
+        } else {
+            if range.is_empty() {
+                chunk_text(text, range, newline_ix, &mut chunk_ranges);
+                range = newline_ix..newline_ix;
+            } else {
+                chunk_ranges.push(range.clone());
+                range.start = range.end;
+            }
+        }
+    }
+
+    if !range.is_empty() {
+        chunk_ranges.push(range);
+    }
+
+    chunk_ranges
+        .into_iter()
+        .map(|range| {
+            let mut hasher = Sha256::new();
+            hasher.update(&text[range.clone()]);
+            let mut digest = [0u8; 32];
+            digest.copy_from_slice(hasher.finalize().as_slice());
+            Chunk { range, digest }
+        })
+        .collect()
+}
+
+fn chunk_text(
+    text: &str,
+    mut range: Range<usize>,
+    max_end: usize,
+    chunk_ranges: &mut Vec<Range<usize>>,
+) {
+    while range.start < max_end {
+        range.end = cmp::min(range.start + CHUNK_THRESHOLD, max_end);
+        while !text.is_char_boundary(range.end) {
+            range.end -= 1;
+        }
+        chunk_ranges.push(range.clone());
+        range.start = range.end;
     }
 }
