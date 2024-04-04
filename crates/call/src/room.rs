@@ -52,7 +52,7 @@ pub enum Event {
     RemoteProjectInvitationDiscarded {
         project_id: u64,
     },
-    Left {
+    RoomLeft {
         channel_id: Option<ChannelId>,
     },
 }
