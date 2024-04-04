@@ -337,60 +337,8 @@ impl X11Client {
 }
 
 impl LinuxClient for X11Client {
-    fn common(&self, f: &dyn Fn(&mut LinuxCommon)) {
+    fn common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
-    }
-
-    fn common_background_executor(&self) -> crate::BackgroundExecutor {
-        self.0.borrow().common.background_executor.clone()
-    }
-
-    fn common_foreground_executor(&self) -> crate::ForegroundExecutor {
-        self.0.borrow().common.foreground_executor.clone()
-    }
-
-    fn common_text_system(&self) -> std::sync::Arc<dyn crate::PlatformTextSystem> {
-        self.0.borrow().common.text_system.clone()
-    }
-
-    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.0.borrow_mut().common.callbacks.open_urls = Some(callback);
-    }
-
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().common.callbacks.become_active = Some(callback);
-    }
-
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().common.callbacks.resign_active = Some(callback);
-    }
-
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().common.callbacks.quit = Some(callback);
-    }
-
-    fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().common.callbacks.reopen = Some(callback);
-    }
-
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.0.borrow_mut().common.callbacks.event = Some(callback);
-    }
-
-    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn crate::Action)>) {
-        self.0.borrow_mut().common.callbacks.app_menu_action = Some(callback);
-    }
-
-    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.0.borrow_mut().common.callbacks.will_open_app_menu = Some(callback);
-    }
-
-    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {
-        self.0
-            .borrow_mut()
-            .common
-            .callbacks
-            .validate_app_menu_command = Some(callback);
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

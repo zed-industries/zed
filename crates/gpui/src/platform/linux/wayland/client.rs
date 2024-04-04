@@ -334,7 +334,7 @@ impl LinuxClient for WaylandClient {
         // self.state.cursor_state.borrow_mut().cursor_icon_name = cursor_icon_name;
     }
 
-    fn common(&self, f: &dyn Fn(&mut LinuxCommon)) {
+    fn common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         todo!()
     }
 
@@ -345,54 +345,6 @@ impl LinuxClient for WaylandClient {
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {}
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
-        todo!()
-    }
-
-    fn common_background_executor(&self) -> crate::BackgroundExecutor {
-        todo!()
-    }
-
-    fn common_foreground_executor(&self) -> crate::ForegroundExecutor {
-        todo!()
-    }
-
-    fn common_text_system(&self) -> Arc<dyn crate::PlatformTextSystem> {
-        todo!()
-    }
-
-    fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        todo!()
-    }
-
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        todo!()
-    }
-
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        todo!()
-    }
-
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        todo!()
-    }
-
-    fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        todo!()
-    }
-
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        todo!()
-    }
-
-    fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn crate::Action)>) {
-        todo!()
-    }
-
-    fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        todo!()
-    }
-
-    fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {
         todo!()
     }
 }
