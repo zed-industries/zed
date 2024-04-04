@@ -94,7 +94,11 @@ impl LspAdapter for ElmLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+    fn workspace_configuration(
+        self: Arc<Self>,
+        _workspace_root: &Path,
+        cx: &mut AppContext,
+    ) -> Value {
         // elm-language-server expects workspace didChangeConfiguration notification
         // params to be the same as lsp initialization_options
         let override_options = ProjectSettings::get_global(cx)

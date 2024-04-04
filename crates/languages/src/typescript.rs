@@ -245,7 +245,11 @@ impl EsLintLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
-    fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
+    fn workspace_configuration(
+        self: Arc<Self>,
+        workspace_root: &Path,
+        cx: &mut AppContext,
+    ) -> Value {
         let eslint_user_settings = ProjectSettings::get_global(cx)
             .lsp
             .get(Self::SERVER_NAME)

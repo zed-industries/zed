@@ -92,7 +92,11 @@ impl LspAdapter for YamlLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &*self.node).await
     }
-    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+    fn workspace_configuration(
+        self: Arc<Self>,
+        _workspace_root: &Path,
+        cx: &mut AppContext,
+    ) -> Value {
         serde_json::json!({
             "yaml": {
                 "keyOrdering": false

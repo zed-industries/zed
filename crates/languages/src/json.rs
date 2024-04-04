@@ -152,7 +152,11 @@ impl LspAdapter for JsonLspAdapter {
         })))
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+    fn workspace_configuration(
+        self: Arc<Self>,
+        _workspace_root: &Path,
+        cx: &mut AppContext,
+    ) -> Value {
         self.workspace_config
             .get_or_init(|| Self::get_workspace_config(self.languages.language_names(), cx))
             .clone()

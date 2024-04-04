@@ -107,7 +107,11 @@ impl LspAdapter for TailwindLspAdapter {
         })))
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, _: &mut AppContext) -> Value {
+    fn workspace_configuration(
+        self: Arc<Self>,
+        _workspace_root: &Path,
+        _: &mut AppContext,
+    ) -> Value {
         json!({
             "tailwindCSS": {
                 "emmetCompletions": true,

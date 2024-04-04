@@ -198,7 +198,9 @@ impl CachedLspAdapter {
     }
 
     pub fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
-        self.adapter.workspace_configuration(workspace_root, cx)
+        self.adapter
+            .clone()
+            .workspace_configuration(workspace_root, cx)
     }
 
     pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
@@ -445,7 +447,11 @@ pub trait LspAdapter: 'static + Send + Sync {
         Ok(None)
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, _cx: &mut AppContext) -> Value {
+    fn workspace_configuration(
+        self: Arc<Self>,
+        _workspace_root: &Path,
+        _cx: &mut AppContext,
+    ) -> Value {
         serde_json::json!({})
     }
 

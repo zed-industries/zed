@@ -6,6 +6,7 @@ use lsp::LanguageServerBinary;
 use project::project_settings::ProjectSettings;
 use serde_json::Value;
 use settings::Settings;
+use std::sync::Arc;
 use std::{
     any::Any,
     path::{Path, PathBuf},
@@ -55,7 +56,11 @@ impl LspAdapter for DartLanguageServer {
         None
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+    fn workspace_configuration(
+        self: Arc<Self>,
+        _workspace_root: &Path,
+        cx: &mut AppContext,
+    ) -> Value {
         let settings = ProjectSettings::get_global(cx)
             .lsp
             .get("dart")

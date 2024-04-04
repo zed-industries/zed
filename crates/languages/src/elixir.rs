@@ -278,7 +278,11 @@ impl LspAdapter for ElixirLspAdapter {
         })
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+    fn workspace_configuration(
+        self: Arc<Self>,
+        _workspace_root: &Path,
+        cx: &mut AppContext,
+    ) -> Value {
         let settings = ProjectSettings::get_global(cx)
             .lsp
             .get("elixir-ls")

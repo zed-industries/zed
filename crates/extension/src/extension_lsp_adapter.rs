@@ -6,12 +6,13 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{Future, FutureExt};
-use gpui::AsyncAppContext;
+use gpui::{AppContext, AsyncAppContext};
 use language::{
     CodeLabel, HighlightId, Language, LanguageServerName, LspAdapter, LspAdapterDelegate,
 };
 use lsp::LanguageServerBinary;
 use serde::Serialize;
+use serde_json::Value;
 use std::ops::Range;
 use std::{
     any::Any,
@@ -179,6 +180,14 @@ impl LspAdapter for ExtensionLspAdapter {
         } else {
             None
         })
+    }
+
+    fn workspace_configuration(
+        self: Arc<Self>,
+        _workspace_root: &Path,
+        _cx: &mut AppContext,
+    ) -> Value {
+        serde_json::json!({})
     }
 
     async fn labels_for_completions(
