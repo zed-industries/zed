@@ -304,7 +304,7 @@ impl From<lsp::CompletionItem> for wit::Completion {
     }
 }
 
-impl From<lsp::CompletionItemKind> for wit::CompletionItemKind {
+impl From<lsp::CompletionItemKind> for wit::CompletionKind {
     fn from(value: lsp::CompletionItemKind) -> Self {
         match value {
             lsp::CompletionItemKind::TEXT => Self::Text,

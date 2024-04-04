@@ -3,11 +3,11 @@ interface lsp {
     record completion {
         label: string,
         detail: option<string>,
-        kind: option<completion-item-kind>,
+        kind: option<completion-kind>,
         insert-text-format: option<insert-text-format>,
     }
 
-    variant completion-item-kind {
+    variant completion-kind {
         text,
         method,
         function,

@@ -19,7 +19,7 @@ use super::{wasm_engine, WasmState};
 use since_v0_0_6 as latest;
 
 pub use latest::{
-    zed::extension::lsp::{Completion, CompletionItemKind, InsertTextFormat},
+    zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat},
     CodeLabel, CodeLabelSpan, Command, Range,
 };
 pub use since_v0_0_4::LanguageServerConfig;

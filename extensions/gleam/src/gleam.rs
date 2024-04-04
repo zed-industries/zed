@@ -1,5 +1,5 @@
 use std::fs;
-use zed::lsp::CompletionItemKind;
+use zed::lsp::CompletionKind;
 use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
@@ -119,7 +119,7 @@ impl zed::Extension for GleamExtension {
         let colon = ": ";
         let assignment = " = ";
         let call = match completion.kind? {
-            CompletionItemKind::Function | CompletionItemKind::Constructor => "()",
+            CompletionKind::Function | CompletionKind::Constructor => "()",
             _ => "",
         };
         let code = format!("{let_binding}{colon}{ty}{assignment}{name}{call}");
