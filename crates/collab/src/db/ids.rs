@@ -271,3 +271,18 @@ impl Into<i32> for ChannelVisibility {
         proto.into()
     }
 }
+
+#[derive(Copy, Clone, Debug, Serialize, PartialEq)]
+pub enum PrincipalId {
+    UserId(UserId),
+    DevServerId(DevServerId),
+}
+
+/// Indicate whether a [Buffer] has permissions to edit.
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum Capability {
+    /// The buffer is a mutable replica.
+    ReadWrite,
+    /// The buffer is a read-only replica.
+    ReadOnly,
+}

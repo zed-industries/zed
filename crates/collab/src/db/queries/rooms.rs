@@ -6,7 +6,7 @@ impl Database {
         &self,
         room_id: RoomId,
         new_server_id: ServerId,
-    ) -> Result<RoomGuard<RefreshedRoom>> {
+    ) -> Result<TransactionGuard<RefreshedRoom>> {
         self.room_transaction(room_id, |tx| async move {
             let stale_participant_filter = Condition::all()
                 .add(room_participant::Column::RoomId.eq(room_id))
@@ -149,7 +149,7 @@ impl Database {
         calling_connection: ConnectionId,
         called_user_id: UserId,
         initial_project_id: Option<ProjectId>,
-    ) -> Result<RoomGuard<(proto::Room, proto::IncomingCall)>> {
+    ) -> Result<TransactionGuard<(proto::Room, proto::IncomingCall)>> {
         self.room_transaction(room_id, |tx| async move {
             let caller = room_participant::Entity::find()
                 .filter(
@@ -201,7 +201,7 @@ impl Database {
         &self,
         room_id: RoomId,
         called_user_id: UserId,
-    ) -> Result<RoomGuard<proto::Room>> {
+    ) -> Result<TransactionGuard<proto::Room>> {
         self.room_transaction(room_id, |tx| async move {
             room_participant::Entity::delete_many()
                 .filter(
@@ -221,7 +221,7 @@ impl Database {
         &self,
         expected_room_id: Option<RoomId>,
         user_id: UserId,
-    ) -> Result<Option<RoomGuard<proto::Room>>> {
+    ) -> Result<Option<TransactionGuard<proto::Room>>> {
         self.optional_room_transaction(|tx| async move {
             let mut filter = Condition::all()
                 .add(room_participant::Column::UserId.eq(user_id))
@@ -258,7 +258,7 @@ impl Database {
         room_id: RoomId,
         calling_connection: ConnectionId,
         called_user_id: UserId,
-    ) -> Result<RoomGuard<proto::Room>> {
+    ) -> Result<TransactionGuard<proto::Room>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
                 .filter(
@@ -294,7 +294,7 @@ impl Database {
         room_id: RoomId,
         user_id: UserId,
         connection: ConnectionId,
-    ) -> Result<RoomGuard<JoinRoom>> {
+    ) -> Result<TransactionGuard<JoinRoom>> {
         self.room_transaction(room_id, |tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryChannelId {
@@ -450,7 +450,7 @@ impl Database {
         rejoin_room: proto::RejoinRoom,
         user_id: UserId,
         connection: ConnectionId,
-    ) -> Result<RoomGuard<RejoinedRoom>> {
+    ) -> Result<TransactionGuard<RejoinedRoom>> {
         let room_id = RoomId::from_proto(rejoin_room.id);
         self.room_transaction(room_id, |tx| async {
             let tx = tx;
@@ -741,7 +741,7 @@ impl Database {
     pub async fn leave_room(
         &self,
         connection: ConnectionId,
-    ) -> Result<Option<RoomGuard<LeftRoom>>> {
+    ) -> Result<Option<TransactionGuard<LeftRoom>>> {
         self.optional_room_transaction(|tx| async move {
             let leaving_participant = room_participant::Entity::find()
                 .filter(
@@ -913,7 +913,7 @@ impl Database {
         room_id: RoomId,
         connection: ConnectionId,
         location: proto::ParticipantLocation,
-    ) -> Result<RoomGuard<proto::Room>> {
+    ) -> Result<TransactionGuard<proto::Room>> {
         self.room_transaction(room_id, |tx| async {
             let tx = tx;
             let location_kind;
@@ -975,7 +975,7 @@ impl Database {
         room_id: RoomId,
         user_id: UserId,
         role: ChannelRole,
-    ) -> Result<RoomGuard<proto::Room>> {
+    ) -> Result<TransactionGuard<proto::Room>> {
         self.room_transaction(room_id, |tx| async move {
             room_participant::Entity::find()
                 .filter(
@@ -1128,7 +1128,7 @@ impl Database {
         &self,
         room_id: RoomId,
         connection_id: ConnectionId,
-    ) -> Result<RoomGuard<HashSet<ConnectionId>>> {
+    ) -> Result<TransactionGuard<HashSet<ConnectionId>>> {
         self.room_transaction(room_id, |tx| async move {
             let mut participants = room_participant::Entity::find()
                 .filter(room_participant::Column::RoomId.eq(room_id))

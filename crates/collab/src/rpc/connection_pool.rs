@@ -1,4 +1,4 @@
-use crate::db::{ChannelId, ChannelRole, DevServerId, UserId};
+use crate::db::{ChannelId, ChannelRole, DevServerId, PrincipalId, UserId};
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
@@ -33,12 +33,6 @@ impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
         self.0 >= SemanticVersion::new(0, 127, 3)
     }
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub enum PrincipalId {
-    UserId(UserId),
-    DevServerId(DevServerId),
 }
 
 #[derive(Serialize)]

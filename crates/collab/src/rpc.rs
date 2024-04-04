@@ -3,10 +3,11 @@ mod connection_pool;
 use crate::{
     auth,
     db::{
-        self, dev_server, BufferId, Channel, ChannelId, ChannelRole, ChannelsForUser,
+        self, dev_server, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
         CreatedChannelMessage, Database, DevServerId, InviteMemberResult, MembershipUpdated,
-        MessageId, NotificationId, Project, ProjectId, RemoteProjectId, RemoveChannelMemberResult,
-        ReplicaId, RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
+        MessageId, NotificationId, PrincipalId, Project, ProjectId, RemoteProjectId,
+        RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId, ServerId,
+        UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
     AppState, Error, RateLimit, RateLimiter, Result,
@@ -188,6 +189,14 @@ impl Session {
         match &self.principal {
             Principal::User(_) | Principal::Impersonated { .. } => None,
             Principal::DevServer(dev_server) => Some(dev_server.id),
+        }
+    }
+
+    fn principal_id(&self) -> PrincipalId {
+        match &self.principal {
+            Principal::User(user) => PrincipalId::UserId(user.id),
+            Principal::Impersonated { user, .. } => PrincipalId::UserId(user.id),
+            Principal::DevServer(dev_server) => PrincipalId::DevServerId(dev_server.id),
         }
     }
 }
@@ -401,39 +410,93 @@ impl Server {
             .add_message_handler(update_language_server)
             .add_message_handler(update_diagnostic_summary)
             .add_message_handler(update_worktree_settings)
-            .add_request_handler(forward_read_only_project_request::<proto::GetHover>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetDefinition>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetTypeDefinition>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
-            .add_request_handler(forward_read_only_project_request::<proto::SearchProject>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetProjectSymbols>)
-            .add_request_handler(forward_read_only_project_request::<proto::OpenBufferForSymbol>)
-            .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
-            .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
-            .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
-            .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
-            .add_request_handler(forward_mutating_project_request::<proto::GetCompletions>)
-            .add_request_handler(
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::GetHover>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::GetDefinition>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::GetTypeDefinition>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::GetReferences>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::SearchProject>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::GetDocumentHighlights>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::GetProjectSymbols>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::OpenBufferForSymbol>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::OpenBufferById>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::SynchronizeBuffers>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::InlayHints>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::OpenBufferByPath>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::GetCompletions>,
+            ))
+            .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::ApplyCompletionAdditionalEdits>,
-            )
-            .add_request_handler(
+            ))
+            .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
-            )
-            .add_request_handler(forward_mutating_project_request::<proto::GetCodeActions>)
-            .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeAction>)
-            .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
-            .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
-            .add_request_handler(forward_mutating_project_request::<proto::ReloadBuffers>)
-            .add_request_handler(forward_mutating_project_request::<proto::FormatBuffers>)
-            .add_request_handler(forward_mutating_project_request::<proto::CreateProjectEntry>)
-            .add_request_handler(forward_mutating_project_request::<proto::RenameProjectEntry>)
-            .add_request_handler(forward_mutating_project_request::<proto::CopyProjectEntry>)
-            .add_request_handler(forward_mutating_project_request::<proto::DeleteProjectEntry>)
-            .add_request_handler(forward_mutating_project_request::<proto::ExpandProjectEntry>)
-            .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
-            .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
-            .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::GetCodeActions>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::ApplyCodeAction>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::PrepareRename>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::PerformRename>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::ReloadBuffers>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::FormatBuffers>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::CreateProjectEntry>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::RenameProjectEntry>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::CopyProjectEntry>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::DeleteProjectEntry>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::ExpandProjectEntry>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::OnTypeFormatting>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::SaveBuffer>,
+            ))
+            .add_request_handler(user_handler(
+                forward_mutating_project_request::<proto::BlameBuffer>,
+            ))
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
@@ -1873,7 +1936,9 @@ async fn unshare_project(message: proto::UnshareProject, session: Session) -> Re
         guest_connection_ids.iter().copied(),
         |conn_id| session.peer.send(conn_id, message.clone()),
     );
-    room_updated(&room, &session.peer);
+    if let Some(room) = room {
+        room_updated(room, &session.peer);
+    }
 
     Ok(())
 }
@@ -1931,21 +1996,12 @@ async fn join_project(
     tracing::info!(%project_id, "join project");
 
     let db = session.db().await;
-    let project = db.get_project(project_id).await?;
-    if project.remote_project_id.is_some() {
-        let (project, replica_id) = &mut db
-            .join_remote_project(project_id, session.connection_id, session.user_id())
-            .await?;
-        drop(db);
-        tracing::info!(%project_id, "join remote project");
-        join_project_internal(response, session, project, replica_id)
-    } else {
-        let (project, replica_id) = &mut *db
-            .join_project_in_room(project_id, session.connection_id)
-            .await?;
-        drop(db);
-        join_project_internal(response, session, project, replica_id)
-    }
+    let (project, replica_id) = &mut *db
+        .join_project(project_id, session.connection_id, session.user_id())
+        .await?;
+    drop(db);
+    tracing::info!(%project_id, "join remote project");
+    join_project_internal(response, session, project, replica_id)
 }
 
 trait JoinProjectInternalResponse {
@@ -2101,7 +2157,9 @@ async fn leave_project(request: proto::LeaveProject, session: UserSession) -> Re
     );
 
     project_left(&project, &session);
-    room_updated(&room, &session.peer);
+    if let Some(room) = room {
+        room_updated(&room, &session.peer);
+    }
 
     Ok(())
 }
@@ -2361,7 +2419,7 @@ async fn update_language_server(
 async fn forward_read_only_project_request<T>(
     request: T,
     response: Response<T>,
-    session: Session,
+    session: UserSession,
 ) -> Result<()>
 where
     T: EntityMessage + RequestMessage,
@@ -2370,7 +2428,7 @@ where
     let host_connection_id = session
         .db()
         .await
-        .host_for_read_only_project_request(project_id, session.connection_id)
+        .host_for_read_only_project_request(project_id, session.connection_id, session.user_id())
         .await?;
     let payload = session
         .peer
@@ -2385,7 +2443,7 @@ where
 async fn forward_mutating_project_request<T>(
     request: T,
     response: Response<T>,
-    session: Session,
+    session: UserSession,
 ) -> Result<()>
 where
     T: EntityMessage + RequestMessage,
@@ -2394,7 +2452,7 @@ where
     let host_connection_id = session
         .db()
         .await
-        .host_for_mutating_project_request(project_id, session.connection_id)
+        .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
         .await?;
     let payload = session
         .peer
@@ -2434,13 +2492,12 @@ async fn update_buffer(
     let project_id = ProjectId::from_proto(request.project_id);
     let mut guest_connection_ids;
     let mut host_connection_id = None;
-
-    let mut requires_write_permission = false;
+    let mut capability = Capability::ReadOnly;
 
     for op in request.operations.iter() {
         match op.variant {
             None | Some(proto::operation::Variant::UpdateSelections(_)) => {}
-            Some(_) => requires_write_permission = true,
+            Some(_) => capability = Capability::ReadWrite,
         }
     }
 
@@ -2450,8 +2507,9 @@ async fn update_buffer(
             .await
             .project_collaborators_for_buffer_update(
                 project_id,
+                session.principal_id(),
                 session.connection_id,
-                requires_write_permission,
+                capability,
             )
             .await?;
         guest_connection_ids = Vec::with_capacity(collaborators.len() - 1);
