@@ -789,6 +789,42 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_raw_links_detection() {
+        let parsed = parse("Checkout this https://zed.dev link").await;
+
+        assert_eq!(
+            parsed.children,
+            vec![p("Checkout this https://zed.dev link", 0..34)]
+        );
+
+        let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+        assert_eq!(
+            paragraph.highlights,
+            vec![(
+                14..29,
+                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                    underline: true,
+                    ..Default::default()
+                }),
+            )]
+        );
+        assert_eq!(
+            paragraph.regions,
+            vec![ParsedRegion {
+                code: false,
+                link: Some(Link::Web {
+                    url: "https://zed.dev".to_string()
+                }),
+            }]
+        );
+        assert_eq!(paragraph.region_ranges, vec![14..29]);
+    }
+
+    #[gpui::test]
     async fn test_header_only_table() {
         let markdown = "\
 | Header 1 | Header 2 |
