@@ -14,7 +14,11 @@ use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
 use project::{Entry, Project, Worktree};
 use smol::channel;
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::Path,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use util::ResultExt;
 use worktree::LocalSnapshot;
 
@@ -239,9 +243,10 @@ impl WorktreeIndex {
         let (entries, scan_entries) = Self::scan_entries(worktree, &mut cx);
         let (chunked_files, chunk_files) =
             Self::chunk_files(&this, worktree_abs_path, entries, &mut cx)?;
-        let embed_chunks = Self::embed_chunks(&this, chunked_files, &mut cx);
+        let (embedded_files, embed_chunks) = Self::embed_files(&this, chunked_files, &mut cx);
+        let save_embedded_files = Self::save_embedded_files(&this, embedded_files, &mut cx);
 
-        futures::join!(scan_entries, chunk_files, embed_chunks);
+        futures::join!(scan_entries, chunk_files, embed_chunks, save_embedded_files);
         this.update(&mut cx, |this, cx| {
             this.status = Status::Idle;
             cx.notify();
@@ -298,7 +303,7 @@ impl WorktreeIndex {
                                 };
 
                                 if chunked_files_tx.send(chunked_file).await.is_err() {
-                                    break;
+                                    return;
                                 }
                             }
                         });
@@ -309,18 +314,45 @@ impl WorktreeIndex {
         Ok((chunked_files_rx, chunk_files))
     }
 
-    fn embed_chunks(
+    fn embed_files(
         this: &WeakModel<Self>,
         chunked_files: channel::Receiver<ChunkedFile>,
         cx: &mut AsyncAppContext,
-    ) -> Task<()> {
-        cx.spawn(|cx| async move {
+    ) -> (channel::Receiver<EmbeddedFile>, Task<()>) {
+        let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
+        let embed_chunks = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
                 chunked_files.chunks_timeout(512, Duration::from_secs(2));
             while let Some(batch) = chunked_file_batches.next().await {
-                dbg!(batch.len());
+                // todo!("actually embed the batch")
+                for chunked_file in batch {
+                    let embedded_file = EmbeddedFile {
+                        path: chunked_file.entry.path.clone(),
+                        mtime: chunked_file.entry.mtime,
+                        chunks: chunked_file
+                            .chunks
+                            .into_iter()
+                            .map(|chunk| EmbeddedChunk {
+                                chunk,
+                                embedding: [0.0; 1536],
+                            })
+                            .collect(),
+                    };
+                    if embedded_files_tx.send(embedded_file).await.is_err() {
+                        return;
+                    }
+                }
             }
-        })
+        });
+        (embedded_files_rx, embed_chunks)
+    }
+
+    fn save_embedded_files(
+        this: &WeakModel<Self>,
+        embedded_files: channel::Receiver<EmbeddedFile>,
+        cx: &mut AsyncAppContext,
+    ) -> Task<()> {
+        todo!()
     }
 }
 
@@ -329,4 +361,15 @@ struct ChunkedFile {
     entry: Entry,
     text: String,
     chunks: Vec<Chunk>,
+}
+
+struct EmbeddedFile {
+    path: Arc<Path>,
+    mtime: Option<SystemTime>,
+    chunks: Vec<EmbeddedChunk>,
+}
+
+struct EmbeddedChunk {
+    chunk: Chunk,
+    embedding: [f32; 1536],
 }
