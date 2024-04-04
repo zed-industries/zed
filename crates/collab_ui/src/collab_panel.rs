@@ -2090,7 +2090,7 @@ impl CollabPanel {
             return;
         };
         let app_state = workspace.read(cx).app_state().clone();
-        workspace::join_hosted_project(project_id, app_state, cx).detach_and_prompt_err(
+        workspace::join_remote_project(project_id, app_state, cx).detach_and_prompt_err(
             "Failed to join project",
             cx,
             |_, _| None,

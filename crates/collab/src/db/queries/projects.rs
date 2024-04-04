@@ -543,6 +543,16 @@ impl Database {
         .await
     }
 
+    pub async fn get_project(&self, id: ProjectId) -> Result<project::Model> {
+        self.transaction(|tx| async move {
+            Ok(project::Entity::find_by_id(id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?)
+        })
+        .await
+    }
+
     /// Adds the given connection to the specified project
     /// in the current room.
     pub async fn join_project_in_room(
@@ -583,6 +593,39 @@ impl Database {
                 &tx,
             )
             .await
+        })
+        .await
+    }
+
+    /// Adds the given connection to the specified remote project
+    pub async fn join_remote_project(
+        &self,
+        project_id: ProjectId,
+        connection: ConnectionId,
+        user_id: UserId,
+    ) -> Result<(Project, ReplicaId)> {
+        self.transaction(|tx| async move {
+            let (project, remote_project) = project::Entity::find_by_id(project_id)
+                .find_also_related(remote_project::Entity)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+
+            let Some(remote_project) = remote_project else {
+                return Err(anyhow!("project is not remote"))?;
+            };
+
+            let channel = channel::Entity::find_by_id(remote_project.channel_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such channel"))?;
+
+            let role = self
+                .check_user_is_channel_member(&channel, user_id, &*tx)
+                .await?;
+
+            self.join_project_internal(project, user_id, connection, role, &tx)
+                .await
         })
         .await
     }

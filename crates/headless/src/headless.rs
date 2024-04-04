@@ -78,16 +78,19 @@ impl DevServer {
             (this.client.clone(), project, worktrees)
         })?;
 
-        let request = client.request(proto::ShareRemoteProject {
-            remote_project_id: remote_project.id,
-            worktrees,
-        });
+        let response = client
+            .request(proto::ShareRemoteProject {
+                remote_project_id: remote_project.id,
+                worktrees,
+            })
+            .await?;
 
-        let response = request.await?;
+        let project_id = response.project_id;
         dbg!(&response);
+        project.update(cx, |project, cx| project.shared(project_id, cx))??;
         this.update(cx, |this, _| {
             this.projects.insert(response.project_id, project);
-        });
+        })?;
         Ok(())
     }
 }

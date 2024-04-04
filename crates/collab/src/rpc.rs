@@ -272,7 +272,10 @@ where
             if let Some(user_session) = session.for_user() {
                 Ok(handler(message, response, user_session).await?)
             } else {
-                Err(Error::Internal(anyhow!("must be a user")))
+                Err(Error::Internal(anyhow!(
+                    "must be a user to call {}",
+                    M::NAME
+                )))
             }
         })
     }
@@ -291,7 +294,10 @@ where
             if let Some(dev_server_session) = session.for_dev_server() {
                 Ok(handler(message, response, dev_server_session).await?)
             } else {
-                Err(Error::Internal(anyhow!("must be a dev server")))
+                Err(Error::Internal(anyhow!(
+                    "must be a dev server to call {}",
+                    M::NAME
+                )))
             }
         })
     }
@@ -310,7 +316,10 @@ where
             if let Some(user_session) = session.for_user() {
                 Ok(handler(message, user_session).await?)
             } else {
-                Err(Error::Internal(anyhow!("must be a user")))
+                Err(Error::Internal(anyhow!(
+                    "must be a user to call {}",
+                    M::NAME
+                )))
             }
         })
     }
@@ -1885,9 +1894,28 @@ async fn share_remote_project(
             &request.worktrees,
         )
         .await?;
-    response.send(proto::ShareProjectResponse {
-        project_id: project_id.to_proto(),
-    })?;
+    let Some(project_id) = remote_project.project_id else {
+        return Err(anyhow!("failed to share remote project"))?;
+    };
+
+    for (connection_id, _) in session
+        .connection_pool()
+        .await
+        .channel_connection_ids(ChannelId::from_proto(remote_project.channel_id))
+    {
+        session
+            .peer
+            .send(
+                connection_id,
+                proto::UpdateChannels {
+                    remote_projects: vec![remote_project.clone()],
+                    ..Default::default()
+                },
+            )
+            .trace_err();
+    }
+
+    response.send(proto::ShareProjectResponse { project_id })?;
 
     Ok(())
 }
@@ -1902,13 +1930,22 @@ async fn join_project(
 
     tracing::info!(%project_id, "join project");
 
-    let (project, replica_id) = &mut *session
-        .db()
-        .await
-        .join_project_in_room(project_id, session.connection_id)
-        .await?;
-
-    join_project_internal(response, session, project, replica_id)
+    let db = session.db().await;
+    let project = db.get_project(project_id).await?;
+    if project.remote_project_id.is_some() {
+        let (project, replica_id) = &mut db
+            .join_remote_project(project_id, session.connection_id, session.user_id())
+            .await?;
+        drop(db);
+        tracing::info!(%project_id, "join remote project");
+        join_project_internal(response, session, project, replica_id)
+    } else {
+        let (project, replica_id) = &mut *db
+            .join_project_in_room(project_id, session.connection_id)
+            .await?;
+        drop(db);
+        join_project_internal(response, session, project, replica_id)
+    }
 }
 
 trait JoinProjectInternalResponse {
@@ -2110,7 +2147,7 @@ async fn create_remote_project(
     };
     let connection_pool = session.connection_pool().await;
     for (connection_id, role) in connection_pool.channel_connection_ids(channel.root_id()) {
-        if role.can_see_channel(channel.visibility) {
+        if role.can_see_all_descendants() {
             session.peer.send(connection_id, update.clone())?;
         }
     }
@@ -4524,6 +4561,7 @@ where
 {
     type Ok = T;
 
+    #[track_caller]
     fn trace_err(self) -> Option<T> {
         match self {
             Ok(value) => Some(value),
