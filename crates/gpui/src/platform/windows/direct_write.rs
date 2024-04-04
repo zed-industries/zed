@@ -1,10 +1,10 @@
 use std::{borrow::Cow, sync::Arc};
 
+use ::util::ResultExt;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-use ::util::ResultExt;
 use smallvec::SmallVec;
 use windows::{
     core::{implement, HSTRING, PCWSTR},
