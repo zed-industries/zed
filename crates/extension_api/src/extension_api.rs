@@ -47,7 +47,7 @@ pub trait Extension: Send + Sync {
         worktree: &Worktree,
     ) -> Result<Command>;
 
-    /// Returns the initializations options to pass to the specified language server.
+    /// Returns the initialization options to pass to the specified language server.
     fn language_server_initialization_options(
         &mut self,
         _language_server_id: &LanguageServerId,
