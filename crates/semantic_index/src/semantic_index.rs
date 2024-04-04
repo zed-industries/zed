@@ -4,7 +4,7 @@ mod embedding;
 use anyhow::{Context as _, Result};
 use chunking::{chunk_text, Chunk};
 use collections::HashMap;
-use embedding::{Embedding, EmbeddingProvider, OllamaEmbeddingProvider};
+use embedding::{Embedding, EmbeddingModel, EmbeddingProvider, OllamaEmbeddingProvider};
 use fs::Fs;
 use futures::stream::{self, StreamExt};
 use futures_batch::ChunksTimeoutStreamExt;
@@ -335,7 +335,8 @@ impl WorktreeIndex {
             // todo(): handle no client, return a result instead of panicking
             .unwrap();
 
-        let embedding_provider = OllamaEmbeddingProvider::new(client, None);
+        let embedding_provider =
+            OllamaEmbeddingProvider::new(client, EmbeddingModel::OllamaNomicEmbedText);
 
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
         let embed_chunks = cx.background_executor().spawn(async move {

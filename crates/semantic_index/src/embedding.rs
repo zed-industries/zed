@@ -14,8 +14,7 @@ pub const EMBEDDING_SIZE_SMALL: usize = 1536;
 /// OpenAI's text large embeddings are of length 3072
 pub const EMBEDDING_SIZE_LARGE: usize = 3072;
 
-// TODO: Check out Voyage
-
+#[derive(Clone, Copy)]
 pub enum EmbeddingModel {
     OllamaNomicEmbedText,
     OllamaMxbaiEmbedLarge,
@@ -37,8 +36,7 @@ pub trait EmbeddingProvider {
 
 pub struct OllamaEmbeddingProvider {
     client: Arc<HttpClientWithUrl>,
-    // Model should not change when creating embeddings, otherwise they're incompatible embeddings
-    model: String,
+    model: EmbeddingModel,
 }
 
 #[derive(Serialize)]
@@ -57,7 +55,7 @@ pub(crate) fn normalize_vector(embedding: Vec<f32>) -> Vec<f32> {
     //         let array = ndarray::Array1::from(self.embedding.clone());
     //         let norm = array.dot(&array).sqrt();
     //         array / norm
-    // OR: use simd operations directly to calculate the norm and normalize the embedding
+    // OR: use simd operations directly to calculate the norm and normalize the embedding ourselves
     let len = embedding.len();
     let mut norm = 0f32;
 
@@ -110,18 +108,19 @@ pub fn normalize_embedding(
 }
 
 impl OllamaEmbeddingProvider {
-    pub fn new(client: Arc<HttpClientWithUrl>, model: Option<String>) -> Self {
-        Self {
-            client,
-            model: model.unwrap_or("nomic-embed-text".to_string()),
-        }
+    pub fn new(client: Arc<HttpClientWithUrl>, model: EmbeddingModel) -> Self {
+        Self { client, model }
     }
 }
 
 impl EmbeddingProvider for OllamaEmbeddingProvider {
     async fn get_embedding(&self, text: String) -> Result<Embedding> {
         let request = OllamaEmbeddingRequest {
-            model: self.model.clone(),
+            model: match self.model {
+                EmbeddingModel::OllamaNomicEmbedText => "nomic-embed-text".to_string(),
+                EmbeddingModel::OllamaMxbaiEmbedLarge => "mxbai-embed-large".to_string(),
+                _ => return Err(anyhow!("Invalid model")),
+            },
             prompt: text,
         };
 
@@ -138,7 +137,7 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
         let response: OllamaEmbeddingResponse =
             serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
 
-        normalize_embedding(response.embedding, EmbeddingModel::OllamaNomicEmbedText)
+        normalize_embedding(response.embedding, self.model)
     }
 }
 
@@ -152,7 +151,8 @@ mod test {
         executor.allow_parking();
 
         let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
-        let provider = OllamaEmbeddingProvider::new(client.into(), None);
+        let provider =
+            OllamaEmbeddingProvider::new(client.into(), EmbeddingModel::OllamaNomicEmbedText);
         let embedding = provider
             .get_embedding("Hello, world!".to_string())
             .await
