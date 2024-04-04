@@ -1866,6 +1866,24 @@ async fn test_active_call_events(
     executor.run_until_parked();
     assert_eq!(mem::take(&mut *events_a.borrow_mut()), vec![]);
     assert_eq!(mem::take(&mut *events_b.borrow_mut()), vec![]);
+
+    // Unsharing a project should dispatch the RemoteProjectUnshared event.
+    active_call_a
+        .update(cx_a, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    assert_eq!(
+        mem::take(&mut *events_a.borrow_mut()),
+        vec![room::Event::RoomLeft { channel_id: None }]
+    );
+    assert_eq!(
+        mem::take(&mut *events_b.borrow_mut()),
+        vec![room::Event::RemoteProjectUnshared {
+            project_id: project_a_id,
+        }]
+    );
 }
 
 fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> {

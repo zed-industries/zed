@@ -375,9 +375,7 @@ impl ActiveCall {
         Audio::end_call(cx);
 
         let channel_id = self.channel_id(cx);
-        dbg!("Channel ID: {:?}", channel_id);
         if let Some((room, _)) = self.room.take() {
-            dbg!("Emitting");
             cx.emit(Event::RoomLeft { channel_id });
             room.update(cx, |room, cx| room.leave(cx))
         } else {
