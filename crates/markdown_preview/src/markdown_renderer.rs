@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SyntaxTheme};
-use ui::{h_flex, v_flex, Checkbox, Selection};
+use ui::{h_flex, v_flex, Checkbox, LinkPreview, Selection};
 use workspace::Workspace;
 
 pub struct RenderContext {
@@ -328,6 +328,18 @@ fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> 
         element_id,
         StyledText::new(parsed.contents.clone()).with_highlights(&cx.text_style, highlights),
     )
+    .tooltip({
+        let links = links.clone();
+        let link_ranges = link_ranges.clone();
+        move |idx, cx| {
+            for (ix, range) in link_ranges.iter().enumerate() {
+                if range.contains(&idx) {
+                    return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                }
+            }
+            None
+        }
+    })
     .on_click(
         link_ranges,
         move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
