@@ -8543,6 +8543,7 @@ name = "semantic_index"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "collections",
  "env_logger",
  "fs",

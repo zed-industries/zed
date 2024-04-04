@@ -10,6 +10,7 @@ path = "src/semantic_index.rs"
 
 [dependencies]
 anyhow.workspace = true
+client.workspace = true
 collections.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -26,6 +27,7 @@ worktree.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
+client = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

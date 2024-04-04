@@ -1,10 +1,8 @@
 use anyhow::{anyhow, Context as _, Result};
+use client::Client;
 use collections::HashMap;
 use fs::Fs;
-use futures::{
-    channel::mpsc::{self, Receiver, Sender},
-    SinkExt, StreamExt,
-};
+use futures::StreamExt;
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{AppContext, Context, EventEmitter, Global, Model, ModelContext, Task, WeakModel};
 use language::{LanguageRegistry, Tree, PARSER};
@@ -13,6 +11,7 @@ use sha2::{Digest, Sha256};
 use smol::channel;
 use std::{cmp, ops::Range, path::Path, sync::Arc, time::Duration};
 use util::ResultExt;
+use worktree::LocalSnapshot;
 
 pub struct SemanticIndex {
     db: lmdb::Database,
@@ -23,7 +22,6 @@ impl Global for SemanticIndex {}
 
 impl SemanticIndex {
     pub fn new(db_path: &Path) -> Result<Self> {
-        dbg!(&db_path);
         let env = lmdb::Environment::new()
             .open(db_path)
             .context("failed to open environment")?;
@@ -55,16 +53,19 @@ pub struct ProjectIndex {
     worktree_scans: HashMap<WeakModel<Worktree>, Task<()>>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
+    client: Arc<Client>,
 }
 
 impl ProjectIndex {
     fn new(project: Model<Project>, db: lmdb::Database, cx: &mut ModelContext<Self>) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let fs = project.read(cx).fs().clone();
+        let client = project.read(cx).client();
         let mut this = ProjectIndex {
             db,
             project: project.downgrade(),
             worktree_scans: HashMap::default(),
+            client,
             language_registry,
             fs,
         };
@@ -81,53 +82,21 @@ impl ProjectIndex {
             return;
         };
         let local_worktree = local_worktree.snapshot();
+        let worktree_abs_path = local_worktree.abs_path().clone();
+
+        let (entries_rx, scan_entries) = self.scan_entries(local_worktree, cx);
+        let (chunked_files, chunk_entries) = self.chunk_files(worktree_abs_path, entries_rx, cx);
+        let embed_chunks = self.embed_chunks(chunked_files, cx);
 
         if self.worktree_scans.is_empty() {
             cx.emit(StatusEvent::Scanning);
         }
 
-        let language_registry = self.language_registry.clone();
-        let fs = self.fs.clone();
-
-        let (entries_tx, entries_rx) = channel::bounded(512);
-        let worktree_abs_path = local_worktree.abs_path().clone();
-        let scan_entries = cx.background_executor().spawn(async move {
-            for entry in local_worktree.files(false, 0) {
-                if entries_tx.send(entry.clone()).await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        let (chunked_files_tx, chunked_files_rx) = mpsc::channel(2048);
-        let embed_chunks = embed_chunks(chunked_files_rx, cx);
-
         let worktree = worktree.downgrade();
         let scan = cx.spawn(|this, mut cx| {
             let worktree = worktree.clone();
             async move {
-                cx.background_executor()
-                    .scoped(|cx| {
-                        for _ in 0..cx.num_cpus() {
-                            cx.spawn(async {
-                                while let Ok(entry) = entries_rx.recv().await {
-                                    index_entry(
-                                        worktree_abs_path.clone(),
-                                        entry,
-                                        &language_registry,
-                                        fs.as_ref(),
-                                        chunked_files_tx.clone(),
-                                    )
-                                    .await
-                                    .log_err();
-                                }
-                            });
-                        }
-                    })
-                    .await;
-                scan_entries.await;
-                embed_chunks.await;
-
+                futures::join!(scan_entries, chunk_entries, embed_chunks);
                 this.update(&mut cx, |this, cx| {
                     this.worktree_scans.remove(&worktree);
                     if this.worktree_scans.is_empty() {
@@ -138,6 +107,73 @@ impl ProjectIndex {
             }
         });
         self.worktree_scans.insert(worktree, scan);
+    }
+
+    fn scan_entries(
+        &mut self,
+        worktree: LocalSnapshot,
+        cx: &mut ModelContext<Self>,
+    ) -> (channel::Receiver<Entry>, Task<()>) {
+        let (entries_tx, entries_rx) = channel::bounded(512);
+        let scan_entries = cx.background_executor().spawn(async move {
+            for entry in worktree.files(false, 0) {
+                if entries_tx.send(entry.clone()).await.is_err() {
+                    break;
+                }
+            }
+        });
+        (entries_rx, scan_entries)
+    }
+
+    fn chunk_files(
+        &mut self,
+        worktree_abs_path: Arc<Path>,
+        entries: channel::Receiver<Entry>,
+        cx: &mut ModelContext<Self>,
+    ) -> (channel::Receiver<ChunkedFile>, Task<()>) {
+        let language_registry = self.language_registry.clone();
+        let fs = self.fs.clone();
+        let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
+        let chunk_files = cx.spawn(|_this, cx| async move {
+            cx.background_executor()
+                .scoped(|cx| {
+                    for _ in 0..cx.num_cpus() {
+                        cx.spawn(async {
+                            while let Ok(entry) = entries.recv().await {
+                                if let Some(chunked_file) = chunk_file(
+                                    worktree_abs_path.clone(),
+                                    entry,
+                                    &language_registry,
+                                    fs.as_ref(),
+                                )
+                                .await
+                                .log_err()
+                                {
+                                    if chunked_files_tx.send(chunked_file).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        });
+                    }
+                })
+                .await;
+        });
+        (chunked_files_rx, chunk_files)
+    }
+
+    fn embed_chunks(
+        &mut self,
+        chunked_files: channel::Receiver<ChunkedFile>,
+        cx: &mut ModelContext<ProjectIndex>,
+    ) -> Task<()> {
+        cx.spawn(|this, cx| async move {
+            let mut chunked_file_batches =
+                chunked_files.chunks_timeout(512, Duration::from_secs(2));
+            while let Some(batch) = chunked_file_batches.next().await {
+                dbg!(batch.len());
+            }
+        })
     }
 }
 
@@ -161,13 +197,12 @@ struct Chunk {
     digest: [u8; 32],
 }
 
-async fn index_entry(
+async fn chunk_file(
     worktree_root: Arc<Path>,
     entry: Entry,
     language_registry: &Arc<LanguageRegistry>,
     fs: &dyn Fs,
-    mut tx: Sender<ChunkedFile>,
-) -> Result<()> {
+) -> Result<ChunkedFile> {
     let abs_path = worktree_root.join(&entry.path);
 
     let text = fs.load(&abs_path).await?;
@@ -185,19 +220,15 @@ async fn index_entry(
         });
 
         let chunks = chunk_parse_tree(tree, &text);
-
-        tx.send(ChunkedFile {
+        Ok(ChunkedFile {
             worktree_root,
             entry,
             text,
             chunks,
         })
-        .await?;
     } else {
-        return Err(anyhow!("plain text is not yet supported"));
+        Err(anyhow!("plain text is not yet supported"))
     }
-
-    Ok(())
 }
 
 const CHUNK_THRESHOLD: usize = 1500;
@@ -257,16 +288,4 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
             }
         }
     }
-}
-
-fn embed_chunks(
-    chunked_files: Receiver<ChunkedFile>,
-    cx: &mut ModelContext<ProjectIndex>,
-) -> Task<()> {
-    cx.spawn(|this, cx| async move {
-        let mut chunked_file_batches = chunked_files.chunks_timeout(512, Duration::from_secs(2));
-        while let Some(batch) = chunked_file_batches.next().await {
-            dbg!(batch.len());
-        }
-    })
 }
