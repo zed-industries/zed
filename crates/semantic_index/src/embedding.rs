@@ -14,6 +14,7 @@ pub const EMBEDDING_SIZE_LARGE: usize = 3072;
 
 // TODO: Check out Voyage
 
+#[derive(Debug, Clone)]
 pub enum Embedding {
     Tiny([f32; EMBEDDING_SIZE_TINY]),
     Small([f32; EMBEDDING_SIZE_SMALL]),

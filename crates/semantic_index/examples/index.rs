@@ -1,11 +1,13 @@
+use client::Client;
 use futures::channel::oneshot;
 use gpui::{App, Global, TestAppContext};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::SemanticIndex;
 use settings::SettingsStore;
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 use tempfile::tempdir;
+use util::http::HttpClientWithUrl;
 
 pub fn init_test(cx: &mut TestAppContext) {
     _ = cx.update(|cx| {
@@ -22,6 +24,8 @@ pub fn init_test(cx: &mut TestAppContext) {
 fn main() {
     env_logger::init();
 
+    use clock::FakeSystemClock;
+
     App::new().run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
@@ -30,6 +34,12 @@ fn main() {
         SettingsStore::update(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
         });
+
+        let clock = Arc::new(FakeSystemClock::default());
+        let http = Arc::new(HttpClientWithUrl::new("http://localhost:11434"));
+
+        let client = client::Client::new(clock, http.clone(), cx);
+        Client::set_global(client.clone(), cx);
 
         let temp_dir = tempdir().unwrap();
         let semantic_index = SemanticIndex::new(temp_dir.path(), cx);

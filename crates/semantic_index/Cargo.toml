@@ -12,6 +12,7 @@ path = "src/semantic_index.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 client.workspace = true
+clock.workspace = true
 collections.workspace = true
 fs.workspace = true
 futures.workspace = true

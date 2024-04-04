@@ -357,7 +357,7 @@ impl WorktreeIndex {
                         .into_iter()
                         .filter_map(|(chunk, embedding)| {
                             embedding
-                                .ok()
+                                .log_err()
                                 .map(|embedding| EmbeddedChunk { chunk, embedding })
                         })
                         .collect::<Vec<EmbeddedChunk>>();
@@ -382,7 +382,12 @@ impl WorktreeIndex {
         embedded_files: channel::Receiver<EmbeddedFile>,
         cx: &mut AsyncAppContext,
     ) -> Task<()> {
-        todo!()
+        // Let's just log the files for now
+        cx.spawn(|cx| async move {
+            while let Ok(embedded_file) = embedded_files.recv().await {
+                // println!("Embedded file: {:?}", embedded_file.chunks);
+            }
+        })
     }
 }
 
@@ -399,6 +404,7 @@ struct EmbeddedFile {
     chunks: Vec<EmbeddedChunk>,
 }
 
+#[derive(Debug)]
 struct EmbeddedChunk {
     chunk: Chunk,
     embedding: Embedding,
