@@ -64,6 +64,15 @@ pub trait Extension: Send + Sync {
     ) -> Option<CodeLabel> {
         None
     }
+
+    /// Returns the label for the given symbol.
+    fn label_for_symbol(
+        &self,
+        _language_server_id: &LanguageServerId,
+        _symbol: Symbol,
+    ) -> Option<CodeLabel> {
+        None
+    }
 }
 
 #[macro_export]
@@ -138,10 +147,32 @@ impl wit::Guest for Component {
         }
         Ok(labels)
     }
+
+    fn labels_for_symbols(
+        language_server_id: String,
+        symbols: Vec<Symbol>,
+    ) -> Result<Vec<Option<CodeLabel>>, String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        let mut labels = Vec::new();
+        for (ix, symbol) in symbols.into_iter().enumerate() {
+            let label = extension().label_for_symbol(&language_server_id, symbol);
+            if let Some(label) = label {
+                labels.resize(ix + 1, None);
+                *labels.last_mut().unwrap() = Some(label);
+            }
+        }
+        Ok(labels)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct LanguageServerId(String);
+
+impl AsRef<str> for LanguageServerId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
 
 impl fmt::Display for LanguageServerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

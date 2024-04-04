@@ -5,7 +5,6 @@ mod since_v0_0_6;
 use std::ops::RangeInclusive;
 use std::sync::Arc;
 
-use anyhow::bail;
 use anyhow::{Context, Result};
 use language::{LanguageServerName, LspAdapterDelegate};
 use semantic_version::SemanticVersion;
@@ -19,7 +18,7 @@ use super::{wasm_engine, WasmState};
 use since_v0_0_6 as latest;
 
 pub use latest::{
-    zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat},
+    zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
     CodeLabel, CodeLabelSpan, Command, Range,
 };
 pub use since_v0_0_4::LanguageServerConfig;
@@ -156,11 +155,24 @@ impl Extension {
         completions: Vec<latest::Completion>,
     ) -> Result<Result<Vec<Option<CodeLabel>>, String>> {
         match self {
-            Extension::V001(_) | Extension::V004(_) => {
-                bail!("unsupported function: 'labels_for_completions'")
-            }
+            Extension::V001(_) | Extension::V004(_) => Ok(Ok(Vec::new())),
             Extension::V006(ext) => {
                 ext.call_labels_for_completions(store, &language_server_id.0, &completions)
+                    .await
+            }
+        }
+    }
+
+    pub async fn call_labels_for_symbols(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        symbols: Vec<latest::Symbol>,
+    ) -> Result<Result<Vec<Option<CodeLabel>>, String>> {
+        match self {
+            Extension::V001(_) | Extension::V004(_) => Ok(Ok(Vec::new())),
+            Extension::V006(ext) => {
+                ext.call_labels_for_symbols(store, &language_server_id.0, &symbols)
                     .await
             }
         }

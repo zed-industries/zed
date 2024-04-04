@@ -224,8 +224,11 @@ impl CachedLspAdapter {
         &self,
         symbols: &[(String, lsp::SymbolKind)],
         language: &Arc<Language>,
-    ) -> Vec<Option<CodeLabel>> {
-        self.adapter.labels_for_symbols(symbols, language).await
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        self.adapter
+            .clone()
+            .labels_for_symbols(symbols, language)
+            .await
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -410,10 +413,10 @@ pub trait LspAdapter: 'static + Send + Sync {
     }
 
     async fn labels_for_symbols(
-        &self,
+        self: Arc<Self>,
         symbols: &[(String, lsp::SymbolKind)],
         language: &Arc<Language>,
-    ) -> Vec<Option<CodeLabel>> {
+    ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
         for (ix, (name, kind)) in symbols.into_iter().enumerate() {
             let label = self.label_for_symbol(name, *kind, language).await;
@@ -422,7 +425,7 @@ pub trait LspAdapter: 'static + Send + Sync {
                 *labels.last_mut().unwrap() = Some(label);
             }
         }
-        labels
+        Ok(labels)
     }
 
     async fn label_for_symbol(

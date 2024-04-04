@@ -9876,7 +9876,9 @@ async fn populate_labels_for_symbols(
             if let Some(lsp_adapter) = lsp_adapter {
                 labels = lsp_adapter
                     .labels_for_symbols(&label_params, &language)
-                    .await;
+                    .await
+                    .log_err()
+                    .unwrap_or_default();
             }
         }
 
