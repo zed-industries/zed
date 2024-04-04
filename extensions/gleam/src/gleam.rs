@@ -121,23 +121,14 @@ impl zed::Extension for GleamExtension {
 
         Some(CodeLabel {
             spans: vec![
-                CodeLabelSpan::CodeRange(zed::Range {
-                    start: const_decl.len() as u32,
-                    end: const_decl.len() as u32 + name.len() as u32,
-                }),
+                CodeLabelSpan::CodeRange((const_decl.len()..const_decl.len() + name.len()).into()),
                 CodeLabelSpan::Literal(zed::CodeLabelSpanLiteral {
                     text: ": ".into(),
                     highlight_name: None,
                 }),
-                CodeLabelSpan::CodeRange(zed::Range {
-                    start: code.len() as u32 - ty.len() as u32,
-                    end: code.len() as u32,
-                }),
+                CodeLabelSpan::CodeRange((code.len() - ty.len()..code.len()).into()),
             ],
-            filter_range: zed::Range {
-                start: 0,
-                end: name.len() as u32,
-            },
+            filter_range: (0..name.len()).into(),
             code,
         })
     }

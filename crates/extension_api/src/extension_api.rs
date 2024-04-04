@@ -128,3 +128,21 @@ impl fmt::Display for LanguageServerId {
         write!(f, "{}", self.0)
     }
 }
+
+impl From<std::ops::Range<u32>> for wit::Range {
+    fn from(value: std::ops::Range<u32>) -> Self {
+        Self {
+            start: value.start,
+            end: value.end,
+        }
+    }
+}
+
+impl From<std::ops::Range<usize>> for wit::Range {
+    fn from(value: std::ops::Range<usize>) -> Self {
+        Self {
+            start: value.start as u32,
+            end: value.end as u32,
+        }
+    }
+}
