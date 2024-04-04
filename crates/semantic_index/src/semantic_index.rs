@@ -1,40 +1,48 @@
 mod chunking;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::Result;
 use chunking::{chunk_text, Chunk};
-use client::Client;
 use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt;
 use futures_batch::ChunksTimeoutStreamExt;
-use gpui::{AppContext, Context, EventEmitter, Global, Model, ModelContext, Task, WeakModel};
-use language::{LanguageRegistry, Tree, PARSER};
+use gpui::{
+    AppContext, Context, EntityId, EventEmitter, Global, Model, ModelContext, Subscription, Task,
+    WeakModel,
+};
+use heed::types::{SerdeBincode, Str};
+use language::LanguageRegistry;
 use project::{Entry, Project, Worktree};
-use sha2::{Digest, Sha256};
 use smol::channel;
-use std::{cmp, ops::Range, path::Path, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 use util::ResultExt;
 use worktree::LocalSnapshot;
 
 pub struct SemanticIndex {
-    db: lmdb::Database,
+    db_connection: heed::Env,
     project_indices: HashMap<WeakModel<Project>, Model<ProjectIndex>>,
 }
 
 impl Global for SemanticIndex {}
 
 impl SemanticIndex {
-    pub fn new(db_path: &Path) -> Result<Self> {
-        let env = lmdb::Environment::new()
-            .open(db_path)
-            .context("failed to open environment")?;
-        let db = env
-            .create_db(None, lmdb::DatabaseFlags::empty())
-            .context("failed to create db")?;
+    pub fn new(db_path: &Path, cx: &mut AppContext) -> Task<Result<Self>> {
+        let db_path = db_path.to_path_buf();
+        cx.spawn(|cx| async move {
+            let db_connection = cx
+                .background_executor()
+                .spawn(async move {
+                    heed::EnvOpenOptions::new()
+                        .map_size(10 * 1024 * 1024)
+                        .max_dbs(3000)
+                        .open(db_path)
+                })
+                .await?;
 
-        Ok(SemanticIndex {
-            db,
-            project_indices: HashMap::default(),
+            Ok(SemanticIndex {
+                db_connection,
+                project_indices: HashMap::default(),
+            })
         })
     }
 
@@ -45,32 +53,43 @@ impl SemanticIndex {
     ) -> Model<ProjectIndex> {
         self.project_indices
             .entry(project.downgrade())
-            .or_insert_with(|| cx.new_model(|cx| ProjectIndex::new(project, self.db.clone(), cx)))
+            .or_insert_with(|| {
+                cx.new_model(|cx| ProjectIndex::new(project, self.db_connection.clone(), cx))
+            })
             .clone()
     }
 }
 
 pub struct ProjectIndex {
-    db: lmdb::Database,
+    db_connection: heed::Env,
     project: WeakModel<Project>,
-    worktree_scans: HashMap<WeakModel<Worktree>, Task<()>>,
+    worktree_indices: HashMap<EntityId, WorktreeIndexHandle>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
-    client: Arc<Client>,
+    last_status: Status,
+}
+
+enum WorktreeIndexHandle {
+    Loading {
+        _task: Task<Result<()>>,
+    },
+    Loaded {
+        index: Model<WorktreeIndex>,
+        _subscription: Subscription,
+    },
 }
 
 impl ProjectIndex {
-    fn new(project: Model<Project>, db: lmdb::Database, cx: &mut ModelContext<Self>) -> Self {
+    fn new(project: Model<Project>, db_connection: heed::Env, cx: &mut ModelContext<Self>) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let fs = project.read(cx).fs().clone();
-        let client = project.read(cx).client();
         let mut this = ProjectIndex {
-            db,
+            db_connection,
             project: project.downgrade(),
-            worktree_scans: HashMap::default(),
-            client,
+            worktree_indices: HashMap::default(),
             language_registry,
             fs,
+            last_status: Status::Idle,
         };
 
         for worktree in project.read(cx).worktrees().collect::<Vec<_>>() {
@@ -81,35 +100,137 @@ impl ProjectIndex {
     }
 
     fn add_worktree(&mut self, worktree: Model<Worktree>, cx: &mut ModelContext<Self>) {
-        let Some(local_worktree) = worktree.read(cx).as_local() else {
+        if !worktree.read(cx).is_local() {
             return;
-        };
-        let local_worktree = local_worktree.snapshot();
-        let worktree_abs_path = local_worktree.abs_path().clone();
-
-        let (entries_rx, scan_entries) = self.scan_entries(local_worktree, cx);
-        let (chunked_files, chunk_entries) = self.chunk_files(worktree_abs_path, entries_rx, cx);
-        let embed_chunks = self.embed_chunks(chunked_files, cx);
-
-        if self.worktree_scans.is_empty() {
-            cx.emit(StatusEvent::Scanning);
         }
 
-        let worktree = worktree.downgrade();
-        let scan = cx.spawn(|this, mut cx| {
-            let worktree = worktree.clone();
-            async move {
-                futures::join!(scan_entries, chunk_entries, embed_chunks);
+        let worktree_entity_id = worktree.entity_id();
+        let worktree_index = WorktreeIndex::load(
+            worktree.clone(),
+            self.db_connection.clone(),
+            self.language_registry.clone(),
+            self.fs.clone(),
+            cx,
+        );
+        let load_worktree = cx.spawn(|this, mut cx| async move {
+            if let Some(index) = worktree_index.await.log_err() {
                 this.update(&mut cx, |this, cx| {
-                    this.worktree_scans.remove(&worktree);
-                    if this.worktree_scans.is_empty() {
-                        cx.emit(StatusEvent::Idle);
+                    this.worktree_indices.insert(
+                        worktree_entity_id,
+                        WorktreeIndexHandle::Loaded {
+                            _subscription: cx.observe(&index, |this, _, cx| this.update_status(cx)),
+                            index,
+                        },
+                    );
+                })?;
+            } else {
+                this.update(&mut cx, |this, cx| {
+                    this.worktree_indices.remove(&worktree_entity_id)
+                })?;
+            }
+
+            this.update(&mut cx, |this, cx| this.update_status(cx))
+        });
+        self.worktree_indices.insert(
+            worktree_entity_id,
+            WorktreeIndexHandle::Loading {
+                _task: load_worktree,
+            },
+        );
+        self.update_status(cx);
+    }
+
+    fn update_status(&mut self, cx: &mut ModelContext<Self>) {
+        let mut status = Status::Idle;
+        for index in self.worktree_indices.values() {
+            match index {
+                WorktreeIndexHandle::Loading { .. } => {
+                    status = Status::Scanning;
+                    break;
+                }
+                WorktreeIndexHandle::Loaded { index, .. } => {
+                    if index.read(cx).pending_scan.is_some() {
+                        status = Status::Scanning;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if status != self.last_status {
+            self.last_status = status;
+            cx.emit(status);
+        }
+    }
+}
+
+struct WorktreeIndex {
+    worktree: Model<Worktree>,
+    pending_scan: Option<Task<()>>,
+    db_connection: heed::Env,
+    db: heed::Database<Str, SerdeBincode<ChunkedFile>>,
+    language_registry: Arc<LanguageRegistry>,
+    fs: Arc<dyn Fs>,
+}
+
+impl WorktreeIndex {
+    pub fn load(
+        worktree: Model<Worktree>,
+        db_connection: heed::Env,
+        language_registry: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Model<Self>>> {
+        let worktree_abs_path = worktree.read(cx).abs_path();
+        cx.spawn(|mut cx| async move {
+            let db = cx
+                .background_executor()
+                .spawn({
+                    let db_connection = db_connection.clone();
+                    async move {
+                        let mut txn = db_connection.write_txn()?;
+                        let db_name = worktree_abs_path.to_string_lossy();
+                        db_connection.create_database(&mut txn, Some(&db_name))
                     }
                 })
-                .ok();
-            }
-        });
-        self.worktree_scans.insert(worktree, scan);
+                .await?;
+            cx.new_model(|cx| Self::new(worktree, db_connection, db, language_registry, fs, cx))
+        })
+    }
+
+    fn new(
+        worktree: Model<Worktree>,
+        db_connection: heed::Env,
+        db: heed::Database<Str, SerdeBincode<ChunkedFile>>,
+        language_registry: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        let mut this = Self {
+            db_connection,
+            db,
+            worktree,
+            pending_scan: None,
+            language_registry,
+            fs,
+        };
+        this.rescan(cx);
+        this
+    }
+
+    fn rescan(&mut self, cx: &mut ModelContext<Self>) {
+        let worktree = self.worktree.read(cx).as_local().unwrap().snapshot();
+        let worktree_abs_path = worktree.abs_path().clone();
+        let (entries, scan_entries) = self.scan_entries(worktree, cx);
+        let (chunked_files, chunk_files) = self.chunk_files(worktree_abs_path, entries, cx);
+        let embed_chunks = self.embed_chunks(chunked_files, cx);
+        self.pending_scan = Some(cx.spawn(|this, mut cx| async move {
+            futures::join!(scan_entries, chunk_files, embed_chunks);
+            _ = this.update(&mut cx, |this, cx| {
+                this.pending_scan = None;
+                cx.notify();
+            });
+        }));
     }
 
     fn scan_entries(
@@ -175,9 +296,8 @@ impl ProjectIndex {
     fn embed_chunks(
         &mut self,
         chunked_files: channel::Receiver<ChunkedFile>,
-        cx: &mut ModelContext<ProjectIndex>,
+        cx: &mut ModelContext<Self>,
     ) -> Task<()> {
-        let http_client = self.client.http_client();
         cx.spawn(|this, cx| async move {
             let mut chunked_file_batches =
                 chunked_files.chunks_timeout(512, Duration::from_secs(2));
@@ -189,12 +309,12 @@ impl ProjectIndex {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum StatusEvent {
+pub enum Status {
     Idle,
     Scanning,
 }
 
-impl EventEmitter<StatusEvent> for ProjectIndex {}
+impl EventEmitter<Status> for ProjectIndex {}
 
 struct ChunkedFile {
     worktree_root: Arc<Path>,

@@ -31,6 +31,9 @@ fn main() {
             store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
         });
 
+        let temp_dir = tempdir().unwrap();
+        let mut semantic_index = SemanticIndex::new(temp_dir.path(), cx);
+
         cx.spawn(|mut cx| async move {
             let args: Vec<String> = std::env::args().collect();
             if args.len() < 2 {
@@ -38,6 +41,8 @@ fn main() {
                 cx.update(|cx| cx.quit()).unwrap(); // Exiting if no path is provided
                 return;
             }
+
+            let mut semantic_index = semantic_index.await.unwrap();
 
             let project_path = Path::new(&args[1]);
 
@@ -49,9 +54,6 @@ fn main() {
                 languages::init(language_registry, node_runtime, cx);
             })
             .unwrap();
-
-            let temp_dir = tempdir().unwrap();
-            let mut semantic_index = SemanticIndex::new(temp_dir.path()).unwrap();
 
             let project_index = cx
                 .update(|cx| semantic_index.project_index(project.clone(), cx))
@@ -71,6 +73,7 @@ fn main() {
             rx.await.expect("no event emitted");
             drop(subscription);
             dbg!(t0.elapsed());
+            drop(temp_dir);
             cx.update(|cx| cx.quit()).unwrap();
         })
         .detach();
