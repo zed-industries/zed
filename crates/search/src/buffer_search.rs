@@ -64,7 +64,7 @@ pub struct BufferSearchBar {
     replacement_editor: View<Editor>,
     replacement_editor_focused: bool,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
-    pub active_match_index: Option<usize>,
+    active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
     active_search: Option<Arc<SearchQuery>>,
     searchable_items_with_matches:

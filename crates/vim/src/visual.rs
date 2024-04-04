@@ -1,13 +1,12 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use aho_corasick::AhoCorasick;
 use collections::HashMap;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Bias, DisplayPoint, Editor, SelectNextState,
+    Bias, DisplayPoint, Editor,
 };
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
@@ -494,62 +493,58 @@ pub fn select_next_match(
     cx: &mut ViewContext<Workspace>,
 ) -> Result<()> {
     let mut operator: Option<Operator> = Default::default();
-    let result = Vim::update(cx, |vim, cx| {
+    let update_result = Vim::update(cx, |vim, cx| {
         let count = vim.take_count(cx).unwrap_or(1);
-        let query = vim.workspace_state.search.initial_query.clone();
         operator = vim.maybe_pop_operator();
-        if query.is_empty() {
-            return Some(Ok(()));
-        }
         let pane = workspace.active_pane().clone();
-        if vim.state().mode == Mode::Normal {
+        let vim_is_normal = vim.state().mode == Mode::Normal;
+        let mut current_start_selection = 0usize;
+        let mut current_end_selection = 0usize;
+        vim.update_active_editor(cx, |_, editor, _| {
+            editor.set_collapse_matches(false);
+        });
+        if vim_is_normal {
+            // if vim mode is normal we select the current or next match
             pane.update(cx, |pane, cx| {
                 if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                     search_bar.update(cx, |search_bar, cx| {
-                        // without update_match_index there are some bugs when the cursor is before any match
+                        // without update_match_index there is a bug when the cursor is before the first match
                         search_bar.update_match_index(cx);
                         search_bar.select_match(Direction::Prev, 1, cx);
                         search_bar.update_match_index(cx);
                         search_bar.select_match(Direction::Next, 1, cx);
-                        search_bar.update_match_index(cx);
                     });
                 }
             });
         }
+        // we save the current selection for merge with the selection of the next match
         vim.update_active_editor(cx, |_, editor, cx| {
-            let old_select_next_state = editor.select_next_state.clone();
-            // we modify editor.select_next_state so that editor.select_next
-            // makes the selections for us
-            editor.select_next_state = Some(SelectNextState {
-                query: AhoCorasick::new(&[query])?,
-                wordwise: false,
-                done: false,
-            });
-            for _ in 0..count {
-                match editor.select_next(&Default::default(), cx) {
-                    Err(a) => return Err(a),
-                    _ => {}
-                }
+            current_start_selection = editor.selections.first::<usize>(cx).start.clone();
+            current_end_selection = editor.selections.last::<usize>(cx).end.clone();
+        });
+        pane.update(cx, |pane, cx| {
+            if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.update_match_index(cx);
+                    search_bar.select_match(Direction::Next, if vim_is_normal { count - 1 } else { count }, cx);
+                });
             }
-            // we merge all the selections
+        });
+        vim.update_active_editor(cx, |_, editor, cx| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.clear_pending();
+                s.insert_range(current_start_selection..current_end_selection);
+            });
             let start_selection = editor.selections.first::<usize>(cx).start.clone();
             let end_selection = editor.selections.last::<usize>(cx).end.clone();
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.clear_pending();
                 s.insert_range(start_selection..end_selection);
             });
-            editor.select_next_state = old_select_next_state;
+            editor.set_collapse_matches(true);
             Ok(())
         })
-    })
-    .unwrap_or(Ok(()));
-    // Basic operator support
-    match operator {
-        Some(Operator::Delete) => delete(workspace, &Default::default(), cx),
-        Some(Operator::Yank) => yank(workspace, &Default::default(), cx),
-        _ => {} // Ignoring other operators for now
-    }
-    result
+    }).unwrap_or(Ok(()));
+    update_result
 }
 
 #[cfg(test)]

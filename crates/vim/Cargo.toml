@@ -16,7 +16,6 @@ doctest = false
 neovim = ["nvim-rs", "async-compat", "async-trait", "tokio"]
 
 [dependencies]
-aho-corasick = "1.1"
 anyhow.workspace = true
 async-compat = { version = "0.2.1", "optional" = true }
 async-trait = { workspace = true, "optional" = true }
