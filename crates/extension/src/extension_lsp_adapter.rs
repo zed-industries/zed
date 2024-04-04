@@ -185,8 +185,6 @@ impl LspAdapter for ExtensionLspAdapter {
         completions: &[lsp::CompletionItem],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
-        dbg!(completions);
-
         let completions = completions
             .into_iter()
             .map(|completion| wit::Completion::from(completion.clone()))
@@ -216,71 +214,74 @@ impl LspAdapter for ExtensionLspAdapter {
             .into_iter()
             .map(|label| {
                 label.map(|label| {
-                    let mut text = String::new();
-                    let mut runs = vec![];
-
-                    let parsed_runs =
-                        language.highlight_text(&label.code.as_str().into(), 0..label.code.len());
-
-                    for span in label.spans {
-                        match span {
-                            wit::CodeLabelSpan::CodeRange(range) => {
-                                let range = Range::from(range);
-
-                                let mut input_ix = range.start;
-                                let mut output_ix = text.len();
-                                for (run_range, id) in &parsed_runs {
-                                    if run_range.start >= range.end {
-                                        break;
-                                    }
-                                    if run_range.end <= range.start {
-                                        continue;
-                                    }
-
-                                    if run_range.start > input_ix {
-                                        let len = run_range.start - range.start;
-                                        runs.push((
-                                            output_ix..output_ix + len,
-                                            HighlightId::default(),
-                                        ));
-                                        input_ix += len;
-                                        output_ix += len;
-                                    }
-
-                                    {
-                                        let len = range.end.min(run_range.end)
-                                            - range.start.max(run_range.start);
-                                        runs.push((output_ix..output_ix + len, *id));
-                                        input_ix += len;
-                                        output_ix += len;
-                                    }
-                                }
-
-                                text.push_str(&label.code[range]);
-                            }
-                            wit::CodeLabelSpan::Literal(span) => {
-                                let highlight_id = language
-                                    .grammar()
-                                    .zip(span.highlight_name.as_ref())
-                                    .and_then(|(grammar, highlight_name)| {
-                                        grammar.highlight_id_for_name(&highlight_name)
-                                    })
-                                    .unwrap_or_default();
-                                let ix = text.len();
-                                runs.push((ix..ix + span.text.len(), highlight_id));
-                                text.push_str(&span.text);
-                            }
-                        }
-                    }
-
-                    CodeLabel {
-                        text,
-                        runs,
-                        filter_range: label.filter_range.into(),
-                    }
+                    build_code_label(
+                        &label,
+                        &language.highlight_text(&label.code.as_str().into(), 0..label.code.len()),
+                        &language,
+                    )
                 })
             })
             .collect())
+    }
+}
+
+fn build_code_label(
+    label: &wit::CodeLabel,
+    parsed_runs: &[(Range<usize>, HighlightId)],
+    language: &Arc<Language>,
+) -> CodeLabel {
+    let mut text = String::new();
+    let mut runs = vec![];
+
+    for span in &label.spans {
+        match span {
+            wit::CodeLabelSpan::CodeRange(range) => {
+                let range = Range::from(range.clone());
+
+                let mut input_ix = range.start;
+                let mut output_ix = text.len();
+                for (run_range, id) in parsed_runs {
+                    if run_range.start >= range.end {
+                        break;
+                    }
+                    if run_range.end <= input_ix {
+                        continue;
+                    }
+
+                    if run_range.start > input_ix {
+                        output_ix += run_range.start - input_ix;
+                        input_ix = run_range.start;
+                    }
+
+                    {
+                        let len = range.end.min(run_range.end) - input_ix;
+                        runs.push((output_ix..output_ix + len, *id));
+                        output_ix += len;
+                        input_ix += len;
+                    }
+                }
+
+                text.push_str(&label.code[range]);
+            }
+            wit::CodeLabelSpan::Literal(span) => {
+                let highlight_id = language
+                    .grammar()
+                    .zip(span.highlight_name.as_ref())
+                    .and_then(|(grammar, highlight_name)| {
+                        grammar.highlight_id_for_name(&highlight_name)
+                    })
+                    .unwrap_or_default();
+                let ix = text.len();
+                runs.push((ix..ix + span.text.len(), highlight_id));
+                text.push_str(&span.text);
+            }
+        }
+    }
+
+    CodeLabel {
+        text,
+        runs,
+        filter_range: label.filter_range.into(),
     }
 }
 
@@ -358,4 +359,55 @@ impl From<lsp::InsertTextFormat> for wit::InsertTextFormat {
             }
         }
     }
+}
+
+#[test]
+fn test_build_code_label() {
+    use util::test::marked_text_ranges;
+
+    let (code, ranges) = marked_text_ranges(
+        "«const» «a»: «fn»(«Bcd»(«Efgh»)) -> «Ijklm» = pqrs.tuv",
+        false,
+    );
+    let runs = ranges
+        .iter()
+        .map(|range| (range.clone(), HighlightId(0)))
+        .collect::<Vec<_>>();
+
+    let label = build_code_label(
+        &wit::CodeLabel {
+            spans: vec![
+                wit::CodeLabelSpan::CodeRange(wit::Range {
+                    start: code.find("pqrs").unwrap() as u32,
+                    end: code.len() as u32,
+                }),
+                wit::CodeLabelSpan::CodeRange(wit::Range {
+                    start: code.find(": fn").unwrap() as u32,
+                    end: code.find(" = ").unwrap() as u32,
+                }),
+            ],
+            filter_range: wit::Range {
+                start: 0,
+                end: "pqrs.tuv".len() as u32,
+            },
+            code,
+        },
+        &runs,
+        &language::PLAIN_TEXT,
+    );
+
+    let (text, ranges) = marked_text_ranges("pqrs.tuv: «fn»(«Bcd»(«Efgh»)) -> «Ijklm»", false);
+    let runs = ranges
+        .iter()
+        .map(|range| (range.clone(), HighlightId(0)))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        label,
+        CodeLabel {
+            text,
+            runs,
+            filter_range: label.filter_range.clone()
+        }
+    )
 }

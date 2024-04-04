@@ -590,6 +590,36 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
     let expected_server_path = extensions_dir.join("work/gleam/gleam-v1.2.3/gleam");
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
 
+    assert_eq!(fake_server.binary.path, expected_server_path);
+    assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
+    assert_eq!(
+        fs.load(&expected_server_path).await.unwrap(),
+        expected_binary_contents
+    );
+    assert_eq!(language_server_version.lock().http_request_count, 2);
+    assert_eq!(
+        [
+            status_updates.next().await.unwrap(),
+            status_updates.next().await.unwrap(),
+            status_updates.next().await.unwrap(),
+        ],
+        [
+            (
+                LanguageServerName("gleam".into()),
+                LanguageServerBinaryStatus::CheckingForUpdate
+            ),
+            (
+                LanguageServerName("gleam".into()),
+                LanguageServerBinaryStatus::Downloading
+            ),
+            (
+                LanguageServerName("gleam".into()),
+                LanguageServerBinaryStatus::None
+            )
+        ]
+    );
+
+    // The extension creates custom labels for completion items.
     fake_server.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(lsp::CompletionResponse::Array(vec![
             lsp::CompletionItem {
@@ -626,43 +656,13 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         .into_iter()
         .map(|c| c.label.text)
         .collect::<Vec<_>>();
-
     assert_eq!(
         completion_labels,
-        &[
-            "foo() -> Result(Nil, Error)".to_string(),
-            "bar.baz(List(a)) -> a".to_string(),
-            "Quux(String) -> T".to_string(),
-            "B: U".to_string(),
-        ]
-    );
-
-    assert_eq!(fake_server.binary.path, expected_server_path);
-    assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
-    assert_eq!(
-        fs.load(&expected_server_path).await.unwrap(),
-        expected_binary_contents
-    );
-    assert_eq!(language_server_version.lock().http_request_count, 2);
-    assert_eq!(
         [
-            status_updates.next().await.unwrap(),
-            status_updates.next().await.unwrap(),
-            status_updates.next().await.unwrap(),
-        ],
-        [
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::CheckingForUpdate
-            ),
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::Downloading
-            ),
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::None
-            )
+            "foo: fn() -> Result(Nil, Error)".to_string(),
+            "bar.baz: fn(List(a)) -> a".to_string(),
+            "Quux: fn(String) -> T".to_string(),
+            "my_string: String".to_string(),
         ]
     );
 

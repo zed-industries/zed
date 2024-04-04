@@ -112,36 +112,40 @@ impl zed::Extension for GleamExtension {
         _language_server_id: &LanguageServerId,
         completion: zed::Completion,
     ) -> Option<zed::CodeLabel> {
-        match completion.kind.zip(completion.detail.as_ref()) {
-            Some((lsp::CompletionItemKind::Function, detail)) => {
-                let name = &completion.label;
-                let signature = detail.trim_start_matches("fn");
-                let const_decl = "const a: T = ";
-                let ty_alias = "type T = fn";
-                let code = format!("{const_decl}{name}()\n{ty_alias}{signature}");
+        let name = &completion.label;
+        let ty = completion.detail?;
 
-                dbg!(&code);
-
-                Some(CodeLabel {
-                    spans: vec![
-                        CodeLabelSpan::CodeRange(zed::Range {
-                            start: const_decl.len() as u32,
-                            end: const_decl.len() as u32 + name.len() as u32,
-                        }),
-                        CodeLabelSpan::CodeRange(zed::Range {
-                            start: code.len() as u32 - signature.len() as u32,
-                            end: code.len() as u32,
-                        }),
-                    ],
-                    filter_range: zed::Range {
-                        start: 0,
-                        end: name.len() as u32,
-                    },
-                    code,
-                })
+        let suffix;
+        match completion.kind {
+            Some(lsp::CompletionItemKind::Function) => {
+                suffix = "()";
             }
-            _ => None,
+            _ => {
+                suffix = "";
+            }
         }
+
+        let const_prefix = "const a";
+        let colon = ": ";
+        let code = format!("{const_prefix}{colon}{ty} = {name}{suffix}");
+
+        Some(CodeLabel {
+            spans: vec![
+                CodeLabelSpan::CodeRange(zed::Range {
+                    start: (code.len() - suffix.len() - name.len()) as u32,
+                    end: (code.len() - suffix.len()) as u32,
+                }),
+                CodeLabelSpan::CodeRange(zed::Range {
+                    start: const_prefix.len() as u32,
+                    end: (const_prefix.len() + colon.len() + ty.len()) as u32,
+                }),
+            ],
+            filter_range: zed::Range {
+                start: 0,
+                end: name.len() as u32,
+            },
+            code,
+        })
     }
 }
 
