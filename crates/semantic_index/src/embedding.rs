@@ -40,9 +40,28 @@ struct OllamaEmbeddingResponse {
     embedding: Vec<f32>,
 }
 
-pub fn normalize_embedding(embedding: Vec<f32>, size: usize) -> Embedding {
-    // todo!(): Actually normalize the embedding, either using ndarray or writing the simd operations here
-    match size {
+pub(crate) fn normalize_vector(embedding: Vec<f32>) -> Vec<f32> {
+    // TODO: Either use ndarray directly like this:
+    //         let array = ndarray::Array1::from(self.embedding.clone());
+    //         let norm = array.dot(&array).sqrt();
+    //         array / norm
+    // OR: use simd operations directly to calculate the norm and normalize the embedding
+    let len = embedding.len();
+    let mut norm = 0f32;
+
+    for i in 0..len {
+        norm += embedding[i] * embedding[i];
+    }
+
+    norm = norm.sqrt();
+
+    embedding.iter().map(|x| x / norm).collect::<Vec<f32>>()
+}
+
+pub fn normalize_embedding(embedding: Vec<f32>) -> Embedding {
+    let embedding = normalize_vector(embedding);
+
+    match embedding.len() {
         EMBEDDING_SIZE_TINY => Embedding::Tiny(embedding.try_into().unwrap()),
         EMBEDDING_SIZE_SMALL => Embedding::Small(embedding.try_into().unwrap()),
         EMBEDDING_SIZE_LARGE => Embedding::Large(embedding.try_into().unwrap()),
@@ -79,9 +98,7 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
         let response: OllamaEmbeddingResponse =
             serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
 
-        let embedding_len = response.embedding.len();
-
-        Ok(normalize_embedding(response.embedding, embedding_len))
+        Ok(normalize_embedding(response.embedding))
     }
 }
 
@@ -105,5 +122,17 @@ mod test {
             Embedding::Tiny(e) => assert_eq!(e.len(), EMBEDDING_SIZE_TINY),
             _ => panic!("Invalid embedding size"),
         }
+    }
+
+    #[gpui::test]
+    fn test_normalize_embedding() {
+        // Create an vector of size EMBEDDING_SIZE_TINY with all values set to 1.0
+        let embedding = vec![1.0, 1.0, 1.0];
+
+        let normalized = normalize_vector(embedding);
+
+        let value: f32 = 1.0 / 3.0_f32.sqrt();
+
+        assert_eq!(normalized, vec![value; 3]);
     }
 }
