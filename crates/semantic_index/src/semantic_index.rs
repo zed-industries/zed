@@ -252,6 +252,8 @@ impl WorktreeIndex {
             cx.notify();
         })?;
 
+        // todo!(React to files changing and re-run the pipeline above only for the changed entries)
+
         Ok(())
     }
 
@@ -259,6 +261,12 @@ impl WorktreeIndex {
         worktree: LocalSnapshot,
         cx: &mut AsyncAppContext,
     ) -> (channel::Receiver<Entry>, Task<()>) {
+        // todo!("look at the database to only scan entries with an mtime != than the stored one")
+        // todo!("remember which entries don't exist anymore in the database so that we can delete them")
+        // I am thinking that all deletions, insertions and updates should be done by `save_embedded_files`,
+        // which we should probably rename. This is because I think LMDB only wants the database to be mutated by one thread
+        // at a time. But it's also cool because we know there's only one writer. We need to verify if we can read while we
+        // write. Alternatively, we could prolly use Rocksdb that lets us grab snapshots of the database.
         let (entries_tx, entries_rx) = channel::bounded(512);
         let scan_entries = cx.background_executor().spawn(async move {
             for entry in worktree.files(false, 0) {
