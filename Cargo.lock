@@ -4621,6 +4621,7 @@ dependencies = [
  "anyhow",
  "client",
  "fs",
+ "futures 0.3.28",
  "gpui",
  "language",
  "node_runtime",

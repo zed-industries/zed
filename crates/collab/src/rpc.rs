@@ -2141,6 +2141,12 @@ async fn create_remote_project(
         )
         .await?;
 
+    let projects = session
+        .db()
+        .await
+        .get_remote_projects_for_dev_server(remote_project.dev_server_id)
+        .await?;
+
     let update = proto::UpdateChannels {
         remote_projects: vec![remote_project.to_proto(None)],
         ..Default::default()
@@ -2150,6 +2156,15 @@ async fn create_remote_project(
         if role.can_see_all_descendants() {
             session.peer.send(connection_id, update.clone())?;
         }
+    }
+
+    let dev_server_id = remote_project.dev_server_id;
+    let dev_server_connection_id = connection_pool.dev_server_connection_id(dev_server_id);
+    if let Some(dev_server_connection_id) = dev_server_connection_id {
+        session.peer.send(
+            dev_server_connection_id,
+            proto::DevServerInstructions { projects },
+        )?;
     }
 
     response.send(proto::Ack {})?;

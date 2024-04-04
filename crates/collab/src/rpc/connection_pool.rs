@@ -150,8 +150,8 @@ impl ConnectionPool {
         }
     }
 
-    fn dev_server_connection_id(&self, dev_server_id: DevServerId) -> Option<&ConnectionId> {
-        self.connected_dev_servers.get(&dev_server_id)
+    pub fn dev_server_connection_id(&self, dev_server_id: DevServerId) -> Option<ConnectionId> {
+        self.connected_dev_servers.get(&dev_server_id).copied()
     }
 
     pub fn channel_user_ids(

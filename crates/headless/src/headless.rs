@@ -1,5 +1,5 @@
 use anyhow::Result;
-use client::{user::UserStore, Client};
+use client::{user::UserStore, Client, RemoteProjectId};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext};
 use language::LanguageRegistry;
@@ -11,7 +11,7 @@ use std::{collections::HashMap, sync::Arc};
 pub struct DevServer {
     client: Arc<Client>,
     app_state: AppState,
-    projects: HashMap<u64, Model<Project>>,
+    projects: HashMap<RemoteProjectId, Model<Project>>,
     _subscriptions: Vec<client::Subscription>,
 }
 
@@ -53,9 +53,53 @@ impl DevServer {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        dbg!(&envelope);
-        for remote_project in &envelope.payload.projects {
-            DevServer::share_project(this.clone(), remote_project, &mut cx).await?;
+        let (added_projects, removed_projects_ids) = this.read_with(&mut cx, |this, _| {
+            let removed_projects = this
+                .projects
+                .keys()
+                .filter(|remote_project_id| {
+                    !envelope
+                        .payload
+                        .projects
+                        .iter()
+                        .any(|p| p.id == remote_project_id.0)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let added_projects = envelope
+                .payload
+                .projects
+                .into_iter()
+                .filter(|project| !this.projects.contains_key(&RemoteProjectId(project.id)))
+                .collect::<Vec<_>>();
+
+            (added_projects, removed_projects)
+        })?;
+
+        dbg!(&added_projects);
+        dbg!(&removed_projects_ids);
+
+        for remote_project in added_projects {
+            DevServer::share_project(this.clone(), &remote_project, &mut cx).await?;
+        }
+
+        this.update(&mut cx, |this, cx| {
+            for old_project_id in &removed_projects_ids {
+                this.unshare_project(old_project_id, cx)?;
+            }
+            Ok::<(), anyhow::Error>(())
+        })??;
+        Ok(())
+    }
+
+    fn unshare_project(
+        &mut self,
+        remote_project_id: &RemoteProjectId,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        if let Some(project) = self.projects.remove(remote_project_id) {
+            project.update(cx, |project, cx| project.unshare(cx))?;
         }
         Ok(())
     }
@@ -86,10 +130,10 @@ impl DevServer {
             .await?;
 
         let project_id = response.project_id;
-        dbg!(&response);
         project.update(cx, |project, cx| project.shared(project_id, cx))??;
         this.update(cx, |this, _| {
-            this.projects.insert(response.project_id, project);
+            this.projects
+                .insert(RemoteProjectId(remote_project.id), project);
         })?;
         Ok(())
     }

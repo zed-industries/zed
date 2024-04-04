@@ -22,6 +22,7 @@ node_runtime.workspace = true
 language.workspace = true
 project.workspace = true
 fs.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
