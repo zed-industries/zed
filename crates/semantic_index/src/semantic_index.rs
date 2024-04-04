@@ -340,9 +340,9 @@ impl WorktreeIndex {
                         chunks: chunked_file
                             .chunks
                             .into_iter()
-                            .map(|chunk| EmbeddedChunk {
+                            .map(|chunk| EmbeddedChunk::Small {
                                 chunk,
-                                embedding: [0.0; 1536],
+                                embedding: [0.0; EMBEDDING_SIZE_SMALL],
                             })
                             .collect(),
                     };
@@ -377,7 +377,21 @@ struct EmbeddedFile {
     chunks: Vec<EmbeddedChunk>,
 }
 
-struct EmbeddedChunk {
-    chunk: Chunk,
-    embedding: [f32; 1536],
+const EMBEDDING_SIZE_TINY: usize = 768;
+const EMBEDDING_SIZE_SMALL: usize = 1536;
+const EMBEDDING_SIZE_LARGE: usize = 3072;
+
+enum EmbeddedChunk {
+    Tiny {
+        chunk: Chunk,
+        embedding: [f32; EMBEDDING_SIZE_TINY],
+    },
+    Small {
+        chunk: Chunk,
+        embedding: [f32; EMBEDDING_SIZE_SMALL],
+    },
+    Large {
+        chunk: Chunk,
+        embedding: [f32; EMBEDDING_SIZE_LARGE],
+    },
 }
