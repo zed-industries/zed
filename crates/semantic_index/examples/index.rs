@@ -32,7 +32,7 @@ fn main() {
         });
 
         let temp_dir = tempdir().unwrap();
-        let mut semantic_index = SemanticIndex::new(temp_dir.path(), cx);
+        let semantic_index = SemanticIndex::new(temp_dir.path(), cx);
 
         cx.spawn(|mut cx| async move {
             let args: Vec<String> = std::env::args().collect();
