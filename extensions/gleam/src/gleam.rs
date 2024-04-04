@@ -1,4 +1,5 @@
 use std::fs;
+use zed::lsp::CompletionItemKind;
 use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
@@ -114,16 +115,29 @@ impl zed::Extension for GleamExtension {
     ) -> Option<zed::CodeLabel> {
         let name = &completion.label;
         let ty = completion.detail?;
-
-        let const_decl = "const a: T = ";
-        let ty_alias = "type T = ";
-        let code = format!("{const_decl}{name}\n{ty_alias}{ty}");
+        let let_binding = "let a";
+        let colon = ": ";
+        let assignment = " = ";
+        let call = match completion.kind? {
+            CompletionItemKind::Function | CompletionItemKind::Constructor => "()",
+            _ => "",
+        };
+        let code = format!("{let_binding}{colon}{ty}{assignment}{name}{call}");
 
         Some(CodeLabel {
             spans: vec![
-                CodeLabelSpan::code_range(const_decl.len()..const_decl.len() + name.len()),
-                CodeLabelSpan::literal(": ", None),
-                CodeLabelSpan::code_range(code.len() - ty.len()..code.len()),
+                CodeLabelSpan::code_range({
+                    let start = let_binding.len() + colon.len() + ty.len() + assignment.len();
+                    start..start + name.len()
+                }),
+                CodeLabelSpan::code_range({
+                    let start = let_binding.len();
+                    start..start + colon.len()
+                }),
+                CodeLabelSpan::code_range({
+                    let start = let_binding.len() + colon.len();
+                    start..start + ty.len()
+                }),
             ],
             filter_range: (0..name.len()).into(),
             code,
