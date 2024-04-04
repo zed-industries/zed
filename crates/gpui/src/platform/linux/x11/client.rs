@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -25,7 +26,8 @@ use crate::{
     Point, ScrollDelta, Size, TouchPhase, WindowParams,
 };
 
-use super::{super::SCROLL_LINES, X11Display, X11Window, X11WindowState, XcbAtoms};
+use super::{super::SCROLL_LINES, X11Display, X11Window, XcbAtoms};
+use super::{button_of_key, modifiers_from_state};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
 use calloop::{
@@ -34,8 +36,16 @@ use calloop::{
 };
 
 struct WindowRef {
-    state: Rc<X11WindowState>,
+    window: X11Window,
     refresh_event_token: RegistrationToken,
+}
+
+impl Deref for WindowRef {
+    type Target = X11Window;
+
+    fn deref(&self) -> &Self::Target {
+        &self.window
+    }
 }
 
 pub struct X11ClientState {
@@ -119,6 +129,7 @@ impl X11Client {
                     calloop::Mode::Level,
                 ),
                 {
+                    let xcb_connection = xcb_connection.clone();
                     move |_readiness, _, client| {
                         while let Some(event) = xcb_connection.poll_for_event()? {
                             client.handle_event(event);
@@ -137,7 +148,7 @@ impl X11Client {
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
 
-            xcb_connection: Rc::clone(&xcb_connection),
+            xcb_connection,
             x_root_index,
             atoms,
             windows: HashMap::default(),
@@ -147,22 +158,26 @@ impl X11Client {
         })))
     }
 
-    fn get_window(&self, win: xproto::Window) -> Option<Rc<X11WindowState>> {
+    fn get_window(&self, win: xproto::Window) -> Option<X11Window> {
         let state = self.0.borrow();
-        state.windows.get(&win).map(|wr| Rc::clone(&wr.state))
+        state
+            .windows
+            .get(&win)
+            .map(|window_reference| window_reference.window.clone())
     }
 
     fn handle_event(&self, event: Event) -> Option<()> {
-        let mut state = self.0.borrow_mut();
         match event {
             Event::ClientMessage(event) => {
                 let [atom, ..] = event.data.as_data32();
+                let mut state = self.0.borrow_mut();
+
                 if atom == state.atoms.WM_DELETE_WINDOW {
                     // window "x" button clicked by user, we gracefully exit
                     let window_ref = state.windows.remove(&event.window)?;
 
                     state.loop_handle.remove(window_ref.refresh_event_token);
-                    window_ref.state.destroy();
+                    window_ref.window.destroy();
 
                     if state.windows.is_empty() {
                         state.common.signal.stop();
@@ -197,7 +212,9 @@ impl X11Client {
             }
             Event::KeyPress(event) => {
                 let window = self.get_window(event.event)?;
-                let modifiers = super::modifiers_from_state(event.state);
+                let mut state = self.0.borrow_mut();
+
+                let modifiers = modifiers_from_state(event.state);
                 let keystroke = {
                     let code = event.detail.into();
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
@@ -205,6 +222,7 @@ impl X11Client {
                     keystroke
                 };
 
+                drop(state);
                 window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                     keystroke,
                     is_held: false,
@@ -212,22 +230,26 @@ impl X11Client {
             }
             Event::KeyRelease(event) => {
                 let window = self.get_window(event.event)?;
-                let modifiers = super::modifiers_from_state(event.state);
+                let mut state = self.0.borrow_mut();
+
+                let modifiers = modifiers_from_state(event.state);
                 let keystroke = {
                     let code = event.detail.into();
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     state.xkb.update_key(code, xkbc::KeyDirection::Up);
                     keystroke
                 };
-
+                drop(state);
                 window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent { keystroke }));
             }
             Event::ButtonPress(event) => {
                 let window = self.get_window(event.event)?;
-                let modifiers = super::modifiers_from_state(event.state);
+                let mut state = self.0.borrow_mut();
+
+                let modifiers = modifiers_from_state(event.state);
                 let position =
                     Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
-                if let Some(button) = super::button_of_key(event.detail) {
+                if let Some(button) = button_of_key(event.detail) {
                     let click_elapsed = state.last_click.elapsed();
 
                     if click_elapsed < DOUBLE_CLICK_INTERVAL
@@ -240,18 +262,22 @@ impl X11Client {
 
                     state.last_click = Instant::now();
                     state.last_location = position;
+                    let current_count = state.current_count;
 
+                    drop(state);
                     window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
                         button,
                         position,
                         modifiers,
-                        click_count: state.current_count,
+                        click_count: current_count,
                         first_mouse: false,
                     }));
                 } else if event.detail >= 4 && event.detail <= 5 {
                     // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11
                     let scroll_direction = if event.detail == 4 { 1.0 } else { -1.0 };
                     let scroll_y = SCROLL_LINES * scroll_direction;
+
+                    drop(state);
                     window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
                         position,
                         delta: ScrollDelta::Lines(Point::new(0.0, scroll_y as f32)),
@@ -264,15 +290,18 @@ impl X11Client {
             }
             Event::ButtonRelease(event) => {
                 let window = self.get_window(event.event)?;
-                let modifiers = super::modifiers_from_state(event.state);
+                let state = self.0.borrow();
+                let modifiers = modifiers_from_state(event.state);
                 let position =
                     Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
-                if let Some(button) = super::button_of_key(event.detail) {
+                if let Some(button) = button_of_key(event.detail) {
+                    let click_count = state.current_count;
+                    drop(state);
                     window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
                         button,
                         position,
                         modifiers,
-                        click_count: state.current_count,
+                        click_count,
                     }));
                 }
             }
@@ -281,7 +310,7 @@ impl X11Client {
                 let pressed_button = super::button_from_state(event.state);
                 let position =
                     Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
-                let modifiers = super::modifiers_from_state(event.state);
+                let modifiers = modifiers_from_state(event.state);
                 window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
                     pressed_button,
                     position,
@@ -293,7 +322,7 @@ impl X11Client {
                 let pressed_button = super::button_from_state(event.state);
                 let position =
                     Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
-                let modifiers = super::modifiers_from_state(event.state);
+                let modifiers = modifiers_from_state(event.state);
                 window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
                     pressed_button,
                     position,
@@ -308,6 +337,10 @@ impl X11Client {
 }
 
 impl LinuxClient for X11Client {
+    fn common(&self, f: &dyn Fn(&mut LinuxCommon)) {
+        f(&mut self.0.borrow_mut().common)
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
         let setup = state.xcb_connection.setup();
@@ -322,15 +355,6 @@ impl LinuxClient for X11Client {
             .collect()
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        let state = self.0.borrow();
-
-        Some(Rc::new(X11Display::new(
-            &state.xcb_connection,
-            id.0 as usize,
-        )?))
-    }
-
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
 
@@ -340,21 +364,30 @@ impl LinuxClient for X11Client {
         ))
     }
 
+    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
+        let state = self.0.borrow();
+
+        Some(Rc::new(X11Display::new(
+            &state.xcb_connection,
+            id.0 as usize,
+        )?))
+    }
+
     fn open_window(
         &self,
         _handle: AnyWindowHandle,
-        options: WindowParams,
+        params: WindowParams,
     ) -> Box<dyn PlatformWindow> {
         let mut state = self.0.borrow();
         let x_window = state.xcb_connection.generate_id().unwrap();
 
-        let window_ptr = Rc::new(X11WindowState::new(
-            options,
+        let window = X11Window::new(
+            params,
             &state.xcb_connection,
             state.x_root_index,
             x_window,
             &state.atoms,
-        ));
+        );
 
         let screen_resources = state
             .xcb_connection
@@ -417,26 +450,31 @@ impl LinuxClient for X11Client {
             .expect("Failed to initialize refresh timer");
 
         let window_ref = WindowRef {
-            state: Rc::clone(&window_ptr),
+            window: window.clone(),
             refresh_event_token,
         };
+
         state.windows.insert(x_window, window_ref);
-        Box::new(X11Window(window_ptr))
+        Box::new(window)
     }
 
     //todo(linux)
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
-    fn get_clipboard(&self) -> &mut dyn ClipboardProvider {
-        &mut self.0.borrow_mut().clipboard
+    fn write_to_clipboard(&self, item: crate::ClipboardItem) {
+        self.0.borrow_mut().clipboard.set_contents(item.text);
     }
 
-    fn get_primary(&self) -> &mut dyn ClipboardProvider {
-        &mut self.0.borrow_mut().primary
-    }
-
-    fn common(&self) -> &mut LinuxCommon {
-        &mut self.0.borrow_mut().common
+    fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
+        self.0
+            .borrow()
+            .clipboard
+            .get_contents()
+            .ok()
+            .map(|text| crate::ClipboardItem {
+                text,
+                metadata: None,
+            })
     }
 
     fn run(&self) {
@@ -448,6 +486,18 @@ impl LinuxClient for X11Client {
             .expect("App is already running");
 
         event_loop.run(None, &mut self.clone(), |_| {}).log_err();
+    }
+
+    fn common_background_executor(&self) -> crate::BackgroundExecutor {
+        self.0.borrow().common.background_executor.clone()
+    }
+
+    fn common_foreground_executor(&self) -> crate::ForegroundExecutor {
+        self.0.borrow().common.foreground_executor.clone()
+    }
+
+    fn common_text_system(&self) -> std::sync::Arc<dyn crate::PlatformTextSystem> {
+        self.0.borrow().common.text_system.clone()
     }
 }
 

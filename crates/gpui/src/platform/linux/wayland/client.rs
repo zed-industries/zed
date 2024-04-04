@@ -334,20 +334,29 @@ impl LinuxClient for WaylandClient {
         // self.state.cursor_state.borrow_mut().cursor_icon_name = cursor_icon_name;
     }
 
-    fn get_clipboard(&self) -> &mut dyn ClipboardProvider {
-        // self.state.clipboard.clone()
-        todo!()
-    }
-
-    fn get_primary(&self) -> &mut dyn ClipboardProvider {
-        todo!()
-    }
-
-    fn common(&self) -> &mut LinuxCommon {
+    fn common(&self, f: &dyn Fn(&mut LinuxCommon)) {
         todo!()
     }
 
     fn run(&self) {
+        todo!()
+    }
+
+    fn write_to_clipboard(&self, item: crate::ClipboardItem) {}
+
+    fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
+        todo!()
+    }
+
+    fn common_background_executor(&self) -> crate::BackgroundExecutor {
+        todo!()
+    }
+
+    fn common_foreground_executor(&self) -> crate::ForegroundExecutor {
+        todo!()
+    }
+
+    fn common_text_system(&self) -> Arc<dyn crate::PlatformTextSystem> {
         todo!()
     }
 }
