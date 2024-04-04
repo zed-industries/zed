@@ -1,8 +1,10 @@
 mod chunking;
+mod embedding;
 
 use anyhow::Result;
 use chunking::{chunk_text, Chunk};
 use collections::HashMap;
+use embedding::Embedding;
 use fs::Fs;
 use futures::StreamExt;
 use futures_batch::ChunksTimeoutStreamExt;
@@ -340,9 +342,9 @@ impl WorktreeIndex {
                         chunks: chunked_file
                             .chunks
                             .into_iter()
-                            .map(|chunk| EmbeddedChunk::Small {
+                            .map(|chunk| EmbeddedChunk {
                                 chunk,
-                                embedding: [0.0; EMBEDDING_SIZE_SMALL],
+                                embedding: Embedding::None,
                             })
                             .collect(),
                     };
@@ -377,21 +379,7 @@ struct EmbeddedFile {
     chunks: Vec<EmbeddedChunk>,
 }
 
-const EMBEDDING_SIZE_TINY: usize = 768;
-const EMBEDDING_SIZE_SMALL: usize = 1536;
-const EMBEDDING_SIZE_LARGE: usize = 3072;
-
-enum EmbeddedChunk {
-    Tiny {
-        chunk: Chunk,
-        embedding: [f32; EMBEDDING_SIZE_TINY],
-    },
-    Small {
-        chunk: Chunk,
-        embedding: [f32; EMBEDDING_SIZE_SMALL],
-    },
-    Large {
-        chunk: Chunk,
-        embedding: [f32; EMBEDDING_SIZE_LARGE],
-    },
+struct EmbeddedChunk {
+    chunk: Chunk,
+    embedding: Embedding,
 }
