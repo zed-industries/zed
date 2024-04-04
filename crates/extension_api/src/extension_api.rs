@@ -14,7 +14,7 @@ pub use wit::{
     LanguageServerInstallationStatus, Os, Range, Worktree,
 };
 
-// Undocument WIT re-exports.
+// Undocumented WIT re-exports.
 //
 // These are symbols that need to be public for the purposes of implementing
 // the extension host, but aren't relevant to extension authors.
