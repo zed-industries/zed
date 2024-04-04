@@ -484,7 +484,7 @@ impl LinuxClient for X11Client {
             .event_loop
             .take()
             .expect("App is already running");
-        dbg!("running");
+
         event_loop.run(None, &mut self.clone(), |_| {}).log_err();
     }
 }
