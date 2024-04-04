@@ -74,7 +74,7 @@ pub trait Task {
     fn cwd(&self) -> Option<&str>;
     /// Sets up everything needed to spawn the task in the given directory (`cwd`).
     /// If a task is intended to be spawned in the terminal, it should return the corresponding struct filled with the data necessary.
-    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal>;
+    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal>;
 }
 
 /// [`Source`] produces tasks that can be scheduled.

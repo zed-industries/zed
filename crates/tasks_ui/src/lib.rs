@@ -30,7 +30,6 @@ pub fn init(cx: &mut AppContext) {
                         } else {
                             old_context
                         };
-
                         schedule_task(workspace, task.as_ref(), task_context, false, cx)
                     };
                 });
@@ -40,17 +39,17 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
-    let inventory = workspace.project().read(cx).task_inventory().clone();
-    let workspace_handle = workspace.weak_handle();
-    let cwd = task_cwd(workspace, cx).log_err().flatten();
-    let task_context = task_context(workspace, cwd, cx);
-    if let Some(name) = action.task_name.clone() {
-        // Do not actually show the modal.
-        spawn_task_with_name(name.clone(), cx);
-    } else {
-        workspace.toggle_modal(cx, |cx| {
-            TasksModal::new(inventory, task_context, workspace_handle, cx)
-        })
+    match &action.task_name {
+        Some(name) => spawn_task_with_name(name.clone(), cx),
+        None => {
+            let inventory = workspace.project().read(cx).task_inventory().clone();
+            let workspace_handle = workspace.weak_handle();
+            let cwd = task_cwd(workspace, cx).log_err().flatten();
+            let task_context = task_context(workspace, cwd, cx);
+            workspace.toggle_modal(cx, |cx| {
+                TasksModal::new(inventory, task_context, workspace_handle, cx)
+            })
+        }
     }
 }
 
@@ -198,7 +197,7 @@ fn schedule_task(
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
-    let spawn_in_terminal = task.exec(task_cx.clone());
+    let spawn_in_terminal = task.prepare_exec(task_cx.clone());
     if let Some(spawn_in_terminal) = spawn_in_terminal {
         if !omit_history {
             workspace.project().update(cx, |project, cx| {

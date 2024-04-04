@@ -353,6 +353,7 @@ impl ContextProvider for RustContextProvider {
 
         Ok(context)
     }
+
     fn associated_tasks(&self) -> Option<TaskDefinitions> {
         Some(TaskDefinitions(vec![
             Definition {

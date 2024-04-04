@@ -36,7 +36,7 @@ impl Task for OneshotTask {
         None
     }
 
-    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
+    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
         if self.id().0.is_empty() {
             return None;
         }

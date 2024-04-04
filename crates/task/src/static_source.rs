@@ -42,7 +42,7 @@ pub fn tasks_for(tasks: TaskDefinitions, id_base: &str) -> Vec<Arc<dyn Task>> {
 }
 
 impl Task for StaticTask {
-    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
+    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
         let TaskContext {
             cwd,
             task_variables,
