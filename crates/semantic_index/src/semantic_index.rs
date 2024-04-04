@@ -1,16 +1,17 @@
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
-use futures::channel::mpsc::{self, Receiver, Sender};
+use futures::{
+    channel::mpsc::{self, Receiver, Sender},
+    SinkExt, StreamExt,
+};
+use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{AppContext, Context, EventEmitter, Global, Model, ModelContext, Task, WeakModel};
 use language::{LanguageRegistry, Tree, PARSER};
 use project::{Entry, Project, Worktree};
 use sha2::{Digest, Sha256};
-use smol::{
-    channel::{self},
-    stream::StreamExt,
-};
-use std::{cmp, ops::Range, path::Path, sync::Arc};
+use smol::channel;
+use std::{cmp, ops::Range, path::Path, sync::Arc, time::Duration};
 use util::ResultExt;
 
 pub struct SemanticIndex {
@@ -94,6 +95,7 @@ impl ProjectIndex {
 
         let language_registry = self.language_registry.clone();
         let fs = self.fs.clone();
+        let chunked_files_tx = self.chunked_files_tx.clone();
         let worktree = worktree.downgrade();
         let scan = cx.spawn(|this, mut cx| {
             let worktree = worktree.clone();
@@ -118,6 +120,7 @@ impl ProjectIndex {
                                         entry,
                                         &language_registry,
                                         fs.as_ref(),
+                                        chunked_files_tx.clone(),
                                     )
                                     .await
                                     .log_err();
@@ -150,9 +153,9 @@ pub enum StatusEvent {
 }
 
 struct ChunkedFile {
-    worktree_path: Arc<Path>,
+    worktree_root: Arc<Path>,
     entry: Entry,
-    contents: String,
+    text: String,
     chunks: Vec<Chunk>,
 }
 
@@ -166,6 +169,7 @@ async fn index_entry(
     entry: Entry,
     language_registry: &Arc<LanguageRegistry>,
     fs: &dyn Fs,
+    mut tx: Sender<ChunkedFile>,
 ) -> Result<()> {
     let abs_path = worktree_root.join(&entry.path);
 
@@ -184,6 +188,14 @@ async fn index_entry(
         });
 
         let chunks = chunk_parse_tree(tree, &text);
+
+        tx.send(ChunkedFile {
+            worktree_root,
+            entry,
+            text,
+            chunks,
+        })
+        .await?;
     } else {
         return Err(anyhow!("plain text is not yet supported"));
     }
@@ -250,9 +262,14 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
     }
 }
 
-fn embed_chunks(mut chunked_files: Receiver<ChunkedFile>, cx: &mut ModelContext<ProjectIndex>) {
-    cx.spawn(
-        |this, cx| async move { while let Some(chunked_file) = chunked_files.next().await {} },
-    )
+fn embed_chunks(chunked_files: Receiver<ChunkedFile>, cx: &mut ModelContext<ProjectIndex>) {
+    cx.spawn(|this, cx| async move {
+        let mut chunked_file_batches =
+            chunked_files.chunks_timeout(512, Duration::from_millis(2000));
+
+        while let Some(batch) = chunked_file_batches.next().await {
+            dbg!(batch.len());
+        }
+    })
     .detach();
 }

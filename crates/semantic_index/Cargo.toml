@@ -13,6 +13,7 @@ anyhow.workspace = true
 collections.workspace = true
 fs.workspace = true
 futures.workspace = true
+futures-batch = "0.6.1"
 gpui.workspace = true
 language.workspace = true
 lmdb = "0.8.0"
