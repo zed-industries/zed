@@ -1,3 +1,5 @@
+pub mod settings;
+
 use core::fmt;
 
 use wit::*;

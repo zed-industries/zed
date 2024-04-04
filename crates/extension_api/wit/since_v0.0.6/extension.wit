@@ -51,6 +51,8 @@ world extension {
     /// Gets the current operating system and architecture
     import current-platform: func() -> tuple<os, architecture>;
 
+    import get-settings: func(key: string) -> result<string, string>;
+
     /// Get the path to the node binary used by Zed.
     import node-binary-path: func() -> result<string, string>;
 

@@ -8504,6 +8504,7 @@ dependencies = [
  "gpui",
  "indoc",
  "lazy_static",
+ "parking_lot",
  "pretty_assertions",
  "release_channel",
  "rust-embed",
@@ -12526,6 +12527,8 @@ dependencies = [
 name = "zed_extension_api"
 version = "0.0.6"
 dependencies = [
+ "serde",
+ "serde_json",
  "wit-bindgen",
 ]
 

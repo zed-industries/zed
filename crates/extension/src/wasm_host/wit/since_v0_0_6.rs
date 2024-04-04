@@ -1,16 +1,18 @@
 use crate::wasm_host::wit::ToWasmtimeResult;
 use crate::wasm_host::WasmState;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use futures::io::BufReader;
+use futures::FutureExt as _;
+use language::language_settings::all_language_settings;
 use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
 use semantic_version::SemanticVersion;
-use std::path::Path;
+use std::num::NonZeroU32;
 use std::{
     env,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 use util::maybe;
@@ -26,6 +28,8 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
     },
 });
+
+mod settings;
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 
@@ -78,6 +82,28 @@ impl self::zed::extension::lsp::Host for WasmState {}
 
 #[async_trait]
 impl ExtensionImports for WasmState {
+    async fn get_settings(&mut self, key: String) -> wasmtime::Result<Result<String, String>> {
+        self.on_main_thread(|cx| {
+            async move {
+                cx.update(|cx| match key.as_str() {
+                    "language" => {
+                        let settings = all_language_settings(None, cx);
+                        let language_settings = settings::LanguageSettings {
+                            tab_size: settings.language(Some("JSON")).tab_size,
+                        };
+                        Ok(serde_json::to_string(&language_settings)?)
+                    }
+                    _ => {
+                        bail!("invalid key: {key}")
+                    }
+                })
+            }
+            .boxed_local()
+        })
+        .await?
+        .to_wasmtime_result()
+    }
+
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
         self.host
             .node_runtime
