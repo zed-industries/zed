@@ -1,4 +1,5 @@
 interface lsp {
+    /// An LSP completion.
     record completion {
         label: string,
         detail: option<string>,

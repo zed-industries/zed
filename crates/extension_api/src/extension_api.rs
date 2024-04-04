@@ -1,16 +1,30 @@
 use core::fmt;
 
 use wit::*;
+
+// WIT re-exports.
+//
+// We explicitly enumerate the symbols we want to re-export, as there are some
+// that we may want to shadow to provide a cleaner Rust API.
 pub use wit::{
     current_platform, download_file, latest_github_release, make_file_executable, node_binary_path,
     npm_install_package, npm_package_installed_version, npm_package_latest_version,
     zed::extension::lsp, Architecture, CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command,
-    Completion, DownloadedFileType, EnvVars, GithubRelease, GithubReleaseAsset,
-    GithubReleaseOptions, Guest, LanguageServerInstallationStatus, Os, Range, Worktree,
+    DownloadedFileType, EnvVars, GithubRelease, GithubReleaseAsset, GithubReleaseOptions,
+    LanguageServerInstallationStatus, Os, Range, Worktree,
 };
 
+// Undocument WIT re-exports.
+//
+// These are symbols that need to be public for the purposes of implementing
+// the extension host, but aren't relevant to extension authors.
+#[doc(hidden)]
+pub use wit::Guest;
+
+/// A result returned from a Zed extension.
 pub type Result<T, E = String> = core::result::Result<T, E>;
 
+/// Updates the installation status for the given language server.
 pub fn set_language_server_installation_status(
     language_server_id: &LanguageServerId,
     status: &LanguageServerInstallationStatus,
@@ -18,17 +32,22 @@ pub fn set_language_server_installation_status(
     wit::set_language_server_installation_status(&language_server_id.0, status)
 }
 
+/// A Zed extension.
 pub trait Extension: Send + Sync {
+    /// Returns a new instance of the extension.
     fn new() -> Self
     where
         Self: Sized;
 
+    /// Returns the command used to start the language server for the specified
+    /// language.
     fn language_server_command(
         &mut self,
         language_server_id: &LanguageServerId,
         worktree: &Worktree,
     ) -> Result<Command>;
 
+    /// Returns the initializations options to pass to the specified language server.
     fn language_server_initialization_options(
         &mut self,
         _language_server_id: &LanguageServerId,
@@ -37,6 +56,7 @@ pub trait Extension: Send + Sync {
         Ok(None)
     }
 
+    /// Returns the label for the given completion.
     fn label_for_completion(
         &self,
         _language_server_id: &LanguageServerId,
@@ -126,6 +146,21 @@ pub struct LanguageServerId(String);
 impl fmt::Display for LanguageServerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl CodeLabelSpan {
+    /// Returns a [`CodeLabelSpan::CodeRange`].
+    pub fn code_range(range: impl Into<wit::Range>) -> Self {
+        Self::CodeRange(range.into())
+    }
+
+    /// Returns a [`CodeLabelSpan::Literal`].
+    pub fn literal(text: impl Into<String>, highlight_name: Option<String>) -> Self {
+        Self::Literal(CodeLabelSpanLiteral {
+            text: text.into(),
+            highlight_name,
+        })
     }
 }
 

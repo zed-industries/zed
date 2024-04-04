@@ -110,7 +110,7 @@ impl zed::Extension for GleamExtension {
     fn label_for_completion(
         &self,
         _language_server_id: &LanguageServerId,
-        completion: zed::Completion,
+        completion: zed::lsp::Completion,
     ) -> Option<zed::CodeLabel> {
         let name = &completion.label;
         let ty = completion.detail?;
@@ -121,12 +121,9 @@ impl zed::Extension for GleamExtension {
 
         Some(CodeLabel {
             spans: vec![
-                CodeLabelSpan::CodeRange((const_decl.len()..const_decl.len() + name.len()).into()),
-                CodeLabelSpan::Literal(zed::CodeLabelSpanLiteral {
-                    text: ": ".into(),
-                    highlight_name: None,
-                }),
-                CodeLabelSpan::CodeRange((code.len() - ty.len()..code.len()).into()),
+                CodeLabelSpan::code_range(const_decl.len()..const_decl.len() + name.len()),
+                CodeLabelSpan::literal(": ", None),
+                CodeLabelSpan::code_range(code.len() - ty.len()..code.len()),
             ],
             filter_range: (0..name.len()).into(),
             code,
