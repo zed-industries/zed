@@ -165,6 +165,47 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_ollama_embedding_not_exactly_a_benchmark(executor: BackgroundExecutor) {
+        executor.allow_parking();
+
+        let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
+        let provider =
+            OllamaEmbeddingProvider::new(client.into(), EmbeddingModel::OllamaNomicEmbedText);
+
+        let t_nomic = std::time::Instant::now();
+        for i in 0..100 {
+            let embedding = provider
+                .get_embedding(format!("Hello, world! {}", i))
+                .await
+                .unwrap();
+
+            match embedding {
+                Embedding::OllamaNomicEmbedText(e) => assert_eq!(e.len(), EMBEDDING_SIZE_TINY),
+                _ => panic!("Invalid embedding size"),
+            }
+        }
+        dbg!(t_nomic.elapsed());
+
+        let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
+        let provider =
+            OllamaEmbeddingProvider::new(client.into(), EmbeddingModel::OllamaMxbaiEmbedLarge);
+
+        let t_mxbai = std::time::Instant::now();
+        for i in 0..100 {
+            let embedding = provider
+                .get_embedding(format!("Hello, world! {}", i))
+                .await
+                .unwrap();
+
+            match embedding {
+                Embedding::OllamaMxbaiEmbedLarge(e) => assert_eq!(e.len(), EMBEDDING_SIZE_XSMALL),
+                _ => panic!("Invalid embedding size"),
+            }
+        }
+        dbg!(t_mxbai.elapsed());
+    }
+
+    #[gpui::test]
     fn test_normalize_embedding() {
         // Create an vector of size EMBEDDING_SIZE_TINY with all values set to 1.0
         let embedding = vec![1.0, 1.0, 1.0];
