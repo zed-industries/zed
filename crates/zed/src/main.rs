@@ -298,6 +298,7 @@ fn main() {
         cx.activate(true);
 
         let mut args = Args::parse();
+        let mut triggered_authentication = false;
         if let Some(dev_server_token) = args.dev_server_token.take() {
             headless::init(
                 client.clone(),
@@ -329,39 +330,37 @@ fn main() {
             if !urls.is_empty() {
                 listener.open_urls(urls)
             }
-        }
 
-        let mut triggered_authentication = false;
-
-        match open_rx
-            .try_next()
-            .ok()
-            .flatten()
-            .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
-        {
-            Some(request) => {
-                triggered_authentication = handle_open_request(request, app_state.clone(), cx)
+            match open_rx
+                .try_next()
+                .ok()
+                .flatten()
+                .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
+            {
+                Some(request) => {
+                    triggered_authentication = handle_open_request(request, app_state.clone(), cx)
+                }
+                None => cx
+                    .spawn({
+                        let app_state = app_state.clone();
+                        |cx| async move { restore_or_create_workspace(app_state, cx).await }
+                    })
+                    .detach(),
             }
-            None => cx
-                .spawn({
-                    let app_state = app_state.clone();
-                    |cx| async move { restore_or_create_workspace(app_state, cx).await }
-                })
-                .detach(),
-        }
 
-        let app_state = app_state.clone();
-        cx.spawn(move |cx| async move {
-            while let Some(urls) = open_rx.next().await {
-                cx.update(|cx| {
-                    if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
-                        handle_open_request(request, app_state.clone(), cx);
-                    }
-                })
-                .ok();
-            }
-        })
-        .detach();
+            let app_state = app_state.clone();
+            cx.spawn(move |cx| async move {
+                while let Some(urls) = open_rx.next().await {
+                    cx.update(|cx| {
+                        if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
+                            handle_open_request(request, app_state.clone(), cx);
+                        }
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+        }
 
         if !triggered_authentication {
             cx.spawn(|cx| async move { authenticate(client, &cx).await })
