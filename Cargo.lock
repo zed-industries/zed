@@ -9633,6 +9633,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "text-eg"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clock",
+ "collections",
+ "ctor",
+ "derive_more",
+ "env_logger",
+ "gpui",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "postage",
+ "rand 0.8.5",
+ "regex",
+ "rope",
+ "smallvec",
+ "sum_tree",
+ "util",
+]
+
+[[package]]
 name = "textwrap"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

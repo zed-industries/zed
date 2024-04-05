@@ -84,6 +84,7 @@ members = [
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
+    "crates/text-eg",
     "crates/theme",
     "crates/theme_importer",
     "crates/theme_selector",
