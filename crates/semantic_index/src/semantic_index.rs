@@ -18,7 +18,7 @@ use project::{Entry, Project, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
 use std::{
-    cmp::Ordering,
+    cmp::{self, Ordering},
     ops::Range,
     path::Path,
     sync::Arc,
@@ -232,6 +232,7 @@ struct WorktreeIndex {
     fs: Arc<dyn Fs>,
     status: Status,
     index_entries: Task<Result<()>>,
+    embedding_provider: Arc<dyn EmbeddingProvider>,
 }
 
 impl WorktreeIndex {
@@ -267,6 +268,7 @@ impl WorktreeIndex {
         db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        embedding_provider: Arc<dyn EmbeddingProvider>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self {
@@ -277,6 +279,7 @@ impl WorktreeIndex {
             fs,
             status: Status::Idle,
             index_entries: cx.spawn(Self::index_entries),
+            embedding_provider,
         }
     }
 
@@ -436,49 +439,107 @@ impl WorktreeIndex {
     }
 
     fn embed_files(
-        _this: &WeakModel<Self>,
+        this: &WeakModel<Self>,
         chunked_files: channel::Receiver<ChunkedFile>,
         cx: &mut AsyncAppContext,
     ) -> Result<EmbedFiles> {
+        let embedding_provider = this.read_with(cx, |this, _| this.embedding_provider.clone())?;
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
         let task = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
                 chunked_files.chunks_timeout(512, Duration::from_secs(2));
-            while let Some(batch) = chunked_file_batches.next().await {
-                for chunked_file in batch {
-                    // todo!("actually embed the batch")
-                    // let embedded_chunks = stream::iter(chunked_file.chunks.into_iter())
-                    //     .then(|chunk| {
-                    //         let embedding_future = embedding_provider
-                    //             .embed(chunked_file.text[chunk.range.clone()].to_string());
+            while let Some(chunked_files) = chunked_file_batches.next().await {
+                // View the batch of files as a vec of chunks
+                // Flatten out to a vec of chunks that we can subdivide into batch sized pieces
+                // Once those are done, reassemble it back into which files they belong to
 
-                    //         async move { (chunk, embedding_future.await) }
-                    //     })
-                    //     .collect::<Vec<_>>()
-                    //     .await
-                    //     .into_iter()
-                    //     .filter_map(|(chunk, embedding)| {
-                    //         embedding
-                    //             .log_err()
-                    //             .map(|embedding| EmbeddedChunk { chunk, embedding })
-                    //     })
-                    //     .collect::<Vec<EmbeddedChunk>>();
+                let mut chunks = chunked_files
+                    .iter()
+                    .flat_map(|file| {
+                        file.chunks
+                            .iter()
+                            .map(|chunk| &file.text[chunk.range.clone()])
+                    })
+                    .collect::<Vec<_>>();
 
+                let mut embeddings = Vec::new();
+                for embedding_batch in chunks.chunks(embedding_provider.batch_size()) {
+                    // todo!("add a retry facility")
+                    embeddings.extend(embedding_provider.embed(embedding_batch).await?);
+                }
+
+                let mut embeddings = embeddings.into_iter();
+                for chunked_file in chunked_files {
+                    let chunk_embeddings = embeddings
+                        .by_ref()
+                        .take(chunked_file.chunks.len())
+                        .collect::<Vec<_>>();
+                    let embedded_chunks = chunked_file
+                        .chunks
+                        .into_iter()
+                        .zip(chunk_embeddings)
+                        .map(|(chunk, embedding)| EmbeddedChunk { chunk, embedding })
+                        .collect();
                     let embedded_file = EmbeddedFile {
                         path: chunked_file.entry.path.clone(),
                         mtime: chunked_file.entry.mtime,
-                        chunks: chunked_file
-                            .chunks
-                            .into_iter()
-                            .map(|chunk| EmbeddedChunk {
-                                chunk,
-                                embedding: Embedding::default(),
-                            })
-                            .collect(),
+                        chunks: embedded_chunks,
                     };
 
                     embedded_files_tx.send(embedded_file).await?;
                 }
+
+                // let mut embeddings = Vec::new();
+                // let batch_size = embedding_provider.batch_size();
+
+                // for chunked_file in &batch {
+
+                //     let mut index = 0;
+                //     while index <
+
+                //     let len = cmp::min(chunked_file.chunks.len(), batch_size - embedding_batch.len());
+                //     embedding_batch.extend(chunked_file.chunks[..len].iter().map(|chunk| &chunked_file.text[chunk.range.clone()]));
+                //     if embedding_batch.len() == batch_size {
+                //         embeddings.extend(embedding_provider.embed(&embedding_batch).await?);
+                //     }
+
+                // }
+
+                // let embedded_chunks = batch.into_iter()
+
+                // for chunked_file in batch {
+                //     let embedded_chunks = stream::iter(chunked_file.chunks.into_iter())
+                //         .then(|chunk| {
+                //             let embedding_future = embedding_provider
+                //                 //.embed([chunked_file.text[chunk.range.clone()].to_string()]);
+
+                //             async move { (chunk, embedding_future.await) }
+                //         })
+                //         .collect::<Vec<_>>()
+                //         .await
+                //         .into_iter()
+                //         .filter_map(|(chunk, embedding)| {
+                //             embedding
+                //                 .log_err()
+                //                 .map(|embedding| EmbeddedChunk { chunk, embedding })
+                //         })
+                //         .collect::<Vec<EmbeddedChunk>>();
+
+                //     let embedded_file = EmbeddedFile {
+                //         path: chunked_file.entry.path.clone(),
+                //         mtime: chunked_file.entry.mtime,
+                //         chunks: chunked_file
+                //             .chunks
+                //             .into_iter()
+                //             .map(|chunk| EmbeddedChunk {
+                //                 chunk,
+                //                 embedding: Embedding::default(),
+                //             })
+                //             .collect(),
+                //     };
+
+                //     embedded_files_tx.send(embedded_file).await?;
+                // }
             }
             Ok(())
         });

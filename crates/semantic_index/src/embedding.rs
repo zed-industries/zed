@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Context as _, Result};
-use futures::AsyncReadExt;
+use futures::{future::BoxFuture, AsyncReadExt, FutureExt};
 use gpui::{AppContext, Task};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{future, sync::Arc};
 use util::http::{AsyncBody, HttpClient, HttpClientWithUrl, Method, Request as HttpRequest};
 
 /// Ollama's embedding via nomic-embed-text is of length 768
@@ -27,11 +27,6 @@ pub struct Embedding(Vec<f32>);
 
 impl Embedding {
     fn new(mut embedding: Vec<f32>) -> Self {
-        // TODO: Either use ndarray directly like this:
-        //         let array = ndarray::Array1::from(self.embedding.clone());
-        //         let norm = array.dot(&array).sqrt();
-        //         array / norm
-        // OR: use simd operations directly to calculate the norm and normalize the embedding ourselves
         let len = embedding.len();
         let mut norm = 0f32;
 
@@ -52,9 +47,10 @@ impl Embedding {
     }
 }
 
-/// Trait for embedding providers. Text in, vector out.
+/// Trait for embedding providers. Texts in, vectors out.
 pub trait EmbeddingProvider {
-    fn embed(&self, texts: &[&str], cx: &AppContext) -> Task<Result<Embedding>>;
+    fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>>;
+    fn batch_size(&self) -> usize;
 }
 
 pub struct OllamaEmbeddingProvider {
@@ -80,31 +76,43 @@ impl OllamaEmbeddingProvider {
 }
 
 impl EmbeddingProvider for OllamaEmbeddingProvider {
-    async fn embed(&self, texts: &[&str], cx: &AppContext) -> Task<Result<Vec<Embedding>>> {
-        for text in texts {
+    fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
+        //
+        let model = match self.model {
+            EmbeddingModel::OllamaNomicEmbedText => "nomic-embed-text".to_string(),
+            EmbeddingModel::OllamaMxbaiEmbedLarge => "mxbai-embed-large".to_string(),
+            _ => return future::ready(Err(anyhow!("Invalid model"))).boxed(),
+        };
+
+        futures::future::try_join_all(texts.into_iter().map(|text| {
             let request = OllamaEmbeddingRequest {
-                model: match self.model {
-                    EmbeddingModel::OllamaNomicEmbedText => "nomic-embed-text".to_string(),
-                    EmbeddingModel::OllamaMxbaiEmbedLarge => "mxbai-embed-large".to_string(),
-                    _ => return Err(anyhow!("Invalid model")),
-                },
+                model,
                 prompt: text.to_string(),
             };
 
-            let request = serde_json::to_string(&request)?;
-            let mut response = self
-                .client
-                .post_json("http://localhost:11434/api/embeddings", request.into())
-                .context("failed to embed")?;
+            let request = serde_json::to_string(&request).unwrap();
 
-            let mut body = Vec::new();
-            response.body_mut().read_to_end(&mut body).await.ok();
+            async {
+                let response = self
+                    .client
+                    .post_json("http://localhost:11434/api/embeddings", request.into())
+                    .await?;
 
-            let response: OllamaEmbeddingResponse =
-                serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
+                let mut body = String::new();
+                response.into_body().read_to_string(&mut body).await?;
 
-            embeddings.push(response.embedding);
-        }
+                let response: OllamaEmbeddingResponse =
+                    serde_json::from_str(&body).context("Unable to pull response")?;
+
+                Ok(Embedding::new(response.embedding))
+            }
+        }))
+        .boxed()
+    }
+
+    fn batch_size(&self) -> usize {
+        // TODO: Figure out decent value
+        10
     }
 }
 
@@ -143,7 +151,8 @@ impl OpenaiEmbeddingProvider {
 }
 
 impl EmbeddingProvider for OpenaiEmbeddingProvider {
-    async fn embed(&self, text: String) -> Result<Embedding> {
+    fn embed(&self, texts: &[&str], cx: &AppContext) -> BoxFuture<Result<Vec<Embedding>>> {
+        todo!();
         let request = OpenaiEmbeddingRequest {
             model: match self.model {
                 EmbeddingModel::OpenaiTextEmbedding3Small => "text-embedding-3-small".to_string(),
@@ -177,6 +186,10 @@ impl EmbeddingProvider for OpenaiEmbeddingProvider {
             .pop()
             .context("No embedding data found in response")?;
         Ok(Embedding::new(data.embedding))
+    }
+
+    fn batch_size(&self, cx: &AppContext) -> usize {
+        todo!();
     }
 }
 
