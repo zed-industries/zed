@@ -924,26 +924,26 @@ impl Chunk {
     fn clip_point(&self, target: Point, bias: Bias) -> Point {
         for (row, line) in self.0.split('\n').enumerate() {
             if row == target.row as usize {
-                let mut column = target.column.min(line.len() as u32);
-                let mut grapheme_cursor = GraphemeCursor::new(column as usize, self.0.len(), true);
+                let mut column = target.column.min(line.len() as u32) as usize;
+                let mut grapheme_cursor = GraphemeCursor::new(column, self.0.len(), true);
                 while !grapheme_cursor.is_boundary(line, 0).unwrap() {
                     match bias {
                         Bias::Left => {
                             column = grapheme_cursor
                                 .prev_boundary(line, 0)
-                                .unwrap_or(Some(column as usize - 1))
-                                .unwrap() as u32
+                                .unwrap_or(Some(column - 1))
+                                .unwrap()
                         }
                         Bias::Right => {
                             column = grapheme_cursor
                                 .next_boundary(line, 0)
-                                .unwrap_or(Some(column as usize + 1))
-                                .unwrap() as u32
+                                .unwrap_or(Some(column + 1))
+                                .unwrap()
                         }
                     }
-                    grapheme_cursor.set_cursor(column as usize);
+                    grapheme_cursor.set_cursor(column);
                 }
-                return Point::new(row as u32, column);
+                return Point::new(row as u32, column as u32);
             }
         }
         unreachable!()
