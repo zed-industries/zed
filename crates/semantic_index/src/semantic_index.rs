@@ -566,6 +566,10 @@ impl WorktreeIndex {
     ) -> Task<Result<Vec<SearchResult>>> {
         let embedding_provider = Arc::clone(&self.embedding_provider);
 
+        let db_connection = self.db_connection.clone();
+        let db = self.db.clone();
+        let pattern = "/".replace('/', "\0");
+
         let query = query.to_owned();
         cx.background_executor().spawn(async move {
             // Embed the query as a vector
@@ -574,10 +578,51 @@ impl WorktreeIndex {
                 .into_iter()
                 .next()
                 .ok_or_else(|| anyhow!("no embedding for query"))?;
+            println!("{}", query_embedding);
 
             // Load all the embeddings from the database
             // todo!("already have this loaded into memory?")
-            println!("{}", query_embedding);
+            let txn = db_connection
+                .read_txn()
+                .context("failed to create read transaction")?;
+
+            let mut results: Vec<SearchResult> = Vec::new();
+            db.get(&txn, key)
+            let mut iter = db
+                .prefix_iter(&txn, &pattern)
+                .context("failed to iterate over DB with prefix")?;
+
+            iter.map(|item| {
+                let (key, value) = item.context("failed to read entry")?;
+                let file: EmbeddedFile =
+                    bincode::deserialize(&value).context("failed to deserialize embedded file")?;
+                let mut score = 0.0;
+                for chunk in file.chunks {
+                    score += query_embedding.dot(&chunk.embedding);
+                }
+                results.push(SearchResult {
+                    path: file.path,
+                    score,
+                });
+            })
+
+            while let Some(entry) = iter.next() {
+                let (key, value) = entry.context("failed to read entry")?;
+
+                let file: EmbeddedFile =
+                    bincode::deserialize(&value).context("failed to deserialize embedded file")?;
+
+                // let file: EmbeddedFile =
+                //     bincode::deserialize(&value).context("failed to deserialize embedded file")?;
+                // let mut score = 0.0;
+                // for chunk in file.chunks {
+                //     score += query_embedding.dot(&chunk.embedding);
+                // }
+                // results.push(SearchResult {
+                //     path: file.path,
+                //     score,
+                // });
+            }
 
             // Compute the scores across all embeddings
 
