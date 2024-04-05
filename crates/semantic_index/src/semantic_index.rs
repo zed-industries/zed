@@ -1,7 +1,7 @@
 mod chunking;
 pub mod embedding;
 
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use chunking::{chunk_text, Chunk};
 use collections::{Bound, HashMap};
 use embedding::{Embedding, EmbeddingProvider};
@@ -564,7 +564,26 @@ impl WorktreeIndex {
         limit: usize,
         cx: &AppContext,
     ) -> Task<Result<Vec<SearchResult>>> {
-        todo!()
+        let embedding_provider = Arc::clone(&self.embedding_provider);
+
+        let query = query.to_owned();
+        cx.background_executor().spawn(async move {
+            // Embed the query as a vector
+            let query_embedding = embedding_provider.embed(&[&query]).await?;
+            let query_embedding = query_embedding
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("no embedding for query"))?;
+
+            // Load all the embeddings from the database
+            // todo!("already have this loaded into memory?")
+            println!("{}", query_embedding);
+
+            // Compute the scores across all embeddings
+
+            // Sort the scores and return the top N
+            Ok(vec![])
+        })
     }
 }
 

@@ -3,7 +3,7 @@ use futures::channel::oneshot;
 use gpui::{App, Global, TestAppContext};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
-use semantic_index::embedding::FakeEmbeddingProvider;
+use semantic_index::embedding::{EmbeddingModel, FakeEmbeddingProvider, OpenaiEmbeddingProvider};
 use semantic_index::SemanticIndex;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
@@ -42,8 +42,6 @@ fn main() {
         let client = client::Client::new(clock, http.clone(), cx);
         Client::set_global(client.clone(), cx);
 
-        let temp_dir = tempdir().unwrap();
-
         let args: Vec<String> = std::env::args().collect();
         if args.len() < 2 {
             eprintln!("Usage: cargo run --example index -p semantic_index -- <project_path>");
@@ -52,6 +50,13 @@ fn main() {
         }
 
         let embedding_provider = FakeEmbeddingProvider::new();
+
+        // let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
+        // let embedding_provider = OpenaiEmbeddingProvider::new(
+        //     http.clone(),
+        //     EmbeddingModel::OpenaiTextEmbedding3Small,
+        //     api_key,
+        // );
 
         let semantic_index = SemanticIndex::new(
             Path::new("/tmp/semantic-index-db.mdb"),
@@ -91,7 +96,20 @@ fn main() {
             rx.await.expect("no event emitted");
             drop(subscription);
             dbg!(t0.elapsed());
-            drop(temp_dir);
+
+            let results = cx
+                .update(|cx| {
+                    let project_index = project_index.read(cx);
+                    let query = "fn main() { println!(\"Hello, world!\"); }";
+                    project_index.search(query, 10, cx)
+                })
+                .unwrap()
+                .await;
+
+            results.iter().for_each(|search_result| {
+                println!("{}", search_result.text);
+            });
+
             cx.update(|cx| cx.quit()).unwrap();
         })
         .detach();

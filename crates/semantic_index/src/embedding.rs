@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context as _, Result};
 use futures::{future::BoxFuture, AsyncReadExt, FutureExt};
 use serde::{Deserialize, Serialize};
-use std::{future, sync::Arc};
+use std::{fmt, future, sync::Arc};
 use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
 /// Ollama's embedding via nomic-embed-text is of length 768
@@ -43,6 +43,33 @@ impl Embedding {
 
     fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn dot(self, other: Embedding) -> f32 {
+        let len = self.0.len();
+        let mut dot = 0f32;
+
+        for i in 0..len {
+            dot += self.0[i] * other.0[i];
+        }
+
+        dot
+    }
+}
+
+impl fmt::Display for Embedding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Start the Embedding display format
+        write!(f, "Embedding({} [", self.len())?;
+
+        for (index, value) in self.0.iter().enumerate().take(3) {
+            // Lead with comma if not the first element
+            if index != 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{:.3}", value)?;
+        }
+        write!(f, "])")
     }
 }
 
