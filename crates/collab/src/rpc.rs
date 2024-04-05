@@ -1368,6 +1368,7 @@ async fn connection_lost(
                     update_user_contacts(session.user_id(), &session).await?;
                 },
             Principal::DevServer(dev_server) => {
+                lost_dev_server_connection(&session).await?;
                 update_dev_server_status(&dev_server, proto::DevServerStatus::Offline, &session)
                     .await;
             },
@@ -4624,6 +4625,18 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
             }
         }
     }
+    Ok(())
+}
+
+async fn lost_dev_server_connection(session: &Session) -> Result<()> {
+    log::info!("lost dev server connection, unsharing projects");
+    let project_ids =  session.db().await.get_stale_dev_server_projects(session.connection_id).await?;
+
+    for project_id in project_ids {
+        // not unshare re-checks the connection ids match, so we get away with no transaction
+        unshare_project_internal(project_id, &session).await?;
+    }
+
     Ok(())
 }
 
