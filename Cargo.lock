@@ -4420,6 +4420,7 @@ dependencies = [
  "thiserror",
  "time",
  "tiny-skia",
+ "unicode-segmentation",
  "usvg",
  "util",
  "uuid",
@@ -7798,6 +7799,7 @@ dependencies = [
  "rand 0.8.5",
  "smallvec",
  "sum_tree",
+ "unicode-segmentation",
  "util",
 ]
 
