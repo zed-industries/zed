@@ -47,7 +47,7 @@ impl Embedding {
 }
 
 /// Trait for embedding providers. Texts in, vectors out.
-pub trait EmbeddingProvider {
+pub trait EmbeddingProvider: Sync + Send {
     fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>>;
     fn batch_size(&self) -> usize;
 }

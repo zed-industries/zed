@@ -470,7 +470,6 @@ impl WorktreeIndex {
         cx: &mut AsyncAppContext,
     ) -> Result<EmbedFiles> {
         let embedding_provider = this.read_with(cx, |this, _| this.embedding_provider.clone())?;
-        let embedding_provider = embedding_provider.clone();
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
 
         let task = cx.background_executor().spawn(async move {
@@ -481,7 +480,7 @@ impl WorktreeIndex {
                 // Flatten out to a vec of chunks that we can subdivide into batch sized pieces
                 // Once those are done, reassemble it back into which files they belong to
 
-                let mut chunks = chunked_files
+                let chunks = chunked_files
                     .iter()
                     .flat_map(|file| {
                         file.chunks
@@ -491,10 +490,10 @@ impl WorktreeIndex {
                     .collect::<Vec<_>>();
 
                 let mut embeddings = Vec::new();
-                // for embedding_batch in chunks.chunks(embedding_provider.batch_size()) {
-                //     // todo!("add a retry facility")
-                //     embeddings.extend(embedding_provider.embed(embedding_batch).await?);
-                // }
+                for embedding_batch in chunks.chunks(embedding_provider.batch_size()) {
+                    // todo!("add a retry facility")
+                    embeddings.extend(embedding_provider.embed(embedding_batch).await?);
+                }
 
                 let mut embeddings = embeddings.into_iter();
                 for chunked_file in chunked_files {
@@ -516,58 +515,6 @@ impl WorktreeIndex {
 
                     embedded_files_tx.send(embedded_file).await?;
                 }
-
-                // let mut embeddings = Vec::new();
-                // let batch_size = embedding_provider.batch_size();
-
-                // for chunked_file in &batch {
-
-                //     let mut index = 0;
-                //     while index <
-
-                //     let len = cmp::min(chunked_file.chunks.len(), batch_size - embedding_batch.len());
-                //     embedding_batch.extend(chunked_file.chunks[..len].iter().map(|chunk| &chunked_file.text[chunk.range.clone()]));
-                //     if embedding_batch.len() == batch_size {
-                //         embeddings.extend(embedding_provider.embed(&embedding_batch).await?);
-                //     }
-
-                // }
-
-                // let embedded_chunks = batch.into_iter()
-
-                // for chunked_file in batch {
-                //     let embedded_chunks = stream::iter(chunked_file.chunks.into_iter())
-                //         .then(|chunk| {
-                //             let embedding_future = embedding_provider
-                //                 //.embed([chunked_file.text[chunk.range.clone()].to_string()]);
-
-                //             async move { (chunk, embedding_future.await) }
-                //         })
-                //         .collect::<Vec<_>>()
-                //         .await
-                //         .into_iter()
-                //         .filter_map(|(chunk, embedding)| {
-                //             embedding
-                //                 .log_err()
-                //                 .map(|embedding| EmbeddedChunk { chunk, embedding })
-                //         })
-                //         .collect::<Vec<EmbeddedChunk>>();
-
-                //     let embedded_file = EmbeddedFile {
-                //         path: chunked_file.entry.path.clone(),
-                //         mtime: chunked_file.entry.mtime,
-                //         chunks: chunked_file
-                //             .chunks
-                //             .into_iter()
-                //             .map(|chunk| EmbeddedChunk {
-                //                 chunk,
-                //                 embedding: Embedding::default(),
-                //             })
-                //             .collect(),
-                //     };
-
-                //     embedded_files_tx.send(embedded_file).await?;
-                // }
             }
             Ok(())
         });
