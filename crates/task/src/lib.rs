@@ -10,7 +10,7 @@ use gpui::ModelContext;
 use static_source::RevealStrategy;
 use std::any::Any;
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 pub use vscode_format::VsCodeTaskFile;
 
@@ -148,10 +148,9 @@ pub trait Task {
 pub trait TaskSource: Any {
     /// A way to erase the type of the source, processing and storing them generically.
     fn as_any(&mut self) -> &mut dyn Any;
-    /// Collects all tasks available for scheduling, for the path given.
-    fn tasks_for_path(
+    /// Collects all tasks available for scheduling.
+    fn tasks_to_schedule(
         &mut self,
-        path: Option<&Path>,
         cx: &mut ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>>;
 }

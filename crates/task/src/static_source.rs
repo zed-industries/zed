@@ -1,6 +1,6 @@
 //! A source of tasks, based on a static configuration, deserialized from the tasks config file, and related infrastructure for tracking changes to the file.
 
-use std::{borrow::Cow, path::Path, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use collections::HashMap;
 use futures::StreamExt;
@@ -268,9 +268,8 @@ impl StaticSource {
 }
 
 impl TaskSource for StaticSource {
-    fn tasks_for_path(
+    fn tasks_to_schedule(
         &mut self,
-        _: Option<&Path>,
         _: &mut ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks

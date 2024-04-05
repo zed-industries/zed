@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use editor::Editor;
-use gpui::{AppContext, ViewContext, WindowContext};
-use language::Point;
+use gpui::{AppContext, ViewContext, WeakView, WindowContext};
+use language::{Language, Point};
 use modal::{Spawn, TasksModal};
 use project::{Location, WorktreeId};
 use task::{Task, TaskContext, TaskVariables, VariableName};
@@ -19,9 +19,7 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(move |workspace, action: &modal::Rerun, cx| {
                     if let Some((task, old_context)) =
                         workspace.project().update(cx, |project, cx| {
-                            project
-                                .task_inventory()
-                                .update(cx, |inventory, cx| inventory.last_scheduled_task(cx))
+                            project.task_inventory().read(cx).last_scheduled_task()
                         })
                     {
                         let task_context = if action.reevaluate_context {
@@ -30,7 +28,7 @@ pub fn init(cx: &mut AppContext) {
                         } else {
                             old_context
                         };
-                        schedule_task(workspace, task.as_ref(), task_context, false, cx)
+                        schedule_task(workspace, &task, task_context, false, cx)
                     };
                 });
         },
@@ -57,19 +55,16 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
     cx.spawn(|workspace, mut cx| async move {
         let did_spawn = workspace
             .update(&mut cx, |this, cx| {
-                let active_item = this
-                    .active_item(cx)
-                    .and_then(|item| item.project_path(cx))
-                    .map(|path| path.worktree_id);
+                let (worktree, language) = active_item_selection_properties(&workspace, cx);
                 let tasks = this.project().update(cx, |project, cx| {
                     project.task_inventory().update(cx, |inventory, cx| {
-                        inventory.list_tasks(None, active_item, false, cx)
+                        inventory.list_tasks(language, worktree, false, cx)
                     })
                 });
                 let (_, target_task) = tasks.into_iter().find(|(_, task)| task.name() == name)?;
                 let cwd = task_cwd(this, cx).log_err().flatten();
                 let task_context = task_context(this, cwd, cx);
-                schedule_task(this, target_task.as_ref(), task_context, false, cx);
+                schedule_task(this, &target_task, task_context, false, cx);
                 Some(())
             })
             .ok()
@@ -86,6 +81,33 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
     .detach();
 }
 
+fn active_item_selection_properties(
+    workspace: &WeakView<Workspace>,
+    cx: &mut WindowContext,
+) -> (Option<WorktreeId>, Option<Arc<Language>>) {
+    let active_item = workspace
+        .update(cx, |workspace, cx| workspace.active_item(cx))
+        .ok()
+        .flatten();
+    let worktree_id = active_item
+        .as_ref()
+        .and_then(|item| item.project_path(cx))
+        .map(|path| path.worktree_id);
+    let language = active_item
+        .and_then(|active_item| active_item.act_as::<Editor>(cx))
+        .and_then(|editor| {
+            editor.update(cx, |editor, cx| {
+                let selection = editor.selections.newest::<usize>(cx);
+                let (buffer, buffer_position, _) = editor
+                    .buffer()
+                    .read(cx)
+                    .point_to_buffer_offset(selection.start, cx)?;
+                buffer.read(cx).language_at(buffer_position)
+            })
+        });
+    (worktree_id, language)
+}
+
 fn task_context(
     workspace: &Workspace,
     cwd: Option<PathBuf>,
@@ -93,8 +115,7 @@ fn task_context(
 ) -> TaskContext {
     let current_editor = workspace
         .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx))
-        .clone();
+        .and_then(|item| item.act_as::<Editor>(cx));
     if let Some(current_editor) = current_editor {
         (|| {
             let editor = current_editor.read(cx);
@@ -190,7 +211,7 @@ fn task_context(
 
 fn schedule_task(
     workspace: &Workspace,
-    task: &dyn Task,
+    task: &Arc<dyn Task>,
     task_cx: TaskContext,
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
@@ -200,7 +221,7 @@ fn schedule_task(
         if !omit_history {
             workspace.project().update(cx, |project, cx| {
                 project.task_inventory().update(cx, |inventory, _| {
-                    inventory.task_scheduled(task.id().clone(), task_cx);
+                    inventory.task_scheduled(Arc::clone(task), task_cx);
                 })
             });
         }
