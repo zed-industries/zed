@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
-use editor::Editor;
+use crate::{active_item_selection_properties, schedule_task};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
     Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
     VisualContext, WeakView,
 };
-use language::Language;
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
     Picker, PickerDelegate,
@@ -22,7 +21,6 @@ use ui::{
 use util::{paths::PathExt, ResultExt};
 use workspace::{ModalView, Workspace};
 
-use crate::schedule_task;
 use serde::Deserialize;
 
 /// Spawn a task with name or open tasks modal
@@ -200,18 +198,8 @@ impl PickerDelegate for TasksModalDelegate {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
                     let candidates = picker.delegate.candidates.get_or_insert_with(|| {
-                        let worktree = picker
-                            .delegate
-                            .workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.active_item(cx).and_then(|active_item| {
-                                    Some(active_item.project_path(cx)?.worktree_id)
-                                })
-                            })
-                            .ok()
-                            .flatten();
-                        let language =
-                            language_for_active_selection(&picker.delegate.workspace, cx);
+                        let (worktree, language) =
+                            active_item_selection_properties(&picker.delegate.workspace, cx);
                         picker.delegate.inventory.update(cx, |inventory, cx| {
                             inventory.list_tasks(language, worktree, true, cx)
                         })
@@ -383,22 +371,6 @@ impl PickerDelegate for TasksModalDelegate {
             .ok();
         cx.emit(DismissEvent);
     }
-}
-
-fn language_for_active_selection(
-    workspace: &WeakView<Workspace>,
-    cx: &mut WindowContext,
-) -> Option<Arc<Language>> {
-    let active_item = workspace.upgrade()?.read(cx).active_item(cx)?;
-    let editor = active_item.act_as::<Editor>(cx)?;
-    editor.update(cx, |editor, cx| {
-        let selection = editor.selections.newest::<usize>(cx);
-        let (buffer, buffer_position, _) = editor
-            .buffer()
-            .read(cx)
-            .point_to_buffer_offset(selection.start, cx)?;
-        buffer.read(cx).language_at(buffer_position)
-    })
 }
 
 #[cfg(test)]

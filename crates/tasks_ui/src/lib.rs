@@ -1,8 +1,8 @@
 use std::{path::PathBuf, sync::Arc};
 
 use editor::Editor;
-use gpui::{AppContext, ViewContext, WindowContext};
-use language::Point;
+use gpui::{AppContext, ViewContext, WeakView, WindowContext};
+use language::{Language, Point};
 use modal::{Spawn, TasksModal};
 use project::{Location, WorktreeId};
 use task::{Task, TaskContext, TaskVariables, VariableName};
@@ -55,13 +55,10 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
     cx.spawn(|workspace, mut cx| async move {
         let did_spawn = workspace
             .update(&mut cx, |this, cx| {
-                let active_item = this
-                    .active_item(cx)
-                    .and_then(|item| item.project_path(cx))
-                    .map(|path| path.worktree_id);
+                let (worktree, language) = active_item_selection_properties(&workspace, cx);
                 let tasks = this.project().update(cx, |project, cx| {
                     project.task_inventory().update(cx, |inventory, cx| {
-                        inventory.list_tasks(None, active_item, false, cx)
+                        inventory.list_tasks(language, worktree, false, cx)
                     })
                 });
                 let (_, target_task) = tasks.into_iter().find(|(_, task)| task.name() == name)?;
@@ -82,6 +79,33 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
         }
     })
     .detach();
+}
+
+fn active_item_selection_properties(
+    workspace: &WeakView<Workspace>,
+    cx: &mut WindowContext,
+) -> (Option<WorktreeId>, Option<Arc<Language>>) {
+    let active_item = workspace
+        .update(cx, |workspace, cx| workspace.active_item(cx))
+        .ok()
+        .flatten();
+    let worktree_id = active_item
+        .as_ref()
+        .and_then(|item| item.project_path(cx))
+        .map(|path| path.worktree_id);
+    let language = active_item
+        .and_then(|active_item| active_item.act_as::<Editor>(cx))
+        .and_then(|editor| {
+            editor.update(cx, |editor, cx| {
+                let selection = editor.selections.newest::<usize>(cx);
+                let (buffer, buffer_position, _) = editor
+                    .buffer()
+                    .read(cx)
+                    .point_to_buffer_offset(selection.start, cx)?;
+                buffer.read(cx).language_at(buffer_position)
+            })
+        });
+    (worktree_id, language)
 }
 
 fn task_context(
