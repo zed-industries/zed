@@ -1,3 +1,5 @@
+//! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
+
 use core::fmt;
 
 use wit::*;
@@ -8,10 +10,10 @@ use wit::*;
 // that we may want to shadow to provide a cleaner Rust API.
 pub use wit::{
     current_platform, download_file, latest_github_release, make_file_executable, node_binary_path,
-    npm_install_package, npm_package_installed_version, npm_package_latest_version,
-    zed::extension::lsp, Architecture, CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command,
-    DownloadedFileType, EnvVars, GithubRelease, GithubReleaseAsset, GithubReleaseOptions,
-    LanguageServerInstallationStatus, Os, Range, Worktree,
+    npm_install_package, npm_package_installed_version, npm_package_latest_version, Architecture,
+    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
+    GithubRelease, GithubReleaseAsset, GithubReleaseOptions, LanguageServerInstallationStatus, Os,
+    Range, Worktree,
 };
 
 // Undocumented WIT re-exports.
@@ -20,6 +22,14 @@ pub use wit::{
 // the extension host, but aren't relevant to extension authors.
 #[doc(hidden)]
 pub use wit::Guest;
+
+/// Constructs for interacting with language servers over the
+/// Language Server Protocol (LSP).
+pub mod lsp {
+    pub use crate::wit::zed::extension::lsp::{
+        Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind,
+    };
+}
 
 /// A result returned from a Zed extension.
 pub type Result<T, E = String> = core::result::Result<T, E>;
@@ -75,6 +85,9 @@ pub trait Extension: Send + Sync {
     }
 }
 
+/// Registers the provided type as a Zed extension.
+///
+/// The type must implement the [`Extension`] trait.
 #[macro_export]
 macro_rules! register_extension {
     ($extension_type:ty) => {
@@ -165,6 +178,7 @@ impl wit::Guest for Component {
     }
 }
 
+/// The ID of a language server.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct LanguageServerId(String);
 
