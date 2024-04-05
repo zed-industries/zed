@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::sync::Arc;
 
 use collections::HashMap;
@@ -15,6 +14,7 @@ use workspace::{searchable::Direction, Workspace};
 
 use crate::{
     motion::{start_of_line, Motion},
+    normal::substitute::substitute,
     object::Object,
     state::{Mode, Operator},
     utils::{copy_selections_content, yank_selections_content},
@@ -49,18 +49,21 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         },
     );
     workspace.register_action(other_end);
-    workspace.register_action(delete);
-    workspace.register_action(yank);
+    workspace.register_action(|_, _: &VisualDelete, cx| {
+        Vim::update(cx, |vim, cx| {
+            vim.record_current_action(cx);
+            delete(vim, cx);
+        });
+    });
+    workspace.register_action(|_, _: &VisualYank, cx| {
+        Vim::update(cx, |vim, cx| {
+            yank(vim, cx);
+        });
+    });
 
-    workspace.register_action(|workspace, action, cx| {
-        select_next(workspace, action, cx).ok();
-    });
-    workspace.register_action(|workspace, action, cx| {
-        select_previous(workspace, action, cx).ok();
-    });
-    workspace.register_action(|workspace, action, cx| {
-        select_next_match(workspace, action, cx).ok();
-    });
+    workspace.register_action(select_next);
+    workspace.register_action(select_previous);
+    workspace.register_action(select_next_match);
 }
 
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
@@ -333,9 +336,7 @@ pub fn other_end(_: &mut Workspace, _: &OtherEnd, cx: &mut ViewContext<Workspace
     });
 }
 
-pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
-        vim.record_current_action(cx);
+pub fn delete(vim: &mut Vim, cx: &mut WindowContext) {
         vim.update_active_editor(cx, |vim, editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
             let line_mode = editor.selections.line_mode;
@@ -375,11 +376,9 @@ pub fn delete(_: &mut Workspace, _: &VisualDelete, cx: &mut ViewContext<Workspac
             })
         });
         vim.switch_mode(Mode::Normal, true, cx);
-    });
 }
 
-pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) {
-    Vim::update(cx, |vim, cx| {
+pub fn yank(vim: &mut Vim, cx: &mut WindowContext) {
         vim.update_active_editor(cx, |vim, editor, cx| {
             let line_mode = editor.selections.line_mode;
             yank_selections_content(vim, editor, line_mode, cx);
@@ -396,7 +395,6 @@ pub fn yank(_: &mut Workspace, _: &VisualYank, cx: &mut ViewContext<Workspace>) 
             });
         });
         vim.switch_mode(Mode::Normal, true, cx);
-    });
 }
 
 pub(crate) fn visual_replace(text: Arc<str>, cx: &mut WindowContext) {
@@ -442,48 +440,34 @@ pub(crate) fn visual_replace(text: Arc<str>, cx: &mut WindowContext) {
     });
 }
 
-pub fn select_next(
-    _: &mut Workspace,
-    _: &SelectNext,
-    cx: &mut ViewContext<Workspace>,
-) -> Result<()> {
+pub fn select_next(_: &mut Workspace, _: &SelectNext, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         let count =
             vim.take_count(cx)
                 .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
         vim.update_active_editor(cx, |_, editor, cx| {
             for _ in 0..count {
-                match editor.select_next(&Default::default(), cx) {
-                    Err(a) => return Err(a),
-                    _ => {}
+                if editor.select_next(&Default::default(), cx).is_err() {
+                    break
                 }
             }
-            Ok(())
         })
-    })
-    .unwrap_or(Ok(()))
+    });
 }
 
-pub fn select_previous(
-    _: &mut Workspace,
-    _: &SelectPrevious,
-    cx: &mut ViewContext<Workspace>,
-) -> Result<()> {
+pub fn select_previous(_: &mut Workspace, _: &SelectPrevious, cx: &mut ViewContext<Workspace>) {
     Vim::update(cx, |vim, cx| {
         let count =
             vim.take_count(cx)
                 .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
         vim.update_active_editor(cx, |_, editor, cx| {
             for _ in 0..count {
-                match editor.select_previous(&Default::default(), cx) {
-                    Err(a) => return Err(a),
-                    _ => {}
+                if editor.select_previous(&Default::default(), cx).is_err() {
+                    break
                 }
             }
-            Ok(())
         })
-    })
-    .unwrap_or(Ok(()))
+    });
 }
 
 // Support for gn command
@@ -491,11 +475,13 @@ pub fn select_next_match(
     workspace: &mut Workspace,
     _: &SelectNextMatch,
     cx: &mut ViewContext<Workspace>,
-) -> Result<()> {
-    let mut operator: Option<Operator> = Default::default();
-    let update_result = Vim::update(cx, |vim, cx| {
+) {
+    // c: start recording
+    // gn: start recording
+    // cgn: don't start recording
+    // vim::PushOperator['c'], vim::SelectNextMatch, 'inserted text', vim::NormalBefor
+    Vim::update(cx, |vim, cx| {
         let count = vim.take_count(cx).unwrap_or(1);
-        operator = vim.maybe_pop_operator();
         let pane = workspace.active_pane().clone();
         let vim_is_normal = vim.state().mode == Mode::Normal;
         let mut current_start_selection = 0usize;
@@ -503,10 +489,12 @@ pub fn select_next_match(
         vim.update_active_editor(cx, |_, editor, _| {
             editor.set_collapse_matches(false);
         });
+
         if vim_is_normal {
             // if vim mode is normal we select the current or next match
             pane.update(cx, |pane, cx| {
-                if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+                if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
+                {
                     search_bar.update(cx, |search_bar, cx| {
                         // without update_match_index there is a bug when the cursor is before the first match
                         search_bar.update_match_index(cx);
@@ -522,11 +510,16 @@ pub fn select_next_match(
             current_start_selection = editor.selections.first::<usize>(cx).start.clone();
             current_end_selection = editor.selections.last::<usize>(cx).end.clone();
         });
+
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.update_match_index(cx);
-                    search_bar.select_match(Direction::Next, if vim_is_normal { count - 1 } else { count }, cx);
+                    search_bar.select_match(
+                        Direction::Next,
+                        if vim_is_normal { count - 1 } else { count },
+                        cx,
+                    );
                 });
             }
         });
@@ -541,10 +534,14 @@ pub fn select_next_match(
                 s.insert_range(start_selection..end_selection);
             });
             editor.set_collapse_matches(true);
-            Ok(())
-        })
-    }).unwrap_or(Ok(()));
-    update_result
+        });
+        match vim.maybe_pop_operator() {
+            Some(Operator::Change) => substitute(vim, Some(1), false, cx),
+            Some(Operator::Delete) => delete(vim, cx),
+            Some(Operator::Yank) => yank(vim, cx),
+            _ => {} // Ignoring other operators
+        };
+    });
 }
 
 #[cfg(test)]
@@ -1112,5 +1109,20 @@ mod test {
         assert_eq!(cx.mode(), Mode::VisualBlock);
         cx.simulate_keystrokes(["cmd-shift-p", "escape"]);
         assert_eq!(cx.mode(), Mode::VisualBlock);
+    }
+
+    #[gpui::test]
+    // cargo test -p vim test_g_n_repeat
+    async fn test_g_n_repeat(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // change
+        cx.set_state("aˇa aa aa aa aa", Mode::Normal);
+        cx.simulate_keystrokes(["/", "a", "a", "enter"]);
+        cx.assert_state("ˇaa aa aa aa aa", Mode::Normal);
+        cx.simulate_keystrokes(["c", "g", "n", "x", "escape"]);
+        cx.assert_state("ˇx aa aa aa aa", Mode::Normal);
+        cx.simulate_keystrokes(["."]);
+        cx.assert_state("x ˇx aa aa aa", Mode::Normal);
     }
 }
