@@ -404,6 +404,7 @@ impl Server {
             .add_request_handler(user_handler(create_dev_server))
             .add_request_handler(dev_server_handler(share_remote_project))
             .add_request_handler(dev_server_handler(shutdown_dev_server))
+            .add_request_handler(dev_server_handler(reconnect_dev_server))
             .add_message_handler(user_message_handler(leave_project))
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
@@ -2275,6 +2276,72 @@ async fn create_dev_server(
         access_token: auth::generate_dev_server_token(dev_server.id.0 as usize, access_token),
         name: request.name.clone(),
     })?;
+    Ok(())
+}
+
+async fn reconnect_dev_server(
+    request: proto::ReconnectDevServer,
+    response: Response<proto::ReconnectDevServer>,
+    session: DevServerSession,
+) -> Result<()> {
+    let reshared_projects = {
+        let db = session.db().await;
+        db.reshare_remote_projects(
+            &request.reshared_projects,
+            session.dev_server_id(),
+            session.0.connection_id,
+        )
+        .await?
+    };
+
+    for project in &reshared_projects {
+        for collaborator in &project.collaborators {
+            session
+                .peer
+                .send(
+                    collaborator.connection_id,
+                    proto::UpdateProjectCollaborator {
+                        project_id: project.id.to_proto(),
+                        old_peer_id: Some(project.old_connection_id.into()),
+                        new_peer_id: Some(session.connection_id.into()),
+                    },
+                )
+                .trace_err();
+        }
+
+        broadcast(
+            Some(session.connection_id),
+            project
+                .collaborators
+                .iter()
+                .map(|collaborator| collaborator.connection_id),
+            |connection_id| {
+                session.peer.forward_send(
+                    session.connection_id,
+                    connection_id,
+                    proto::UpdateProject {
+                        project_id: project.id.to_proto(),
+                        worktrees: project.worktrees.clone(),
+                    },
+                )
+            },
+        );
+    }
+
+    response.send(proto::ReconnectDevServerResponse {
+        reshared_projects: reshared_projects
+            .iter()
+            .map(|project| proto::ResharedProject {
+                id: project.id.to_proto(),
+                collaborators: project
+                    .collaborators
+                    .iter()
+                    .map(|collaborator| collaborator.to_proto())
+                    .collect(),
+            })
+            .collect(),
+    })?;
+
     Ok(())
 }
 

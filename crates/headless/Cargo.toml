@@ -25,6 +25,8 @@ language.workspace = true
 project.workspace = true
 fs.workspace = true
 futures.workspace = true
+settings.workspace = true
+postage.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

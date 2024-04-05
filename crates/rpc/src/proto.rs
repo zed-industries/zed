@@ -303,6 +303,8 @@ messages!(
     (CreateDevServerResponse, Foreground),
     (DevServerInstructions, Foreground),
     (ShutdownDevServer, Foreground),
+    (ReconnectDevServer, Foreground),
+    (ReconnectDevServerResponse, Foreground),
     (ShareRemoteProject, Foreground),
     (JoinRemoteProject, Foreground),
 );
@@ -401,6 +403,7 @@ request_messages!(
     (ShutdownDevServer, Ack),
     (ShareRemoteProject, ShareProjectResponse),
     (JoinRemoteProject, JoinProjectResponse),
+    (ReconnectDevServer, ReconnectDevServerResponse),
 );
 
 entity_messages!(

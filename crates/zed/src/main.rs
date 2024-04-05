@@ -10,9 +10,7 @@ use backtrace::Backtrace;
 use chrono::Utc;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{
-    parse_zed_link, telemetry::Telemetry, Client, ClientSettings, DevServerToken, UserStore,
-};
+use client::{parse_zed_link, telemetry::Telemetry, Client, DevServerToken, UserStore};
 use collab_ui::channel_view::ChannelView;
 use copilot::Copilot;
 use copilot_ui::CopilotCompletionProvider;
@@ -300,6 +298,10 @@ fn main() {
         let mut args = Args::parse();
         let mut triggered_authentication = false;
         if let Some(dev_server_token) = args.dev_server_token.take() {
+            let dev_server_token = DevServerToken(dev_server_token);
+            let client = client.clone();
+            client.set_dev_server_token(dev_server_token);
+
             headless::init(
                 client.clone(),
                 headless::AppState {
@@ -310,16 +312,6 @@ fn main() {
                 },
                 cx,
             );
-            let dev_server_token = DevServerToken(dev_server_token);
-            let server_url = ClientSettings::get_global(&cx).server_url.clone();
-            let client = client.clone();
-            client.set_dev_server_token(dev_server_token);
-            cx.spawn(|cx| async move {
-                client.authenticate_and_connect(false, &cx).await?;
-                log::info!("Connected to {}", server_url);
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
         } else {
             let urls: Vec<_> = args
                 .paths_or_urls
@@ -360,11 +352,11 @@ fn main() {
                 }
             })
             .detach();
-        }
 
-        if !triggered_authentication {
-            cx.spawn(|cx| async move { authenticate(client, &cx).await })
-                .detach_and_log_err(cx);
+            if !triggered_authentication {
+                cx.spawn(|cx| async move { authenticate(client, &cx).await })
+                    .detach_and_log_err(cx);
+            }
         }
     });
 }

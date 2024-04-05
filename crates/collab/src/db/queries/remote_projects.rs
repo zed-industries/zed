@@ -1,12 +1,15 @@
 use anyhow::anyhow;
 use rpc::{proto, ConnectionId};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, ModelTrait,
+    QueryFilter,
 };
 
+use crate::db::ProjectId;
+
 use super::{
-    channel, project, remote_project, worktree, ChannelId, Database, DevServerId, RemoteProjectId,
-    ServerId, UserId,
+    channel, project, project_collaborator, remote_project, worktree, ChannelId, Database,
+    DevServerId, RemoteProjectId, ResharedProject, ServerId, UserId,
 };
 
 impl Database {
@@ -147,6 +150,70 @@ impl Database {
             }
 
             Ok(remote_project.to_proto(Some(project)))
+        })
+        .await
+    }
+
+    pub async fn reshare_remote_projects(
+        &self,
+        reshared_projects: &Vec<proto::UpdateProject>,
+        dev_server_id: DevServerId,
+        connection: ConnectionId,
+    ) -> crate::Result<Vec<ResharedProject>> {
+        // todo!() project_transaction? (maybe we can make the lock per-dev-server instead of per-project?)
+        self.transaction(|tx| async move {
+            let mut ret = Vec::new();
+            for reshared_project in reshared_projects {
+                let project_id = ProjectId::from_proto(reshared_project.project_id);
+                let (project, remote_project) = project::Entity::find_by_id(project_id)
+                    .find_also_related(remote_project::Entity)
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("project does not exist"))?;
+
+                if remote_project.map(|rp| rp.dev_server_id) != Some(dev_server_id) {
+                    return Err(anyhow!("remote project reshared from wrong server"))?;
+                }
+
+                let Ok(old_connection_id) = project.host_connection() else {
+                    return Err(anyhow!("remote project was not shared"))?;
+                };
+
+                project::Entity::update(project::ActiveModel {
+                    id: ActiveValue::set(project_id),
+                    host_connection_id: ActiveValue::set(Some(connection.id as i32)),
+                    host_connection_server_id: ActiveValue::set(Some(ServerId(
+                        connection.owner_id as i32,
+                    ))),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+
+                let collaborators = project
+                    .find_related(project_collaborator::Entity)
+                    .all(&*tx)
+                    .await?;
+
+                self.update_project_worktrees(project_id, &reshared_project.worktrees, &tx)
+                    .await?;
+
+                ret.push(super::ResharedProject {
+                    id: project_id,
+                    old_connection_id,
+                    collaborators: collaborators
+                        .iter()
+                        .map(|collaborator| super::ProjectCollaborator {
+                            connection_id: collaborator.connection(),
+                            user_id: collaborator.user_id,
+                            replica_id: collaborator.replica_id,
+                            is_host: collaborator.is_host,
+                        })
+                        .collect(),
+                    worktrees: reshared_project.worktrees.clone(),
+                });
+            }
+            Ok(ret)
         })
         .await
     }

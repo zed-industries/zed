@@ -4633,8 +4633,10 @@ dependencies = [
  "language",
  "log",
  "node_runtime",
+ "postage",
  "project",
  "rpc",
+ "settings",
  "util",
 ]
 
