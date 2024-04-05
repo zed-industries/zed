@@ -34,7 +34,7 @@ use task::{
     oneshot_source::OneshotSource,
     static_source::{StaticSource, TrackedFile},
 };
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeSettings};
 
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{

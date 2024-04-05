@@ -3,6 +3,8 @@ use gpui::{
     AnyView, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled, View, ViewContext,
     WindowContext,
 };
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
 
@@ -94,6 +96,12 @@ impl Toolbar {
 
 impl Render for Toolbar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let theme = ThemeSettings::get_global(cx).clone();
+
+        if theme.hide_toolbar {
+            return div();
+        }
+
         if !self.has_any_visible_items() {
             return div();
         }

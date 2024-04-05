@@ -29,7 +29,7 @@ use std::{
         Arc,
     },
 };
-use theme::ThemeSettings;
+use theme::{TabBarPlacement, ThemeSettings};
 
 use ui::{
     prelude::*, right_click_menu, ButtonSize, Color, IconButton, IconButtonShape, IconName,
@@ -250,6 +250,7 @@ impl Pane {
         double_click_dispatch_action: Box<dyn Action>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let theme = ThemeSettings::get_global(&cx).clone();
         let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
@@ -1827,7 +1828,13 @@ impl Render for Pane {
                 }),
             )
             .when(self.active_item().is_some(), |pane| {
-                pane.child(self.render_tab_bar(cx))
+                let theme = ThemeSettings::get_global(cx).clone();
+
+                if theme.tab_bar_placement == TabBarPlacement::Top {
+                    pane.child(self.render_tab_bar(cx))
+                } else {
+                    pane
+                }
             })
             .child({
                 let has_worktrees = self.project.read(cx).worktrees().next().is_some();
