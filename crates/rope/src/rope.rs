@@ -12,7 +12,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
-use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
+use unicode_segmentation::GraphemeCursor;
 use util::debug_panic;
 
 pub use offset_utf16::OffsetUtf16;
