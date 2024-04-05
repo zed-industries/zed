@@ -10,14 +10,14 @@ use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use itertools::Itertools;
 use language::Language;
-use task::{static_source::tasks_for, Task, TaskContext, TaskId, TaskSource};
+use task::{static_source::tasks_for, Task, TaskContext, TaskSource};
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
     sources: Vec<SourceInInventory>,
-    last_scheduled_tasks: VecDeque<(TaskId, TaskContext)>,
+    last_scheduled_tasks: VecDeque<(Arc<dyn Task>, TaskContext)>,
 }
 
 struct SourceInInventory {
@@ -155,9 +155,9 @@ impl Inventory {
         let tasks_by_usage = if lru {
             self.last_scheduled_tasks.iter().rev().fold(
                 HashMap::default(),
-                |mut tasks, (id, context)| {
+                |mut tasks, (task, context)| {
                     tasks
-                        .entry(id)
+                        .entry(task.id().clone())
                         .or_insert_with(|| (post_inc(&mut lru_score), Some(context)));
                     tasks
                 },
@@ -225,20 +225,13 @@ impl Inventory {
     }
 
     /// Returns the last scheduled task, if any of the sources contains one with the matching id.
-    pub fn last_scheduled_task(&self, cx: &mut AppContext) -> Option<(Arc<dyn Task>, TaskContext)> {
-        self.last_scheduled_tasks
-            .back()
-            .and_then(|(id, task_context)| {
-                self.list_tasks(None, None, false, cx)
-                    .into_iter()
-                    .find(|(_, task)| task.id() == id)
-                    .map(|(_, task)| (task, task_context.clone()))
-            })
+    pub fn last_scheduled_task(&self) -> Option<(Arc<dyn Task>, TaskContext)> {
+        self.last_scheduled_tasks.back().cloned()
     }
 
     /// Registers task "usage" as being scheduled – to be used for LRU sorting when listing all tasks.
-    pub fn task_scheduled(&mut self, id: TaskId, task_context: TaskContext) {
-        self.last_scheduled_tasks.push_back((id, task_context));
+    pub fn task_scheduled(&mut self, task: Arc<dyn Task>, task_context: TaskContext) {
+        self.last_scheduled_tasks.push_back((task, task_context));
         if self.last_scheduled_tasks.len() > 5_000 {
             self.last_scheduled_tasks.pop_front();
         }
@@ -348,7 +341,7 @@ pub mod test_inventory {
                 .into_iter()
                 .find(|(_, task)| task.name() == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
-            inventory.task_scheduled(task.1.id().clone(), TaskContext::default());
+            inventory.task_scheduled(task.1, TaskContext::default());
         });
     }
 

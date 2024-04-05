@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
@@ -19,9 +19,7 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(move |workspace, action: &modal::Rerun, cx| {
                     if let Some((task, old_context)) =
                         workspace.project().update(cx, |project, cx| {
-                            project
-                                .task_inventory()
-                                .update(cx, |inventory, cx| inventory.last_scheduled_task(cx))
+                            project.task_inventory().read(cx).last_scheduled_task()
                         })
                     {
                         let task_context = if action.reevaluate_context {
@@ -30,7 +28,7 @@ pub fn init(cx: &mut AppContext) {
                         } else {
                             old_context
                         };
-                        schedule_task(workspace, task.as_ref(), task_context, false, cx)
+                        schedule_task(workspace, &task, task_context, false, cx)
                     };
                 });
         },
@@ -69,7 +67,7 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
                 let (_, target_task) = tasks.into_iter().find(|(_, task)| task.name() == name)?;
                 let cwd = task_cwd(this, cx).log_err().flatten();
                 let task_context = task_context(this, cwd, cx);
-                schedule_task(this, target_task.as_ref(), task_context, false, cx);
+                schedule_task(this, &target_task, task_context, false, cx);
                 Some(())
             })
             .ok()
@@ -189,7 +187,7 @@ fn task_context(
 
 fn schedule_task(
     workspace: &Workspace,
-    task: &dyn Task,
+    task: &Arc<dyn Task>,
     task_cx: TaskContext,
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
@@ -199,7 +197,7 @@ fn schedule_task(
         if !omit_history {
             workspace.project().update(cx, |project, cx| {
                 project.task_inventory().update(cx, |inventory, _| {
-                    inventory.task_scheduled(task.id().clone(), task_cx);
+                    inventory.task_scheduled(Arc::clone(task), task_cx);
                 })
             });
         }

@@ -276,7 +276,7 @@ impl PickerDelegate for TasksModalDelegate {
             .update(cx, |workspace, cx| {
                 schedule_task(
                     workspace,
-                    task.as_ref(),
+                    &task,
                     self.task_context.clone(),
                     omit_history_entry,
                     cx,
@@ -374,7 +374,7 @@ impl PickerDelegate for TasksModalDelegate {
             .update(cx, |workspace, cx| {
                 schedule_task(
                     workspace,
-                    task.as_ref(),
+                    &task,
                     self.task_context.clone(),
                     omit_history_entry,
                     cx,
