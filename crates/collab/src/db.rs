@@ -695,6 +695,30 @@ pub struct RejoinedProject {
     pub language_servers: Vec<proto::LanguageServer>,
 }
 
+impl RejoinedProject {
+    pub fn to_proto(&self) -> proto::RejoinedProject {
+        proto::RejoinedProject {
+            id: self.id.to_proto(),
+            worktrees: self
+                .worktrees
+                .iter()
+                .map(|worktree| proto::WorktreeMetadata {
+                    id: worktree.id,
+                    root_name: worktree.root_name.clone(),
+                    visible: worktree.visible,
+                    abs_path: worktree.abs_path.clone(),
+                })
+                .collect(),
+            collaborators: self
+                .collaborators
+                .iter()
+                .map(|collaborator| collaborator.to_proto())
+                .collect(),
+            language_servers: self.language_servers.clone(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RejoinedWorktree {
     pub id: u64,

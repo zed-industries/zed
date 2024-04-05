@@ -229,7 +229,7 @@ impl DevServer {
                 continue;
             }
 
-            this.update(&mut cx, |this, cx| this.rejoin(cx))?.await;
+            this.update(&mut cx, |this, cx| this.rejoin(cx))?.await?;
         }
     }
 
@@ -239,7 +239,7 @@ impl DevServer {
             reshared_projects: self
                 .projects
                 .iter()
-                .flat_map(|(id, handle)| {
+                .flat_map(|(_, handle)| {
                     let project = handle.read(cx);
                     let project_id = project.remote_id()?;
                     projects.insert(project_id, handle.clone());

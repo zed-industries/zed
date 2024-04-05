@@ -1,3 +1,4 @@
+pub mod connection_manager;
 pub mod debounced_delay;
 pub mod lsp_command;
 pub mod lsp_ext_command;
@@ -552,6 +553,7 @@ impl Project {
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+        connection_manager::init(client.clone(), cx);
         Self::init_settings(cx);
 
         client.add_model_message_handler(Self::handle_add_collaborator);
@@ -682,6 +684,24 @@ impl Project {
     }
 
     pub async fn remote(
+        remote_id: u64,
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
+        let project =
+            Self::in_room(remote_id, client, user_store, languages, fs, cx.clone()).await?;
+        cx.update(|cx| {
+            connection_manager::Manager::global(cx).update(cx, |manager, cx| {
+                manager.maintain_project_connection(&project, cx)
+            })
+        })?;
+        Ok(project)
+    }
+
+    pub async fn in_room(
         remote_id: u64,
         client: Arc<Client>,
         user_store: Model<UserStore>,
@@ -7662,6 +7682,7 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
+        dbg!(&envelope.payload);
         let old_peer_id = envelope
             .payload
             .old_peer_id

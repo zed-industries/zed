@@ -9,7 +9,7 @@ use crate::db::ProjectId;
 
 use super::{
     channel, project, project_collaborator, remote_project, worktree, ChannelId, Database,
-    DevServerId, RemoteProjectId, ResharedProject, ServerId, UserId,
+    DevServerId, RejoinedProject, RemoteProjectId, ResharedProject, ServerId, UserId,
 };
 
 impl Database {
@@ -212,6 +212,28 @@ impl Database {
                         .collect(),
                     worktrees: reshared_project.worktrees.clone(),
                 });
+            }
+            Ok(ret)
+        })
+        .await
+    }
+
+    pub async fn rejoin_remote_projects(
+        &self,
+        rejoined_projects: &Vec<proto::RejoinProject>,
+        user_id: UserId,
+        connection_id: ConnectionId,
+    ) -> crate::Result<Vec<RejoinedProject>> {
+        // todo!() project_transaction? (maybe we can make the lock per-dev-server instead of per-project?)
+        self.transaction(|tx| async move {
+            let mut ret = Vec::new();
+            for rejoined_project in rejoined_projects {
+                if let Some(project) = self
+                    .rejoin_project_internal(&tx, rejoined_project, user_id, connection_id)
+                    .await?
+                {
+                    ret.push(project);
+                }
             }
             Ok(ret)
         })

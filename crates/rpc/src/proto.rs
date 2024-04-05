@@ -307,6 +307,8 @@ messages!(
     (ReconnectDevServerResponse, Foreground),
     (ShareRemoteProject, Foreground),
     (JoinRemoteProject, Foreground),
+    (RejoinRemoteProjects, Foreground),
+    (RejoinRemoteProjectsResponse, Foreground),
 );
 
 request_messages!(
@@ -403,6 +405,7 @@ request_messages!(
     (ShutdownDevServer, Ack),
     (ShareRemoteProject, ShareProjectResponse),
     (JoinRemoteProject, JoinProjectResponse),
+    (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
     (ReconnectDevServer, ReconnectDevServerResponse),
 );
 
