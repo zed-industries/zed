@@ -922,14 +922,11 @@ impl Chunk {
     }
 
     fn clip_point(&self, target: Point, bias: Bias) -> Point {
-        println!("");
-        println!("Clipping: {:?}", self.0.split('\n').collect::<Vec<_>>());
         for (row, line) in self.0.split('\n').enumerate() {
             if row == target.row as usize {
                 let mut column = target.column.min(line.len() as u32) as usize;
                 let mut grapheme_cursor = GraphemeCursor::new(column, line.len(), true);
                 while !grapheme_cursor.is_boundary(line, 0).unwrap_or(false) {
-                    println!("row: {}, Cursor: {:#?}", row, grapheme_cursor);
                     match bias {
                         Bias::Left => {
                             column = grapheme_cursor
