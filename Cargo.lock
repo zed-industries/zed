@@ -5681,6 +5681,7 @@ dependencies = [
  "gpui",
  "language",
  "linkify",
+ "log",
  "pretty_assertions",
  "pulldown-cmark",
  "theme",
