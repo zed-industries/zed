@@ -59,15 +59,20 @@ impl Embedding {
 
 impl fmt::Display for Embedding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Start the Embedding display format
-        write!(f, "Embedding({} [", self.len())?;
+        let digits_to_display = 3;
 
-        for (index, value) in self.0.iter().enumerate().take(3) {
+        // Start the Embedding display format
+        write!(f, "Embedding(sized: {}; values: [", self.len())?;
+
+        for (index, value) in self.0.iter().enumerate().take(digits_to_display) {
             // Lead with comma if not the first element
             if index != 0 {
                 write!(f, ", ")?;
             }
             write!(f, "{:.3}", value)?;
+        }
+        if self.len() > digits_to_display {
+            write!(f, "...")?;
         }
         write!(f, "])")
     }
@@ -92,8 +97,8 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
         let embeddings = texts
             .iter()
             .map(|text| {
-                let mut embedding = vec![0f32; 2];
-                for i in 0..2 {
+                let mut embedding = vec![0f32; 4];
+                for i in 0..embedding.len() {
                     embedding[i] = i as f32;
                 }
                 Embedding::new(embedding)
