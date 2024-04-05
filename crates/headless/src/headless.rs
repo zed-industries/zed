@@ -77,8 +77,6 @@ impl DevServer {
             (added_projects, removed_projects)
         })?;
 
-        dbg!(&added_projects);
-        dbg!(&removed_projects_ids);
 
         for remote_project in added_projects {
             DevServer::share_project(this.clone(), &remote_project, &mut cx).await?;

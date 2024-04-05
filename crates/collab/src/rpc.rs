@@ -753,9 +753,11 @@ impl Server {
                     let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
                     let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
                     let queue_duration_ms = total_duration_ms - processing_duration_ms;
+                    let payload_type = M::NAME;
                     match result {
                         Err(error) => {
-                            tracing::error!(%error, total_duration_ms, processing_duration_ms, queue_duration_ms, "error handling message")
+                            // todo!(), why isn't this logged inside the span?
+                            tracing::error!(%error, total_duration_ms, processing_duration_ms, queue_duration_ms, payload_type, "error handling message")
                         }
                         Ok(()) => tracing::info!(total_duration_ms, processing_duration_ms, queue_duration_ms, "finished handling message"),
                     }
@@ -2492,8 +2494,6 @@ async fn update_buffer(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let mut guest_connection_ids;
-    let mut host_connection_id = None;
     let mut capability = Capability::ReadOnly;
 
     for op in request.operations.iter() {
@@ -2503,41 +2503,38 @@ async fn update_buffer(
         }
     }
 
-    {
-        let collaborators = session
-            .db()
-            .await
-            .project_collaborators_for_buffer_update(
-                project_id,
-                session.principal_id(),
-                session.connection_id,
-                capability,
-            )
-            .await?;
-        guest_connection_ids = Vec::with_capacity(collaborators.len() - 1);
-        for collaborator in collaborators.iter() {
-            if collaborator.is_host {
-                host_connection_id = Some(collaborator.connection_id);
-            } else {
-                guest_connection_ids.push(collaborator.connection_id);
-            }
-        }
-    }
-    let host_connection_id = host_connection_id.ok_or_else(|| anyhow!("host not found"))?;
-
-    broadcast(
-        Some(session.connection_id),
-        guest_connection_ids,
-        |connection_id| {
+    let host = {
+        let guard =
             session
-                .peer
-                .forward_send(session.connection_id, connection_id, request.clone())
-        },
-    );
-    if host_connection_id != session.connection_id {
+                .db()
+                .await
+                .connections_for_buffer_update(
+                    project_id,
+                    session.principal_id(),
+                    session.connection_id,
+                    capability,
+                )
+                .await?;
+
+        let (host, guests) = &*guard;
+
+        broadcast(
+            Some(session.connection_id),
+            guests.clone(),
+            |connection_id| {
+                session
+                    .peer
+                    .forward_send(session.connection_id, connection_id, request.clone())
+            },
+        );
+
+        *host
+    };
+
+    if host != session.connection_id {
         session
             .peer
-            .forward_request(session.connection_id, host_connection_id, request.clone())
+            .forward_request(session.connection_id, host, request.clone())
             .await?;
     }
 

@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use super::*;
 
 impl Database {
@@ -884,15 +886,14 @@ impl Database {
         connection_id: ConnectionId,
     ) -> Result<()> {
         self.project_transaction(project_id, |tx| async move {
-            project_collaborator::Entity::find()
+            project::Entity::find()
                 .filter(
                     Condition::all()
-                        .add(project_collaborator::Column::ProjectId.eq(project_id))
-                        .add(project_collaborator::Column::IsHost.eq(true))
-                        .add(project_collaborator::Column::ConnectionId.eq(connection_id.id))
+                        .add(project::Column::Id.eq(project_id))
+                        .add(project::Column::HostConnectionId.eq(Some(connection_id.id as i32)))
                         .add(
-                            project_collaborator::Column::ConnectionServerId
-                                .eq(connection_id.owner_id),
+                            project::Column::HostConnectionServerId
+                                .eq(Some(connection_id.owner_id as i32)),
                         ),
                 )
                 .one(&*tx)
@@ -1017,39 +1018,34 @@ impl Database {
         .map(|guard| guard.into_inner())
     }
 
-    pub async fn project_collaborators_for_buffer_update(
+    pub async fn connections_for_buffer_update(
         &self,
         project_id: ProjectId,
         principal_id: PrincipalId,
         connection_id: ConnectionId,
         capability: Capability,
-    ) -> Result<TransactionGuard<Vec<ProjectCollaborator>>> {
+    ) -> Result<TransactionGuard<(ConnectionId, Vec<ConnectionId>)>> {
         self.project_transaction(project_id, |tx| async move {
             // Authorize
-            self.access_project(project_id, connection_id, principal_id, capability, &*tx)
+            let (project, _) = self.access_project(project_id, connection_id, principal_id, capability, &*tx)
                 .await?;
+
+            let host_connection_id = project.host_connection()?;
 
             let collaborators = project_collaborator::Entity::find()
                 .filter(project_collaborator::Column::ProjectId.eq(project_id))
                 .all(&*tx)
-                .await?
-                .into_iter()
-                .map(|collaborator| ProjectCollaborator {
-                    connection_id: collaborator.connection(),
-                    user_id: collaborator.user_id,
-                    replica_id: collaborator.replica_id,
-                    is_host: collaborator.is_host,
-                })
-                .collect::<Vec<_>>();
+                .await?;
 
-            if collaborators
-                .iter()
-                .any(|collaborator| collaborator.connection_id == connection_id)
-            {
-                Ok(collaborators)
-            } else {
-                Err(anyhow!("no such project"))?
-            }
+            let guest_connection_ids = collaborators.into_iter().filter_map(|collaborator| {
+                if collaborator.is_host {
+                    None
+                } else {
+                    Some(collaborator.connection())
+                }
+            }).collect();
+
+            Ok((host_connection_id, guest_connection_ids))
         })
         .await
     }
