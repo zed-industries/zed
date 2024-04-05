@@ -420,7 +420,7 @@ impl DirectWriteState {
             let mut metrics = std::mem::zeroed();
             font_info.font_face.GetMetrics2(&mut metrics);
 
-            let res = FontMetrics {
+            FontMetrics {
                 units_per_em: metrics.Base.designUnitsPerEm as _,
                 ascent: metrics.Base.ascent as _,
                 descent: -(metrics.Base.descent as f32),
@@ -439,9 +439,7 @@ impl DirectWriteState {
                         height: (metrics.glyphBoxTop - metrics.glyphBoxBottom) as _,
                     },
                 },
-            };
-
-            res
+            }
         }
     }
 
@@ -475,7 +473,6 @@ impl DirectWriteState {
             &glyph_run as _,
             1.0,
             Some(&transform as _),
-            // None,
             DWRITE_RENDERING_MODE_NATURAL,
             DWRITE_MEASURING_MODE_NATURAL,
             0.0,
