@@ -31,6 +31,8 @@ pub struct ThemeSettings {
     pub theme_selection: Option<ThemeSelection>,
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeStyleContent>,
+    pub hide_toolbar: bool,
+    pub tab_bar_placement: TabBarPlacement,
 }
 
 impl ThemeSettings {
@@ -182,12 +184,26 @@ pub struct ThemeSettingsContent {
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
+    /// The placement of the tab bar.
+    #[serde(default)]
+    pub tab_bar_placement: Option<TabBarPlacement>,
+    /// Whether to hide the toolbar.
+    #[serde(default)]
+    pub hide_toolbar: Option<bool>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
     pub theme_overrides: Option<ThemeStyleContent>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TabBarPlacement {
+    #[default]
+    Top,
+    None,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
@@ -346,6 +362,8 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
+            hide_toolbar: defaults.hide_toolbar.unwrap(),
+            tab_bar_placement: defaults.tab_bar_placement.unwrap(),
         };
 
         for value in user_values.iter().copied().cloned() {
@@ -361,6 +379,14 @@ impl settings::Settings for ThemeSettings {
             }
             if let Some(value) = value.ui_font_features {
                 this.ui_font.features = value;
+            }
+
+            if let Some(value) = value.hide_toolbar {
+                this.hide_toolbar = value;
+            }
+
+            if let Some(value) = value.tab_bar_placement {
+                this.tab_bar_placement = value;
             }
 
             if let Some(value) = &value.theme {
