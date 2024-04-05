@@ -5,8 +5,8 @@ use editor::scroll::{Autoscroll, AutoscrollStrategy};
 use editor::{Editor, EditorEvent};
 use gpui::{
     list, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, ListState, MouseDownEvent, ParentElement, Render, Styled,
-    Subscription, View, ViewContext, WeakView,
+    InteractiveElement, IntoElement, ListState, ParentElement, Render, Styled, Subscription, View,
+    ViewContext, WeakView,
 };
 use language::LanguageRegistry;
 use ui::prelude::*;
@@ -50,30 +50,34 @@ impl MarkdownPreviewView {
     pub fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, cx| {
             if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                let view = Self::create_markdown_view(workspace, editor, cx);
-                workspace.active_pane().update(cx, |pane, cx| {
-                    pane.add_item(Box::new(view.clone()), true, true, None, cx)
-                });
-                cx.notify();
+                if Self::is_markdown_file(&editor, cx) {
+                    let view = Self::create_markdown_view(workspace, editor, cx);
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(view.clone()), true, true, None, cx)
+                    });
+                    cx.notify();
+                }
             }
         });
 
         workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, cx| {
             if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                let view = Self::create_markdown_view(workspace, editor, cx);
-                let pane = workspace
-                    .find_pane_in_direction(workspace::SplitDirection::Right, cx)
-                    .unwrap_or_else(|| {
-                        workspace.split_pane(
-                            workspace.active_pane().clone(),
-                            workspace::SplitDirection::Right,
-                            cx,
-                        )
+                if Self::is_markdown_file(&editor, cx) {
+                    let view = Self::create_markdown_view(workspace, editor, cx);
+                    let pane = workspace
+                        .find_pane_in_direction(workspace::SplitDirection::Right, cx)
+                        .unwrap_or_else(|| {
+                            workspace.split_pane(
+                                workspace.active_pane().clone(),
+                                workspace::SplitDirection::Right,
+                                cx,
+                            )
+                        });
+                    pane.update(cx, |pane, cx| {
+                        pane.add_item(Box::new(view.clone()), false, false, None, cx)
                     });
-                pane.update(cx, |pane, cx| {
-                    pane.add_item(Box::new(view.clone()), false, false, None, cx)
-                });
-                cx.notify();
+                    cx.notify();
+                }
             }
         });
     }
@@ -196,21 +200,19 @@ impl MarkdownPreviewView {
         if let Some(item) = active_item {
             if item.item_id() != cx.entity_id() {
                 if let Some(editor) = item.act_as::<Editor>(cx) {
-                    let language = editor
-                        .read(cx)
-                        .buffer()
-                        .read(cx)
-                        .language_at(0, cx)
-                        .map(|l| l.name());
-
-                    if let Some(language) = language {
-                        if language.as_ref() == "Markdown" {
-                            self.set_editor(editor, cx);
-                        }
+                    if Self::is_markdown_file(&editor, cx) {
+                        self.set_editor(editor, cx);
                     }
                 }
             }
         }
+    }
+
+    fn is_markdown_file<V>(editor: &View<Editor>, cx: &mut ViewContext<V>) -> bool {
+        let language = editor.read(cx).buffer().read(cx).language_at(0, cx);
+        language
+            .map(|l| l.name().as_ref() == "Markdown")
+            .unwrap_or(false)
     }
 
     fn set_editor(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
