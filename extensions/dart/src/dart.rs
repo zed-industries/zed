@@ -17,7 +17,7 @@ impl zed::Extension for DartExtension {
     ) -> Result<zed::Command> {
         let path = worktree
             .which("dart")
-            .ok_or_else(|| "dart must me installed from dart.dev/get-dart".to_string())?;
+            .ok_or_else(|| "dart must be installed from dart.dev/get-dart".to_string())?;
 
         Ok(zed::Command {
             command: path,
