@@ -79,6 +79,13 @@ world extension {
     /// Returns operating system and architecture for the current platform.
     import current-platform: func() -> tuple<os, architecture>;
 
+    record settings-location {
+        worktree-id: u64,
+        path: string,
+    }
+
+    import get-settings: func(path: option<settings-location>, category: string, key: option<string>) -> result<string, string>;
+
     /// Returns the path to the Node binary used by Zed.
     import node-binary-path: func() -> result<string, string>;
 
@@ -121,6 +128,10 @@ world extension {
 
     /// A Zed worktree.
     resource worktree {
+        /// Returns the ID of the worktree.
+        id: func() -> u64;
+        /// Returns the root path of the worktree.
+        root-path: func() -> string;
         /// Returns the textual contents of the specified file in the worktree.
         read-text-file: func(path: string) -> result<string, string>;
         /// Returns the path to the given binary name, if one is present on the `$PATH`.
@@ -136,6 +147,9 @@ world extension {
     ///
     /// The initialization options are represented as a JSON string.
     export language-server-initialization-options: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
+
+    /// Returns the workspace configuration options to pass to the language server.
+    export language-server-workspace-configuration: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 
     record code-label {
         /// The source code to parse with Tree-sitter.

@@ -237,6 +237,7 @@ impl ExtensionStore {
                 node_runtime,
                 language_registry.clone(),
                 work_dir,
+                cx,
             ),
             wasm_extensions: Vec::new(),
             fs,

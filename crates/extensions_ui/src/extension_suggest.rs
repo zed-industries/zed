@@ -22,6 +22,7 @@ fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
             ("clojure", "cljs"),
             ("clojure", "edn"),
             ("csharp", "cs"),
+            ("dart", "dart"),
             ("dockerfile", "Dockerfile"),
             ("elisp", "el"),
             ("erlang", "erl"),

@@ -12,6 +12,7 @@ use language::{
 };
 use lsp::LanguageServerBinary;
 use serde::Serialize;
+use serde_json::Value;
 use std::ops::Range;
 use std::{
     any::Any,
@@ -178,6 +179,42 @@ impl LspAdapter for ExtensionLspAdapter {
             })?
         } else {
             None
+        })
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        let delegate = delegate.clone();
+        let json_options: Option<String> = self
+            .extension
+            .call({
+                let this = self.clone();
+                |extension, store| {
+                    async move {
+                        let resource = store.data_mut().table().push(delegate)?;
+                        let options = extension
+                            .call_language_server_workspace_configuration(
+                                store,
+                                &this.language_server_id,
+                                resource,
+                            )
+                            .await?
+                            .map_err(|e| anyhow!("{}", e))?;
+                        anyhow::Ok(options)
+                    }
+                    .boxed()
+                }
+            })
+            .await?;
+        Ok(if let Some(json_options) = json_options {
+            serde_json::from_str(&json_options).with_context(|| {
+                format!("failed to parse initialization_options from extension: {json_options}")
+            })?
+        } else {
+            serde_json::json!({})
         })
     }
 

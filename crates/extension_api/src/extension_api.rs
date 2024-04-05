@@ -1,8 +1,12 @@
 //! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
 
+pub mod settings;
+
 use core::fmt;
 
 use wit::*;
+
+pub use serde_json;
 
 // WIT re-exports.
 //
@@ -62,7 +66,16 @@ pub trait Extension: Send + Sync {
         &mut self,
         _language_server_id: &LanguageServerId,
         _worktree: &Worktree,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
+    /// Returns the workspace configuration options to pass to the language server.
+    fn language_server_workspace_configuration(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Result<Option<serde_json::Value>> {
         Ok(None)
     }
 
@@ -142,7 +155,19 @@ impl wit::Guest for Component {
         worktree: &Worktree,
     ) -> Result<Option<String>, String> {
         let language_server_id = LanguageServerId(language_server_id);
-        extension().language_server_initialization_options(&language_server_id, worktree)
+        Ok(extension()
+            .language_server_initialization_options(&language_server_id, worktree)?
+            .and_then(|value| serde_json::to_string(&value).ok()))
+    }
+
+    fn language_server_workspace_configuration(
+        language_server_id: String,
+        worktree: &Worktree,
+    ) -> Result<Option<String>, String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        Ok(extension()
+            .language_server_workspace_configuration(&language_server_id, worktree)?
+            .and_then(|value| serde_json::to_string(&value).ok()))
     }
 
     fn labels_for_completions(

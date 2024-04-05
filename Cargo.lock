@@ -5338,7 +5338,6 @@ dependencies = [
  "tree-sitter-c",
  "tree-sitter-cpp",
  "tree-sitter-css",
- "tree-sitter-dart",
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
@@ -10218,15 +10217,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-dart"
-version = "0.0.1"
-source = "git+https://github.com/agent3bood/tree-sitter-dart?rev=48934e3bf757a9b78f17bdfaa3e2b4284656fdc7#48934e3bf757a9b78f17bdfaa3e2b4284656fdc7"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-elixir"
 version = "0.1.0"
 source = "git+https://github.com/elixir-lang/tree-sitter-elixir?rev=a2861e88a730287a60c11ea9299c033c7d076e30#a2861e88a730287a60c11ea9299c033c7d076e30"
@@ -12491,6 +12481,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_dart"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.6",
+]
+
+[[package]]
 name = "zed_emmet"
 version = "0.0.1"
 dependencies = [
@@ -12526,6 +12523,8 @@ dependencies = [
 name = "zed_extension_api"
 version = "0.0.6"
 dependencies = [
+ "serde",
+ "serde_json",
  "wit-bindgen",
 ]
 
@@ -12575,7 +12574,7 @@ dependencies = [
 name = "zed_svelte"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.0.4",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]

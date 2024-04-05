@@ -148,6 +148,25 @@ impl Extension {
         }
     }
 
+    pub async fn call_language_server_workspace_configuration(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+    ) -> Result<Result<Option<String>, String>> {
+        match self {
+            Extension::V006(ext) => {
+                ext.call_language_server_workspace_configuration(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
+            Extension::V004(_) | Extension::V001(_) => Ok(Ok(None)),
+        }
+    }
+
     pub async fn call_labels_for_completions(
         &self,
         store: &mut Store<WasmState>,

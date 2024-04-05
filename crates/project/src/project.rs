@@ -2857,21 +2857,29 @@ impl Project {
 
         cx.spawn(move |this, mut cx| async move {
             while let Some(()) = settings_changed_rx.next().await {
-                let servers: Vec<_> = this.update(&mut cx, |this, _| {
-                    this.language_servers
-                        .values()
-                        .filter_map(|state| match state {
-                            LanguageServerState::Starting(_) => None,
-                            LanguageServerState::Running {
-                                adapter, server, ..
-                            } => Some((adapter.clone(), server.clone())),
+                let servers = this.update(&mut cx, |this, cx| {
+                    this.language_server_ids
+                        .iter()
+                        .filter_map(|((worktree_id, _), server_id)| {
+                            let worktree = this.worktree_for_id(*worktree_id, cx)?;
+                            let state = this.language_servers.get(server_id)?;
+                            let delegate = ProjectLspAdapterDelegate::new(this, &worktree, cx);
+                            match state {
+                                LanguageServerState::Starting(_) => None,
+                                LanguageServerState::Running {
+                                    adapter, server, ..
+                                } => Some((
+                                    adapter.adapter.clone(),
+                                    server.clone(),
+                                    delegate as Arc<dyn LspAdapterDelegate>,
+                                )),
+                            }
                         })
-                        .collect()
+                        .collect::<Vec<_>>()
                 })?;
 
-                for (adapter, server) in servers {
-                    let settings =
-                        cx.update(|cx| adapter.workspace_configuration(server.root_path(), cx))?;
+                for (adapter, server, delegate) in servers {
+                    let settings = adapter.workspace_configuration(&delegate, &mut cx).await?;
 
                     server
                         .notify::<lsp::notification::DidChangeConfiguration>(
@@ -2985,12 +2993,13 @@ impl Project {
         }
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
+        let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
             Arc::clone(&worktree_path),
-            ProjectLspAdapterDelegate::new(self, worktree_handle, cx),
+            lsp_adapter_delegate.clone(),
             cx,
         ) {
             Some(pending_server) => pending_server,
@@ -3018,7 +3027,7 @@ impl Project {
             cx.spawn(move |this, mut cx| async move {
                 let result = Self::setup_and_insert_language_server(
                     this.clone(),
-                    &worktree_path,
+                    lsp_adapter_delegate,
                     override_options,
                     pending_server,
                     adapter.clone(),
@@ -3142,7 +3151,7 @@ impl Project {
     #[allow(clippy::too_many_arguments)]
     async fn setup_and_insert_language_server(
         this: WeakModel<Self>,
-        worktree_path: &Path,
+        delegate: Arc<dyn LspAdapterDelegate>,
         override_initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
@@ -3155,7 +3164,7 @@ impl Project {
             this.clone(),
             override_initialization_options,
             pending_server,
-            worktree_path,
+            delegate,
             adapter.clone(),
             server_id,
             cx,
@@ -3185,13 +3194,16 @@ impl Project {
         this: WeakModel<Self>,
         override_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
-        worktree_path: &Path,
+        delegate: Arc<dyn LspAdapterDelegate>,
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
-        let workspace_config =
-            cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
+        let workspace_config = adapter
+            .adapter
+            .clone()
+            .workspace_configuration(&delegate, cx)
+            .await?;
         let (language_server, mut initialization_options) = pending_server.task.await?;
 
         let name = language_server.name();
@@ -3220,14 +3232,14 @@ impl Project {
 
         language_server
             .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
-                let adapter = adapter.clone();
-                let worktree_path = worktree_path.to_path_buf();
-                move |params, cx| {
+                let adapter = adapter.adapter.clone();
+                let delegate = delegate.clone();
+                move |params, mut cx| {
                     let adapter = adapter.clone();
-                    let worktree_path = worktree_path.clone();
+                    let delegate = delegate.clone();
                     async move {
                         let workspace_config =
-                            cx.update(|cx| adapter.workspace_configuration(&worktree_path, cx))?;
+                            adapter.workspace_configuration(&delegate, &mut cx).await?;
                         Ok(params
                             .items
                             .into_iter()
@@ -10313,6 +10325,14 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
+    }
+
+    fn worktree_id(&self) -> u64 {
+        self.worktree.id().to_proto()
+    }
+
+    fn worktree_root_path(&self) -> &Path {
+        self.worktree.abs_path().as_ref()
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {
