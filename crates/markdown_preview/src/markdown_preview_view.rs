@@ -4,9 +4,9 @@ use std::{ops::Range, path::PathBuf};
 use editor::scroll::{Autoscroll, AutoscrollStrategy};
 use editor::{Editor, EditorEvent};
 use gpui::{
-    list, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, ListState, ParentElement, Render, Styled, Subscription, View, ViewContext,
-    WeakView,
+    list, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, IntoElement, ListState, MouseDownEvent, ParentElement, Render, Styled,
+    Subscription, View, ViewContext, WeakView,
 };
 use language::LanguageRegistry;
 use ui::prelude::*;
@@ -123,12 +123,16 @@ impl MarkdownPreviewView {
                                     .pl_4()
                                     .pb_3()
                                     .id(ix)
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        if let Some(block) =
-                                            this.contents.as_ref().and_then(|c| c.children.get(ix))
-                                        {
-                                            let start = block.source_range().start;
-                                            this.update_editor_selection(cx, start..start);
+                                    .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
+                                        if event.down.click_count == 2 {
+                                            if let Some(block) = this
+                                                .contents
+                                                .as_ref()
+                                                .and_then(|c| c.children.get(ix))
+                                            {
+                                                let start = block.source_range().start;
+                                                this.update_editor_selection(cx, start..start);
+                                            }
                                         }
                                     }));
 
