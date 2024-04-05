@@ -44,6 +44,13 @@ fn main() {
 
         let temp_dir = tempdir().unwrap();
 
+        let args: Vec<String> = std::env::args().collect();
+        if args.len() < 2 {
+            eprintln!("Usage: cargo run --example index -p semantic_index -- <project_path>");
+            cx.quit();
+            return;
+        }
+
         let embedding_provider = FakeEmbeddingProvider::new();
 
         let semantic_index = SemanticIndex::new(
@@ -53,13 +60,6 @@ fn main() {
         );
 
         cx.spawn(|mut cx| async move {
-            let args: Vec<String> = std::env::args().collect();
-            if args.len() < 2 {
-                eprintln!("Usage: cargo run --example index -p semantic_index -- <project_path>");
-                cx.update(|cx| cx.quit()).unwrap(); // Exiting if no path is provided
-                return;
-            }
-
             let mut semantic_index = semantic_index.await.unwrap();
 
             let project_path = Path::new(&args[1]);
