@@ -178,45 +178,47 @@ impl OpenaiEmbeddingProvider {
 }
 
 impl EmbeddingProvider for OpenaiEmbeddingProvider {
-    fn embed(&self, _texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
-        todo!();
-        // let request = OpenaiEmbeddingRequest {
-        //     model: match self.model {
-        //         EmbeddingModel::OpenaiTextEmbedding3Small => "text-embedding-3-small".to_string(),
-        //         EmbeddingModel::OpenaiTextEmbedding3Large => "text-embedding-3-large".to_string(),
-        //         _ => return Err(anyhow!("Invalid model")),
-        //     },
-        //     input: texts,
-        // };
+    fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
+        let model = match self.model {
+            EmbeddingModel::OpenaiTextEmbedding3Small => "text-embedding-3-small",
+            EmbeddingModel::OpenaiTextEmbedding3Large => "text-embedding-3-large",
+            _ => return future::ready(Err(anyhow!("Invalid model"))).boxed(),
+        };
 
-        // let api_url = "https://api.openai.com/v1/";
+        // Unlike the Ollama model, we can send `texts` as a batch directly
 
-        // let uri = format!("{api_url}/embeddings");
+        let request = OpenaiEmbeddingRequest {
+            model: model.to_string(),
+            input: texts.iter().map(|text| text.to_string()).collect(),
+        };
+        let request = serde_json::to_string(&request).unwrap();
 
-        // let request = HttpRequest::builder()
-        //     .method(Method::POST)
-        //     .uri(uri)
-        //     .header("Content-Type", "application/json")
-        //     .header("Authorization", format!("Bearer {}", self.api_key))
-        //     .body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        async {
+            let response = self
+                .client
+                .post_json("https://api.openai.com/v1/embeddings", request.into())
+                .await?;
 
-        // let mut response = self.client.send(request).await.context("Failed to embed")?;
+            let mut body = String::new();
+            response.into_body().read_to_string(&mut body).await?;
 
-        // let mut body = Vec::new();
-        // response.body_mut().read_to_end(&mut body).await.ok();
+            let response: OpenaiEmbeddingResponse =
+                serde_json::from_str(&body).context("Unable to pull response")?;
 
-        // let mut response: OpenaiEmbeddingResponse =
-        //     serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
+            let embeddings = response
+                .data
+                .into_iter()
+                .map(|data| Embedding::new(data.embedding))
+                .collect();
 
-        // let data = response
-        //     .data
-        //     .pop()
-        //     .context("No embedding data found in response")?;
-        // Ok(Embedding::new(data.embedding))
+            Ok(embeddings)
+        }
+        .boxed()
     }
 
     fn batch_size(&self) -> usize {
-        todo!();
+        // From https://platform.openai.com/docs/api-reference/embeddings/create
+        2048
     }
 }
 

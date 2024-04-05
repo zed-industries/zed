@@ -47,7 +47,7 @@ fn main() {
         let embedding_provider = FakeEmbeddingProvider::new();
 
         let semantic_index = SemanticIndex::new(
-            Path::new("/Users/as-cii/dev/semantic-index-db.mdb"),
+            Path::new("/tmp/semantic-index-db.mdb"),
             Arc::new(embedding_provider),
             cx,
         );
