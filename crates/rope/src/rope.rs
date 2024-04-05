@@ -12,7 +12,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 use util::debug_panic;
 
 pub use offset_utf16::OffsetUtf16;
@@ -925,11 +925,23 @@ impl Chunk {
         for (row, line) in self.0.split('\n').enumerate() {
             if row == target.row as usize {
                 let mut column = target.column.min(line.len() as u32);
-                while !line.is_char_boundary(column as usize) {
+                let mut grapheme_cursor = GraphemeCursor::new(column as usize, self.0.len(), true);
+                while !grapheme_cursor.is_boundary(line, 0).unwrap() {
                     match bias {
-                        Bias::Left => column -= 1,
-                        Bias::Right => column += 1,
+                        Bias::Left => {
+                            column = grapheme_cursor
+                                .prev_boundary(line, 0)
+                                .unwrap_or(Some(column as usize - 1))
+                                .unwrap() as u32
+                        }
+                        Bias::Right => {
+                            column = grapheme_cursor
+                                .next_boundary(line, 0)
+                                .unwrap_or(Some(column as usize + 1))
+                                .unwrap() as u32
+                        }
                     }
+                    grapheme_cursor.set_cursor(column as usize);
                 }
                 return Point::new(row as u32, column);
             }
