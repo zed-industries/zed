@@ -1,10 +1,11 @@
 use language::{Grammar, Tree, PARSER};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{cmp, ops::Range, sync::Arc};
 
 const CHUNK_THRESHOLD: usize = 1500;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chunk {
     pub range: Range<usize>,
     digest: [u8; 32],

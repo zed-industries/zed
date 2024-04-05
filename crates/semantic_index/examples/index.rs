@@ -42,7 +42,8 @@ fn main() {
         Client::set_global(client.clone(), cx);
 
         let temp_dir = tempdir().unwrap();
-        let semantic_index = SemanticIndex::new(temp_dir.path(), cx);
+        let semantic_index =
+            SemanticIndex::new(Path::new("/Users/as-cii/dev/semantic-index-db.mdb"), cx);
 
         cx.spawn(|mut cx| async move {
             let args: Vec<String> = std::env::args().collect();

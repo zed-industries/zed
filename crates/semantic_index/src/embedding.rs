@@ -1,10 +1,8 @@
-use std::{array::TryFromSliceError, sync::Arc};
-
-use util::http::{AsyncBody, HttpClient, HttpClientWithUrl, Method, Request as HttpRequest};
-
 use anyhow::{anyhow, Context as _, Result};
 use futures::AsyncReadExt;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use util::http::{AsyncBody, HttpClient, HttpClientWithUrl, Method, Request as HttpRequest};
 
 /// Ollama's embedding via nomic-embed-text is of length 768
 pub const EMBEDDING_SIZE_TINY: usize = 768;
@@ -23,74 +21,39 @@ pub enum EmbeddingModel {
     OpenaiTextEmbedding3Large,
 }
 
-#[derive(Debug, Clone)]
-pub enum Embedding {
-    OllamaNomicEmbedText([f32; EMBEDDING_SIZE_TINY]),
-    OllamaMxbaiEmbedLarge([f32; EMBEDDING_SIZE_XSMALL]),
-    OpenaiTextEmbedding3Small([f32; EMBEDDING_SIZE_SMALL]),
-    OpenaiTextEmbedding3Large([f32; EMBEDDING_SIZE_LARGE]),
-}
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Embedding(Vec<f32>);
 
-pub(crate) fn normalize_vector(embedding: Vec<f32>) -> Vec<f32> {
-    // TODO: Either use ndarray directly like this:
-    //         let array = ndarray::Array1::from(self.embedding.clone());
-    //         let norm = array.dot(&array).sqrt();
-    //         array / norm
-    // OR: use simd operations directly to calculate the norm and normalize the embedding ourselves
-    let len = embedding.len();
-    let mut norm = 0f32;
+impl Embedding {
+    fn new(mut embedding: Vec<f32>) -> Self {
+        // TODO: Either use ndarray directly like this:
+        //         let array = ndarray::Array1::from(self.embedding.clone());
+        //         let norm = array.dot(&array).sqrt();
+        //         array / norm
+        // OR: use simd operations directly to calculate the norm and normalize the embedding ourselves
+        let len = embedding.len();
+        let mut norm = 0f32;
 
-    for i in 0..len {
-        norm += embedding[i] * embedding[i];
+        for i in 0..len {
+            norm += embedding[i] * embedding[i];
+        }
+
+        norm = norm.sqrt();
+        for dimension in &mut embedding {
+            *dimension /= norm;
+        }
+
+        Self(embedding)
     }
 
-    norm = norm.sqrt();
-
-    embedding.iter().map(|x| x / norm).collect::<Vec<f32>>()
-}
-
-pub fn normalize_embedding(
-    embedding: Vec<f32>,
-    embedding_type: EmbeddingModel,
-) -> Result<Embedding> {
-    let embedding = normalize_vector(embedding);
-
-    match embedding_type {
-        EmbeddingModel::OllamaNomicEmbedText if embedding.len() == EMBEDDING_SIZE_TINY => {
-            Ok(Embedding::OllamaNomicEmbedText(
-                embedding
-                    .try_into()
-                    .map_err(|_| anyhow!("Failed to convert to [f32; {}]", EMBEDDING_SIZE_TINY))?,
-            ))
-        }
-        EmbeddingModel::OllamaMxbaiEmbedLarge if embedding.len() == EMBEDDING_SIZE_XSMALL => {
-            Ok(Embedding::OllamaMxbaiEmbedLarge(
-                embedding.try_into().map_err(|_| {
-                    anyhow!("Failed to convert to [f32; {}]", EMBEDDING_SIZE_XSMALL)
-                })?,
-            ))
-        }
-        EmbeddingModel::OpenaiTextEmbedding3Small if embedding.len() == EMBEDDING_SIZE_SMALL => {
-            Ok(Embedding::OpenaiTextEmbedding3Small(
-                embedding
-                    .try_into()
-                    .map_err(|_| anyhow!("Failed to convert to [f32; {}]", EMBEDDING_SIZE_SMALL))?,
-            ))
-        }
-        EmbeddingModel::OpenaiTextEmbedding3Large if embedding.len() == EMBEDDING_SIZE_LARGE => {
-            Ok(Embedding::OpenaiTextEmbedding3Large(
-                embedding
-                    .try_into()
-                    .map_err(|_| anyhow!("Failed to convert to [f32; {}]", EMBEDDING_SIZE_LARGE))?,
-            ))
-        }
-        _ => Err(anyhow!("Invalid or mismatched embedding size")),
+    fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
 /// Trait for embedding providers. Text in, vector out.
 pub trait EmbeddingProvider {
-    async fn get_embedding(&self, text: String) -> Result<Embedding>;
+    async fn embed(&self, text: String) -> Result<Embedding>;
 }
 
 pub struct OllamaEmbeddingProvider {
@@ -116,7 +79,7 @@ impl OllamaEmbeddingProvider {
 }
 
 impl EmbeddingProvider for OllamaEmbeddingProvider {
-    async fn get_embedding(&self, text: String) -> Result<Embedding> {
+    async fn embed(&self, text: String) -> Result<Embedding> {
         let request = OllamaEmbeddingRequest {
             model: match self.model {
                 EmbeddingModel::OllamaNomicEmbedText => "nomic-embed-text".to_string(),
@@ -139,7 +102,7 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
         let response: OllamaEmbeddingResponse =
             serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
 
-        normalize_embedding(response.embedding, self.model)
+        Ok(Embedding::new(response.embedding))
     }
 }
 
@@ -178,7 +141,7 @@ impl OpenaiEmbeddingProvider {
 }
 
 impl EmbeddingProvider for OpenaiEmbeddingProvider {
-    async fn get_embedding(&self, text: String) -> Result<Embedding> {
+    async fn embed(&self, text: String) -> Result<Embedding> {
         let request = OpenaiEmbeddingRequest {
             model: match self.model {
                 EmbeddingModel::OpenaiTextEmbedding3Small => "text-embedding-3-small".to_string(),
@@ -204,14 +167,14 @@ impl EmbeddingProvider for OpenaiEmbeddingProvider {
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await.ok();
 
-        let response: OpenaiEmbeddingResponse =
+        let mut response: OpenaiEmbeddingResponse =
             serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
 
-        if let Some(first_embedding) = response.data.first() {
-            normalize_embedding(first_embedding.embedding.clone(), self.model)
-        } else {
-            Err(anyhow!("No embedding data found in response"))
-        }
+        let data = response
+            .data
+            .pop()
+            .context("No embedding data found in response")?;
+        Ok(Embedding::new(data.embedding))
     }
 }
 
@@ -227,15 +190,8 @@ mod test {
         let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
         let provider =
             OllamaEmbeddingProvider::new(client.clone(), EmbeddingModel::OllamaNomicEmbedText);
-        let embedding = provider
-            .get_embedding("Hello, world!".to_string())
-            .await
-            .unwrap();
-
-        match embedding {
-            Embedding::OllamaNomicEmbedText(e) => assert_eq!(e.len(), EMBEDDING_SIZE_TINY),
-            _ => panic!("Invalid embedding size"),
-        }
+        let embedding = provider.embed("Hello, world!".to_string()).await.unwrap();
+        assert_eq!(embedding.len(), EMBEDDING_SIZE_TINY);
     }
 
     #[gpui::test]
@@ -249,14 +205,10 @@ mod test {
         let t_nomic = std::time::Instant::now();
         for i in 0..100 {
             let embedding = provider
-                .get_embedding(format!("Hello, world! {}", i))
+                .embed(format!("Hello, world! {}", i))
                 .await
                 .unwrap();
-
-            match embedding {
-                Embedding::OllamaNomicEmbedText(e) => assert_eq!(e.len(), EMBEDDING_SIZE_TINY),
-                _ => panic!("Invalid embedding size"),
-            }
+            assert_eq!(embedding.len(), EMBEDDING_SIZE_TINY);
         }
         dbg!(t_nomic.elapsed());
 
@@ -267,14 +219,10 @@ mod test {
         let t_mxbai = std::time::Instant::now();
         for i in 0..100 {
             let embedding = provider
-                .get_embedding(format!("Hello, world! {}", i))
+                .embed(format!("Hello, world! {}", i))
                 .await
                 .unwrap();
-
-            match embedding {
-                Embedding::OllamaMxbaiEmbedLarge(e) => assert_eq!(e.len(), EMBEDDING_SIZE_XSMALL),
-                _ => panic!("Invalid embedding size"),
-            }
+            assert_eq!(embedding.len(), EMBEDDING_SIZE_XSMALL);
         }
         dbg!(t_mxbai.elapsed());
     }
@@ -295,29 +243,18 @@ mod test {
         let t_openai_small = std::time::Instant::now();
         for i in 0..100 {
             let embedding = provider
-                .get_embedding(format!("Hello, world! {}", i))
+                .embed(format!("Hello, world! {}", i))
                 .await
                 .unwrap();
-
-            match embedding {
-                Embedding::OpenaiTextEmbedding3Small(e) => {
-                    assert_eq!(e.len(), EMBEDDING_SIZE_SMALL)
-                }
-                _ => panic!("Invalid embedding size"),
-            }
+            assert_eq!(embedding.len(), EMBEDDING_SIZE_SMALL);
         }
         dbg!(t_openai_small.elapsed());
     }
 
     #[gpui::test]
     fn test_normalize_embedding() {
-        // Create an vector of size EMBEDDING_SIZE_TINY with all values set to 1.0
-        let embedding = vec![1.0, 1.0, 1.0];
-
-        let normalized = normalize_vector(embedding);
-
+        let normalized = Embedding::new(vec![1.0, 1.0, 1.0]);
         let value: f32 = 1.0 / 3.0_f32.sqrt();
-
-        assert_eq!(normalized, vec![value; 3]);
+        assert_eq!(normalized, Embedding(vec![value; 3]));
     }
 }

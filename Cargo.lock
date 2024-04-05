@@ -3279,9 +3279,9 @@ checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 
 [[package]]
 name = "doxygen-rs"
-version = "0.2.2"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bff670ea0c9bbb8414e7efa6e23ebde2b8f520a7eef78273a3918cf1903e7505"
+checksum = "415b6ec780d34dcf624666747194393603d0373b7141eef01d12ee58881507d9"
 dependencies = [
  "phf",
 ]
@@ -4681,11 +4681,9 @@ dependencies = [
 [[package]]
 name = "heed"
 version = "0.20.0-alpha.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9648a50991c86df7d00c56c268c27754fcf4c80be2ba57fc4a00dc928c6fe934"
+source = "git+https://github.com/meilisearch/heed#036ac23f73a021894974b9adc815bc95b3e0482a"
 dependencies = [
  "bitflags 2.4.2",
- "bytemuck",
  "byteorder",
  "heed-traits",
  "heed-types",
@@ -4701,14 +4699,12 @@ dependencies = [
 [[package]]
 name = "heed-traits"
 version = "0.20.0-alpha.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ab0b7d9cde969ad36dde692e487dc89d97f7168bf6a7bd3b894ad4bf7278298"
+source = "git+https://github.com/meilisearch/heed#036ac23f73a021894974b9adc815bc95b3e0482a"
 
 [[package]]
 name = "heed-types"
 version = "0.20.0-alpha.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0cb3567a7363f28b597bf6e9897b9466397951dd0e52df2c8196dd8a71af44a"
+source = "git+https://github.com/meilisearch/heed#036ac23f73a021894974b9adc815bc95b3e0482a"
 dependencies = [
  "bincode",
  "byteorder",
@@ -5726,13 +5722,11 @@ dependencies = [
 [[package]]
 name = "lmdb-master-sys"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "629c123f5321b48fa4f8f4d3b868165b748d9ba79c7103fb58e3a94f736bcedd"
+source = "git+https://github.com/meilisearch/heed#036ac23f73a021894974b9adc815bc95b3e0482a"
 dependencies = [
  "cc",
  "doxygen-rs",
  "libc",
- "pkg-config",
 ]
 
 [[package]]
@@ -8627,6 +8621,7 @@ dependencies = [
  "heed",
  "language",
  "languages",
+ "log",
  "project",
  "serde",
  "serde_json",

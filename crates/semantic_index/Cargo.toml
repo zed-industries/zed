@@ -19,7 +19,8 @@ futures.workspace = true
 futures-batch = "0.6.1"
 gpui.workspace = true
 language.workspace = true
-heed = "0.20.0-alpha.9"
+log.workspace = true
+heed = { git = "https://github.com/meilisearch/heed", features = ["read-txn-no-tls"] }
 project.workspace = true
 settings.workspace = true
 serde.workspace = true

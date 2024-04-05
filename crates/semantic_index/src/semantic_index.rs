@@ -3,10 +3,10 @@ mod embedding;
 
 use anyhow::{Context as _, Result};
 use chunking::{chunk_text, Chunk};
-use collections::HashMap;
-use embedding::{Embedding, EmbeddingModel, EmbeddingProvider, OllamaEmbeddingProvider};
+use collections::{Bound, HashMap};
+use embedding::Embedding;
 use fs::Fs;
-use futures::stream::{self, StreamExt};
+use futures::stream::StreamExt;
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{
     AppContext, AsyncAppContext, Context, EntityId, EventEmitter, Global, Model, ModelContext,
@@ -15,13 +15,15 @@ use gpui::{
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
 use project::{Entry, Project, Worktree};
+use serde::{Deserialize, Serialize};
 use smol::channel;
 use std::{
+    cmp::Ordering,
     path::Path,
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 use worktree::LocalSnapshot;
 
 pub struct SemanticIndex {
@@ -38,10 +40,12 @@ impl SemanticIndex {
             let db_connection = cx
                 .background_executor()
                 .spawn(async move {
-                    heed::EnvOpenOptions::new()
-                        .map_size(10 * 1024 * 1024)
-                        .max_dbs(3000)
-                        .open(db_path)
+                    unsafe {
+                        heed::EnvOpenOptions::new()
+                            .map_size(10 * 1024 * 1024)
+                            .max_dbs(3000)
+                            .open(db_path)
+                    }
                 })
                 .await?;
 
@@ -130,7 +134,7 @@ impl ProjectIndex {
                     );
                 })?;
             } else {
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, _cx| {
                     this.worktree_indices.remove(&worktree_entity_id)
                 })?;
             }
@@ -181,7 +185,7 @@ impl EventEmitter<Status> for ProjectIndex {}
 struct WorktreeIndex {
     worktree: Model<Worktree>,
     db_connection: heed::Env,
-    db: heed::Database<Str, SerdeBincode<ChunkedFile>>,
+    db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     status: Status,
@@ -205,7 +209,9 @@ impl WorktreeIndex {
                     async move {
                         let mut txn = db_connection.write_txn()?;
                         let db_name = worktree_abs_path.to_string_lossy();
-                        db_connection.create_database(&mut txn, Some(&db_name))
+                        let db = db_connection.create_database(&mut txn, Some(&db_name))?;
+                        txn.commit()?;
+                        anyhow::Ok(db)
                     }
                 })
                 .await?;
@@ -216,7 +222,7 @@ impl WorktreeIndex {
     fn new(
         worktree: Model<Worktree>,
         db_connection: heed::Env,
-        db: heed::Database<Str, SerdeBincode<ChunkedFile>>,
+        db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Self>,
@@ -242,13 +248,18 @@ impl WorktreeIndex {
             this.worktree.read(cx).as_local().unwrap().snapshot()
         })?;
         let worktree_abs_path = worktree.abs_path().clone();
-        let (entries, scan_entries) = Self::scan_entries(worktree, &mut cx);
-        let (chunked_files, chunk_files) =
-            Self::chunk_files(&this, worktree_abs_path, entries, &mut cx)?;
-        let (embedded_files, embed_chunks) = Self::embed_files(&this, chunked_files, &mut cx);
-        let save_embedded_files = Self::save_embedded_files(&this, embedded_files, &mut cx);
+        let scan = Self::scan_entries(&this, worktree.clone(), &mut cx)?;
+        let chunk = Self::chunk_files(&this, worktree_abs_path, scan.updated_entries, &mut cx)?;
+        let embed = Self::embed_files(&this, chunk.files, &mut cx)?;
+        let persist =
+            Self::persist_embeddings(&this, scan.deleted_entry_ranges, embed.files, &mut cx)?;
 
-        futures::join!(scan_entries, chunk_files, embed_chunks, save_embedded_files);
+        futures::join!(
+            scan.task.log_err(),
+            chunk.task,
+            embed.task,
+            persist.log_err()
+        );
         this.update(&mut cx, |this, cx| {
             this.status = Status::Idle;
             cx.notify();
@@ -260,24 +271,85 @@ impl WorktreeIndex {
     }
 
     fn scan_entries(
+        this: &WeakModel<Self>,
         worktree: LocalSnapshot,
         cx: &mut AsyncAppContext,
-    ) -> (channel::Receiver<Entry>, Task<()>) {
-        // todo!("look at the database to only scan entries with an mtime != than the stored one")
-        // todo!("remember which entries don't exist anymore in the database so that we can delete them")
-        // I am thinking that all deletions, insertions and updates should be done by `save_embedded_files`,
-        // which we should probably rename. This is because I think LMDB only wants the database to be mutated by one thread
-        // at a time. But it's also cool because we know there's only one writer. We need to verify if we can read while we
-        // write. Alternatively, we could prolly use Rocksdb that lets us grab snapshots of the database.
-        let (entries_tx, entries_rx) = channel::bounded(512);
-        let scan_entries = cx.background_executor().spawn(async move {
+    ) -> Result<ScanEntries> {
+        let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
+        let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
+        let (db_connection, db) =
+            this.read_with(cx, |this, _| (this.db_connection.clone(), this.db.clone()))?;
+        let task = cx.background_executor().spawn(async move {
+            let txn = db_connection
+                .read_txn()
+                .context("failed to create read transaction")?;
+            let mut db_entries = db
+                .iter(&txn)
+                .context("failed to create iterator")?
+                .move_between_keys()
+                .peekable();
+
+            let mut deletion_range: Option<(Bound<&str>, Bound<&str>)> = None;
             for entry in worktree.files(false, 0) {
-                if entries_tx.send(entry.clone()).await.is_err() {
-                    break;
+                let mut saved_mtime = None;
+                while let Some(db_entry) = db_entries.peek() {
+                    match db_entry {
+                        Ok((db_path, db_embedded_file)) => {
+                            match (*db_path).cmp(&entry.path.to_string_lossy()) {
+                                Ordering::Less => {
+                                    if let Some(deletion_range) = deletion_range.as_mut() {
+                                        deletion_range.1 = Bound::Included(db_path);
+                                    } else {
+                                        deletion_range = Some((
+                                            Bound::Included(db_path),
+                                            Bound::Included(db_path),
+                                        ));
+                                    }
+
+                                    db_entries.next();
+                                }
+                                Ordering::Equal => {
+                                    if let Some(deletion_range) = deletion_range.take() {
+                                        deleted_entry_ranges_tx
+                                            .send((
+                                                deletion_range.0.map(ToString::to_string),
+                                                deletion_range.1.map(ToString::to_string),
+                                            ))
+                                            .await?;
+                                    }
+                                    saved_mtime = db_embedded_file.mtime;
+                                    db_entries.next();
+                                    break;
+                                }
+                                Ordering::Greater => {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(_) => return Err(db_entries.next().unwrap().unwrap_err())?,
+                    }
+                }
+
+                if entry.mtime != saved_mtime {
+                    updated_entries_tx.send(entry.clone()).await?;
                 }
             }
+
+            if let Some(db_entry) = db_entries.next() {
+                let (db_path, _) = db_entry?;
+                deleted_entry_ranges_tx
+                    .send((Bound::Included(db_path.to_string()), Bound::Unbounded))
+                    .await?;
+            }
+
+            Ok(())
         });
-        (entries_rx, scan_entries)
+
+        Ok(ScanEntries {
+            updated_entries: updated_entries_rx,
+            deleted_entry_ranges: deleted_entry_ranges_rx,
+            task,
+        })
     }
 
     fn chunk_files(
@@ -285,11 +357,11 @@ impl WorktreeIndex {
         worktree_abs_path: Arc<Path>,
         entries: channel::Receiver<Entry>,
         cx: &mut AsyncAppContext,
-    ) -> Result<(channel::Receiver<ChunkedFile>, Task<()>)> {
+    ) -> Result<ChunkFiles> {
         let language_registry = this.read_with(cx, |this, _| this.language_registry.clone())?;
         let fs = this.read_with(cx, |this, _| this.fs.clone())?;
         let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
-        let chunk_files = cx.spawn(|cx| async move {
+        let task = cx.spawn(|cx| async move {
             cx.background_executor()
                 .scoped(|cx| {
                     for _ in 0..cx.num_cpus() {
@@ -321,51 +393,56 @@ impl WorktreeIndex {
                 })
                 .await;
         });
-        Ok((chunked_files_rx, chunk_files))
+        Ok(ChunkFiles {
+            files: chunked_files_rx,
+            task,
+        })
     }
 
     fn embed_files(
-        this: &WeakModel<Self>,
+        _this: &WeakModel<Self>,
         chunked_files: channel::Receiver<ChunkedFile>,
         cx: &mut AsyncAppContext,
-    ) -> (channel::Receiver<EmbeddedFile>, Task<()>) {
-        let client = this
-            .read_with(cx, |this, cx| client::Client::global(cx).http_client())
-            .context("http client not available")
-            // todo(): handle no client, return a result instead of panicking
-            .unwrap();
-
-        let embedding_provider =
-            OllamaEmbeddingProvider::new(client, EmbeddingModel::OllamaNomicEmbedText);
+    ) -> Result<EmbedFiles> {
+        // let client = this.read_with(cx, |_this, cx| client::Client::global(cx).http_client())?;
+        // let embedding_provider =
+        //     OllamaEmbeddingProvider::new(client, EmbeddingModel::OllamaNomicEmbedText);
 
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
-        let embed_chunks = cx.background_executor().spawn(async move {
+        let task = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
                 chunked_files.chunks_timeout(512, Duration::from_secs(2));
             while let Some(batch) = chunked_file_batches.next().await {
-                // todo!("actually embed the batch")
                 for chunked_file in batch {
-                    let embedded_chunks = stream::iter(chunked_file.chunks.into_iter())
-                        .then(|chunk| {
-                            let embedding_future = embedding_provider
-                                .get_embedding(chunked_file.text[chunk.range.clone()].to_string());
+                    // todo!("actually embed the batch")
+                    // let embedded_chunks = stream::iter(chunked_file.chunks.into_iter())
+                    //     .then(|chunk| {
+                    //         let embedding_future = embedding_provider
+                    //             .embed(chunked_file.text[chunk.range.clone()].to_string());
 
-                            async move { (chunk, embedding_future.await) }
-                        })
-                        .collect::<Vec<_>>()
-                        .await
-                        .into_iter()
-                        .filter_map(|(chunk, embedding)| {
-                            embedding
-                                .log_err()
-                                .map(|embedding| EmbeddedChunk { chunk, embedding })
-                        })
-                        .collect::<Vec<EmbeddedChunk>>();
+                    //         async move { (chunk, embedding_future.await) }
+                    //     })
+                    //     .collect::<Vec<_>>()
+                    //     .await
+                    //     .into_iter()
+                    //     .filter_map(|(chunk, embedding)| {
+                    //         embedding
+                    //             .log_err()
+                    //             .map(|embedding| EmbeddedChunk { chunk, embedding })
+                    //     })
+                    //     .collect::<Vec<EmbeddedChunk>>();
 
                     let embedded_file = EmbeddedFile {
                         path: chunked_file.entry.path.clone(),
                         mtime: chunked_file.entry.mtime,
-                        chunks: embedded_chunks,
+                        chunks: chunked_file
+                            .chunks
+                            .into_iter()
+                            .map(|chunk| EmbeddedChunk {
+                                chunk,
+                                embedding: Embedding::default(),
+                            })
+                            .collect(),
                     };
 
                     if embedded_files_tx.send(embedded_file).await.is_err() {
@@ -374,21 +451,55 @@ impl WorktreeIndex {
                 }
             }
         });
-        (embedded_files_rx, embed_chunks)
-    }
-
-    fn save_embedded_files(
-        this: &WeakModel<Self>,
-        embedded_files: channel::Receiver<EmbeddedFile>,
-        cx: &mut AsyncAppContext,
-    ) -> Task<()> {
-        // Let's just log the files for now
-        cx.spawn(|cx| async move {
-            while let Ok(embedded_file) = embedded_files.recv().await {
-                // println!("Embedded file: {:?}", embedded_file.chunks);
-            }
+        Ok(EmbedFiles {
+            files: embedded_files_rx,
+            task,
         })
     }
+
+    fn persist_embeddings(
+        this: &WeakModel<Self>,
+        mut deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
+        embedded_files: channel::Receiver<EmbeddedFile>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Task<Result<()>>> {
+        let (db_connection, db) =
+            this.read_with(cx, |this, _| (this.db_connection.clone(), this.db.clone()))?;
+        Ok(cx.background_executor().spawn(async move {
+            while let Some(deletion_range) = deleted_entry_ranges.next().await {
+                let mut txn = db_connection.write_txn()?;
+                let start = deletion_range.0.as_ref().map(|start| start.as_str());
+                let end = deletion_range.1.as_ref().map(|end| end.as_str());
+                log::debug!("deleting embeddings in range {:?}", &(start, end));
+                db.delete_range(&mut txn, &(start, end))?;
+                txn.commit()?;
+            }
+
+            let mut embedded_files = embedded_files.chunks_timeout(4096, Duration::from_secs(2));
+            while let Some(embedded_files) = embedded_files.next().await {
+                let mut txn = db_connection.write_txn()?;
+                for file in embedded_files {
+                    log::debug!("saving embedding for file {:?}", file.path);
+                    db.put(&mut txn, &file.path.to_string_lossy(), &file)?;
+                }
+                txn.commit()?;
+                log::debug!("committed");
+            }
+
+            Ok(())
+        }))
+    }
+}
+
+struct ScanEntries {
+    updated_entries: channel::Receiver<Entry>,
+    deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
+    task: Task<Result<()>>,
+}
+
+struct ChunkFiles {
+    files: channel::Receiver<ChunkedFile>,
+    task: Task<()>,
 }
 
 struct ChunkedFile {
@@ -398,13 +509,19 @@ struct ChunkedFile {
     chunks: Vec<Chunk>,
 }
 
+struct EmbedFiles {
+    files: channel::Receiver<EmbeddedFile>,
+    task: Task<()>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct EmbeddedFile {
     path: Arc<Path>,
     mtime: Option<SystemTime>,
     chunks: Vec<EmbeddedChunk>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct EmbeddedChunk {
     chunk: Chunk,
     embedding: Embedding,
