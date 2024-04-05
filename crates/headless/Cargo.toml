@@ -14,8 +14,10 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-client.workspace =true
+client.workspace = true
+ctrlc.workspace = true
 gpui.workspace = true
+log.workspace = true
 rpc.workspace = true
 util.workspace = true
 node_runtime.workspace = true

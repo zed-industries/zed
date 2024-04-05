@@ -1,5 +1,3 @@
-use anyhow::Context;
-
 use super::*;
 
 impl Database {
@@ -114,7 +112,6 @@ impl Database {
     ) -> Result<TransactionGuard<(Option<proto::Room>, Vec<ConnectionId>)>> {
         self.project_transaction(project_id, |tx| async move {
             let guest_connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
-
             let project = project::Entity::find_by_id(project_id)
                 .one(&*tx)
                 .await?
@@ -1027,7 +1024,8 @@ impl Database {
     ) -> Result<TransactionGuard<(ConnectionId, Vec<ConnectionId>)>> {
         self.project_transaction(project_id, |tx| async move {
             // Authorize
-            let (project, _) = self.access_project(project_id, connection_id, principal_id, capability, &*tx)
+            let (project, _) = self
+                .access_project(project_id, connection_id, principal_id, capability, &*tx)
                 .await?;
 
             let host_connection_id = project.host_connection()?;
@@ -1037,13 +1035,16 @@ impl Database {
                 .all(&*tx)
                 .await?;
 
-            let guest_connection_ids = collaborators.into_iter().filter_map(|collaborator| {
-                if collaborator.is_host {
-                    None
-                } else {
-                    Some(collaborator.connection())
-                }
-            }).collect();
+            let guest_connection_ids = collaborators
+                .into_iter()
+                .filter_map(|collaborator| {
+                    if collaborator.is_host {
+                        None
+                    } else {
+                        Some(collaborator.connection())
+                    }
+                })
+                .collect();
 
             Ok((host_connection_id, guest_connection_ids))
         })

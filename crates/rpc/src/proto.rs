@@ -302,6 +302,7 @@ messages!(
     (CreateDevServer, Foreground),
     (CreateDevServerResponse, Foreground),
     (DevServerInstructions, Foreground),
+    (ShutdownDevServer, Foreground),
     (ShareRemoteProject, Foreground),
     (JoinRemoteProject, Foreground),
 );
@@ -397,6 +398,7 @@ request_messages!(
     (BlameBuffer, BlameBufferResponse),
     (CreateRemoteProject, Ack),
     (CreateDevServer, CreateDevServerResponse),
+    (ShutdownDevServer, Ack),
     (ShareRemoteProject, ShareProjectResponse),
     (JoinRemoteProject, JoinProjectResponse),
 );

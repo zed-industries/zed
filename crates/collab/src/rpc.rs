@@ -403,6 +403,7 @@ impl Server {
             .add_request_handler(user_handler(create_remote_project))
             .add_request_handler(user_handler(create_dev_server))
             .add_request_handler(dev_server_handler(share_remote_project))
+            .add_request_handler(dev_server_handler(shutdown_dev_server))
             .add_message_handler(user_message_handler(leave_project))
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
@@ -1926,12 +1927,19 @@ async fn share_project(
 /// Unshare a project from the room.
 async fn unshare_project(message: proto::UnshareProject, session: Session) -> Result<()> {
     let project_id = ProjectId::from_proto(message.project_id);
+    unshare_project_internal(project_id, &session).await
+}
 
+async fn unshare_project_internal(project_id: ProjectId, session: &Session) -> Result<()> {
     let (room, guest_connection_ids) = &*session
         .db()
         .await
         .unshare_project(project_id, session.connection_id)
         .await?;
+
+    let message = proto::UnshareProject {
+        project_id: project_id.to_proto(),
+    };
 
     broadcast(
         Some(session.connection_id),
@@ -2270,6 +2278,41 @@ async fn create_dev_server(
     Ok(())
 }
 
+async fn shutdown_dev_server(
+    _: proto::ShutdownDevServer,
+    response: Response<proto::ShutdownDevServer>,
+    session: DevServerSession,
+) -> Result<()> {
+    response.send(proto::Ack {})?;
+    let (remote_projects, dev_server) = {
+        let dev_server_id = session.dev_server_id();
+        let db = session.db().await;
+        let remote_projects = db.get_remote_projects_for_dev_server(dev_server_id).await?;
+        let dev_server = db.get_dev_server(dev_server_id).await?;
+        (remote_projects, dev_server)
+    };
+
+    for project_id in remote_projects.iter().filter_map(|p| p.project_id) {
+        unshare_project_internal(ProjectId::from_proto(project_id), &session.0).await?;
+    }
+
+    let update = proto::UpdateChannels {
+        remote_projects,
+        dev_servers: vec![dev_server.to_proto(proto::DevServerStatus::Offline)],
+        ..Default::default()
+    };
+
+    for (connection_id, _) in session
+        .connection_pool()
+        .await
+        .channel_connection_ids(dev_server.channel_id)
+    {
+        session.peer.send(connection_id, update.clone()).trace_err();
+    }
+
+    Ok(())
+}
+
 /// Updates other participants with changes to the project
 async fn update_project(
     request: proto::UpdateProject,
@@ -2504,17 +2547,16 @@ async fn update_buffer(
     }
 
     let host = {
-        let guard =
-            session
-                .db()
-                .await
-                .connections_for_buffer_update(
-                    project_id,
-                    session.principal_id(),
-                    session.connection_id,
-                    capability,
-                )
-                .await?;
+        let guard = session
+            .db()
+            .await
+            .connections_for_buffer_update(
+                project_id,
+                session.principal_id(),
+                session.connection_id,
+                capability,
+            )
+            .await?;
 
         let (host, guests) = &*guard;
 
