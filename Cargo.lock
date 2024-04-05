@@ -8504,7 +8504,6 @@ dependencies = [
  "gpui",
  "indoc",
  "lazy_static",
- "parking_lot",
  "pretty_assertions",
  "release_channel",
  "rust-embed",
