@@ -15,6 +15,7 @@ wasmtime::component::bindgen!({
     path: "../extension_api/wit/since_v0.0.1",
     with: {
          "worktree": ExtensionWorktree,
+         "zed:extension/platform": latest::zed::extension::platform,
     },
 });
 
@@ -23,26 +24,6 @@ pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
     LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
-}
-
-impl From<latest::Os> for Os {
-    fn from(value: latest::Os) -> Self {
-        match value {
-            latest::Os::Mac => Os::Mac,
-            latest::Os::Linux => Os::Linux,
-            latest::Os::Windows => Os::Windows,
-        }
-    }
-}
-
-impl From<latest::Architecture> for Architecture {
-    fn from(value: latest::Architecture) -> Self {
-        match value {
-            latest::Architecture::Aarch64 => Self::Aarch64,
-            latest::Architecture::X86 => Self::X86,
-            latest::Architecture::X8664 => Self::X8664,
-        }
-    }
 }
 
 impl From<latest::GithubRelease> for GithubRelease {
@@ -173,9 +154,7 @@ impl ExtensionImports for WasmState {
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
-        latest::ExtensionImports::current_platform(self)
-            .await
-            .map(|(os, arch)| (os.into(), arch.into()))
+        latest::ExtensionImports::current_platform(self).await
     }
 
     async fn set_language_server_installation_status(

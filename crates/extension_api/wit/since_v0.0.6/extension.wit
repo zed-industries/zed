@@ -1,9 +1,8 @@
 package zed:extension;
 
 world extension {
-    import lsp;
-
     use lsp.{completion, symbol};
+    use platform.{os, architecture};
 
     /// Initializes the extension.
     export init-extension: func();
@@ -30,26 +29,6 @@ world extension {
         require-assets: bool,
         /// Whether pre-releases should be included.
         pre-release: bool,
-    }
-
-    /// An operating system.
-    enum os {
-        /// macOS.
-        mac,
-        /// Linux.
-        linux,
-        /// Windows.
-        windows,
-    }
-
-    /// A platform architecture.
-    enum architecture {
-        /// AArch64 (e.g., Apple Silicon).
-        aarch64,
-        /// x86.
-        x86,
-        /// x86-64.
-        x8664,
     }
 
     /// The type of a downloaded file.

@@ -1,6 +1,8 @@
 package zed:extension;
 
 world extension {
+    use platform.{os, architecture};
+
     export init-extension: func();
 
     record github-release {
@@ -16,18 +18,6 @@ world extension {
     record github-release-options {
         require-assets: bool,
         pre-release: bool,
-    }
-
-    enum os {
-        mac,
-        linux,
-        windows,
-    }
-
-    enum architecture {
-        aarch64,
-        x86,
-        x8664,
     }
 
     enum downloaded-file-type {

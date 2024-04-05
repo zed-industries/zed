@@ -98,6 +98,8 @@ impl HostWorktree for WasmState {
 
 impl self::zed::extension::lsp::Host for WasmState {}
 
+impl self::zed::extension::platform::Host for WasmState {}
+
 #[async_trait]
 impl ExtensionImports for WasmState {
     async fn get_settings(
