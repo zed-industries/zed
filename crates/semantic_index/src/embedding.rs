@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub const EMBEDDING_SIZE_TINY: usize = 768;
 /// Ollama's embedding via mxbai-embed-large is of length 1024
 pub const EMBEDDING_SIZE_XSMALL: usize = 1024;
-/// OpenAI's text small embeddings are of length 1536
+/// OpenAI's text small and Voyage Large/Code are of length 1536
 pub const EMBEDDING_SIZE_SMALL: usize = 1536;
 /// OpenAI's text large embeddings are of length 3072
 pub const EMBEDDING_SIZE_LARGE: usize = 3072;
@@ -152,7 +152,7 @@ pub struct OpenaiEmbeddingProvider {
 #[derive(Serialize)]
 struct OpenaiEmbeddingRequest {
     model: String,
-    prompt: String,
+    input: String,
 }
 
 #[derive(Deserialize)]
@@ -185,7 +185,7 @@ impl EmbeddingProvider for OpenaiEmbeddingProvider {
                 EmbeddingModel::OpenaiTextEmbedding3Large => "text-embedding-3-large".to_string(),
                 _ => return Err(anyhow!("Invalid model")),
             },
-            prompt: text,
+            input: text,
         };
 
         let api_url = "https://api.openai.com/v1/";
@@ -277,6 +277,36 @@ mod test {
             }
         }
         dbg!(t_mxbai.elapsed());
+    }
+
+    #[gpui::test]
+    async fn test_openai_embedding(executor: BackgroundExecutor) {
+        executor.allow_parking();
+
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
+
+        let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
+        let provider = OpenaiEmbeddingProvider::new(
+            client.clone(),
+            EmbeddingModel::OpenaiTextEmbedding3Small,
+            api_key,
+        );
+
+        let t_openai_small = std::time::Instant::now();
+        for i in 0..100 {
+            let embedding = provider
+                .get_embedding(format!("Hello, world! {}", i))
+                .await
+                .unwrap();
+
+            match embedding {
+                Embedding::OpenaiTextEmbedding3Small(e) => {
+                    assert_eq!(e.len(), EMBEDDING_SIZE_SMALL)
+                }
+                _ => panic!("Invalid embedding size"),
+            }
+        }
+        dbg!(t_openai_small.elapsed());
     }
 
     #[gpui::test]
