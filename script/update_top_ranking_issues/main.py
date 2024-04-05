@@ -54,11 +54,14 @@ class IssueData:
 
 @app.command()
 def main(
-    issue_reference_number: int,
+    issue_reference_number: Optional[int] = None,
     github_token: Optional[str] = None,
     prod: bool = False,
     query_day_interval: Optional[int] = None,
 ) -> None:
+    if prod and not issue_reference_number:
+        raise ValueError("Issue reference number must be provided in prod mode")
+
     start_time: datetime = datetime.now()
 
     start_date: datetime | None = None
