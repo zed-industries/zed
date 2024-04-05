@@ -15,4 +15,4 @@ jobs:
           architecture: "x64"
           cache: "pip"
       - run: pip install -r script/update_top_ranking_issues/requirements.txt
-      - run: python script/update_top_ranking_issues/main.py --github-token ${{ secrets.GITHUB_TOKEN }} --issue_reference_number 5393
+      - run: python script/update_top_ranking_issues/main.py --github-token ${{ secrets.GITHUB_TOKEN }} --issue-reference-number 5393
