@@ -13,6 +13,7 @@ use ui::prelude::*;
 use workspace::item::{Item, ItemHandle};
 use workspace::Workspace;
 
+use crate::OpenPreviewToTheSide;
 use crate::{
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
@@ -49,20 +50,49 @@ impl MarkdownPreviewView {
     pub fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, cx| {
             if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                let language_registry = workspace.project().read(cx).languages().clone();
-                let workspace_handle = workspace.weak_handle();
-                let view: View<MarkdownPreviewView> = MarkdownPreviewView::new(
-                    MarkdownPreviewMode::Follow,
-                    editor,
-                    workspace_handle,
-                    language_registry,
-                    None,
-                    cx,
-                );
-                workspace.split_item(workspace::SplitDirection::Right, Box::new(view.clone()), cx);
+                let view = Self::create_markdown_view(workspace, editor, cx);
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.add_item(Box::new(view.clone()), true, true, None, cx)
+                });
                 cx.notify();
             }
         });
+
+        workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, cx| {
+            if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
+                let view = Self::create_markdown_view(workspace, editor, cx);
+                let pane = workspace
+                    .find_pane_in_direction(workspace::SplitDirection::Right, cx)
+                    .unwrap_or_else(|| {
+                        workspace.split_pane(
+                            workspace.active_pane().clone(),
+                            workspace::SplitDirection::Right,
+                            cx,
+                        )
+                    });
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(view.clone()), false, false, None, cx)
+                });
+                cx.notify();
+            }
+        });
+    }
+
+    fn create_markdown_view(
+        workspace: &mut Workspace,
+        editor: View<Editor>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> View<MarkdownPreviewView> {
+        let language_registry = workspace.project().read(cx).languages().clone();
+        let workspace_handle = workspace.weak_handle();
+        MarkdownPreviewView::new(
+            MarkdownPreviewMode::Follow,
+            editor,
+            workspace_handle,
+            language_registry,
+            None,
+            cx,
+        )
     }
 
     pub fn new(
