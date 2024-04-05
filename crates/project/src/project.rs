@@ -10522,7 +10522,7 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
         });
 
     let command = format!(
-        "cd '{}';{} printf '%s' {marker}; /usr/bin/env -0; exit 0;",
+        "cd '{}';{} printf '%s' {marker}; /usr/bin/env; exit 0;",
         dir.display(),
         additional_command.unwrap_or("")
     );
@@ -10549,13 +10549,14 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
 
     let mut parsed_env = HashMap::default();
     let env_output = &stdout[env_output_start + marker.len()..];
-    for line in env_output.split_terminator('\0') {
+    for line in env_output.split_terminator('\n') {
         if let Some(separator_index) = line.find('=') {
             let key = line[..separator_index].to_string();
             let value = line[separator_index + 1..].to_string();
             parsed_env.insert(key, value);
         }
     }
+
     Ok(parsed_env)
 }
 
