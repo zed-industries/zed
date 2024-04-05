@@ -906,7 +906,7 @@ async fn load_login_shell_environment() -> Result<()> {
     // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
     // do that, but it does, and `exit 0` helps.
     let shell_cmd = format!(
-        "{}printf '%s' {marker}; /usr/bin/env -0; exit 0;",
+        "{}printf '%s' {marker}; /usr/bin/env; exit 0;",
         shell_cmd_prefix.as_deref().unwrap_or("")
     );
 
@@ -923,7 +923,7 @@ async fn load_login_shell_environment() -> Result<()> {
 
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
-        for line in env_output.split_terminator('\0') {
+        for line in env_output.split_terminator('\n') {
             if let Some(separator_index) = line.find('=') {
                 let key = &line[..separator_index];
                 let value = &line[separator_index + 1..];
