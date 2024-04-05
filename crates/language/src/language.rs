@@ -197,12 +197,6 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
-        self.adapter
-            .clone()
-            .workspace_configuration(workspace_root, cx)
-    }
-
     pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         self.adapter.process_diagnostics(params)
     }
@@ -245,6 +239,8 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
+    fn worktree_id(&self) -> u64;
+    fn worktree_root_path(&self) -> &Path;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
 
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
@@ -447,12 +443,12 @@ pub trait LspAdapter: 'static + Send + Sync {
         Ok(None)
     }
 
-    fn workspace_configuration(
+    async fn workspace_configuration(
         self: Arc<Self>,
-        _workspace_root: &Path,
-        _cx: &mut AppContext,
-    ) -> Value {
-        serde_json::json!({})
+        _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        Ok(serde_json::json!({}))
     }
 
     /// Returns a list of code actions supported by a given LspAdapter

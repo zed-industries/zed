@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{Future, FutureExt};
-use gpui::{AppContext, AsyncAppContext};
+use gpui::AsyncAppContext;
 use language::{
     CodeLabel, HighlightId, Language, LanguageServerName, LspAdapter, LspAdapterDelegate,
 };
@@ -182,12 +182,40 @@ impl LspAdapter for ExtensionLspAdapter {
         })
     }
 
-    fn workspace_configuration(
+    async fn workspace_configuration(
         self: Arc<Self>,
-        _workspace_root: &Path,
-        _cx: &mut AppContext,
-    ) -> Value {
-        serde_json::json!({})
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        let delegate = delegate.clone();
+        let json_options: Option<String> = self
+            .extension
+            .call({
+                let this = self.clone();
+                |extension, store| {
+                    async move {
+                        let resource = store.data_mut().table().push(delegate)?;
+                        let options = extension
+                            .call_language_server_workspace_configuration(
+                                store,
+                                &this.language_server_id,
+                                resource,
+                            )
+                            .await?
+                            .map_err(|e| anyhow!("{}", e))?;
+                        anyhow::Ok(options)
+                    }
+                    .boxed()
+                }
+            })
+            .await?;
+        Ok(if let Some(json_options) = json_options {
+            serde_json::from_str(&json_options).with_context(|| {
+                format!("failed to parse initialization_options from extension: {json_options}")
+            })?
+        } else {
+            serde_json::json!({})
+        })
     }
 
     async fn labels_for_completions(
