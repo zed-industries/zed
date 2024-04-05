@@ -176,8 +176,7 @@ impl Inventory {
             .flat_map(|source| {
                 source
                     .source
-                    // TODO kb remove the path parameter
-                    .update(cx, |source, cx| source.tasks_for_path(None, cx))
+                    .update(cx, |source, cx| source.tasks_to_schedule(cx))
                     .into_iter()
                     .map(|task| (&source.kind, task))
             })
@@ -230,7 +229,6 @@ impl Inventory {
         self.last_scheduled_tasks
             .back()
             .and_then(|(id, task_context)| {
-                // TODO straighten the `Path` story to understand what has to be passed here: or it will break in the future.
                 self.list_tasks(None, None, false, cx)
                     .into_iter()
                     .find(|(_, task)| task.id() == id)
@@ -249,7 +247,7 @@ impl Inventory {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_inventory {
-    use std::{path::Path, sync::Arc};
+    use std::sync::Arc;
 
     use gpui::{AppContext, Context as _, Model, ModelContext, TestAppContext};
     use task::{Task, TaskContext, TaskId, TaskSource};
@@ -308,9 +306,8 @@ pub mod test_inventory {
     }
 
     impl TaskSource for StaticTestSource {
-        fn tasks_for_path(
+        fn tasks_to_schedule(
             &mut self,
-            _path: Option<&Path>,
             _cx: &mut ModelContext<Box<dyn TaskSource>>,
         ) -> Vec<Arc<dyn Task>> {
             self.tasks
