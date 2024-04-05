@@ -214,8 +214,8 @@ impl DirectWriteState {
                 )
                 .unwrap();
             let total_number = font.GetFontCount();
-            for _ in 0..total_number {
-                let font_face_ref = font.GetFontFaceReference(0).unwrap();
+            for index in 0..total_number {
+                let font_face_ref = font.GetFontFaceReference(index).unwrap();
                 let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
                     continue;
                 };
