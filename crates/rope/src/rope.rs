@@ -930,18 +930,8 @@ impl Chunk {
                     || !grapheme_cursor.is_boundary(line, 0).unwrap_or(false)
                 {
                     match bias {
-                        Bias::Left => {
-                            column = grapheme_cursor
-                                .prev_boundary(line, 0)
-                                .unwrap_or(Some(column - 1))
-                                .unwrap()
-                        }
-                        Bias::Right => {
-                            column = grapheme_cursor
-                                .next_boundary(line, 0)
-                                .unwrap_or(Some(column + 1))
-                                .unwrap()
-                        }
+                        Bias::Left => column -= 1,
+                        Bias::Right => column += 1,
                     }
                     grapheme_cursor.set_cursor(column);
                 }
