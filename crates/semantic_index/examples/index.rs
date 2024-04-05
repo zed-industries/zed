@@ -3,6 +3,7 @@ use futures::channel::oneshot;
 use gpui::{App, Global, TestAppContext};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
+use semantic_index::FakeEmbeddingProvider;
 use semantic_index::SemanticIndex;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
@@ -42,8 +43,14 @@ fn main() {
         Client::set_global(client.clone(), cx);
 
         let temp_dir = tempdir().unwrap();
-        let semantic_index =
-            SemanticIndex::new(Path::new("/Users/as-cii/dev/semantic-index-db.mdb"), cx);
+
+        let embedding_provider = FakeEmbeddingProvider::new();
+
+        let semantic_index = SemanticIndex::new(
+            Path::new("/Users/as-cii/dev/semantic-index-db.mdb"),
+            embedding_provider,
+            cx,
+        );
 
         cx.spawn(|mut cx| async move {
             let args: Vec<String> = std::env::args().collect();

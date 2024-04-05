@@ -1,9 +1,8 @@
 use anyhow::{anyhow, Context as _, Result};
 use futures::{future::BoxFuture, AsyncReadExt, FutureExt};
-use gpui::{AppContext, Task};
 use serde::{Deserialize, Serialize};
 use std::{future, sync::Arc};
-use util::http::{AsyncBody, HttpClient, HttpClientWithUrl, Method, Request as HttpRequest};
+use util::http::HttpClient;
 
 /// Ollama's embedding via nomic-embed-text is of length 768
 pub const EMBEDDING_SIZE_TINY: usize = 768;
@@ -51,6 +50,34 @@ impl Embedding {
 pub trait EmbeddingProvider {
     fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>>;
     fn batch_size(&self) -> usize;
+}
+
+pub struct FakeEmbeddingProvider {}
+
+impl FakeEmbeddingProvider {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl EmbeddingProvider for FakeEmbeddingProvider {
+    fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
+        let embeddings = texts
+            .iter()
+            .map(|text| {
+                let mut embedding = vec![0f32; 2];
+                for i in 0..2 {
+                    embedding[i] = i as f32;
+                }
+                Embedding::new(embedding)
+            })
+            .collect();
+        future::ready(Ok(embeddings)).boxed()
+    }
+
+    fn batch_size(&self) -> usize {
+        16
+    }
 }
 
 pub struct OllamaEmbeddingProvider {
@@ -125,7 +152,7 @@ pub struct OpenaiEmbeddingProvider {
 #[derive(Serialize)]
 struct OpenaiEmbeddingRequest {
     model: String,
-    input: String,
+    input: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -151,44 +178,44 @@ impl OpenaiEmbeddingProvider {
 }
 
 impl EmbeddingProvider for OpenaiEmbeddingProvider {
-    fn embed(&self, texts: &[&str], cx: &AppContext) -> BoxFuture<Result<Vec<Embedding>>> {
+    fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
         todo!();
-        let request = OpenaiEmbeddingRequest {
-            model: match self.model {
-                EmbeddingModel::OpenaiTextEmbedding3Small => "text-embedding-3-small".to_string(),
-                EmbeddingModel::OpenaiTextEmbedding3Large => "text-embedding-3-large".to_string(),
-                _ => return Err(anyhow!("Invalid model")),
-            },
-            input: text,
-        };
+        // let request = OpenaiEmbeddingRequest {
+        //     model: match self.model {
+        //         EmbeddingModel::OpenaiTextEmbedding3Small => "text-embedding-3-small".to_string(),
+        //         EmbeddingModel::OpenaiTextEmbedding3Large => "text-embedding-3-large".to_string(),
+        //         _ => return Err(anyhow!("Invalid model")),
+        //     },
+        //     input: texts,
+        // };
 
-        let api_url = "https://api.openai.com/v1/";
+        // let api_url = "https://api.openai.com/v1/";
 
-        let uri = format!("{api_url}/embeddings");
+        // let uri = format!("{api_url}/embeddings");
 
-        let request = HttpRequest::builder()
-            .method(Method::POST)
-            .uri(uri)
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        // let request = HttpRequest::builder()
+        //     .method(Method::POST)
+        //     .uri(uri)
+        //     .header("Content-Type", "application/json")
+        //     .header("Authorization", format!("Bearer {}", self.api_key))
+        //     .body(AsyncBody::from(serde_json::to_string(&request)?))?;
 
-        let mut response = self.client.send(request).await.context("Failed to embed")?;
+        // let mut response = self.client.send(request).await.context("Failed to embed")?;
 
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await.ok();
+        // let mut body = Vec::new();
+        // response.body_mut().read_to_end(&mut body).await.ok();
 
-        let mut response: OpenaiEmbeddingResponse =
-            serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
+        // let mut response: OpenaiEmbeddingResponse =
+        //     serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
 
-        let data = response
-            .data
-            .pop()
-            .context("No embedding data found in response")?;
-        Ok(Embedding::new(data.embedding))
+        // let data = response
+        //     .data
+        //     .pop()
+        //     .context("No embedding data found in response")?;
+        // Ok(Embedding::new(data.embedding))
     }
 
-    fn batch_size(&self, cx: &AppContext) -> usize {
+    fn batch_size(&self) -> usize {
         todo!();
     }
 }
@@ -198,6 +225,8 @@ mod test {
     use super::*;
     use gpui::BackgroundExecutor;
 
+    use util::http::HttpClientWithUrl;
+
     #[gpui::test]
     async fn test_ollama_embedding_provider(executor: BackgroundExecutor) {
         executor.allow_parking();
@@ -205,7 +234,7 @@ mod test {
         let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
         let provider =
             OllamaEmbeddingProvider::new(client.clone(), EmbeddingModel::OllamaNomicEmbedText);
-        let embedding = provider.embed("Hello, world!".to_string()).await.unwrap();
+        let embedding = provider.embed(&[&"Hello, world!"]).await.unwrap();
         assert_eq!(embedding.len(), EMBEDDING_SIZE_TINY);
     }
 
@@ -220,7 +249,7 @@ mod test {
         let t_nomic = std::time::Instant::now();
         for i in 0..100 {
             let embedding = provider
-                .embed(format!("Hello, world! {}", i))
+                .embed(&[&format!("Hello, world! {}", i)])
                 .await
                 .unwrap();
             assert_eq!(embedding.len(), EMBEDDING_SIZE_TINY);
@@ -232,9 +261,10 @@ mod test {
             OllamaEmbeddingProvider::new(client.clone(), EmbeddingModel::OllamaMxbaiEmbedLarge);
 
         let t_mxbai = std::time::Instant::now();
+
         for i in 0..100 {
             let embedding = provider
-                .embed(format!("Hello, world! {}", i))
+                .embed(&[&format!("Hello, world! {}", i)])
                 .await
                 .unwrap();
             assert_eq!(embedding.len(), EMBEDDING_SIZE_XSMALL);
@@ -258,7 +288,7 @@ mod test {
         let t_openai_small = std::time::Instant::now();
         for i in 0..100 {
             let embedding = provider
-                .embed(format!("Hello, world! {}", i))
+                .embed(&[&format!("Hello, world! {}", i)])
                 .await
                 .unwrap();
             assert_eq!(embedding.len(), EMBEDDING_SIZE_SMALL);

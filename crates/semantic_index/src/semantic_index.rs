@@ -1,12 +1,12 @@
 mod chunking;
-mod embedding;
+pub mod embedding;
 
 use anyhow::{Context as _, Result};
 use chunking::{chunk_text, Chunk};
 use collections::{Bound, HashMap};
 use embedding::{Embedding, EmbeddingProvider};
 use fs::Fs;
-use futures::{stream::StreamExt, FutureExt};
+use futures::stream::StreamExt;
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{
     AppContext, AsyncAppContext, Context, EntityId, EventEmitter, Global, Model, ModelContext,
@@ -18,13 +18,13 @@ use project::{Entry, Project, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
 use std::{
-    cmp::{self, Ordering},
+    cmp::Ordering,
     ops::Range,
     path::Path,
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 use worktree::LocalSnapshot;
 
 pub struct SemanticIndex {
@@ -71,7 +71,14 @@ impl SemanticIndex {
         self.project_indices
             .entry(project.downgrade())
             .or_insert_with(|| {
-                cx.new_model(|cx| ProjectIndex::new(project, self.db_connection.clone(), cx))
+                cx.new_model(|cx| {
+                    ProjectIndex::new(
+                        project,
+                        self.db_connection.clone(),
+                        self.embedding_provider.clone(),
+                        cx,
+                    )
+                })
             })
             .clone()
     }
@@ -84,6 +91,7 @@ pub struct ProjectIndex {
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     last_status: Status,
+    embedding_provider: Arc<dyn EmbeddingProvider>,
 }
 
 enum WorktreeIndexHandle {
@@ -97,7 +105,12 @@ enum WorktreeIndexHandle {
 }
 
 impl ProjectIndex {
-    fn new(project: Model<Project>, db_connection: heed::Env, cx: &mut ModelContext<Self>) -> Self {
+    fn new(
+        project: Model<Project>,
+        db_connection: heed::Env,
+        embedding_provider: Arc<dyn EmbeddingProvider>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let fs = project.read(cx).fs().clone();
         let mut this = ProjectIndex {
@@ -107,6 +120,7 @@ impl ProjectIndex {
             language_registry,
             fs,
             last_status: Status::Idle,
+            embedding_provider,
         };
 
         for worktree in project.read(cx).worktrees().collect::<Vec<_>>() {
@@ -127,6 +141,7 @@ impl ProjectIndex {
             self.db_connection.clone(),
             self.language_registry.clone(),
             self.fs.clone(),
+            self.embedding_provider.clone(),
             cx,
         );
         let load_worktree = cx.spawn(|this, mut cx| async move {
@@ -241,6 +256,7 @@ impl WorktreeIndex {
         db_connection: heed::Env,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        embedding_provider: Arc<dyn EmbeddingProvider>,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         let worktree_abs_path = worktree.read(cx).abs_path();
@@ -258,7 +274,17 @@ impl WorktreeIndex {
                     }
                 })
                 .await?;
-            cx.new_model(|cx| Self::new(worktree, db_connection, db, language_registry, fs, cx))
+            cx.new_model(|cx| {
+                Self::new(
+                    worktree,
+                    db_connection,
+                    db,
+                    language_registry,
+                    fs,
+                    embedding_provider,
+                    cx,
+                )
+            })
         })
     }
 
@@ -444,7 +470,9 @@ impl WorktreeIndex {
         cx: &mut AsyncAppContext,
     ) -> Result<EmbedFiles> {
         let embedding_provider = this.read_with(cx, |this, _| this.embedding_provider.clone())?;
+        let embedding_provider = embedding_provider.as_ref();
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
+
         let task = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
                 chunked_files.chunks_timeout(512, Duration::from_secs(2));
