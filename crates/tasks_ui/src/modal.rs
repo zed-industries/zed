@@ -1,16 +1,18 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
+use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
     Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
     VisualContext, WeakView,
 };
+use language::Language;
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
     Picker, PickerDelegate,
 };
-use project::{Inventory, ProjectPath, TaskSourceKind};
+use project::{Inventory, TaskSourceKind};
 use task::{oneshot_source::OneshotSource, Task, TaskContext};
 use ui::{
     div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, IconButton,
@@ -116,20 +118,6 @@ impl TasksModalDelegate {
             Some(())
         });
     }
-    fn active_item_path(
-        workspace: &WeakView<Workspace>,
-        cx: &mut ViewContext<'_, Picker<Self>>,
-    ) -> Option<(PathBuf, ProjectPath)> {
-        let workspace = workspace.upgrade()?.read(cx);
-        let project = workspace.project().read(cx);
-        let active_item = workspace.active_item(cx)?;
-        active_item.project_path(cx).and_then(|project_path| {
-            project
-                .worktree_for_id(project_path.worktree_id, cx)
-                .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path))
-                .zip(Some(project_path))
-        })
-    }
 }
 
 pub(crate) struct TasksModal {
@@ -212,15 +200,20 @@ impl PickerDelegate for TasksModalDelegate {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
                     let candidates = picker.delegate.candidates.get_or_insert_with(|| {
-                        let (path, worktree) =
-                            match Self::active_item_path(&picker.delegate.workspace, cx) {
-                                Some((abs_path, project_path)) => {
-                                    (Some(abs_path), Some(project_path.worktree_id))
-                                }
-                                None => (None, None),
-                            };
+                        let worktree = picker
+                            .delegate
+                            .workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.active_item(cx).and_then(|active_item| {
+                                    Some(active_item.project_path(cx)?.worktree_id)
+                                })
+                            })
+                            .ok()
+                            .flatten();
+                        let language =
+                            language_for_active_selection(&picker.delegate.workspace, cx);
                         picker.delegate.inventory.update(cx, |inventory, cx| {
-                            inventory.list_tasks(path.as_deref(), worktree, true, cx)
+                            inventory.list_tasks(language, worktree, true, cx)
                         })
                     });
 
@@ -308,7 +301,7 @@ impl PickerDelegate for TasksModalDelegate {
         let (source_kind, _) = &candidates.get(hit.candidate_id)?;
         let details = match source_kind {
             TaskSourceKind::UserInput => "user input".to_string(),
-            TaskSourceKind::Buffer => "language extension".to_string(),
+            TaskSourceKind::Language { name } => format!("{name} language"),
             TaskSourceKind::Worktree { abs_path, .. } | TaskSourceKind::AbsPath(abs_path) => {
                 abs_path.compact().to_string_lossy().to_string()
             }
@@ -390,6 +383,22 @@ impl PickerDelegate for TasksModalDelegate {
             .ok();
         cx.emit(DismissEvent);
     }
+}
+
+fn language_for_active_selection(
+    workspace: &WeakView<Workspace>,
+    cx: &mut WindowContext,
+) -> Option<Arc<Language>> {
+    let active_item = workspace.upgrade()?.read(cx).active_item(cx)?;
+    let editor = active_item.act_as::<Editor>(cx)?;
+    editor.update(cx, |editor, cx| {
+        let selection = editor.selections.newest::<usize>(cx);
+        let (buffer, buffer_position, _) = editor
+            .buffer()
+            .read(cx)
+            .point_to_buffer_offset(selection.start, cx)?;
+        buffer.read(cx).language_at(buffer_position)
+    })
 }
 
 #[cfg(test)]

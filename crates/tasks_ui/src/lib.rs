@@ -93,8 +93,7 @@ fn task_context(
 ) -> TaskContext {
     let current_editor = workspace
         .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx))
-        .clone();
+        .and_then(|item| item.act_as::<Editor>(cx));
     if let Some(current_editor) = current_editor {
         (|| {
             let editor = current_editor.read(cx);

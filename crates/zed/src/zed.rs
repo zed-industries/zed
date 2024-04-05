@@ -18,7 +18,6 @@ pub use open_listener::*;
 use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
-use language::LanguageSource;
 use project::TaskSourceKind;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -179,11 +178,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                                 cx,
                             )
                         },
-                        cx,
-                    );
-                    inventory.add_source(
-                        TaskSourceKind::Buffer,
-                        |cx| LanguageSource::new(app_state.languages.clone(), cx),
                         cx,
                     );
                 })
