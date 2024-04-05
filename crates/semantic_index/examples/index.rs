@@ -3,7 +3,7 @@ use futures::channel::oneshot;
 use gpui::{App, Global, TestAppContext};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
-use semantic_index::FakeEmbeddingProvider;
+use semantic_index::embedding::FakeEmbeddingProvider;
 use semantic_index::SemanticIndex;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};

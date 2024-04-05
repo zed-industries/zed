@@ -1,8 +1,6 @@
 mod chunking;
 pub mod embedding;
 
-pub use embedding::FakeEmbeddingProvider;
-
 use anyhow::{Context as _, Result};
 use chunking::{chunk_text, Chunk};
 use collections::{Bound, HashMap};
