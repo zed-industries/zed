@@ -234,8 +234,8 @@ mod test {
         let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
         let provider =
             OllamaEmbeddingProvider::new(client.clone(), EmbeddingModel::OllamaNomicEmbedText);
-        let embedding = provider.embed(&[&"Hello, world!"]).await.unwrap();
-        assert_eq!(embedding.len(), EMBEDDING_SIZE_TINY);
+        let embeddings = provider.embed(&[&"Hello, world!"]).await.unwrap();
+        assert_eq!(embeddings[0].len(), EMBEDDING_SIZE_TINY);
     }
 
     #[gpui::test]
@@ -248,11 +248,13 @@ mod test {
 
         let t_nomic = std::time::Instant::now();
         for i in 0..100 {
-            let embedding = provider
+            let embeddings = provider
                 .embed(&[&format!("Hello, world! {}", i)])
                 .await
                 .unwrap();
-            assert_eq!(embedding.len(), EMBEDDING_SIZE_TINY);
+            for embedding in embeddings {
+                assert_eq!(embedding.len(), EMBEDDING_SIZE_TINY);
+            }
         }
         dbg!(t_nomic.elapsed());
 
@@ -263,11 +265,13 @@ mod test {
         let t_mxbai = std::time::Instant::now();
 
         for i in 0..100 {
-            let embedding = provider
+            let embeddings = provider
                 .embed(&[&format!("Hello, world! {}", i)])
                 .await
                 .unwrap();
-            assert_eq!(embedding.len(), EMBEDDING_SIZE_XSMALL);
+            for embedding in embeddings {
+                assert_eq!(embedding.len(), EMBEDDING_SIZE_XSMALL);
+            }
         }
         dbg!(t_mxbai.elapsed());
     }
@@ -287,11 +291,13 @@ mod test {
 
         let t_openai_small = std::time::Instant::now();
         for i in 0..100 {
-            let embedding = provider
+            let embeddings = provider
                 .embed(&[&format!("Hello, world! {}", i)])
                 .await
                 .unwrap();
-            assert_eq!(embedding.len(), EMBEDDING_SIZE_SMALL);
+            for embedding in embeddings {
+                assert_eq!(embedding.len(), EMBEDDING_SIZE_SMALL);
+            }
         }
         dbg!(t_openai_small.elapsed());
     }
