@@ -286,41 +286,39 @@ impl WorktreeIndex {
 
             let mut deletion_range: Option<(Bound<&str>, Bound<&str>)> = None;
             for entry in worktree.files(false, 0) {
+                let entry_db_key = db_key_for_path(&entry.path);
+
                 let mut saved_mtime = None;
                 while let Some(db_entry) = db_entries.peek() {
                     match db_entry {
-                        Ok((db_path, db_embedded_file)) => {
-                            match (*db_path).cmp(&entry.path.to_string_lossy()) {
-                                Ordering::Less => {
-                                    if let Some(deletion_range) = deletion_range.as_mut() {
-                                        deletion_range.1 = Bound::Included(db_path);
-                                    } else {
-                                        deletion_range = Some((
-                                            Bound::Included(db_path),
-                                            Bound::Included(db_path),
-                                        ));
-                                    }
+                        Ok((db_path, db_embedded_file)) => match (*db_path).cmp(&entry_db_key) {
+                            Ordering::Less => {
+                                if let Some(deletion_range) = deletion_range.as_mut() {
+                                    deletion_range.1 = Bound::Included(db_path);
+                                } else {
+                                    deletion_range =
+                                        Some((Bound::Included(db_path), Bound::Included(db_path)));
+                                }
 
-                                    db_entries.next();
-                                }
-                                Ordering::Equal => {
-                                    if let Some(deletion_range) = deletion_range.take() {
-                                        deleted_entry_ranges_tx
-                                            .send((
-                                                deletion_range.0.map(ToString::to_string),
-                                                deletion_range.1.map(ToString::to_string),
-                                            ))
-                                            .await?;
-                                    }
-                                    saved_mtime = db_embedded_file.mtime;
-                                    db_entries.next();
-                                    break;
-                                }
-                                Ordering::Greater => {
-                                    break;
-                                }
+                                db_entries.next();
                             }
-                        }
+                            Ordering::Equal => {
+                                if let Some(deletion_range) = deletion_range.take() {
+                                    deleted_entry_ranges_tx
+                                        .send((
+                                            deletion_range.0.map(ToString::to_string),
+                                            deletion_range.1.map(ToString::to_string),
+                                        ))
+                                        .await?;
+                                }
+                                saved_mtime = db_embedded_file.mtime;
+                                db_entries.next();
+                                break;
+                            }
+                            Ordering::Greater => {
+                                break;
+                            }
+                        },
                         Err(_) => return Err(db_entries.next().unwrap().unwrap_err())?,
                     }
                 }
@@ -475,7 +473,8 @@ impl WorktreeIndex {
                 let mut txn = db_connection.write_txn()?;
                 for file in embedded_files {
                     log::debug!("saving embedding for file {:?}", file.path);
-                    db.put(&mut txn, &file.path.to_string_lossy(), &file)?;
+                    let key = db_key_for_path(&file.path);
+                    db.put(&mut txn, &key, &file)?;
                 }
                 txn.commit()?;
                 log::debug!("committed");
@@ -520,4 +519,8 @@ struct EmbeddedFile {
 struct EmbeddedChunk {
     chunk: Chunk,
     embedding: Embedding,
+}
+
+fn db_key_for_path(path: &Arc<Path>) -> String {
+    path.to_string_lossy().replace('/', "\0")
 }
