@@ -3875,10 +3875,7 @@ impl ScrollbarLayout {
             .into_iter()
             .map(|range| {
                 let start_y = self.first_row_y_offset + range.start as f32 * self.row_height;
-                let mut end_y = self.first_row_y_offset + (range.end + 1) as f32 * self.row_height;
-                if end_y - start_y < Self::MIN_MARKER_HEIGHT {
-                    end_y = start_y + Self::MIN_MARKER_HEIGHT;
-                }
+                let end_y = self.first_row_y_offset + (range.end + 1) as f32 * self.row_height;
                 ColoredRange {
                     start: start_y,
                     end: end_y,
@@ -3889,11 +3886,14 @@ impl ScrollbarLayout {
 
         let mut quads = Vec::new();
         while let Some(mut pixel_range) = background_pixel_ranges.next() {
+            pixel_range.end = pixel_range
+                .end
+                .max(pixel_range.start + Self::MIN_MARKER_HEIGHT);
             while let Some(next_pixel_range) = background_pixel_ranges.peek() {
                 if pixel_range.end >= next_pixel_range.start
                     && pixel_range.color == next_pixel_range.color
                 {
-                    pixel_range.end = next_pixel_range.end;
+                    pixel_range.end = next_pixel_range.end.max(pixel_range.end);
                     background_pixel_ranges.next();
                 } else {
                     break;
