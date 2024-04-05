@@ -375,12 +375,12 @@ async fn parse_blocks(
         match &block.kind {
             HoverBlockKind::PlainText => {
                 markdown::new_paragraph(&mut text, &mut Vec::new());
-                text.push_str(&block.text);
+                text.push_str(&block.text.replace("\\n", "\n"));
             }
 
             HoverBlockKind::Markdown => {
                 markdown::parse_markdown_block(
-                    &block.text,
+                    &block.text.replace("\\n", "\n"),
                     language_registry,
                     language.clone(),
                     &mut text,
