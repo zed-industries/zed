@@ -13,7 +13,6 @@ use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod c;
 mod css;
-mod dart;
 mod deno;
 mod elixir;
 mod elm;
@@ -92,7 +91,6 @@ pub fn init(
         ("typescript", tree_sitter_typescript::language_typescript()),
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
-        ("dart", tree_sitter_dart::language()),
     ]);
 
     macro_rules! language {
@@ -312,7 +310,6 @@ pub fn init(
         vec![Arc::new(terraform::TerraformLspAdapter)]
     );
     language!("hcl", vec![]);
-    language!("dart", vec![Arc::new(dart::DartLanguageServer {})]);
 
     languages.register_secondary_lsp_adapter(
         "Astro".into(),
