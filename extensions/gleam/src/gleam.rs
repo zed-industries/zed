@@ -1,6 +1,5 @@
 use std::fs;
 use zed::lsp::CompletionKind;
-use zed::settings::LanguageSettings;
 use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
@@ -102,9 +101,6 @@ impl zed::Extension for GleamExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let settings_result = LanguageSettings::get();
-        dbg!(&settings_result);
-
         Ok(zed::Command {
             command: self.language_server_binary_path(language_server_id, worktree)?,
             args: vec!["lsp".to_string()],

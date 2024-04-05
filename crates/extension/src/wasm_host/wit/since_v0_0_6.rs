@@ -1,15 +1,16 @@
 use crate::wasm_host::wit::ToWasmtimeResult;
 use crate::wasm_host::WasmState;
+use ::settings::Settings;
 use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use futures::io::BufReader;
-use futures::FutureExt as _;
-use language::language_settings::all_language_settings;
-use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
+use futures::{io::BufReader, FutureExt as _};
+use language::{
+    language_settings::all_language_settings, LanguageServerBinaryStatus, LspAdapterDelegate,
+};
+use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
-use std::num::NonZeroU32;
 use std::{
     env,
     path::{Path, PathBuf},
@@ -29,7 +30,9 @@ wasmtime::component::bindgen!({
     },
 });
 
-mod settings;
+mod settings {
+    include!("../../../../extension_api/wit/since_v0.0.6/settings.rs");
+}
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 
@@ -82,19 +85,40 @@ impl self::zed::extension::lsp::Host for WasmState {}
 
 #[async_trait]
 impl ExtensionImports for WasmState {
-    async fn get_settings(&mut self, key: String) -> wasmtime::Result<Result<String, String>> {
+    async fn get_settings(
+        &mut self,
+        category: String,
+        key: Option<String>,
+    ) -> wasmtime::Result<Result<String, String>> {
         self.on_main_thread(|cx| {
             async move {
-                cx.update(|cx| match key.as_str() {
+                cx.update(|cx| match category.as_str() {
                     "language" => {
-                        let settings = all_language_settings(None, cx);
-                        let language_settings = settings::LanguageSettings {
-                            tab_size: settings.language(Some("JSON")).tab_size,
-                        };
-                        Ok(serde_json::to_string(&language_settings)?)
+                        let settings = all_language_settings(None, cx).language(key.as_deref());
+                        Ok(serde_json::to_string(&settings::LanguageSettings {
+                            tab_size: settings.tab_size,
+                        })?)
+                    }
+                    "lsp" => {
+                        let settings = key
+                            .and_then(|key| {
+                                ProjectSettings::get_global(cx)
+                                    .lsp
+                                    .get(&Arc::<str>::from(key))
+                            })
+                            .cloned()
+                            .unwrap_or_default();
+                        Ok(serde_json::to_string(&settings::LspSettings {
+                            binary: settings.binary.map(|binary| settings::BinarySettings {
+                                path: binary.path,
+                                arguments: binary.arguments,
+                            }),
+                            settings: settings.settings,
+                            initialization_options: settings.initialization_options,
+                        })?)
                     }
                     _ => {
-                        bail!("invalid key: {key}")
+                        bail!("Unknown settings category: {}", category);
                     }
                 })
             }
