@@ -5,56 +5,84 @@ world extension {
 
     use lsp.{completion, symbol};
 
+    /// Initializes the extension.
     export init-extension: func();
 
+    /// A GitHub release.
     record github-release {
+        /// The version of the release.
         version: string,
+        /// The list of assets attached to the release.
         assets: list<github-release-asset>,
     }
 
+    /// An asset from a GitHub release.
     record github-release-asset {
+        /// The name of the asset.
         name: string,
+        /// The download URL for the asset.
         download-url: string,
     }
 
+    /// The options used to filter down GitHub releases.
     record github-release-options {
+        /// Whether releases without assets should be included.
         require-assets: bool,
+        /// Whether pre-releases should be included.
         pre-release: bool,
     }
 
+    /// An operating system.
     enum os {
+        /// macOS.
         mac,
+        /// Linux.
         linux,
+        /// Windows.
         windows,
     }
 
+    /// A platform architecture.
     enum architecture {
+        /// AArch64 (e.g., Apple Silicon).
         aarch64,
+        /// x86.
         x86,
+        /// x86-64.
         x8664,
     }
 
+    /// The type of a downloaded file.
     enum downloaded-file-type {
+        /// A gzipped file (`.gz`).
         gzip,
+        /// A gzipped tar archive (`.tar.gz`).
         gzip-tar,
+        /// A ZIP file (`.zip`).
         zip,
+        /// An uncompressed file.
         uncompressed,
     }
 
+    /// The installation status for a language server.
     variant language-server-installation-status {
+        /// The language server has no installation status.
         none,
+        /// The language server is being downloaded.
         downloading,
+        /// The language server is checking for updates.
         checking-for-update,
+        /// The language server installation failed for specified reason.
         failed(string),
     }
 
-    /// Gets the current operating system and architecture
+    /// Returns operating system and architecture for the current platform.
     import current-platform: func() -> tuple<os, architecture>;
 
-    /// Get the path to the node binary used by Zed.
+    /// Returns the path to the Node binary used by Zed.
     import node-binary-path: func() -> result<string, string>;
 
-    /// Gets the latest version of the given NPM package.
+    /// Returns the latest version of the given NPM package.
     import npm-package-latest-version: func(package-name: string) -> result<string, string>;
 
     /// Returns the installed version of the given NPM package, if it exists.
@@ -63,11 +91,13 @@ world extension {
     /// Installs the specified NPM package.
     import npm-install-package: func(package-name: string, version: string) -> result<_, string>;
 
-    /// Gets the latest release for the given GitHub repository.
+    /// Returns the latest release for the given GitHub repository.
     import latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
 
-    /// Downloads a file from the given url, and saves it to the given path within the extension's
-    /// working directory. Extracts the file according to the given file type.
+    /// Downloads a file from the given URL and saves it to the given path within the extension's
+    /// working directory.
+    ///
+    /// The file will be extracted according to the given file type.
     import download-file: func(url: string, file-path: string, file-type: downloaded-file-type) -> result<_, string>;
 
     /// Makes the file at the given path executable.
@@ -76,21 +106,35 @@ world extension {
     /// Updates the installation status for the given language server.
     import set-language-server-installation-status: func(language-server-name: string, status: language-server-installation-status);
 
+    /// A list of environment variables.
     type env-vars = list<tuple<string, string>>;
 
+    /// A command.
     record command {
+        /// The command to execute.
         command: string,
+        /// The arguments to pass to the command.
         args: list<string>,
+        /// The environment variables to set for the command.
         env: env-vars,
     }
 
+    /// A Zed worktree.
     resource worktree {
+        /// Returns the textual contents of the specified file in the worktree.
         read-text-file: func(path: string) -> result<string, string>;
+        /// Returns the path to the given binary name, if one is present on the `$PATH`.
         which: func(binary-name: string) -> option<string>;
+        /// Returns the current shell environment.
         shell-env: func() -> env-vars;
     }
 
+    /// Returns the command used to start up the language server.
     export language-server-command: func(language-server-id: string, worktree: borrow<worktree>) -> result<command, string>;
+
+    /// Returns the initialization options to pass to the language server on startup.
+    ///
+    /// The initialization options are represented as a JSON string.
     export language-server-initialization-options: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 
     record code-label {
