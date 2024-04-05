@@ -926,7 +926,9 @@ impl Chunk {
             if row == target.row as usize {
                 let mut column = target.column.min(line.len() as u32) as usize;
                 let mut grapheme_cursor = GraphemeCursor::new(column, line.len(), true);
-                while !grapheme_cursor.is_boundary(line, 0).unwrap_or(false) {
+                while !line.is_char_boundary(column)
+                    || !grapheme_cursor.is_boundary(line, 0).unwrap_or(false)
+                {
                     match bias {
                         Bias::Left => {
                             column = grapheme_cursor
