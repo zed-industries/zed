@@ -1,9 +1,10 @@
 use std::{array::TryFromSliceError, sync::Arc};
 
+use util::http::{AsyncBody, HttpClient, HttpClientWithUrl, Method, Request as HttpRequest};
+
 use anyhow::{anyhow, Context as _, Result};
 use futures::AsyncReadExt;
 use serde::{Deserialize, Serialize};
-use util::http::{HttpClient, HttpClientWithUrl};
 
 /// Ollama's embedding via nomic-embed-text is of length 768
 pub const EMBEDDING_SIZE_TINY: usize = 768;
@@ -93,7 +94,7 @@ pub trait EmbeddingProvider {
 }
 
 pub struct OllamaEmbeddingProvider {
-    client: Arc<HttpClientWithUrl>,
+    client: Arc<dyn HttpClient>,
     model: EmbeddingModel,
 }
 
@@ -109,7 +110,7 @@ struct OllamaEmbeddingResponse {
 }
 
 impl OllamaEmbeddingProvider {
-    pub fn new(client: Arc<HttpClientWithUrl>, model: EmbeddingModel) -> Self {
+    pub fn new(client: Arc<dyn HttpClient>, model: EmbeddingModel) -> Self {
         Self { client, model }
     }
 }
@@ -142,6 +143,78 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
     }
 }
 
+pub struct OpenaiEmbeddingProvider {
+    client: Arc<dyn HttpClient>,
+    model: EmbeddingModel,
+    api_key: String,
+}
+
+#[derive(Serialize)]
+struct OpenaiEmbeddingRequest {
+    model: String,
+    prompt: String,
+}
+
+#[derive(Deserialize)]
+struct OpenaiEmbeddingData {
+    embedding: Vec<f32>,
+}
+
+#[derive(Deserialize)]
+struct OpenaiEmbeddingResponse {
+    object: String,
+    data: Vec<OpenaiEmbeddingData>,
+    model: String,
+}
+
+impl OpenaiEmbeddingProvider {
+    pub fn new(client: Arc<dyn HttpClient>, model: EmbeddingModel, api_key: String) -> Self {
+        Self {
+            client,
+            model,
+            api_key,
+        }
+    }
+}
+
+impl EmbeddingProvider for OpenaiEmbeddingProvider {
+    async fn get_embedding(&self, text: String) -> Result<Embedding> {
+        let request = OpenaiEmbeddingRequest {
+            model: match self.model {
+                EmbeddingModel::OpenaiTextEmbedding3Small => "text-embedding-3-small".to_string(),
+                EmbeddingModel::OpenaiTextEmbedding3Large => "text-embedding-3-large".to_string(),
+                _ => return Err(anyhow!("Invalid model")),
+            },
+            prompt: text,
+        };
+
+        let api_url = "https://api.openai.com/v1/";
+
+        let uri = format!("{api_url}/embeddings");
+
+        let request = HttpRequest::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .body(AsyncBody::from(serde_json::to_string(&request)?))?;
+
+        let mut response = self.client.send(request).await.context("Failed to embed")?;
+
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await.ok();
+
+        let response: OpenaiEmbeddingResponse =
+            serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
+
+        if let Some(first_embedding) = response.data.first() {
+            normalize_embedding(first_embedding.embedding.clone(), self.model)
+        } else {
+            Err(anyhow!("No embedding data found in response"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -153,7 +226,7 @@ mod test {
 
         let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
         let provider =
-            OllamaEmbeddingProvider::new(client.into(), EmbeddingModel::OllamaNomicEmbedText);
+            OllamaEmbeddingProvider::new(client.clone(), EmbeddingModel::OllamaNomicEmbedText);
         let embedding = provider
             .get_embedding("Hello, world!".to_string())
             .await
@@ -171,7 +244,7 @@ mod test {
 
         let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
         let provider =
-            OllamaEmbeddingProvider::new(client.into(), EmbeddingModel::OllamaNomicEmbedText);
+            OllamaEmbeddingProvider::new(client.clone(), EmbeddingModel::OllamaNomicEmbedText);
 
         let t_nomic = std::time::Instant::now();
         for i in 0..100 {
@@ -189,7 +262,7 @@ mod test {
 
         let client = Arc::new(HttpClientWithUrl::new("http://localhost:11434/"));
         let provider =
-            OllamaEmbeddingProvider::new(client.into(), EmbeddingModel::OllamaMxbaiEmbedLarge);
+            OllamaEmbeddingProvider::new(client.clone(), EmbeddingModel::OllamaMxbaiEmbedLarge);
 
         let t_mxbai = std::time::Instant::now();
         for i in 0..100 {
