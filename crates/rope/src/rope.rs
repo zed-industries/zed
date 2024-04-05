@@ -12,6 +12,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
+use unicode_segmentation::UnicodeSegmentation;
 use util::debug_panic;
 
 pub use offset_utf16::OffsetUtf16;
@@ -735,13 +736,13 @@ impl Chunk {
     fn offset_to_offset_utf16(&self, target: usize) -> OffsetUtf16 {
         let mut offset = 0;
         let mut offset_utf16 = OffsetUtf16(0);
-        for ch in self.0.chars() {
+        for ch in self.0.graphemes(true) {
             if offset >= target {
                 break;
             }
 
-            offset += ch.len_utf8();
-            offset_utf16.0 += ch.len_utf16();
+            offset += ch.len();
+            offset_utf16.0 += ch.encode_utf16().count();
         }
         offset_utf16
     }
@@ -749,13 +750,13 @@ impl Chunk {
     fn offset_utf16_to_offset(&self, target: OffsetUtf16) -> usize {
         let mut offset_utf16 = OffsetUtf16(0);
         let mut offset = 0;
-        for ch in self.0.chars() {
+        for ch in self.0.graphemes(true) {
             if offset_utf16 >= target {
                 break;
             }
 
-            offset += ch.len_utf8();
-            offset_utf16.0 += ch.len_utf16();
+            offset += ch.len();
+            offset_utf16.0 += ch.encode_utf16().count();
         }
         offset
     }
@@ -763,18 +764,18 @@ impl Chunk {
     fn offset_to_point(&self, target: usize) -> Point {
         let mut offset = 0;
         let mut point = Point::new(0, 0);
-        for ch in self.0.chars() {
+        for ch in self.0.graphemes(true) {
             if offset >= target {
                 break;
             }
 
-            if ch == '\n' {
+            if ch == "\n" {
                 point.row += 1;
                 point.column = 0;
             } else {
-                point.column += ch.len_utf8() as u32;
+                point.column += ch.len() as u32;
             }
-            offset += ch.len_utf8();
+            offset += ch.len();
         }
         point
     }
@@ -782,18 +783,18 @@ impl Chunk {
     fn offset_to_point_utf16(&self, target: usize) -> PointUtf16 {
         let mut offset = 0;
         let mut point = PointUtf16::new(0, 0);
-        for ch in self.0.chars() {
+        for ch in self.0.graphemes(true) {
             if offset >= target {
                 break;
             }
 
-            if ch == '\n' {
+            if ch == "\n" {
                 point.row += 1;
                 point.column = 0;
             } else {
-                point.column += ch.len_utf16() as u32;
+                point.column += ch.encode_utf16().count() as u32;
             }
-            offset += ch.len_utf8();
+            offset += ch.len();
         }
         point
     }
@@ -802,7 +803,7 @@ impl Chunk {
         let mut offset = 0;
         let mut point = Point::new(0, 0);
 
-        for ch in self.0.chars() {
+        for ch in self.0.graphemes(true) {
             if point >= target {
                 if point > target {
                     debug_panic!("point {target:?} is inside of character {ch:?}");
@@ -810,7 +811,7 @@ impl Chunk {
                 break;
             }
 
-            if ch == '\n' {
+            if ch == "\n" {
                 point.row += 1;
                 point.column = 0;
 
@@ -822,10 +823,10 @@ impl Chunk {
                     break;
                 }
             } else {
-                point.column += ch.len_utf8() as u32;
+                point.column += ch.len() as u32;
             }
 
-            offset += ch.len_utf8();
+            offset += ch.len();
         }
 
         offset
@@ -834,19 +835,19 @@ impl Chunk {
     fn point_to_point_utf16(&self, target: Point) -> PointUtf16 {
         let mut point = Point::zero();
         let mut point_utf16 = PointUtf16::new(0, 0);
-        for ch in self.0.chars() {
+        for ch in self.0.graphemes(true) {
             if point >= target {
                 break;
             }
 
-            if ch == '\n' {
+            if ch == "\n" {
                 point_utf16.row += 1;
                 point_utf16.column = 0;
                 point.row += 1;
                 point.column = 0;
             } else {
-                point_utf16.column += ch.len_utf16() as u32;
-                point.column += ch.len_utf8() as u32;
+                point_utf16.column += ch.encode_utf16().count() as u32;
+                point.column += ch.len() as u32;
             }
         }
         point_utf16
@@ -856,12 +857,12 @@ impl Chunk {
         let mut offset = 0;
         let mut point = PointUtf16::new(0, 0);
 
-        for ch in self.0.chars() {
+        for ch in self.0.graphemes(true) {
             if point == target {
                 break;
             }
 
-            if ch == '\n' {
+            if ch == "\n" {
                 point.row += 1;
                 point.column = 0;
 
@@ -876,7 +877,7 @@ impl Chunk {
                     return offset;
                 }
             } else {
-                point.column += ch.len_utf16() as u32;
+                point.column += ch.encode_utf16().count() as u32;
             }
 
             if point > target {
@@ -887,7 +888,7 @@ impl Chunk {
                 return offset;
             }
 
-            offset += ch.len_utf8();
+            offset += ch.len();
         }
 
         offset
@@ -897,7 +898,7 @@ impl Chunk {
         let mut point = Point::zero();
         let mut point_utf16 = PointUtf16::zero();
 
-        for ch in self.0.chars() {
+        for ch in self.0.graphemes(true) {
             if point_utf16 == target.0 {
                 break;
             }
@@ -908,12 +909,12 @@ impl Chunk {
                 return point;
             }
 
-            if ch == '\n' {
+            if ch == "\n" {
                 point_utf16 += PointUtf16::new(1, 0);
                 point += Point::new(1, 0);
             } else {
-                point_utf16 += PointUtf16::new(0, ch.len_utf16() as u32);
-                point += Point::new(0, ch.len_utf8() as u32);
+                point_utf16 += PointUtf16::new(0, ch.encode_utf16().count() as u32);
+                point += Point::new(0, ch.len() as u32);
             }
         }
 
