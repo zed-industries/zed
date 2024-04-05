@@ -223,13 +223,13 @@ impl DirectWriteState {
                     continue;
                 };
                 let is_emoji = font_face.IsColorFont().as_bool();
-                let direct_write_featrues = self.components.factory.CreateTypography().unwrap();
-                apply_font_features(&direct_write_featrues, features);
+                let direct_write_features = self.components.factory.CreateTypography().unwrap();
+                apply_font_features(&direct_write_features, features);
                 let font_info = FontInfo {
                     font_family: family_name,
                     font_face,
                     font_set_index: fontset_index,
-                    features: direct_write_featrues,
+                    features: direct_write_features,
                     is_emoji,
                 };
                 let font_id = FontId(self.fonts.len());
@@ -1088,7 +1088,7 @@ unsafe fn get_postscript_name(font_face: &IDWriteFontFace3) -> Option<String> {
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
-unsafe fn apply_font_features(direct_write_featrues: &IDWriteTypography, features: &FontFeatures) {
+unsafe fn apply_font_features(direct_write_features: &IDWriteTypography, features: &FontFeatures) {
     let tag_values = features.tag_value_list();
     if tag_values.is_empty() {
         return;
@@ -1114,13 +1114,13 @@ unsafe fn apply_font_features(direct_write_featrues: &IDWriteTypography, feature
             continue;
         }
 
-        direct_write_featrues
+        direct_write_features
             .AddFontFeature(make_direct_write_feature(&tag, enable))
             .unwrap();
     }
-    direct_write_featrues.AddFontFeature(feature_liga).unwrap();
-    direct_write_featrues.AddFontFeature(feature_clig).unwrap();
-    direct_write_featrues.AddFontFeature(feature_calt).unwrap();
+    direct_write_features.AddFontFeature(feature_liga).unwrap();
+    direct_write_features.AddFontFeature(feature_clig).unwrap();
+    direct_write_features.AddFontFeature(feature_calt).unwrap();
 }
 
 #[inline]
