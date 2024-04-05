@@ -10,10 +10,11 @@ use editor::{
 use gpui::{actions, ViewContext, WindowContext};
 use language::{Point, Selection, SelectionGoal};
 use search::BufferSearchBar;
+use util::ResultExt;
 use workspace::{searchable::Direction, Workspace};
 
 use crate::{
-    motion::{start_of_line, Motion},
+motion::{start_of_line, Motion},
     normal::substitute::substitute,
     object::Object,
     state::{Mode, Operator},
@@ -33,6 +34,7 @@ actions!(
         SelectNext,
         SelectPrevious,
         SelectNextMatch,
+        SelectPreviousMatch,
     ]
 );
 
@@ -63,7 +65,16 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
 
     workspace.register_action(select_next);
     workspace.register_action(select_previous);
-    workspace.register_action(select_next_match);
+    workspace.register_action(|workspace, _: &SelectNextMatch, cx| {
+        Vim::update(cx, |vim, cx| {
+            select_match(workspace, vim, Direction::Next, cx);
+        });
+    });
+    workspace.register_action(|workspace, _: &SelectPreviousMatch, cx| {
+        Vim::update(cx, |vim, cx| {
+            select_match(workspace, vim, Direction::Prev, cx);
+        });
+    });
 }
 
 pub fn visual_motion(motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
@@ -447,7 +458,7 @@ pub fn select_next(_: &mut Workspace, _: &SelectNext, cx: &mut ViewContext<Works
                 .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
         vim.update_active_editor(cx, |_, editor, cx| {
             for _ in 0..count {
-                if editor.select_next(&Default::default(), cx).is_err() {
+                if editor.select_next(&Default::default(), cx).log_err().is_none() {
                     break
                 }
             }
@@ -462,7 +473,7 @@ pub fn select_previous(_: &mut Workspace, _: &SelectPrevious, cx: &mut ViewConte
                 .unwrap_or_else(|| if vim.state().mode.is_visual() { 1 } else { 2 });
         vim.update_active_editor(cx, |_, editor, cx| {
             for _ in 0..count {
-                if editor.select_previous(&Default::default(), cx).is_err() {
+                if editor.select_previous(&Default::default(), cx).log_err().is_none() {
                     break
                 }
             }
@@ -470,45 +481,39 @@ pub fn select_previous(_: &mut Workspace, _: &SelectPrevious, cx: &mut ViewConte
     });
 }
 
-// Support for gn command
-pub fn select_next_match(
+pub fn select_match(
     workspace: &mut Workspace,
-    _: &SelectNextMatch,
-    cx: &mut ViewContext<Workspace>,
+    vim: &mut Vim,
+    direction: Direction,
+    cx: &mut WindowContext
 ) {
-    // c: start recording
-    // gn: start recording
-    // cgn: don't start recording
-    // vim::PushOperator['c'], vim::SelectNextMatch, 'inserted text', vim::NormalBefor
-    Vim::update(cx, |vim, cx| {
         let count = vim.take_count(cx).unwrap_or(1);
         let pane = workspace.active_pane().clone();
         let vim_is_normal = vim.state().mode == Mode::Normal;
-        let mut current_start_selection = 0usize;
-        let mut current_end_selection = 0usize;
+        let mut start_selection = 0usize;
+        let mut end_selection = 0usize;
+
         vim.update_active_editor(cx, |_, editor, _| {
             editor.set_collapse_matches(false);
         });
 
         if vim_is_normal {
-            // if vim mode is normal we select the current or next match
             pane.update(cx, |pane, cx| {
                 if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
                 {
                     search_bar.update(cx, |search_bar, cx| {
                         // without update_match_index there is a bug when the cursor is before the first match
                         search_bar.update_match_index(cx);
-                        search_bar.select_match(Direction::Prev, 1, cx);
-                        search_bar.update_match_index(cx);
-                        search_bar.select_match(Direction::Next, 1, cx);
+                        search_bar.select_match(direction.opposite(), 1, cx);
                     });
                 }
             });
         }
-        // we save the current selection for merge with the selection of the next match
+
         vim.update_active_editor(cx, |_, editor, cx| {
-            current_start_selection = editor.selections.first::<usize>(cx).start.clone();
-            current_end_selection = editor.selections.last::<usize>(cx).end.clone();
+            let latest = editor.selections.newest::<usize>(cx);
+            start_selection = latest.start;
+            end_selection = latest.end;
         });
 
         pane.update(cx, |pane, cx| {
@@ -516,32 +521,36 @@ pub fn select_next_match(
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.update_match_index(cx);
                     search_bar.select_match(
-                        Direction::Next,
-                        if vim_is_normal { count - 1 } else { count },
+                        direction,
+                        count,
                         cx,
                     );
                 });
             }
         });
-        vim.update_active_editor(cx, |_, editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.clear_pending();
-                s.insert_range(current_start_selection..current_end_selection);
+            vim.update_active_editor(cx, |_, editor, cx| {
+                let latest = editor.selections.newest::<usize>(cx);
+                if vim_is_normal {
+                    start_selection = latest.start;
+                    end_selection = latest.end;
+                } else {
+                    start_selection = start_selection.min(latest.start);
+                    end_selection = end_selection.max(latest.end);
+                }
+                if direction == Direction::Prev {
+                    std::mem::swap(&mut start_selection, &mut end_selection);
+                }
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.select_ranges([start_selection..end_selection]);
+                });
+                editor.set_collapse_matches(true);
             });
-            let start_selection = editor.selections.first::<usize>(cx).start.clone();
-            let end_selection = editor.selections.last::<usize>(cx).end.clone();
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.insert_range(start_selection..end_selection);
-            });
-            editor.set_collapse_matches(true);
-        });
         match vim.maybe_pop_operator() {
-            Some(Operator::Change) => substitute(vim, Some(1), false, cx),
+            Some(Operator::Change) => substitute(vim, None, false, cx),
             Some(Operator::Delete) => delete(vim, cx),
             Some(Operator::Yank) => yank(vim, cx),
             _ => {} // Ignoring other operators
         };
-    });
 }
 
 #[cfg(test)]
@@ -1112,17 +1121,44 @@ mod test {
     }
 
     #[gpui::test]
-    // cargo test -p vim test_g_n_repeat
-    async fn test_g_n_repeat(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
+    async fn test_gn(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        // change
-        cx.set_state("aˇa aa aa aa aa", Mode::Normal);
-        cx.simulate_keystrokes(["/", "a", "a", "enter"]);
-        cx.assert_state("ˇaa aa aa aa aa", Mode::Normal);
-        cx.simulate_keystrokes(["c", "g", "n", "x", "escape"]);
-        cx.assert_state("ˇx aa aa aa aa", Mode::Normal);
-        cx.simulate_keystrokes(["."]);
-        cx.assert_state("x ˇx aa aa aa", Mode::Normal);
+        cx.set_shared_state("aaˇ aa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["/", "a", "a", "enter"]).await;
+        cx.assert_shared_state("aa ˇaa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["g", "n"]).await;
+        cx.assert_shared_state("aa «aaˇ» aa aa aa").await;
+        cx.simulate_shared_keystrokes(["g", "n"]).await;
+        cx.assert_shared_state("aa «aa aaˇ» aa aa").await;
+        cx.simulate_shared_keystrokes(["escape", "d", "g", "n"]).await;
+        cx.assert_shared_state("aa aa ˇ aa aa").await;
+
+        cx.set_shared_state("aaˇ aa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["/", "a", "a", "enter"]).await;
+        cx.assert_shared_state("aa ˇaa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["3", "g", "n"]).await;
+        cx.assert_shared_state("aa aa aa «aaˇ» aa").await;
+
+        cx.set_shared_state("aaˇ aa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["/", "a", "a", "enter"]).await;
+        cx.assert_shared_state("aa ˇaa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["g", "shift-n"]).await;
+        cx.assert_shared_state("aa «ˇaa» aa aa aa").await;
+        cx.simulate_shared_keystrokes(["g", "shift-n"]).await;
+        cx.assert_shared_state("«ˇaa aa» aa aa aa").await;
+    }
+
+    #[gpui::test]
+    async fn test_cgn_repeat(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("aaˇ aa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["/", "a", "a", "enter"]).await;
+        cx.assert_shared_state("aa ˇaa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["c", "g", "n", "x", "escape"]).await;
+        cx.assert_shared_state("aa ˇx aa aa aa").await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        cx.assert_shared_state("aa x ˇx aa aa").await;
     }
 }
