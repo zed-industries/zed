@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context as _, Result};
 use futures::{future::BoxFuture, AsyncReadExt, FutureExt};
 use serde::{Deserialize, Serialize};
 use std::{future, sync::Arc};
-use util::http::HttpClient;
+use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
 /// Ollama's embedding via nomic-embed-text is of length 768
 pub const EMBEDDING_SIZE_TINY: usize = 768;
@@ -187,23 +187,39 @@ impl EmbeddingProvider for OpenaiEmbeddingProvider {
 
         // Unlike the Ollama model, we can send `texts` as a batch directly
 
+        let api_url = "https://api.openai.com/v1/";
+
+        let uri = format!("{api_url}/embeddings");
+
         let request = OpenaiEmbeddingRequest {
             model: model.to_string(),
             input: texts.iter().map(|text| text.to_string()).collect(),
         };
         let request = serde_json::to_string(&request).unwrap();
+        let body = AsyncBody::from(request);
+
+        let request = HttpRequest::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .body(body);
+
+        let request = if let Ok(request) = request {
+            request
+        } else {
+            return future::ready(Err(anyhow!("Failed to build request"))).boxed();
+        };
 
         async {
-            let response = self
-                .client
-                .post_json("https://api.openai.com/v1/embeddings", request.into())
-                .await?;
+            let response = self.client.send(request).await?;
 
             let mut body = String::new();
             response.into_body().read_to_string(&mut body).await?;
 
-            let response: OpenaiEmbeddingResponse =
-                serde_json::from_str(&body).context("Unable to pull response")?;
+            // todo(): check for errors in response (likely due to rate limiting or invalid API key)
+            let response: OpenaiEmbeddingResponse = serde_json::from_str(&body)
+                .context("Response format from OpenAI did not match struct")?;
 
             let embeddings = response
                 .data
@@ -249,14 +265,12 @@ mod test {
             OllamaEmbeddingProvider::new(client.clone(), EmbeddingModel::OllamaNomicEmbedText);
 
         let t_nomic = std::time::Instant::now();
-        for i in 0..100 {
-            let embeddings = provider
-                .embed(&[&format!("Hello, world! {}", i)])
-                .await
-                .unwrap();
-            for embedding in embeddings {
-                assert_eq!(embedding.len(), EMBEDDING_SIZE_TINY);
-            }
+        let strings: Vec<String> = (0..100).map(|i| format!("Hello, world! {}", i)).collect();
+        let texts: Vec<&str> = strings.iter().map(AsRef::as_ref).collect();
+
+        let embeddings = provider.embed(&texts).await.unwrap();
+        for embedding in embeddings {
+            assert_eq!(embedding.len(), EMBEDDING_SIZE_TINY);
         }
         dbg!(t_nomic.elapsed());
 
@@ -266,14 +280,12 @@ mod test {
 
         let t_mxbai = std::time::Instant::now();
 
-        for i in 0..100 {
-            let embeddings = provider
-                .embed(&[&format!("Hello, world! {}", i)])
-                .await
-                .unwrap();
-            for embedding in embeddings {
-                assert_eq!(embedding.len(), EMBEDDING_SIZE_XSMALL);
-            }
+        let strings: Vec<String> = (0..100).map(|i| format!("Hello, world! {}", i)).collect();
+        let texts: Vec<&str> = strings.iter().map(AsRef::as_ref).collect();
+
+        let embeddings = provider.embed(&texts).await.unwrap();
+        for embedding in embeddings {
+            assert_eq!(embedding.len(), EMBEDDING_SIZE_XSMALL);
         }
         dbg!(t_mxbai.elapsed());
     }
@@ -291,15 +303,13 @@ mod test {
             api_key,
         );
 
+        let strings: Vec<String> = (0..100).map(|i| format!("Hello, world! {}", i)).collect();
+        let texts: Vec<&str> = strings.iter().map(AsRef::as_ref).collect();
+
         let t_openai_small = std::time::Instant::now();
-        for i in 0..100 {
-            let embeddings = provider
-                .embed(&[&format!("Hello, world! {}", i)])
-                .await
-                .unwrap();
-            for embedding in embeddings {
-                assert_eq!(embedding.len(), EMBEDDING_SIZE_SMALL);
-            }
+        let embeddings = provider.embed(&texts).await.unwrap();
+        for embedding in embeddings {
+            assert_eq!(embedding.len(), EMBEDDING_SIZE_SMALL);
         }
         dbg!(t_openai_small.elapsed());
     }
