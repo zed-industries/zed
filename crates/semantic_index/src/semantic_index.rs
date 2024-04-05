@@ -254,12 +254,7 @@ impl WorktreeIndex {
         let persist =
             Self::persist_embeddings(&this, scan.deleted_entry_ranges, embed.files, &mut cx)?;
 
-        futures::join!(
-            scan.task.log_err(),
-            chunk.task,
-            embed.task,
-            persist.log_err()
-        );
+        futures::try_join!(scan.task, chunk.task, embed.task, persist).log_err();
         this.update(&mut cx, |this, cx| {
             this.status = Status::Idle;
             cx.notify();
@@ -392,6 +387,7 @@ impl WorktreeIndex {
                     }
                 })
                 .await;
+            Ok(())
         });
         Ok(ChunkFiles {
             files: chunked_files_rx,
@@ -445,11 +441,10 @@ impl WorktreeIndex {
                             .collect(),
                     };
 
-                    if embedded_files_tx.send(embedded_file).await.is_err() {
-                        return;
-                    }
+                    embedded_files_tx.send(embedded_file).await?;
                 }
             }
+            Ok(())
         });
         Ok(EmbedFiles {
             files: embedded_files_rx,
@@ -499,7 +494,7 @@ struct ScanEntries {
 
 struct ChunkFiles {
     files: channel::Receiver<ChunkedFile>,
-    task: Task<()>,
+    task: Task<Result<()>>,
 }
 
 struct ChunkedFile {
@@ -511,7 +506,7 @@ struct ChunkedFile {
 
 struct EmbedFiles {
     files: channel::Receiver<EmbeddedFile>,
-    task: Task<()>,
+    task: Task<Result<()>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
