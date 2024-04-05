@@ -13,12 +13,14 @@ pub use serde_json;
 // We explicitly enumerate the symbols we want to re-export, as there are some
 // that we may want to shadow to provide a cleaner Rust API.
 pub use wit::{
-    download_file, latest_github_release, make_file_executable, node_binary_path,
-    npm_install_package, npm_package_installed_version, npm_package_latest_version,
+    download_file, make_file_executable, node_binary_path, npm_install_package,
+    npm_package_installed_version, npm_package_latest_version,
+    zed::extension::github::{
+        latest_github_release, GithubRelease, GithubReleaseAsset, GithubReleaseOptions,
+    },
     zed::extension::platform::{current_platform, Architecture, Os},
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    GithubRelease, GithubReleaseAsset, GithubReleaseOptions, LanguageServerInstallationStatus,
-    Range, Worktree,
+    LanguageServerInstallationStatus, Range, Worktree,
 };
 
 // Undocumented WIT re-exports.

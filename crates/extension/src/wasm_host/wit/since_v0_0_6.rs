@@ -1,4 +1,7 @@
-use self::zed::extension::platform::{Architecture, Os};
+use self::zed::extension::{
+    github::{GithubRelease, GithubReleaseAsset, GithubReleaseOptions},
+    platform::{Architecture, Os},
+};
 use crate::wasm_host::wit::ToWasmtimeResult;
 use crate::wasm_host::WasmState;
 use ::settings::Settings;
@@ -98,6 +101,38 @@ impl HostWorktree for WasmState {
 }
 
 impl self::zed::extension::lsp::Host for WasmState {}
+
+#[async_trait]
+impl self::zed::extension::github::Host for WasmState {
+    async fn latest_github_release(
+        &mut self,
+        repo: String,
+        options: GithubReleaseOptions,
+    ) -> wasmtime::Result<Result<GithubRelease, String>> {
+        maybe!(async {
+            let release = util::github::latest_github_release(
+                &repo,
+                options.require_assets,
+                options.pre_release,
+                self.host.http_client.clone(),
+            )
+            .await?;
+            Ok(GithubRelease {
+                version: release.tag_name,
+                assets: release
+                    .assets
+                    .into_iter()
+                    .map(|asset| GithubReleaseAsset {
+                        name: asset.name,
+                        download_url: asset.browser_download_url,
+                    })
+                    .collect(),
+            })
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
 
 #[async_trait]
 impl self::zed::extension::platform::Host for WasmState {
@@ -214,35 +249,6 @@ impl ExtensionImports for WasmState {
             .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
             .await
             .to_wasmtime_result()
-    }
-
-    async fn latest_github_release(
-        &mut self,
-        repo: String,
-        options: GithubReleaseOptions,
-    ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        maybe!(async {
-            let release = util::github::latest_github_release(
-                &repo,
-                options.require_assets,
-                options.pre_release,
-                self.host.http_client.clone(),
-            )
-            .await?;
-            Ok(GithubRelease {
-                version: release.tag_name,
-                assets: release
-                    .assets
-                    .into_iter()
-                    .map(|asset| GithubReleaseAsset {
-                        name: asset.name,
-                        download_url: asset.browser_download_url,
-                    })
-                    .collect(),
-            })
-        })
-        .await
-        .to_wasmtime_result()
     }
 
     async fn set_language_server_installation_status(

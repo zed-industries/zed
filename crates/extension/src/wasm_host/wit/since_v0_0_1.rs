@@ -15,6 +15,7 @@ wasmtime::component::bindgen!({
     path: "../extension_api/wit/since_v0.0.1",
     with: {
          "worktree": ExtensionWorktree,
+         "zed:extension/github": latest::zed::extension::github,
          "zed:extension/platform": latest::zed::extension::platform,
     },
 });
@@ -24,33 +25,6 @@ pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
     LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
-}
-
-impl From<latest::GithubRelease> for GithubRelease {
-    fn from(value: latest::GithubRelease) -> Self {
-        Self {
-            version: value.version,
-            assets: value.assets.into_iter().map(|asset| asset.into()).collect(),
-        }
-    }
-}
-
-impl From<latest::GithubReleaseAsset> for GithubReleaseAsset {
-    fn from(value: latest::GithubReleaseAsset) -> Self {
-        Self {
-            name: value.name,
-            download_url: value.download_url,
-        }
-    }
-}
-
-impl From<GithubReleaseOptions> for latest::GithubReleaseOptions {
-    fn from(value: GithubReleaseOptions) -> Self {
-        Self {
-            require_assets: value.require_assets,
-            pre_release: value.pre_release,
-        }
-    }
 }
 
 impl From<DownloadedFileType> for latest::DownloadedFileType {
@@ -146,11 +120,8 @@ impl ExtensionImports for WasmState {
         repo: String,
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        Ok(
-            latest::ExtensionImports::latest_github_release(self, repo, options.into())
-                .await?
-                .map(|github| github.into()),
-        )
+        latest::zed::extension::github::Host::latest_github_release(self, repo, options.into())
+            .await
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
