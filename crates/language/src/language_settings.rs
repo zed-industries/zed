@@ -87,7 +87,7 @@ pub struct LanguageSettings {
     /// How to perform a buffer format.
     pub formatter: Formatter,
     /// Zed's Prettier integration settings.
-    /// If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
+    /// If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
     /// the project has no other Prettier installed.
     pub prettier: HashMap<String, serde_json::Value>,
     /// Whether to use language servers to provide code intelligence.
@@ -200,7 +200,7 @@ pub struct LanguageSettingsContent {
     #[serde(default)]
     pub formatter: Option<Formatter>,
     /// Zed's Prettier integration settings.
-    /// If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
+    /// If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
     /// the project has no other Prettier installed.
     ///
     /// Default: {}

@@ -547,6 +547,12 @@
     }
   },
   {
+    "context": "EmptyPane || SharedScreen",
+    "bindings": {
+      ":": "command_palette::Toggle"
+    }
+  },
+  {
     // netrw compatibility
     "context": "ProjectPanel && not_editing",
     "bindings": {
