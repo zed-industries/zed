@@ -106,14 +106,14 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
     fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
         //
         let model = match self.model {
-            EmbeddingModel::OllamaNomicEmbedText => "nomic-embed-text".to_string(),
-            EmbeddingModel::OllamaMxbaiEmbedLarge => "mxbai-embed-large".to_string(),
+            EmbeddingModel::OllamaNomicEmbedText => "nomic-embed-text",
+            EmbeddingModel::OllamaMxbaiEmbedLarge => "mxbai-embed-large",
             _ => return future::ready(Err(anyhow!("Invalid model"))).boxed(),
         };
 
         futures::future::try_join_all(texts.into_iter().map(|text| {
             let request = OllamaEmbeddingRequest {
-                model,
+                model: model.to_string(),
                 prompt: text.to_string(),
             };
 
@@ -178,7 +178,7 @@ impl OpenaiEmbeddingProvider {
 }
 
 impl EmbeddingProvider for OpenaiEmbeddingProvider {
-    fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
+    fn embed(&self, _texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
         todo!();
         // let request = OpenaiEmbeddingRequest {
         //     model: match self.model {

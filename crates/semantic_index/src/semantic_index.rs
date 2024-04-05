@@ -1,6 +1,8 @@
 mod chunking;
 pub mod embedding;
 
+pub use embedding::FakeEmbeddingProvider;
+
 use anyhow::{Context as _, Result};
 use chunking::{chunk_text, Chunk};
 use collections::{Bound, HashMap};
@@ -470,7 +472,7 @@ impl WorktreeIndex {
         cx: &mut AsyncAppContext,
     ) -> Result<EmbedFiles> {
         let embedding_provider = this.read_with(cx, |this, _| this.embedding_provider.clone())?;
-        let embedding_provider = embedding_provider.as_ref();
+        let embedding_provider = embedding_provider.clone();
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
 
         let task = cx.background_executor().spawn(async move {
@@ -491,10 +493,10 @@ impl WorktreeIndex {
                     .collect::<Vec<_>>();
 
                 let mut embeddings = Vec::new();
-                for embedding_batch in chunks.chunks(embedding_provider.batch_size()) {
-                    // todo!("add a retry facility")
-                    embeddings.extend(embedding_provider.embed(embedding_batch).await?);
-                }
+                // for embedding_batch in chunks.chunks(embedding_provider.batch_size()) {
+                //     // todo!("add a retry facility")
+                //     embeddings.extend(embedding_provider.embed(embedding_batch).await?);
+                // }
 
                 let mut embeddings = embeddings.into_iter();
                 for chunked_file in chunked_files {
