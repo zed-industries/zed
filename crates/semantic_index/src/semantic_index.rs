@@ -4,9 +4,9 @@ mod embedding;
 use anyhow::{Context as _, Result};
 use chunking::{chunk_text, Chunk};
 use collections::{Bound, HashMap};
-use embedding::Embedding;
+use embedding::{Embedding, EmbeddingProvider};
 use fs::Fs;
-use futures::stream::StreamExt;
+use futures::{stream::StreamExt, FutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{
     AppContext, AsyncAppContext, Context, EntityId, EventEmitter, Global, Model, ModelContext,
@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use smol::channel;
 use std::{
     cmp::Ordering,
+    ops::Range,
     path::Path,
     sync::Arc,
     time::{Duration, SystemTime},
@@ -27,6 +28,7 @@ use util::{ResultExt, TryFutureExt};
 use worktree::LocalSnapshot;
 
 pub struct SemanticIndex {
+    embedding_provider: Arc<dyn EmbeddingProvider>,
     db_connection: heed::Env,
     project_indices: HashMap<WeakModel<Project>, Model<ProjectIndex>>,
 }
@@ -34,7 +36,11 @@ pub struct SemanticIndex {
 impl Global for SemanticIndex {}
 
 impl SemanticIndex {
-    pub fn new(db_path: &Path, cx: &mut AppContext) -> Task<Result<Self>> {
+    pub fn new(
+        db_path: &Path,
+        embedding_provider: Arc<dyn EmbeddingProvider>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Self>> {
         let db_path = db_path.to_path_buf();
         cx.spawn(|cx| async move {
             let db_connection = cx
@@ -51,6 +57,7 @@ impl SemanticIndex {
 
             Ok(SemanticIndex {
                 db_connection,
+                embedding_provider,
                 project_indices: HashMap::default(),
             })
         })
@@ -172,6 +179,41 @@ impl ProjectIndex {
             cx.emit(status);
         }
     }
+
+    pub fn search(&self, query: &str, limit: usize, cx: &AppContext) -> Task<Vec<SearchResult>> {
+        let mut worktree_searches = Vec::new();
+        for worktree_index in self.worktree_indices.values() {
+            if let WorktreeIndexHandle::Loaded { index, .. } = worktree_index {
+                worktree_searches
+                    .push(index.read_with(cx, |index, cx| index.search(query, limit, cx)));
+            }
+        }
+
+        cx.spawn(|_| async move {
+            let mut results = Vec::new();
+            let worktree_searches = futures::future::join_all(worktree_searches).await;
+
+            for worktree_search_results in worktree_searches {
+                if let Some(worktree_search_results) = worktree_search_results.log_err() {
+                    results.extend(worktree_search_results);
+                }
+            }
+
+            results
+                .sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+            results.truncate(limit);
+
+            results
+        })
+    }
+}
+
+pub struct SearchResult {
+    pub worktree: Model<Worktree>,
+    pub entry: Entry,
+    pub range: Range<usize>,
+    pub text: String,
+    pub score: f32,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -398,10 +440,6 @@ impl WorktreeIndex {
         chunked_files: channel::Receiver<ChunkedFile>,
         cx: &mut AsyncAppContext,
     ) -> Result<EmbedFiles> {
-        // let client = this.read_with(cx, |_this, cx| client::Client::global(cx).http_client())?;
-        // let embedding_provider =
-        //     OllamaEmbeddingProvider::new(client, EmbeddingModel::OllamaNomicEmbedText);
-
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
         let task = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
@@ -482,6 +520,15 @@ impl WorktreeIndex {
 
             Ok(())
         }))
+    }
+
+    fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        cx: &AppContext,
+    ) -> Task<Result<Vec<SearchResult>>> {
+        todo!()
     }
 }
 

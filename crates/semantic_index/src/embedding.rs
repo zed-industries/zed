@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context as _, Result};
 use futures::AsyncReadExt;
+use gpui::{AppContext, Task};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use util::http::{AsyncBody, HttpClient, HttpClientWithUrl, Method, Request as HttpRequest};
@@ -53,7 +54,7 @@ impl Embedding {
 
 /// Trait for embedding providers. Text in, vector out.
 pub trait EmbeddingProvider {
-    async fn embed(&self, text: String) -> Result<Embedding>;
+    fn embed(&self, texts: &[&str], cx: &AppContext) -> Task<Result<Embedding>>;
 }
 
 pub struct OllamaEmbeddingProvider {
@@ -79,30 +80,31 @@ impl OllamaEmbeddingProvider {
 }
 
 impl EmbeddingProvider for OllamaEmbeddingProvider {
-    async fn embed(&self, text: String) -> Result<Embedding> {
-        let request = OllamaEmbeddingRequest {
-            model: match self.model {
-                EmbeddingModel::OllamaNomicEmbedText => "nomic-embed-text".to_string(),
-                EmbeddingModel::OllamaMxbaiEmbedLarge => "mxbai-embed-large".to_string(),
-                _ => return Err(anyhow!("Invalid model")),
-            },
-            prompt: text,
-        };
+    async fn embed(&self, texts: &[&str], cx: &AppContext) -> Task<Result<Vec<Embedding>>> {
+        for text in texts {
+            let request = OllamaEmbeddingRequest {
+                model: match self.model {
+                    EmbeddingModel::OllamaNomicEmbedText => "nomic-embed-text".to_string(),
+                    EmbeddingModel::OllamaMxbaiEmbedLarge => "mxbai-embed-large".to_string(),
+                    _ => return Err(anyhow!("Invalid model")),
+                },
+                prompt: text.to_string(),
+            };
 
-        let request = serde_json::to_string(&request)?;
-        let mut response = self
-            .client
-            .post_json("http://localhost:11434/api/embeddings", request.into())
-            .await
-            .context("failed to embed")?;
+            let request = serde_json::to_string(&request)?;
+            let mut response = self
+                .client
+                .post_json("http://localhost:11434/api/embeddings", request.into())
+                .context("failed to embed")?;
 
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await.ok();
+            let mut body = Vec::new();
+            response.body_mut().read_to_end(&mut body).await.ok();
 
-        let response: OllamaEmbeddingResponse =
-            serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
+            let response: OllamaEmbeddingResponse =
+                serde_json::from_slice(body.as_slice()).context("Unable to pull response")?;
 
-        Ok(Embedding::new(response.embedding))
+            embeddings.push(response.embedding);
+        }
     }
 }
 
