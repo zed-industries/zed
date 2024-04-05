@@ -1,8 +1,9 @@
 package zed:extension;
 
 world extension {
+    import platform;
+
     use lsp.{completion, symbol};
-    use platform.{os, architecture};
 
     /// Initializes the extension.
     export init-extension: func();
@@ -54,9 +55,6 @@ world extension {
         /// The language server installation failed for specified reason.
         failed(string),
     }
-
-    /// Returns operating system and architecture for the current platform.
-    import current-platform: func() -> tuple<os, architecture>;
 
     record settings-location {
         worktree-id: u64,

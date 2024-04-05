@@ -1,3 +1,4 @@
+use self::zed::extension::platform::{Architecture, Os};
 use crate::wasm_host::wit::ToWasmtimeResult;
 use crate::wasm_host::WasmState;
 use ::settings::Settings;
@@ -98,7 +99,25 @@ impl HostWorktree for WasmState {
 
 impl self::zed::extension::lsp::Host for WasmState {}
 
-impl self::zed::extension::platform::Host for WasmState {}
+#[async_trait]
+impl self::zed::extension::platform::Host for WasmState {
+    async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
+        Ok((
+            match env::consts::OS {
+                "macos" => Os::Mac,
+                "linux" => Os::Linux,
+                "windows" => Os::Windows,
+                _ => panic!("unsupported os"),
+            },
+            match env::consts::ARCH {
+                "aarch64" => Architecture::Aarch64,
+                "x86" => Architecture::X86,
+                "x86_64" => Architecture::X8664,
+                _ => panic!("unsupported architecture"),
+            },
+        ))
+    }
+}
 
 #[async_trait]
 impl ExtensionImports for WasmState {
@@ -224,23 +243,6 @@ impl ExtensionImports for WasmState {
         })
         .await
         .to_wasmtime_result()
-    }
-
-    async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
-        Ok((
-            match env::consts::OS {
-                "macos" => Os::Mac,
-                "linux" => Os::Linux,
-                "windows" => Os::Windows,
-                _ => panic!("unsupported os"),
-            },
-            match env::consts::ARCH {
-                "aarch64" => Architecture::Aarch64,
-                "x86" => Architecture::X86,
-                "x86_64" => Architecture::X8664,
-                _ => panic!("unsupported architecture"),
-            },
-        ))
     }
 
     async fn set_language_server_installation_status(

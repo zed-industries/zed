@@ -154,7 +154,7 @@ impl ExtensionImports for WasmState {
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
-        latest::ExtensionImports::current_platform(self).await
+        latest::zed::extension::platform::Host::current_platform(self).await
     }
 
     async fn set_language_server_installation_status(
