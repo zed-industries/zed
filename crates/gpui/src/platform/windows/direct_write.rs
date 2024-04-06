@@ -831,8 +831,6 @@ struct TextRenderer {
 
 impl TextRenderer {
     pub fn new(inner: Arc<RwLock<TextRendererInner>>, locale_str: &str) -> Self {
-        let locale_vec = locale_str.encode_utf16().chain(Some(0)).collect_vec();
-
         TextRenderer {
             inner,
             locale: locale_str.to_owned(),
@@ -1098,7 +1096,7 @@ unsafe fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Opt
             &mut info,
             &mut exists,
         )
-        .unwrap();
+        .log_err();
     if !exists.as_bool() || info.is_none() {
         return None;
     }
@@ -1182,7 +1180,7 @@ unsafe fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Option<Stri
             &mut locale_name_index,
             &mut exists as _,
         )
-        .unwrap();
+        .log_err();
     if !exists.as_bool() {
         string
             .FindLocaleName(
@@ -1190,10 +1188,10 @@ unsafe fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Option<Stri
                 &mut locale_name_index as _,
                 &mut exists as _,
             )
-            .unwrap();
-    }
-    if !exists.as_bool() {
-        return None;
+            .log_err();
+        if !exists.as_bool() {
+            return None;
+        }
     }
 
     let name_length = string.GetStringLength(locale_name_index).unwrap() as usize;
