@@ -280,9 +280,9 @@ impl DirectWriteState {
             let locale_name = PCWSTR::from_raw(locale_wide.as_ptr());
             let text_wide = text.encode_utf16().collect_vec();
 
-            let mut offset = 0usize;
-            let mut wstring_offset = 0u32;
-            let text_layout = {
+            let mut utf8_offset = 0usize;
+            let mut utf16_offset = 0u32;
+            let (text_layout, ascent, descent) = {
                 let first_run = &font_runs[0];
                 let font_info = &self.fonts[first_run.font_id.0];
                 let collection = {
@@ -292,17 +292,14 @@ impl DirectWriteState {
                         .CreateFontCollectionFromFontSet(font_set)
                         .unwrap()
                 };
-                let font_family_name = font_info.font_family.clone();
-                let font_weight = font_info.font_face.GetWeight();
-                let font_style = font_info.font_face.GetStyle();
                 let format = self
                     .components
                     .factory
                     .CreateTextFormat(
-                        &HSTRING::from(&font_family_name),
+                        &HSTRING::from(&font_info.font_family),
                         &collection,
-                        font_weight,
-                        font_style,
+                        font_info.font_face.GetWeight(),
+                        font_info.font_face.GetStyle(),
                         DWRITE_FONT_STRETCH_NORMAL,
                         font_size.0,
                         locale_name,
@@ -314,20 +311,27 @@ impl DirectWriteState {
                     .factory
                     .CreateTextLayout(&text_wide, &format, f32::INFINITY, f32::INFINITY)
                     .unwrap();
-                let first_str = &text[offset..(offset + first_run.len)];
-                offset += first_run.len;
-                let first_wstring = first_str.encode_utf16().collect_vec();
-                let local_length = first_wstring.len() as u32;
+                let current_text = &text[utf8_offset..(utf8_offset + first_run.len)];
+                utf8_offset += first_run.len;
+                let current_text_utf16_length = current_text.encode_utf16().count() as u32;
                 let text_range = DWRITE_TEXT_RANGE {
-                    startPosition: wstring_offset,
-                    length: local_length,
+                    startPosition: utf16_offset,
+                    length: current_text_utf16_length,
                 };
                 layout
                     .SetTypography(&font_info.features, text_range)
                     .unwrap();
-                wstring_offset += local_length;
+                utf16_offset += current_text_utf16_length;
 
+                let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
+                let mut line_count = 0u32;
                 layout
+                    .GetLineMetrics(Some(&mut metrics), &mut line_count as _)
+                    .unwrap();
+                let ascent = px(metrics[0].baseline);
+                let descent = px(metrics[0].height - metrics[0].baseline);
+
+                (layout, ascent, descent)
             };
 
             let mut first_run = true;
@@ -337,10 +341,9 @@ impl DirectWriteState {
                     continue;
                 }
                 let font_info = &self.fonts[run.font_id.0];
-                let local_str = &text[offset..(offset + run.len)];
-                offset += run.len;
-                let local_wide = local_str.encode_utf16().collect_vec();
-                let local_length = local_wide.len() as u32;
+                let current_text = &text[utf8_offset..(utf8_offset + run.len)];
+                utf8_offset += run.len;
+                let current_text_utf16_length = current_text.encode_utf16().count() as u32;
 
                 let collection = {
                     let font_set = &self.font_sets[font_info.font_set_index];
@@ -350,10 +353,10 @@ impl DirectWriteState {
                         .unwrap()
                 };
                 let text_range = DWRITE_TEXT_RANGE {
-                    startPosition: wstring_offset,
-                    length: local_length,
+                    startPosition: utf16_offset,
+                    length: current_text_utf16_length,
                 };
-                wstring_offset += local_length;
+                utf16_offset += current_text_utf16_length;
                 text_layout
                     .SetFontCollection(&collection, text_range)
                     .unwrap();
@@ -393,15 +396,7 @@ impl DirectWriteState {
                 }
                 vec
             };
-
-            let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
-            let mut line_count = 0u32;
-            text_layout
-                .GetLineMetrics(Some(&mut metrics), &mut line_count as _)
-                .unwrap();
             let width = text_renderer_inner.read().width;
-            let ascent = px(metrics[0].baseline);
-            let descent = px(metrics[0].height - metrics[0].baseline);
 
             LineLayout {
                 font_size,
