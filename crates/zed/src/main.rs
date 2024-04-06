@@ -9,7 +9,10 @@ use anyhow::{anyhow, Context as _, Result};
 use backtrace::Backtrace;
 use chrono::Utc;
 use clap::{command, Parser};
-use client::{parse_zed_link, stdout_is_a_pty, telemetry::Telemetry, Client, ClientSettings, DevServerToken, UserStore};
+use client::{
+    parse_zed_link, stdout_is_a_pty, telemetry::Telemetry, Client, ClientSettings, DevServerToken,
+    UserStore,
+};
 use collab_ui::channel_view::ChannelView;
 use copilot::Copilot;
 use copilot_ui::CopilotCompletionProvider;
