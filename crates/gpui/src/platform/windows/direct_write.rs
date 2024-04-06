@@ -239,13 +239,14 @@ impl DirectWriteState {
                 font_style.into(),
             )
             .unwrap();
+        let locale = self.components.locale.as_str();
         let total_number = font.GetFontCount();
         for index in 0..total_number {
             let font_face_ref = font.GetFontFaceReference(index).unwrap();
             let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
                 continue;
             };
-            let Some(postscript_name) = get_postscript_name(&font_face) else {
+            let Some(postscript_name) = get_postscript_name(&font_face, locale) else {
                 continue;
             };
             let is_emoji = font_face.IsColorFont().as_bool();
@@ -750,22 +751,8 @@ impl DirectWriteState {
     fn all_font_names(&self) -> Vec<String> {
         unsafe {
             let mut result = Vec::new();
-            let mut system_collection = std::mem::zeroed();
-            self.components
-                .factory
-                .GetSystemFontCollection(&mut system_collection, false)
-                .unwrap();
-            if system_collection.is_none() {
-                return result;
-            }
-            let system_collection = system_collection.unwrap();
-            let locale_name_wide = self
-                .components
-                .locale
-                .encode_utf16()
-                .chain(Some(0))
-                .collect_vec();
-            let locale_name = PCWSTR::from_raw(locale_name_wide.as_ptr());
+            let system_collection = &self.system_font_collection;
+            let locale = self.components.locale.as_str();
             let family_count = system_collection.GetFontFamilyCount();
             for index in 0..family_count {
                 let font_family = system_collection.GetFontFamily(index).unwrap();
@@ -790,7 +777,7 @@ impl DirectWriteState {
                     let Some(localized_font_name) = font_name_localized_string else {
                         continue;
                     };
-                    let Some(font_name) = get_name(localized_font_name, locale_name) else {
+                    let Some(font_name) = get_name(localized_font_name, locale) else {
                         continue;
                     };
                     result.push(font_name);
@@ -804,22 +791,8 @@ impl DirectWriteState {
     fn all_font_families(&self) -> Vec<String> {
         unsafe {
             let mut result = Vec::new();
-            let mut system_collection = std::mem::zeroed();
-            self.components
-                .factory
-                .GetSystemFontCollection(&mut system_collection, false)
-                .unwrap();
-            if system_collection.is_none() {
-                return result;
-            }
-            let system_collection = system_collection.unwrap();
-            let locale_name_wide = self
-                .components
-                .locale
-                .encode_utf16()
-                .chain(Some(0))
-                .collect_vec();
-            let locale_name = PCWSTR::from_raw(locale_name_wide.as_ptr());
+            let system_collection = &self.system_font_collection;
+            let locale = self.components.locale.as_str();
             let family_count = system_collection.GetFontFamilyCount();
             for index in 0..family_count {
                 let Some(font_family) = system_collection.GetFontFamily(index).log_err() else {
@@ -828,7 +801,7 @@ impl DirectWriteState {
                 let Some(localized_family_name) = font_family.GetFamilyNames().log_err() else {
                     continue;
                 };
-                let Some(family_name) = get_name(localized_family_name, locale_name) else {
+                let Some(family_name) = get_name(localized_family_name, locale) else {
                     continue;
                 };
                 result.push(family_name);
@@ -853,19 +826,16 @@ impl Drop for DirectWriteState {
 #[implement(IDWriteTextRenderer)]
 struct TextRenderer {
     inner: Arc<RwLock<TextRendererInner>>,
-    _locale_vec: Vec<u16>,
-    locale: PCWSTR,
+    locale: String,
 }
 
 impl TextRenderer {
     pub fn new(inner: Arc<RwLock<TextRendererInner>>, locale_str: &str) -> Self {
         let locale_vec = locale_str.encode_utf16().chain(Some(0)).collect_vec();
-        let locale = PCWSTR::from_raw(locale_vec.as_ptr());
 
         TextRenderer {
             inner,
-            _locale_vec: locale_vec,
-            locale,
+            locale: locale_str.to_owned(),
         }
     }
 }
@@ -969,7 +939,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             }
             let font = glyphrun.fontFace.as_ref().unwrap();
             let Some((postscript_name, family_name, is_emoji)) =
-                get_postscript_and_family_name(font, self.locale)
+                get_postscript_and_family_name(font, &self.locale)
             else {
                 log::error!("none postscript name found");
                 return Ok(());
@@ -1101,12 +1071,12 @@ impl Into<DWRITE_FONT_WEIGHT> for FontWeight {
 
 unsafe fn get_postscript_and_family_name(
     font_face: &IDWriteFontFace,
-    locale: PCWSTR,
+    locale: &str,
 ) -> Option<(String, String, bool)> {
     let font_face_pointer = font_face as *const IDWriteFontFace;
     let font_face_3_pointer: *const IDWriteFontFace3 = std::mem::transmute(font_face_pointer);
     let font_face_3 = &*font_face_3_pointer;
-    let Some(postscript_name) = get_postscript_name(font_face_3) else {
+    let Some(postscript_name) = get_postscript_name(font_face_3, locale) else {
         return None;
     };
     let Some(localized_family_name) = font_face_3.GetFamilyNames().log_err() else {
@@ -1119,7 +1089,7 @@ unsafe fn get_postscript_and_family_name(
     ))
 }
 
-unsafe fn get_postscript_name(font_face: &IDWriteFontFace3) -> Option<String> {
+unsafe fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Option<String> {
     let mut info = std::mem::zeroed();
     let mut exists = BOOL(0);
     font_face
@@ -1133,7 +1103,7 @@ unsafe fn get_postscript_name(font_face: &IDWriteFontFace3) -> Option<String> {
         return None;
     }
 
-    get_name(info.unwrap(), DEFAULT_LOCALE_NAME)
+    get_name(info.unwrap(), locale)
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
@@ -1203,11 +1173,15 @@ fn make_direct_write_tag(tag_name: &str) -> DWRITE_FONT_FEATURE_TAG {
     DWRITE_FONT_FEATURE_TAG(make_open_type_tag(tag_name))
 }
 
-unsafe fn get_name(string: IDWriteLocalizedStrings, locale: PCWSTR) -> Option<String> {
+unsafe fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Option<String> {
     let mut locale_name_index = 0u32;
     let mut exists = BOOL(0);
     string
-        .FindLocaleName(locale, &mut locale_name_index, &mut exists as _)
+        .FindLocaleName(
+            &HSTRING::from(locale),
+            &mut locale_name_index,
+            &mut exists as _,
+        )
         .unwrap();
     if !exists.as_bool() {
         string
