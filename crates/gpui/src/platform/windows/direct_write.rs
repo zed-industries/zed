@@ -232,22 +232,27 @@ impl DirectWriteState {
         let Some(fontset) = collection.GetFontSet().log_err() else {
             return None;
         };
-        let font = fontset
+        let Some(font) = fontset
             .GetMatchingFonts(
                 &HSTRING::from(family_name),
                 font_weight.into(),
                 DWRITE_FONT_STRETCH_NORMAL,
                 font_style.into(),
             )
-            .unwrap();
-        let locale = self.components.locale.as_str();
+            .log_err()
+        else {
+            return None;
+        };
         let total_number = font.GetFontCount();
         for index in 0..total_number {
-            let font_face_ref = font.GetFontFaceReference(index).unwrap();
+            let Some(font_face_ref) = font.GetFontFaceReference(index).log_err() else {
+                continue;
+            };
             let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
                 continue;
             };
-            let Some(postscript_name) = get_postscript_name(&font_face, locale) else {
+            let Some(postscript_name) = get_postscript_name(&font_face, &self.components.locale)
+            else {
                 continue;
             };
             let is_emoji = font_face.IsColorFont().as_bool();
@@ -269,51 +274,25 @@ impl DirectWriteState {
         None
     }
 
-    unsafe fn match_font_from_font_sets(
-        &mut self,
-        family_name: &str,
-        font_weight: FontWeight,
-        font_style: FontStyle,
-        font_features: &FontFeatures,
-    ) -> Option<FontId> {
-        // try to find target font in custom font collection first
-        self.get_font_id_from_font_collection(
-            family_name,
-            font_weight,
-            font_style,
-            font_features,
-            false,
-        )
-        .or_else(|| {
-            self.get_font_id_from_font_collection(
-                family_name,
-                font_weight,
-                font_style,
-                font_features,
-                true,
-            )
-        })
-    }
-
     fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
         unsafe {
-            self.match_font_from_font_sets(
+            // try to find target font in custom font collection first
+            self.get_font_id_from_font_collection(
                 &target_font.family,
                 target_font.weight,
                 target_font.style,
                 &target_font.features,
+                false,
             )
-        }
-    }
-
-    fn select_font_by_family(&mut self, family: &str) -> Option<FontId> {
-        unsafe {
-            self.match_font_from_font_sets(
-                family,
-                FontWeight::NORMAL,
-                FontStyle::Normal,
-                &FontFeatures::default(),
-            )
+            .or_else(|| {
+                self.get_font_id_from_font_collection(
+                    &target_font.family,
+                    target_font.weight,
+                    target_font.style,
+                    &target_font.features,
+                    true,
+                )
+            })
         }
     }
 
@@ -430,7 +409,7 @@ impl DirectWriteState {
                     if let Some(id) = self.font_id_by_postscript_name.get(&result.postscript) {
                         font_id = *id;
                     } else {
-                        font_id = self.select_font_by_family(&result.family).unwrap();
+                        font_id = self.select_font(&result.font_struct).unwrap();
                     }
                     let mut glyphs = SmallVec::new();
                     for glyph in result.glyphs.iter() {
@@ -798,7 +777,7 @@ struct RendererShapedGlyph {
 
 struct RendererShapedRun {
     postscript: String,
-    family: String,
+    font_struct: Font,
     is_emoji: bool,
     glyphs: SmallVec<[RendererShapedGlyph; 8]>,
 }
@@ -888,8 +867,8 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
                 return Ok(());
             }
             let font = glyphrun.fontFace.as_ref().unwrap();
-            let Some((postscript_name, family_name, is_emoji)) =
-                get_postscript_and_family_name(font, &self.locale)
+            let Some((postscript_name, font_struct, is_emoji)) =
+                get_postscript_name_and_font(font, &self.locale)
             else {
                 log::error!("none postscript name found");
                 return Ok(());
@@ -912,7 +891,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             self.inner.write().width = position;
             self.inner.write().runs.push(RendererShapedRun {
                 postscript: postscript_name,
-                family: family_name,
+                font_struct,
                 is_emoji,
                 glyphs,
             });
@@ -1013,9 +992,26 @@ impl Into<DWRITE_FONT_STYLE> for FontStyle {
     }
 }
 
+impl From<DWRITE_FONT_STYLE> for FontStyle {
+    fn from(value: DWRITE_FONT_STYLE) -> Self {
+        match value.0 {
+            0 => FontStyle::Normal,
+            1 => FontStyle::Oblique,
+            2 => FontStyle::Italic,
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl Into<DWRITE_FONT_WEIGHT> for FontWeight {
     fn into(self) -> DWRITE_FONT_WEIGHT {
         DWRITE_FONT_WEIGHT(self.0 as i32)
+    }
+}
+
+impl From<DWRITE_FONT_WEIGHT> for FontWeight {
+    fn from(value: DWRITE_FONT_WEIGHT) -> Self {
+        FontWeight(value.0 as f32)
     }
 }
 
@@ -1043,10 +1039,10 @@ fn get_font_names_from_collection(
     }
 }
 
-unsafe fn get_postscript_and_family_name(
+unsafe fn get_postscript_name_and_font(
     font_face: &IDWriteFontFace,
     locale: &str,
-) -> Option<(String, String, bool)> {
+) -> Option<(String, Font, bool)> {
     let font_face_pointer = font_face as *const IDWriteFontFace;
     let font_face_3_pointer: *const IDWriteFontFace3 = std::mem::transmute(font_face_pointer);
     let font_face_3 = &*font_face_3_pointer;
@@ -1056,9 +1052,18 @@ unsafe fn get_postscript_and_family_name(
     let Some(localized_family_name) = font_face_3.GetFamilyNames().log_err() else {
         return None;
     };
+    let Some(family_name) = get_name(localized_family_name, locale) else {
+        return None;
+    };
+    let font_struct = Font {
+        family: family_name.into(),
+        features: FontFeatures::default(),
+        weight: font_face_3.GetWeight().into(),
+        style: font_face_3.GetStyle().into(),
+    };
     Some((
         postscript_name,
-        get_name(localized_family_name, locale).unwrap(),
+        font_struct,
         font_face_3.IsColorFont().as_bool(),
     ))
 }
