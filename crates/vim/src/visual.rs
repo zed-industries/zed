@@ -15,7 +15,7 @@ use workspace::{searchable::Direction, Workspace};
 
 use crate::{
     motion::{start_of_line, Motion},
-    normal::substitute::substitute,
+    normal::{move_cursor, substitute::substitute},
     object::Object,
     state::{Mode, Operator},
     utils::{copy_selections_content, yank_selections_content},
@@ -513,6 +513,8 @@ pub fn select_match(
     if !exists_match {
         if !vim.workspace_state.replaying {
             vim.clear_operator(cx);
+        } else {
+            move_cursor(vim, Motion::Right, Some(1), cx);
         }
         // clear recording
         vim.workspace_state.recording = false;
