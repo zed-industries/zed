@@ -60,7 +60,7 @@ impl MarkdownPreviewView {
 
         workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
-                let view = Self::create_markdown_view(workspace, editor, cx);
+                let view = Self::create_markdown_view(workspace, editor.clone(), cx);
                 let pane = workspace
                     .find_pane_in_direction(workspace::SplitDirection::Right, cx)
                     .unwrap_or_else(|| {
@@ -73,6 +73,7 @@ impl MarkdownPreviewView {
                 pane.update(cx, |pane, cx| {
                     pane.add_item(Box::new(view.clone()), false, false, None, cx)
                 });
+                editor.focus_handle(cx).focus(cx);
                 cx.notify();
             }
         });
