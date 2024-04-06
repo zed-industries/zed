@@ -52,14 +52,14 @@ fn main() {
             return;
         }
 
-        let embedding_provider = FakeEmbeddingProvider::new();
+        //let embedding_provider = FakeEmbeddingProvider::new();
 
-        // let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-        // let embedding_provider = OpenaiEmbeddingProvider::new(
-        //     http.clone(),
-        //     EmbeddingModel::OpenaiTextEmbedding3Small,
-        //     api_key,
-        // );
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
+        let embedding_provider = OpenaiEmbeddingProvider::new(
+            http.clone(),
+            EmbeddingModel::OpenaiTextEmbedding3Small,
+            api_key,
+        );
 
         let semantic_index = SemanticIndex::new(
             Path::new("/tmp/semantic-index-db.mdb"),
@@ -104,7 +104,7 @@ fn main() {
                 .update(|cx| {
                     let project_index = project_index.read(cx);
                     let query = "converting an anchor to a point";
-                    project_index.search(query, 10, cx)
+                    project_index.search(query, 4, cx)
                 })
                 .unwrap()
                 .await;
@@ -115,7 +115,6 @@ fn main() {
 
                 let content = cx
                     .update(|cx| {
-                        println!("{:?} = {:?}", path, range);
                         let worktree = search_result.worktree.read(cx);
                         let entry_abs_path = worktree.abs_path().join(search_result.path.clone());
                         let fs = project.read(cx).fs().clone();
