@@ -500,8 +500,28 @@ pub fn select_match(
     direction: Direction,
     cx: &mut WindowContext,
 ) {
-    let count = vim.take_count(cx).unwrap_or(1);
     let pane = workspace.active_pane().clone();
+    let mut exists_match = false;
+    pane.update(cx, |pane, cx| {
+        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+            search_bar.update(cx, |search_bar, cx| {
+                exists_match = search_bar.exists_match(cx);
+            });
+        }
+    });
+    
+    if !exists_match {
+        if !vim.workspace_state.replaying {
+            vim.clear_operator(cx);
+        }
+        // clear recording
+        vim.workspace_state.recording = false;
+        vim.workspace_state.recorded_actions = Default::default();
+        vim.workspace_state.recorded_count = None;
+        return;
+    }
+
+    let count = vim.take_count(cx).unwrap_or(1);
     let vim_is_normal = vim.state().mode == Mode::Normal;
     let mut start_selection = 0usize;
     let mut end_selection = 0usize;
