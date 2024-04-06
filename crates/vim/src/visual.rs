@@ -550,7 +550,10 @@ pub fn select_match(
     });
     match vim.maybe_pop_operator() {
         Some(Operator::Change) => substitute(vim, None, false, cx),
-        Some(Operator::Delete) => delete(vim, cx),
+        Some(Operator::Delete) => {
+            vim.stop_recording();
+            delete(vim, cx)
+        }
         Some(Operator::Yank) => yank(vim, cx),
         _ => {} // Ignoring other operators
     };
@@ -1154,6 +1157,23 @@ mod test {
         cx.assert_shared_state("aa «ˇaa» aa aa aa").await;
         cx.simulate_shared_keystrokes(["g", "shift-n"]).await;
         cx.assert_shared_state("«ˇaa aa» aa aa aa").await;
+    }
+
+    #[gpui::test]
+    async fn test_dgn_repeat(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("aaˇ aa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["/", "a", "a", "enter"])
+            .await;
+        cx.assert_shared_state("aa ˇaa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["d", "g", "n"]).await;
+
+        cx.assert_shared_state("aa ˇ aa aa aa").await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        cx.assert_shared_state("aa  ˇ aa aa").await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        cx.assert_shared_state("aa   ˇ aa").await;
     }
 
     #[gpui::test]
