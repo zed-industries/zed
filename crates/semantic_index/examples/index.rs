@@ -1,11 +1,14 @@
 use client::Client;
 use futures::channel::oneshot;
+use futures::task::waker;
 use gpui::{App, Global, TestAppContext};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::embedding::{EmbeddingModel, FakeEmbeddingProvider, OpenaiEmbeddingProvider};
 use semantic_index::SemanticIndex;
 use settings::SettingsStore;
+use std::fs;
+use std::io::{self, Read, Seek, SeekFrom};
 use std::{path::Path, sync::Arc};
 use tempfile::tempdir;
 use util::http::HttpClientWithUrl;
@@ -106,9 +109,32 @@ fn main() {
                 .unwrap()
                 .await;
 
-            results.iter().for_each(|search_result| {
-                println!("{:?} = {:?}", search_result.path, search_result.range);
-            });
+            for search_result in results {
+                let path = search_result.path.clone();
+                let range = search_result.range.clone();
+
+                let content = cx
+                    .update(|cx| {
+                        println!("{:?} = {:?}", path, range);
+                        let worktree = search_result.worktree.read(cx);
+                        let entry_abs_path = worktree.abs_path().join(search_result.path.clone());
+                        let fs = project.read(cx).fs().clone();
+                        cx.spawn(|_| async move { fs.load(&entry_abs_path).await.unwrap() })
+                    })
+                    .unwrap()
+                    .await;
+
+                // Now only show the range from content, on line breaks
+                // Range is in buffer terms (byte offsets)
+                let range = search_result.range.clone();
+                let start = range.start;
+                let end = range.end;
+                let content = content[start..end].to_owned();
+
+                println!("✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄");
+                println!("{:?}:{:?}:{:?}", path, range.start, range.end);
+                println!("{}", content);
+            }
 
             cx.update(|cx| cx.quit()).unwrap();
         })
