@@ -3,10 +3,9 @@ use crate::{
     LanguageModelRequest,
 };
 use anyhow::{anyhow, Result};
-use client::{proto, Client};
+use client::{proto, stdout_is_a_pty, Client};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryFutureExt};
 use gpui::{AnyView, AppContext, Task};
-use std::io::IsTerminal;
 use std::{future, sync::Arc};
 use ui::prelude::*;
 
@@ -65,10 +64,18 @@ impl ZedDotDevCompletionProvider {
     }
 
     pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
-        let try_keychain = std::io::stdout().is_terminal();
-
         let client = self.client.clone();
-        cx.spawn(move |cx| async move { client.authenticate_and_connect(try_keychain, &cx).await })
+        if stdout_is_a_pty() {
+            if client::IMPERSONATE_LOGIN.is_some() {
+                cx.spawn(move |cx| async move { client.authenticate_and_connect(false, &cx).await })
+            } else {
+                Task::ready(Err(anyhow!(
+                    "not authenticated yet, please authenticate first."
+                )))
+            }
+        } else {
+            cx.spawn(move |cx| async move { client.authenticate_and_connect(true, &cx).await })
+        }
     }
 
     pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
