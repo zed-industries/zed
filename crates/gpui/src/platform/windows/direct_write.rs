@@ -22,7 +22,7 @@ use crate::*;
 struct FontInfo {
     font_family: String,
     font_face: IDWriteFontFace3,
-    font_set_index: usize,
+    font_collection_index: usize,
     features: IDWriteTypography,
     is_emoji: bool,
 }
@@ -41,7 +41,7 @@ struct DirectWriteComponent {
 
 struct DirectWriteState {
     components: DirectWriteComponent,
-    font_sets: Vec<IDWriteFontSet>,
+    font_collections: Vec<IDWriteFontCollection1>,
     fonts: Vec<FontInfo>,
     font_selections: HashMap<Font, FontId>,
     font_id_by_postscript_name: HashMap<String, FontId>,
@@ -79,10 +79,15 @@ impl DirectWriteTextSystem {
     pub(crate) fn new() -> Result<Self> {
         let components = DirectWriteComponent::new()?;
         let system_set = unsafe { components.factory.GetSystemFontSet() }?;
+        let system_collection = unsafe {
+            components
+                .factory
+                .CreateFontCollectionFromFontSet(&system_set)
+        }?;
 
         Ok(Self(RwLock::new(DirectWriteState {
             components,
-            font_sets: vec![system_set],
+            font_collections: vec![system_collection],
             fonts: Vec::new(),
             font_selections: HashMap::default(),
             font_id_by_postscript_name: HashMap::default(),
@@ -192,7 +197,12 @@ impl DirectWriteState {
             }
         }
         let set = unsafe { self.components.builder.CreateFontSet()? };
-        self.font_sets.push(set);
+        let collection = unsafe {
+            self.components
+                .factory
+                .CreateFontCollectionFromFontSet(&set)?
+        };
+        self.font_collections.push(collection);
 
         Ok(())
     }
@@ -204,7 +214,8 @@ impl DirectWriteState {
         font_style: FontStyle,
         features: &FontFeatures,
     ) -> Option<FontId> {
-        for (fontset_index, fontset) in self.font_sets.iter().enumerate() {
+        for (font_collection_index, font_collection) in self.font_collections.iter().enumerate() {
+            let fontset = font_collection.GetFontSet().unwrap();
             let font = fontset
                 .GetMatchingFonts(
                     &HSTRING::from(&family_name),
@@ -228,7 +239,7 @@ impl DirectWriteState {
                 let font_info = FontInfo {
                     font_family: family_name,
                     font_face,
-                    font_set_index: fontset_index,
+                    font_collection_index,
                     features: direct_write_features,
                     is_emoji,
                 };
@@ -282,22 +293,16 @@ impl DirectWriteState {
 
             let mut utf8_offset = 0usize;
             let mut utf16_offset = 0u32;
-            let (text_layout, ascent, descent) = {
+            let text_layout = {
                 let first_run = &font_runs[0];
                 let font_info = &self.fonts[first_run.font_id.0];
-                let collection = {
-                    let font_set = &self.font_sets[font_info.font_set_index];
-                    self.components
-                        .factory
-                        .CreateFontCollectionFromFontSet(font_set)
-                        .unwrap()
-                };
+                let collection = &self.font_collections[font_info.font_collection_index];
                 let format = self
                     .components
                     .factory
                     .CreateTextFormat(
                         &HSTRING::from(&font_info.font_family),
-                        &collection,
+                        collection,
                         font_info.font_face.GetWeight(),
                         font_info.font_face.GetStyle(),
                         DWRITE_FONT_STRETCH_NORMAL,
@@ -323,21 +328,22 @@ impl DirectWriteState {
                     .unwrap();
                 utf16_offset += current_text_utf16_length;
 
-                let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
-                let mut line_count = 0u32;
                 layout
-                    .GetLineMetrics(Some(&mut metrics), &mut line_count as _)
-                    .unwrap();
-                let ascent = px(metrics[0].baseline);
-                let descent = px(metrics[0].height - metrics[0].baseline);
-
-                (layout, ascent, descent)
             };
 
             let mut first_run = true;
+            let mut ascent = Pixels::default();
+            let mut descent = Pixels::default();
             for run in font_runs {
                 if first_run {
                     first_run = false;
+                    let mut metrics = vec![DWRITE_LINE_METRICS::default(); 4];
+                    let mut line_count = 0u32;
+                    text_layout
+                        .GetLineMetrics(Some(&mut metrics), &mut line_count as _)
+                        .unwrap();
+                    ascent = px(metrics[0].baseline);
+                    descent = px(metrics[0].height - metrics[0].baseline);
                     continue;
                 }
                 let font_info = &self.fonts[run.font_id.0];
@@ -345,20 +351,14 @@ impl DirectWriteState {
                 utf8_offset += run.len;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
 
-                let collection = {
-                    let font_set = &self.font_sets[font_info.font_set_index];
-                    self.components
-                        .factory
-                        .CreateFontCollectionFromFontSet(font_set)
-                        .unwrap()
-                };
+                let collection = &self.font_collections[font_info.font_collection_index];
                 let text_range = DWRITE_TEXT_RANGE {
                     startPosition: utf16_offset,
                     length: current_text_utf16_length,
                 };
                 utf16_offset += current_text_utf16_length;
                 text_layout
-                    .SetFontCollection(&collection, text_range)
+                    .SetFontCollection(collection, text_range)
                     .unwrap();
                 text_layout
                     .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)
