@@ -134,7 +134,7 @@ fn main() {
             .detach();
         }
     });
-    dbg!("here");
+
     app.run(move |cx| {
         release_channel::init(env!("CARGO_PKG_VERSION"), cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {

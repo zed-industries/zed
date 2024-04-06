@@ -1,3 +1,6 @@
+// todo(linux): remove
+#![allow(unused)]
+
 mod dispatcher;
 mod platform;
 mod text_system;

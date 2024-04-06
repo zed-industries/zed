@@ -35,7 +35,7 @@ use calloop::{
     RegistrationToken,
 };
 
-struct WindowRef {
+pub(crate) struct WindowRef {
     window: X11Window,
     refresh_event_token: RegistrationToken,
 }

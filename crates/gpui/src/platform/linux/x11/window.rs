@@ -62,7 +62,7 @@ struct RawWindow {
 }
 
 #[derive(Default)]
-struct Callbacks {
+pub struct Callbacks {
     request_frame: Option<Box<dyn FnMut()>>,
     input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
