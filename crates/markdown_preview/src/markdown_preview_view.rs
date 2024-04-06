@@ -49,37 +49,48 @@ struct EditorState {
 impl MarkdownPreviewView {
     pub fn register(workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, cx| {
-            if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                if Self::is_markdown_file(&editor, cx) {
-                    let view = Self::create_markdown_view(workspace, editor, cx);
-                    workspace.active_pane().update(cx, |pane, cx| {
-                        pane.add_item(Box::new(view.clone()), true, true, None, cx)
-                    });
-                    cx.notify();
-                }
+            if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
+                let view = Self::create_markdown_view(workspace, editor, cx);
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.add_item(Box::new(view.clone()), true, true, None, cx)
+                });
+                cx.notify();
             }
         });
 
         workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, cx| {
-            if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                if Self::is_markdown_file(&editor, cx) {
-                    let view = Self::create_markdown_view(workspace, editor, cx);
-                    let pane = workspace
-                        .find_pane_in_direction(workspace::SplitDirection::Right, cx)
-                        .unwrap_or_else(|| {
-                            workspace.split_pane(
-                                workspace.active_pane().clone(),
-                                workspace::SplitDirection::Right,
-                                cx,
-                            )
-                        });
-                    pane.update(cx, |pane, cx| {
-                        pane.add_item(Box::new(view.clone()), false, false, None, cx)
+            if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
+                let view = Self::create_markdown_view(workspace, editor, cx);
+                let pane = workspace
+                    .find_pane_in_direction(workspace::SplitDirection::Right, cx)
+                    .unwrap_or_else(|| {
+                        workspace.split_pane(
+                            workspace.active_pane().clone(),
+                            workspace::SplitDirection::Right,
+                            cx,
+                        )
                     });
-                    cx.notify();
-                }
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(view.clone()), false, false, None, cx)
+                });
+                cx.notify();
             }
         });
+    }
+
+    fn resolve_active_item_as_markdown_editor(
+        workspace: &Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<View<Editor>> {
+        if let Some(editor) = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+        {
+            if Self::is_markdown_file(&editor, cx) {
+                return Some(editor);
+            }
+        }
+        None
     }
 
     fn create_markdown_view(
