@@ -111,7 +111,6 @@ fn main() {
 
             for search_result in results {
                 let path = search_result.path.clone();
-                let range = search_result.range.clone();
 
                 let content = cx
                     .update(|cx| {
@@ -123,12 +122,8 @@ fn main() {
                     .unwrap()
                     .await;
 
-                // Now only show the range from content, on line breaks
-                // Range is in buffer terms (byte offsets)
                 let range = search_result.range.clone();
-                let start = range.start;
-                let end = range.end;
-                let content = content[start..end].to_owned();
+                let content = content[search_result.range].to_owned();
 
                 println!("✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄");
                 println!("{:?}:{:?}:{:?}", path, range.start, range.end);
