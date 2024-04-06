@@ -79,11 +79,12 @@ impl DirectWriteComponent {
 impl DirectWriteTextSystem {
     pub(crate) fn new() -> Result<Self> {
         let components = DirectWriteComponent::new()?;
-        let system_font_set = unsafe { components.factory.GetSystemFontSet()? };
         let system_font_collection = unsafe {
+            let mut result = std::mem::zeroed();
             components
                 .factory
-                .CreateFontCollectionFromFontSet(&system_font_set)?
+                .GetSystemFontCollection2(false, &mut result, true)?;
+            result.unwrap()
         };
         let custom_font_set = unsafe { components.builder.CreateFontSet()? };
         let custom_font_collection = unsafe {
