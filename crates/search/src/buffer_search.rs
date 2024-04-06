@@ -963,7 +963,7 @@ impl BufferSearchBar {
         done_rx
     }
 
-    fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
         let new_index = self
             .active_searchable_item
             .as_ref()

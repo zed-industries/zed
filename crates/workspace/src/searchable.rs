@@ -24,6 +24,15 @@ pub enum Direction {
     Next,
 }
 
+impl Direction {
+    pub fn opposite(&self) -> Self {
+        match self {
+            Direction::Prev => Direction::Next,
+            Direction::Next => Direction::Prev,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SearchOptions {
     pub case: bool,
