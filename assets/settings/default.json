@@ -545,6 +545,12 @@
   "file_types": {},
   // Different settings for specific languages.
   "languages": {
+    "C++": {
+      "format_on_save": "off"
+    },
+    "C": {
+      "format_on_save": "off"
+    },
     "Plain Text": {
       "soft_wrap": "preferred_line_length"
     },
