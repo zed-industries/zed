@@ -45,15 +45,14 @@ impl Embedding {
         self.0.len()
     }
 
-    pub fn dot(self, other: Embedding) -> f32 {
-        let len = self.0.len();
-        let mut dot = 0f32;
-
-        for i in 0..len {
-            dot += self.0[i] * other.0[i];
-        }
-
-        dot
+    pub fn similarity(self, other: &Embedding) -> f32 {
+        debug_assert_eq!(self.0.len(), other.0.len());
+        self.0
+            .iter()
+            .copied()
+            .zip(other.0.iter().copied())
+            .map(|(a, b)| a * b)
+            .sum()
     }
 }
 

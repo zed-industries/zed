@@ -48,7 +48,7 @@ impl SemanticIndex {
                 .spawn(async move {
                     unsafe {
                         heed::EnvOpenOptions::new()
-                            .map_size(10 * 1024 * 1024)
+                            .map_size(128 * 1024 * 1024) // todo!("revisit this value, we shouldn't be writing too much at once")
                             .max_dbs(3000)
                             .open(db_path)
                     }
@@ -225,9 +225,8 @@ impl ProjectIndex {
 
 pub struct SearchResult {
     pub worktree: Model<Worktree>,
-    pub entry: Entry,
+    pub path: Arc<Path>,
     pub range: Range<usize>,
-    pub text: String,
     pub score: f32,
 }
 
@@ -564,70 +563,82 @@ impl WorktreeIndex {
         limit: usize,
         cx: &AppContext,
     ) -> Task<Result<Vec<SearchResult>>> {
-        let embedding_provider = Arc::clone(&self.embedding_provider);
+        let (chunks_tx, chunks_rx) = channel::bounded(1024);
 
         let db_connection = self.db_connection.clone();
         let db = self.db.clone();
-        let pattern = "/".replace('/', "\0");
-
-        let query = query.to_owned();
-        cx.background_executor().spawn(async move {
-            // Embed the query as a vector
-            let query_embedding = embedding_provider.embed(&[&query]).await?;
-            let query_embedding = query_embedding
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow!("no embedding for query"))?;
-            println!("{}", query_embedding);
-
-            // Load all the embeddings from the database
-            // todo!("already have this loaded into memory?")
-            let txn = db_connection
-                .read_txn()
-                .context("failed to create read transaction")?;
-
-            let mut results: Vec<SearchResult> = Vec::new();
-            db.get(&txn, key)
-            let mut iter = db
-                .prefix_iter(&txn, &pattern)
-                .context("failed to iterate over DB with prefix")?;
-
-            iter.map(|item| {
-                let (key, value) = item.context("failed to read entry")?;
-                let file: EmbeddedFile =
-                    bincode::deserialize(&value).context("failed to deserialize embedded file")?;
-                let mut score = 0.0;
-                for chunk in file.chunks {
-                    score += query_embedding.dot(&chunk.embedding);
+        let scan_chunks = cx.background_executor().spawn({
+            async move {
+                let txn = db_connection
+                    .read_txn()
+                    .context("failed to create read transaction")?;
+                let db_entries = db.iter(&txn).context("failed to iterate database")?;
+                for db_entry in db_entries {
+                    let (_, db_embedded_file) = db_entry?;
+                    for chunk in db_embedded_file.chunks {
+                        chunks_tx
+                            .send((db_embedded_file.path.clone(), chunk))
+                            .await?;
+                    }
                 }
-                results.push(SearchResult {
-                    path: file.path,
-                    score,
-                });
-            })
+                anyhow::Ok(())
+            }
+        });
 
-            while let Some(entry) = iter.next() {
-                let (key, value) = entry.context("failed to read entry")?;
-
-                let file: EmbeddedFile =
-                    bincode::deserialize(&value).context("failed to deserialize embedded file")?;
-
-                // let file: EmbeddedFile =
-                //     bincode::deserialize(&value).context("failed to deserialize embedded file")?;
-                // let mut score = 0.0;
-                // for chunk in file.chunks {
-                //     score += query_embedding.dot(&chunk.embedding);
-                // }
-                // results.push(SearchResult {
-                //     path: file.path,
-                //     score,
-                // });
+        let query = query.to_string();
+        let embedding_provider = self.embedding_provider.clone();
+        let worktree = self.worktree.clone();
+        cx.spawn(|cx| async move {
+            let embedding_query_start = std::time::Instant::now();
+            let mut query_embeddings = embedding_provider.embed(&[&query]).await?;
+            dbg!(embedding_query_start.elapsed());
+            let query_embedding = query_embeddings
+                .pop()
+                .ok_or_else(|| anyhow!("no embedding for query"))?;
+            let mut workers = Vec::new();
+            for _ in 0..cx.background_executor().num_cpus() {
+                workers.push(Vec::<SearchResult>::new());
             }
 
-            // Compute the scores across all embeddings
+            let search_start = std::time::Instant::now();
+            cx.background_executor()
+                .scoped(|cx| {
+                    for worker_results in workers.iter_mut() {
+                        cx.spawn(async {
+                            while let Ok((path, embedded_chunk)) = chunks_rx.recv().await {
+                                let score = embedded_chunk.embedding.similarity(&query_embedding);
+                                let ix = match worker_results.binary_search_by(|probe| {
+                                    score.partial_cmp(&probe.score).unwrap_or(Ordering::Equal)
+                                }) {
+                                    Ok(ix) | Err(ix) => ix,
+                                };
+                                worker_results.insert(
+                                    ix,
+                                    SearchResult {
+                                        worktree: worktree.clone(),
+                                        path: path.clone(),
+                                        range: embedded_chunk.chunk.range.clone(),
+                                        score,
+                                    },
+                                );
+                                worker_results.truncate(limit);
+                            }
+                        });
+                    }
+                })
+                .await;
+            scan_chunks.await?;
 
-            // Sort the scores and return the top N
-            Ok(vec![])
+            let mut search_results = Vec::with_capacity(workers.len() * limit);
+            for worker_results in workers {
+                search_results.extend(worker_results);
+            }
+            search_results
+                .sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
+            search_results.truncate(limit);
+            dbg!(search_start.elapsed());
+
+            Ok(search_results)
         })
     }
 }

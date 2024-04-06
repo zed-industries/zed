@@ -92,22 +92,22 @@ fn main() {
                 })
             });
 
-            let t0 = std::time::Instant::now();
+            let index_start = std::time::Instant::now();
             rx.await.expect("no event emitted");
             drop(subscription);
-            dbg!(t0.elapsed());
+            dbg!(index_start.elapsed());
 
             let results = cx
                 .update(|cx| {
                     let project_index = project_index.read(cx);
-                    let query = "fn main() { println!(\"Hello, world!\"); }";
+                    let query = "converting an anchor to a point";
                     project_index.search(query, 10, cx)
                 })
                 .unwrap()
                 .await;
 
             results.iter().for_each(|search_result| {
-                println!("{}", search_result.text);
+                println!("{:?} = {:?}", search_result.path, search_result.range);
             });
 
             cx.update(|cx| cx.quit()).unwrap();
