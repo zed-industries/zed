@@ -99,7 +99,7 @@ use text::{Anchor, BufferId, RopeFingerprint};
 use util::{
     debug_panic, defer,
     http::{HttpClient, Url},
-    maybe, merge_json_value_into,
+    maybe, merge_json_value_into, parse_env_output,
     paths::{
         LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
     },
@@ -10569,13 +10569,10 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
 
     let mut parsed_env = HashMap::default();
     let env_output = &stdout[env_output_start + marker.len()..];
-    for line in env_output.split_terminator('\n') {
-        if let Some(separator_index) = line.find('=') {
-            let key = line[..separator_index].to_string();
-            let value = line[separator_index + 1..].to_string();
-            parsed_env.insert(key, value);
-        }
-    }
+
+    parse_env_output(env_output, |key, value| {
+        parsed_env.insert(key, value);
+    });
 
     Ok(parsed_env)
 }

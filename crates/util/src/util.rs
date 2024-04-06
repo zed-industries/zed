@@ -130,6 +130,32 @@ where
     }
 }
 
+/// Parse the result of calling `usr/bin/env` with no arguments
+pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
+    let mut current_key: Option<String> = None;
+    let mut current_value: Option<String> = None;
+
+    for line in env.split_terminator('\n') {
+        if let Some(separator_index) = line.find('=') {
+            if &line[..separator_index] != "" {
+                if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
+                    f(key, value)
+                }
+                current_key = Some(line[..separator_index].to_string());
+                current_value = Some(line[separator_index + 1..].to_string());
+                continue;
+            };
+        }
+        if let Some(value) = current_value.as_mut() {
+            value.push('\n');
+            value.push_str(line);
+        }
+    }
+    if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
+        f(key, value)
+    }
+}
+
 pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
     use serde_json::Value;
 

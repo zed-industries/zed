@@ -54,7 +54,7 @@ use std::{
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
     http::{HttpClient, HttpClientWithUrl},
-    maybe,
+    maybe, parse_env_output,
     paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
     ResultExt, TryFutureExt,
 };
@@ -923,13 +923,9 @@ async fn load_login_shell_environment() -> Result<()> {
 
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
-        for line in env_output.split_terminator('\n') {
-            if let Some(separator_index) = line.find('=') {
-                let key = &line[..separator_index];
-                let value = &line[separator_index + 1..];
-                env::set_var(key, value);
-            }
-        }
+
+        parse_env_output(env_output, |key, value| env::set_var(key, value));
+
         log::info!(
             "set environment variables from shell:{}, path:{}",
             shell,
