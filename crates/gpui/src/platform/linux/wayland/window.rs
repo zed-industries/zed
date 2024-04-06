@@ -145,6 +145,10 @@ pub(crate) struct WaylandWindow {
 }
 
 impl WaylandWindow {
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.state, &other.state)
+    }
+
     pub fn new(globals: Globals, params: WindowParams) -> (Self, ObjectId) {
         let surface = globals.compositor.create_surface(&globals.qh, ());
         let xdg_surface = globals
