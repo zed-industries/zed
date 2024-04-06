@@ -247,9 +247,6 @@ impl Platform for WindowsPlatform {
                                 self.inner.settings.borrow_mut().update_all();
                                 continue;
                             }
-                            if msg.message == WM_KEYDOWN {
-                                self.restart();
-                            }
                             TranslateMessage(&msg);
                             DispatchMessageW(&msg);
                         }
@@ -280,7 +277,9 @@ impl Platform for WindowsPlatform {
 
     fn restart(&self) {
         let pid = std::process::id();
-        let app_path = self.app_path().unwrap();
+        let Some(app_path) = self.app_path().log_err() else {
+            return;
+        };
         let script = format!(
             r#"
             $pidToWaitFor = {}
@@ -650,7 +649,6 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    // todo(windows)
     fn app_path(&self) -> Result<PathBuf> {
         Ok(std::env::current_exe()?)
     }
