@@ -6617,8 +6617,10 @@ impl Project {
                     if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
                     }
-                    let id = language_server.next_id().load(SeqCst);
 
+                    let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
+
+                    let id = lsp_request.id;
                     if status.is_some() {
                         cx.update(|cx| {
                             this.update(cx, |this, cx| {
@@ -6637,7 +6639,7 @@ impl Project {
                         .log_err();
                     }
 
-                    let result = language_server.request::<R::LspRequest>(lsp_params).await;
+                    let result = lsp_request.await;
                     let response = match result {
                         Ok(response) => response,
 

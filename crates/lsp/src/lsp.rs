@@ -4,7 +4,7 @@ pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, FutureExt};
+use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
@@ -22,14 +22,15 @@ use smol::process::windows::CommandExt;
 use std::{
     ffi::OsString,
     fmt,
-    future::Future,
     io::Write,
     path::PathBuf,
+    pin::Pin,
     str::{self, FromStr as _},
     sync::{
         atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
     },
+    task::Poll,
     time::{Duration, Instant},
 };
 use std::{path::Path, process::Stdio};
@@ -166,6 +167,30 @@ struct AnyNotification<'a> {
 #[derive(Debug, Serialize, Deserialize)]
 struct Error {
     message: String,
+}
+
+pub struct FutureWithId<T> {
+    pub id: i32,
+    future: Pin<Box<dyn Future<Output = T>>>,
+}
+
+unsafe impl<T> Send for FutureWithId<T> {}
+
+impl<T> FutureWithId<T> {
+    pub fn new(id: i32, future: impl Future<Output = T> + 'static) -> Self {
+        Self {
+            id,
+            future: Box::pin(future),
+        }
+    }
+}
+
+impl<T> Future for FutureWithId<T> {
+    type Output = T;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context) -> Poll<Self::Output> {
+        self.future.as_mut().poll(cx)
+    }
 }
 
 /// Experimental: Informs the end user about the state of the server
@@ -910,18 +935,10 @@ impl LanguageServer {
         &self.root_path
     }
 
-    /// Gets the id of the next request.
-    pub fn next_id(&self) -> &AtomicI32 {
-        &self.next_id
-    }
-
     /// Sends a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
-    pub fn request<T: request::Request>(
-        &self,
-        params: T::Params,
-    ) -> impl Future<Output = Result<T::Result>>
+    pub fn request<T: request::Request>(&self, params: T::Params) -> FutureWithId<Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -940,7 +957,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> impl 'static + Future<Output = anyhow::Result<T::Result>>
+    ) -> FutureWithId<Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -989,7 +1006,7 @@ impl LanguageServer {
         let outbound_tx = outbound_tx.downgrade();
         let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
         let started = Instant::now();
-        async move {
+        FutureWithId::new(id, async move {
             handle_response?;
             send?;
 
@@ -1019,7 +1036,7 @@ impl LanguageServer {
                     anyhow::bail!("LSP request timeout");
                 }
             }
-        }
+        })
     }
 
     /// Sends a RPC notification to the language server.
