@@ -351,7 +351,7 @@ impl Pane {
                     })
                     .into_any_element()
             }),
-            display_nav_history_buttons: WorkspaceSettings::get_global(cx).show_nav_history_buttons,
+            display_nav_history_buttons: ItemSettings::get_global(cx).show_nav_history_buttons,
             _subscriptions: subscriptions,
             double_click_dispatch_action,
         }
@@ -420,8 +420,7 @@ impl Pane {
     }
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
-        self.display_nav_history_buttons =
-            WorkspaceSettings::get_global(cx).show_nav_history_buttons;
+        self.display_nav_history_buttons = ItemSettings::get_global(cx).show_nav_history_buttons;
         cx.notify();
     }
 

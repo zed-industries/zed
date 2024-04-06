@@ -40,6 +40,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
+    pub show_nav_history_buttons: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -69,6 +70,10 @@ pub struct ItemSettingsContent {
     ///
     /// Default: right
     close_position: Option<ClosePosition>,
+    /// Whether or not to show the navigation history buttons in the tab bar.
+    ///
+    /// Default: true
+    pub show_nav_history_buttons: Option<bool>,
 }
 
 impl Settings for ItemSettings {
