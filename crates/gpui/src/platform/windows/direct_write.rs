@@ -749,66 +749,17 @@ impl DirectWriteState {
     }
 
     fn all_font_names(&self) -> Vec<String> {
-        unsafe {
-            let mut result = Vec::new();
-            let system_collection = &self.system_font_collection;
-            let locale = self.components.locale.as_str();
-            let family_count = system_collection.GetFontFamilyCount();
-            for index in 0..family_count {
-                let font_family = system_collection.GetFontFamily(index).unwrap();
-                let font_count = font_family.GetFontCount();
-                for font_index in 0..font_count {
-                    let font = font_family.GetFont(font_index).unwrap();
-                    let mut font_name_localized_string: Option<IDWriteLocalizedStrings> = {
-                        let mut string: Option<IDWriteLocalizedStrings> = std::mem::zeroed();
-                        let mut exists = BOOL(0);
-                        font.GetInformationalStrings(
-                            DWRITE_INFORMATIONAL_STRING_FULL_NAME,
-                            &mut string as _,
-                            &mut exists as _,
-                        )
-                        .unwrap();
-                        if exists.as_bool() {
-                            string
-                        } else {
-                            continue;
-                        }
-                    };
-                    let Some(localized_font_name) = font_name_localized_string else {
-                        continue;
-                    };
-                    let Some(font_name) = get_name(localized_font_name, locale) else {
-                        continue;
-                    };
-                    result.push(font_name);
-                }
-            }
-
-            result
-        }
+        let mut result =
+            get_font_names_from_collection(&self.system_font_collection, &self.components.locale);
+        result.extend(get_font_names_from_collection(
+            &self.custom_font_collection,
+            &self.components.locale,
+        ));
+        result
     }
 
     fn all_font_families(&self) -> Vec<String> {
-        unsafe {
-            let mut result = Vec::new();
-            let system_collection = &self.system_font_collection;
-            let locale = self.components.locale.as_str();
-            let family_count = system_collection.GetFontFamilyCount();
-            for index in 0..family_count {
-                let Some(font_family) = system_collection.GetFontFamily(index).log_err() else {
-                    continue;
-                };
-                let Some(localized_family_name) = font_family.GetFamilyNames().log_err() else {
-                    continue;
-                };
-                let Some(family_name) = get_name(localized_family_name, locale) else {
-                    continue;
-                };
-                result.push(family_name);
-            }
-
-            result
-        }
+        get_font_names_from_collection(&self.system_font_collection, &self.components.locale)
     }
 }
 
@@ -1064,6 +1015,30 @@ impl Into<DWRITE_FONT_STYLE> for FontStyle {
 impl Into<DWRITE_FONT_WEIGHT> for FontWeight {
     fn into(self) -> DWRITE_FONT_WEIGHT {
         DWRITE_FONT_WEIGHT(self.0 as i32)
+    }
+}
+
+fn get_font_names_from_collection(
+    collection: &IDWriteFontCollection1,
+    locale: &str,
+) -> Vec<String> {
+    unsafe {
+        let mut result = Vec::new();
+        let family_count = collection.GetFontFamilyCount();
+        for index in 0..family_count {
+            let Some(font_family) = collection.GetFontFamily(index).log_err() else {
+                continue;
+            };
+            let Some(localized_family_name) = font_family.GetFamilyNames().log_err() else {
+                continue;
+            };
+            let Some(family_name) = get_name(localized_family_name, locale) else {
+                continue;
+            };
+            result.push(family_name);
+        }
+
+        result
     }
 }
 
