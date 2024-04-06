@@ -18,4 +18,7 @@ interface platform {
         /// x86-64.
         x8664,
     }
+
+    /// Gets the current operating system and architecture.
+    current-platform: func() -> tuple<os, architecture>;
 }

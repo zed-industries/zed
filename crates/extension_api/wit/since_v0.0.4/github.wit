@@ -22,4 +22,7 @@ interface github {
         /// Whether pre-releases should be included.
         pre-release: bool,
     }
+
+    /// Returns the latest release for the given GitHub repository.
+    latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
 }

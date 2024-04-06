@@ -3,6 +3,7 @@ package zed:extension;
 world extension {
     import github;
     import platform;
+    import nodejs;
 
     use lsp.{completion, symbol};
 
@@ -39,18 +40,6 @@ world extension {
     }
 
     import get-settings: func(path: option<settings-location>, category: string, key: option<string>) -> result<string, string>;
-
-    /// Returns the path to the Node binary used by Zed.
-    import node-binary-path: func() -> result<string, string>;
-
-    /// Returns the latest version of the given NPM package.
-    import npm-package-latest-version: func(package-name: string) -> result<string, string>;
-
-    /// Returns the installed version of the given NPM package, if it exists.
-    import npm-package-installed-version: func(package-name: string) -> result<option<string>, string>;
-
-    /// Installs the specified NPM package.
-    import npm-install-package: func(package-name: string, version: string) -> result<_, string>;
 
     /// Downloads a file from the given URL and saves it to the given path within the extension's
     /// working directory.
