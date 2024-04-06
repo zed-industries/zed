@@ -22,8 +22,8 @@ use crate::*;
 struct FontInfo {
     font_family: String,
     font_face: IDWriteFontFace3,
-    font_collection_index: usize,
     features: IDWriteTypography,
+    is_system_font: bool,
     is_emoji: bool,
 }
 
@@ -41,7 +41,8 @@ struct DirectWriteComponent {
 
 struct DirectWriteState {
     components: DirectWriteComponent,
-    font_collections: Vec<IDWriteFontCollection1>,
+    system_font_collection: IDWriteFontCollection1,
+    custom_font_collection: IDWriteFontCollection1,
     fonts: Vec<FontInfo>,
     font_selections: HashMap<Font, FontId>,
     font_id_by_postscript_name: HashMap<String, FontId>,
@@ -78,16 +79,23 @@ impl DirectWriteComponent {
 impl DirectWriteTextSystem {
     pub(crate) fn new() -> Result<Self> {
         let components = DirectWriteComponent::new()?;
-        let system_set = unsafe { components.factory.GetSystemFontSet() }?;
-        let system_collection = unsafe {
+        let system_font_set = unsafe { components.factory.GetSystemFontSet()? };
+        let system_font_collection = unsafe {
             components
                 .factory
-                .CreateFontCollectionFromFontSet(&system_set)
-        }?;
+                .CreateFontCollectionFromFontSet(&system_font_set)?
+        };
+        let custom_font_set = unsafe { components.builder.CreateFontSet()? };
+        let custom_font_collection = unsafe {
+            components
+                .factory
+                .CreateFontCollectionFromFontSet(&custom_font_set)?
+        };
 
         Ok(Self(RwLock::new(DirectWriteState {
             components,
-            font_collections: vec![system_collection],
+            system_font_collection,
+            custom_font_collection,
             fonts: Vec::new(),
             font_selections: HashMap::default(),
             font_id_by_postscript_name: HashMap::default(),
@@ -202,61 +210,93 @@ impl DirectWriteState {
                 .factory
                 .CreateFontCollectionFromFontSet(&set)?
         };
-        self.font_collections.push(collection);
+        self.custom_font_collection = collection;
 
         Ok(())
     }
 
-    unsafe fn match_font_from_font_sets(
+    unsafe fn get_font_id_from_font_collection(
         &mut self,
-        family_name: String,
+        family_name: &str,
         font_weight: FontWeight,
         font_style: FontStyle,
-        features: &FontFeatures,
+        font_features: &FontFeatures,
+        is_system_font: bool,
     ) -> Option<FontId> {
-        for (font_collection_index, font_collection) in self.font_collections.iter().enumerate() {
-            let fontset = font_collection.GetFontSet().unwrap();
-            let font = fontset
-                .GetMatchingFonts(
-                    &HSTRING::from(&family_name),
-                    DWRITE_FONT_WEIGHT(font_weight.0 as i32),
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    font_style.into(),
-                )
-                .unwrap();
-            let total_number = font.GetFontCount();
-            for index in 0..total_number {
-                let font_face_ref = font.GetFontFaceReference(index).unwrap();
-                let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
-                    continue;
-                };
-                let Some(postscript_name) = get_postscript_name(&font_face) else {
-                    continue;
-                };
-                let is_emoji = font_face.IsColorFont().as_bool();
-                let direct_write_features = self.components.factory.CreateTypography().unwrap();
-                apply_font_features(&direct_write_features, features);
-                let font_info = FontInfo {
-                    font_family: family_name,
-                    font_face,
-                    font_collection_index,
-                    features: direct_write_features,
-                    is_emoji,
-                };
-                let font_id = FontId(self.fonts.len());
-                self.fonts.push(font_info);
-                self.font_id_by_postscript_name
-                    .insert(postscript_name, font_id);
-                return Some(font_id);
-            }
+        let collection = if is_system_font {
+            &self.system_font_collection
+        } else {
+            &self.custom_font_collection
+        };
+        let Some(fontset) = collection.GetFontSet().log_err() else {
+            return None;
+        };
+        let font = fontset
+            .GetMatchingFonts(
+                &HSTRING::from(family_name),
+                font_weight.into(),
+                DWRITE_FONT_STRETCH_NORMAL,
+                font_style.into(),
+            )
+            .unwrap();
+        let total_number = font.GetFontCount();
+        for index in 0..total_number {
+            let font_face_ref = font.GetFontFaceReference(index).unwrap();
+            let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
+                continue;
+            };
+            let Some(postscript_name) = get_postscript_name(&font_face) else {
+                continue;
+            };
+            let is_emoji = font_face.IsColorFont().as_bool();
+            let direct_write_features = self.components.factory.CreateTypography().unwrap();
+            apply_font_features(&direct_write_features, font_features);
+            let font_info = FontInfo {
+                font_family: family_name.to_owned(),
+                font_face,
+                is_system_font,
+                features: direct_write_features,
+                is_emoji,
+            };
+            let font_id = FontId(self.fonts.len());
+            self.fonts.push(font_info);
+            self.font_id_by_postscript_name
+                .insert(postscript_name, font_id);
+            return Some(font_id);
         }
         None
+    }
+
+    unsafe fn match_font_from_font_sets(
+        &mut self,
+        family_name: &str,
+        font_weight: FontWeight,
+        font_style: FontStyle,
+        font_features: &FontFeatures,
+    ) -> Option<FontId> {
+        // try to find target font in custom font collection first
+        self.get_font_id_from_font_collection(
+            family_name,
+            font_weight,
+            font_style,
+            font_features,
+            false,
+        )
+        .or_else(|| {
+            self.get_font_id_from_font_collection(
+                family_name,
+                font_weight,
+                font_style,
+                font_features,
+                true,
+            )
+        })
     }
 
     fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
         unsafe {
             self.match_font_from_font_sets(
-                target_font.family.to_string(),
+                &target_font.family,
                 target_font.weight,
                 target_font.style,
                 &target_font.features,
@@ -264,7 +304,7 @@ impl DirectWriteState {
         }
     }
 
-    fn select_font_by_family(&mut self, family: String) -> Option<FontId> {
+    fn select_font_by_family(&mut self, family: &str) -> Option<FontId> {
         unsafe {
             self.match_font_from_font_sets(
                 family,
@@ -296,7 +336,11 @@ impl DirectWriteState {
             let text_layout = {
                 let first_run = &font_runs[0];
                 let font_info = &self.fonts[first_run.font_id.0];
-                let collection = &self.font_collections[font_info.font_collection_index];
+                let collection = if font_info.is_system_font {
+                    &self.system_font_collection
+                } else {
+                    &self.custom_font_collection
+                };
                 let format = self
                     .components
                     .factory
@@ -351,7 +395,11 @@ impl DirectWriteState {
                 utf8_offset += run.len;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
 
-                let collection = &self.font_collections[font_info.font_collection_index];
+                let collection = if font_info.is_system_font {
+                    &self.system_font_collection
+                } else {
+                    &self.custom_font_collection
+                };
                 let text_range = DWRITE_TEXT_RANGE {
                     startPosition: utf16_offset,
                     length: current_text_utf16_length,
@@ -380,7 +428,7 @@ impl DirectWriteState {
                     if let Some(id) = self.font_id_by_postscript_name.get(&result.postscript) {
                         font_id = *id;
                     } else {
-                        font_id = self.select_font_by_family(result.family.clone()).unwrap();
+                        font_id = self.select_font_by_family(&result.family).unwrap();
                     }
                     let mut glyphs = SmallVec::new();
                     for glyph in result.glyphs.iter() {
@@ -1042,6 +1090,12 @@ impl Into<DWRITE_FONT_STYLE> for FontStyle {
             FontStyle::Italic => DWRITE_FONT_STYLE_ITALIC,
             FontStyle::Oblique => DWRITE_FONT_STYLE_OBLIQUE,
         }
+    }
+}
+
+impl Into<DWRITE_FONT_WEIGHT> for FontWeight {
+    fn into(self) -> DWRITE_FONT_WEIGHT {
+        DWRITE_FONT_WEIGHT(self.0 as i32)
     }
 }
 
