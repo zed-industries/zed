@@ -554,9 +554,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClient {
                         XKB_KEYMAP_FORMAT_TEXT_V1,
                         KEYMAP_COMPILE_NO_FLAGS,
                     )
-                    .unwrap()
-                }
-                .unwrap();
+                    .log_err()
+                    .flatten()
+                    .expect("Failed to create keymap")
+                };
                 state.keymap_state = Some(xkb::State::new(&keymap));
             }
             wl_keyboard::Event::Enter { surface, .. } => {

@@ -27,7 +27,8 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay, PlatformInput,
-    Point, PromptLevel, Size, WindowAppearance, WindowBackgroundAppearance, WindowParams,
+    Point, PromptLevel, RcRefCell, Size, WindowAppearance, WindowBackgroundAppearance,
+    WindowParams,
 };
 
 #[derive(Default)]
@@ -140,7 +141,7 @@ impl WaylandWindowState {
 
 #[derive(Clone)]
 pub(crate) struct WaylandWindow {
-    pub(crate) state: Rc<RefCell<WaylandWindowState>>,
+    pub(crate) state: RcRefCell<WaylandWindowState>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
 }
 
@@ -176,14 +177,14 @@ impl WaylandWindow {
 
         surface.frame(&globals.qh, surface.id());
 
-        let window_state = Rc::new(RefCell::new(WaylandWindowState::new(
+        let window_state = RcRefCell::new(WaylandWindowState::new(
             surface.clone(),
             xdg_surface,
             viewport,
             toplevel,
             globals,
             params,
-        )));
+        ));
 
         let this = Self {
             state: window_state,
@@ -294,7 +295,7 @@ impl WaylandWindow {
                     }
                 }
 
-                state.surface.set_buffer_scale(scale as i32);
+                state.surface.set_buffer_scale(scale);
                 drop(state);
                 self.rescale(scale as f32);
             }
@@ -313,7 +314,7 @@ impl WaylandWindow {
                     }
                 }
 
-                state.surface.set_buffer_scale(scale as i32);
+                state.surface.set_buffer_scale(scale);
                 drop(state);
                 self.rescale(scale as f32);
             }
@@ -423,9 +424,12 @@ impl WaylandWindow {
         }
         if let PlatformInput::KeyDown(event) = input {
             let mut state = self.state.borrow_mut();
-            if let Some(ref mut input_handler) = state.input_handler {
+            if let Some(mut input_handler) = state.input_handler.take() {
                 if let Some(ime_key) = &event.keystroke.ime_key {
+                    drop(state);
                     input_handler.replace_text_in_range(None, ime_key);
+                    let mut state = self.state.borrow_mut();
+                    state.input_handler = Some(input_handler);
                 }
             }
         }

@@ -115,7 +115,7 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn park(&self) {
-        self.parker.lock().park()
+        self.parker.lock().park();
     }
 
     fn unparker(&self) -> Unparker {
