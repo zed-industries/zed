@@ -132,41 +132,46 @@ impl MarkdownPreviewView {
                             let mut render_cx =
                                 RenderContext::new(Some(view.workspace.clone()), cx);
                             let block = contents.children.get(ix).unwrap();
-                            let block = render_markdown_block(block, &mut render_cx);
-                            let block =
-                                div()
-                                    .child(block)
-                                    .pl_4()
-                                    .pb_3()
-                                    .id(ix)
-                                    .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
-                                        if event.down.click_count == 2 {
-                                            if let Some(block) = this
-                                                .contents
-                                                .as_ref()
-                                                .and_then(|c| c.children.get(ix))
-                                            {
-                                                let start = block.source_range().start;
-                                                this.move_cursor_to_block(cx, start..start);
-                                            }
+                            let rendered_block = render_markdown_block(block, &mut render_cx);
+
+                            div()
+                                .id(ix)
+                                .pb_3()
+                                .group("markdown-block")
+                                .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
+                                    if event.down.click_count == 2 {
+                                        if let Some(block) =
+                                            this.contents.as_ref().and_then(|c| c.children.get(ix))
+                                        {
+                                            let start = block.source_range().start;
+                                            this.move_cursor_to_block(cx, start..start);
                                         }
-                                    }));
+                                    }
+                                }))
+                                .map(move |this| {
+                                    let indicator = div()
+                                        .h_full()
+                                        .w(px(4.0))
+                                        .when(ix == view.selected_block, |this| {
+                                            this.bg(cx.theme().colors().border)
+                                        })
+                                        .group_hover("markdown-block", |s| {
+                                            if ix != view.selected_block {
+                                                s.bg(cx.theme().colors().border_variant)
+                                            } else {
+                                                s
+                                            }
+                                        })
+                                        .rounded_sm();
 
-                            if ix == view.selected_block {
-                                let indicator = div()
-                                    .h_full()
-                                    .w(px(4.0))
-                                    .bg(cx.theme().colors().border)
-                                    .rounded_sm();
-
-                                return div()
-                                    .relative()
-                                    .child(block)
-                                    .child(indicator.absolute().left_0().top_0())
-                                    .into_any();
-                            }
-
-                            block.into_any()
+                                    this.child(
+                                        div()
+                                            .relative()
+                                            .child(div().pl_4().child(rendered_block))
+                                            .child(indicator.absolute().left_0().top_0()),
+                                    )
+                                })
+                                .into_any()
                         })
                     } else {
                         div().into_any()
