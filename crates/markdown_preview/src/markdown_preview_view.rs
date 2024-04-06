@@ -147,7 +147,7 @@ impl MarkdownPreviewView {
                                                 .and_then(|c| c.children.get(ix))
                                             {
                                                 let start = block.source_range().start;
-                                                this.update_editor_selection(cx, start..start);
+                                                this.move_cursor_to_block(cx, start..start);
                                             }
                                         }
                                     }));
@@ -286,7 +286,7 @@ impl MarkdownPreviewView {
         }
     }
 
-    fn update_editor_selection(&self, cx: &mut ViewContext<Self>, selection: Range<usize>) {
+    fn move_cursor_to_block(&self, cx: &mut ViewContext<Self>, selection: Range<usize>) {
         if let Some(state) = &self.active_editor {
             state.editor.update(cx, |editor, cx| {
                 editor.change_selections(
@@ -294,6 +294,7 @@ impl MarkdownPreviewView {
                     cx,
                     |selections| selections.select_ranges(vec![selection]),
                 );
+                editor.focus(cx);
             });
         }
     }
