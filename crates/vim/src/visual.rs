@@ -500,30 +500,8 @@ pub fn select_match(
     direction: Direction,
     cx: &mut WindowContext,
 ) {
-    let pane = workspace.active_pane().clone();
-    let mut exists_match = false;
-    pane.update(cx, |pane, cx| {
-        if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
-            search_bar.update(cx, |search_bar, cx| {
-                exists_match = search_bar.exists_match(cx);
-            });
-        }
-    });
-    
-    if !exists_match {
-        if !vim.workspace_state.replaying {
-            vim.clear_operator(cx);
-        } else {
-            move_cursor(vim, Motion::Right, Some(1), cx);
-        }
-        // clear recording
-        vim.workspace_state.recording = false;
-        vim.workspace_state.recorded_actions = Default::default();
-        vim.workspace_state.recorded_count = None;
-        return;
-    }
-
     let count = vim.take_count(cx).unwrap_or(1);
+    let pane = workspace.active_pane().clone();
     let vim_is_normal = vim.state().mode == Mode::Normal;
     let mut start_selection = 0usize;
     let mut end_selection = 0usize;
@@ -531,7 +509,6 @@ pub fn select_match(
     vim.update_active_editor(cx, |_, editor, _| {
         editor.set_collapse_matches(false);
     });
-
     if vim_is_normal {
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
@@ -543,18 +520,19 @@ pub fn select_match(
             }
         });
     }
-
     vim.update_active_editor(cx, |_, editor, cx| {
         let latest = editor.selections.newest::<usize>(cx);
         start_selection = latest.start;
         end_selection = latest.end;
     });
 
+    let mut match_exists = false;
     pane.update(cx, |pane, cx| {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |search_bar, cx| {
                 search_bar.update_match_index(cx);
                 search_bar.select_match(direction, count, cx);
+                match_exists = search_bar.match_exists(cx);
             });
         }
     });
@@ -575,15 +553,26 @@ pub fn select_match(
         });
         editor.set_collapse_matches(true);
     });
-    match vim.maybe_pop_operator() {
-        Some(Operator::Change) => substitute(vim, None, false, cx),
-        Some(Operator::Delete) => {
-            vim.stop_recording();
-            delete(vim, cx)
+
+    if match_exists {
+        match vim.maybe_pop_operator() {
+            Some(Operator::Change) => substitute(vim, None, false, cx),
+            Some(Operator::Delete) => {
+                vim.stop_recording();
+                delete(vim, cx)
+            }
+            Some(Operator::Yank) => yank(vim, cx),
+            _ => {} // Ignoring other operators
         }
-        Some(Operator::Yank) => yank(vim, cx),
-        _ => {} // Ignoring other operators
-    };
+    } else {
+        vim.clear_operator(cx);
+        vim.workspace_state.recording = false;
+        vim.workspace_state.recorded_actions = Default::default();
+        vim.workspace_state.recorded_count = None;
+        if vim.workspace_state.replaying {
+            move_cursor(vim, Motion::Right, Some(1), cx);
+        }
+    }
 }
 
 #[cfg(test)]

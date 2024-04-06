@@ -1100,10 +1100,10 @@ impl BufferSearchBar {
             }
         }
     }
-    
-    pub fn exists_match(&mut self, cx: &mut ViewContext<Self>) -> bool {
+
+    pub fn match_exists(&mut self, cx: &mut ViewContext<Self>) -> bool {
         self.update_match_index(cx);
-        self.active_match_index.is_some() 
+        self.active_match_index.is_some()
     }
 }
 
