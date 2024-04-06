@@ -609,6 +609,12 @@ mod tests {
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
             Some(NumericPrefixWithSuffix(12, "_ab"))
         );
+
+        let target = "1_2ab";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, "_2ab"))
+        );
     }
 
     #[test]
