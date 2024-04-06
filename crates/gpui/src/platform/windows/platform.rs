@@ -247,6 +247,9 @@ impl Platform for WindowsPlatform {
                                 self.inner.settings.borrow_mut().update_all();
                                 continue;
                             }
+                            if msg.message == WM_KEYDOWN {
+                                self.restart();
+                            }
                             TranslateMessage(&msg);
                             DispatchMessageW(&msg);
                         }
@@ -275,9 +278,35 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    // todo(windows)
     fn restart(&self) {
-        unimplemented!()
+        let pid = std::process::id();
+        let app_path = self.app_path().unwrap();
+        let script = format!(
+            r#"
+            $pidToWaitFor = {}
+            $exePath = "{}"
+
+            while ($true) {{
+                $process = Get-Process -Id $pidToWaitFor -ErrorAction SilentlyContinue
+                if (-not $process) {{
+                    Start-Process -FilePath $exePath
+                    break
+                }}
+                Start-Sleep -Seconds 0.1
+            }}
+            "#,
+            pid,
+            app_path.display(),
+        );
+        let restart_process = std::process::Command::new("powershell.exe")
+            .arg("-command")
+            .arg(script)
+            .spawn();
+
+        match restart_process {
+            Ok(_) => self.quit(),
+            Err(e) => log::error!("failed to spawn restart script: {:?}", e),
+        }
     }
 
     // todo(windows)
@@ -623,7 +652,7 @@ impl Platform for WindowsPlatform {
 
     // todo(windows)
     fn app_path(&self) -> Result<PathBuf> {
-        Err(anyhow!("not yet implemented"))
+        Ok(std::env::current_exe()?)
     }
 
     fn local_timezone(&self) -> UtcOffset {
