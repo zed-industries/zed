@@ -1,8 +1,8 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
 use gpui::{
-    list, svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, Entity,
-    EntityId, EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
+    svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, Entity, EntityId,
+    EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
     VisualContext, WindowContext,
 };
 use language::DiagnosticSeverity;
@@ -262,7 +262,7 @@ impl Render for LanguageServerPrompt {
                                         }),
                                     )
                                     .child(
-                                        Label::new(format!("{}", request.lsp_name))
+                                        Label::new(request.lsp_name.clone())
                                             .size(LabelSize::Default),
                                     ),
                             )
