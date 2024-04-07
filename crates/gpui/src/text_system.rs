@@ -117,6 +117,17 @@ impl TextSystem {
         }
     }
 
+    /// Get the Font for the Font Id.
+    pub fn get_font_for_id(&self, id: FontId) -> Option<Font> {
+        let lock = self.font_ids_by_font.read();
+        lock.iter()
+            .filter_map(|(font, result)| match result {
+                Ok(font_id) if *font_id == id => Some(font.clone()),
+                _ => None,
+            })
+            .next()
+    }
+
     /// Resolves the specified font, falling back to the default font stack if
     /// the font fails to load.
     ///

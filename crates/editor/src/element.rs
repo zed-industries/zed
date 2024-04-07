@@ -884,13 +884,21 @@ impl EditorElement {
                                     SharedString::from(character.to_string())
                                 };
                                 let len = text.len();
+
+                                let font = cursor_row_layout
+                                    .font_id_for_index(cursor_column)
+                                    .and_then(|cursor_font_id| {
+                                        cx.text_system().get_font_for_id(cursor_font_id)
+                                    })
+                                    .unwrap_or(self.style.text.font());
+
                                 cx.text_system()
                                     .shape_line(
                                         text,
                                         cursor_row_layout.font_size,
                                         &[TextRun {
                                             len,
-                                            font: self.style.text.font(),
+                                            font: font,
                                             color: self.style.background,
                                             background_color: None,
                                             strikethrough: None,
