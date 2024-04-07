@@ -169,27 +169,34 @@ struct Error {
     message: String,
 }
 
-pub struct FutureWithId<T> {
-    pub id: i32,
-    future: Pin<Box<dyn Future<Output = T>>>,
+pub trait LspRequestFuture<O>: Future<Output = O> {
+    fn id(&self) -> i32;
 }
 
-unsafe impl<T> Send for FutureWithId<T> {}
+struct LspRequest<F> {
+    id: i32,
+    request: F,
+}
 
-impl<T> FutureWithId<T> {
-    pub fn new(id: i32, future: impl Future<Output = T> + 'static) -> Self {
-        Self {
-            id,
-            future: Box::pin(future),
-        }
+impl<F> LspRequest<F> {
+    pub fn new(id: i32, request: F) -> Self {
+        Self { id, request }
     }
 }
 
-impl<T> Future for FutureWithId<T> {
-    type Output = T;
+impl<F: Future> Future for LspRequest<F> {
+    type Output = F::Output;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context) -> Poll<Self::Output> {
-        self.future.as_mut().poll(cx)
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: This is standard pin projection, we're pinned so our fields must be pinned.
+        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().request) };
+        inner.poll(cx)
+    }
+}
+
+impl<F: Future> LspRequestFuture<F::Output> for LspRequest<F> {
+    fn id(&self) -> i32 {
+        self.id
     }
 }
 
@@ -938,7 +945,10 @@ impl LanguageServer {
     /// Sends a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
-    pub fn request<T: request::Request>(&self, params: T::Params) -> FutureWithId<Result<T::Result>>
+    pub fn request<T: request::Request>(
+        &self,
+        params: T::Params,
+    ) -> impl LspRequestFuture<Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -957,7 +967,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> FutureWithId<Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -1006,7 +1016,7 @@ impl LanguageServer {
         let outbound_tx = outbound_tx.downgrade();
         let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
         let started = Instant::now();
-        FutureWithId::new(id, async move {
+        LspRequest::new(id, async move {
             handle_response?;
             send?;
 

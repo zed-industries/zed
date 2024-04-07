@@ -54,7 +54,7 @@ use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    MessageActionItem, OneOf, ServerHealthStatus, ServerStatus,
+    LspRequestFuture, MessageActionItem, OneOf, ServerHealthStatus, ServerStatus,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -6620,7 +6620,7 @@ impl Project {
 
                     let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
 
-                    let id = lsp_request.id;
+                    let id = lsp_request.id();
                     if status.is_some() {
                         cx.update(|cx| {
                             this.update(cx, |this, cx| {
