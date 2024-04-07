@@ -298,13 +298,6 @@ impl DirectWriteState {
         }
         unsafe {
             let text_renderer = self.components.text_renderer.clone();
-            let locale_wide = self
-                .components
-                .locale
-                .encode_utf16()
-                .chain(Some(0))
-                .collect_vec();
-            let locale_name = PCWSTR::from_raw(locale_wide.as_ptr());
             let text_wide = text.encode_utf16().collect_vec();
 
             let mut utf8_offset = 0usize;
@@ -327,7 +320,7 @@ impl DirectWriteState {
                         font_info.font_face.GetStyle(),
                         DWRITE_FONT_STRETCH_NORMAL,
                         font_size.0,
-                        locale_name,
+                        &HSTRING::from(&self.components.locale),
                     )
                     .unwrap();
 
@@ -386,6 +379,13 @@ impl DirectWriteState {
                     .unwrap();
                 text_layout
                     .SetFontFamilyName(&HSTRING::from(&font_info.font_family), text_range)
+                    .unwrap();
+                text_layout.SetFontSize(font_size.0, text_range).unwrap();
+                text_layout
+                    .SetFontStyle(font_info.font_face.GetStyle(), text_range)
+                    .unwrap();
+                text_layout
+                    .SetFontWeight(font_info.font_face.GetWeight(), text_range)
                     .unwrap();
                 text_layout
                     .SetTypography(&font_info.features, text_range)
@@ -825,14 +825,23 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             if glyphrun.fontFace.is_none() {
                 return Ok(());
             }
-            let font = glyphrun.fontFace.as_ref().unwrap();
+            let font_face = glyphrun.fontFace.as_ref().unwrap();
             let Some((postscript_name, font_struct, is_emoji)) =
-                get_postscript_name_and_font(font, &self.locale)
+                get_postscript_name_and_font(font_face, &self.locale)
             else {
                 log::error!("none postscript name found");
                 return Ok(());
             };
 
+            let font_id = if let Some(id) = context
+                .text_system
+                .font_id_by_postscript_name
+                .get(&postscript_name)
+            {
+                *id
+            } else {
+                context.text_system.select_font(&font_struct).unwrap()
+            };
             let mut glyphs = SmallVec::new();
             for index in 0..glyph_count {
                 let id = GlyphId(*glyphrun.glyphIndices.add(index) as u32);
@@ -847,16 +856,6 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
                 });
                 context.utf16_index += utf16_length_per_glyph;
                 context.width += *glyphrun.glyphAdvances.add(index);
-            }
-            let font_id;
-            if let Some(id) = context
-                .text_system
-                .font_id_by_postscript_name
-                .get(&postscript_name)
-            {
-                font_id = *id;
-            } else {
-                font_id = context.text_system.select_font(&font_struct).unwrap();
             }
             context.runs.push(ShapedRun { font_id, glyphs });
         }
@@ -1025,11 +1024,8 @@ unsafe fn get_postscript_name_and_font(
         weight: font_face_3.GetWeight().into(),
         style: font_face_3.GetStyle().into(),
     };
-    Some((
-        postscript_name,
-        font_struct,
-        font_face_3.IsColorFont().as_bool(),
-    ))
+    let is_emoji = font_face_3.IsColorFont().as_bool();
+    Some((postscript_name, font_struct, is_emoji))
 }
 
 unsafe fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Option<String> {
