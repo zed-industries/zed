@@ -521,6 +521,16 @@ impl Pane {
         self.preview_item_id
     }
 
+    fn preview_item_idx(&self) -> Option<usize> {
+        if let Some(preview_item_id) = self.preview_item_id {
+            self.items
+                .iter()
+                .position(|item| item.item_id() == preview_item_id)
+        } else {
+            None
+        }
+    }
+
     pub fn is_active_preview_item(&self, item_id: EntityId) -> bool {
         self.preview_item_id == Some(item_id)
     }
@@ -576,26 +586,32 @@ impl Pane {
             self.activate_item(index, focus_item, focus_item, cx);
             existing_item
         } else {
+            let mut destination_index = None;
             if allow_preview {
-                if let Some(preview_item_id) = self.preview_item_id {
-                    if let Some(item_idx) = self
-                        .items
-                        .iter()
-                        .position(|item| item.item_id() == preview_item_id)
-                    {
-                        self.remove_item(item_idx, false, cx);
+                // If we are opening a new item as preview and we have an existing preview tab, remove it.
+                if let Some(item_idx) = self.preview_item_idx() {
+                    let prev_active_item_index = self.active_item_index;
+                    self.remove_item(item_idx, false, cx);
+                    self.active_item_index = prev_active_item_index;
+
+                    // If the item is being opened as preview and we have an existing preview tab,
+                    // open the new item in the position of the existing preview tab.
+                    if item_idx < self.items.len() {
+                        destination_index = Some(item_idx);
                     }
                 }
             }
 
             let new_item = build_item(cx);
-            if allow_preview {
-                self.set_preview_item_id(Some(new_item.item_id()), cx);
-            } else {
-                self.set_preview_item_id(None, cx);
-            }
 
-            self.add_item(new_item.clone(), true, focus_item, None, cx);
+            let item_id = if allow_preview {
+                Some(new_item.item_id())
+            } else {
+                None
+            };
+            self.set_preview_item_id(item_id, cx);
+
+            self.add_item(new_item.clone(), true, focus_item, destination_index, cx);
 
             new_item
         }
@@ -688,7 +704,10 @@ impl Pane {
             self.activate_item(insertion_index, activate_pane, focus_item, cx);
         } else {
             self.items.insert(insertion_index, item.clone());
-            if insertion_index <= self.active_item_index {
+
+            if insertion_index <= self.active_item_index
+                && self.preview_item_idx() != Some(self.active_item_index)
+            {
                 self.active_item_index += 1;
             }
 
