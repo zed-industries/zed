@@ -61,6 +61,9 @@ pub trait PickerDelegate: Sized + 'static {
     fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>);
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str>;
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+        "No matches".into()
+    }
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()>;
 
     // Delegates that support this method (e.g. the CommandPalette) can chose to block on any background
@@ -418,7 +421,7 @@ impl<D: PickerDelegate> Picker<D> {
             .id(("item", ix))
             .cursor_pointer()
             .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
-                this.handle_click(ix, event.down.modifiers.command, cx)
+                this.handle_click(ix, event.down.modifiers.secondary(), cx)
             }))
             // As of this writing, GPUI intercepts `ctrl-[mouse-event]`s on macOS
             // and produces right mouse button events. This matches platforms norms
@@ -427,7 +430,9 @@ impl<D: PickerDelegate> Picker<D> {
             .on_mouse_up(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseUpEvent, cx| {
-                    this.handle_click(ix, event.modifiers.command, cx)
+                    // We specficially want to use the platform key here, as
+                    // ctrl will already be held down for the tab switcher.
+                    this.handle_click(ix, event.modifiers.platform, cx)
                 }),
             )
             .children(
@@ -522,7 +527,9 @@ impl<D: PickerDelegate> Render for Picker<D> {
                             .inset(true)
                             .spacing(ListItemSpacing::Sparse)
                             .disabled(true)
-                            .child(Label::new("No matches").color(Color::Muted)),
+                            .child(
+                                Label::new(self.delegate.no_matches_text(cx)).color(Color::Muted),
+                            ),
                     ),
                 )
             })

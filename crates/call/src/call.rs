@@ -373,7 +373,10 @@ impl ActiveCall {
         self.report_call_event("hang up", cx);
 
         Audio::end_call(cx);
+
+        let channel_id = self.channel_id(cx);
         if let Some((room, _)) = self.room.take() {
+            cx.emit(Event::RoomLeft { channel_id });
             room.update(cx, |room, cx| room.leave(cx))
         } else {
             Task::ready(Ok(()))

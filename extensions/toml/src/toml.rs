@@ -72,6 +72,8 @@ impl TomlExtension {
             )
             .map_err(|err| format!("failed to download file: {err}"))?;
 
+            zed::make_file_executable(&binary_path)?;
+
             let entries = fs::read_dir(".")
                 .map_err(|err| format!("failed to list working directory {err}"))?;
             for entry in entries {

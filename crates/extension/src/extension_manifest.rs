@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageServerName;
 use semantic_version::SemanticVersion;
@@ -99,6 +99,8 @@ pub struct GrammarManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
     pub language: Arc<str>,
+    #[serde(default)]
+    pub language_ids: HashMap<String, String>,
 }
 
 impl ExtensionManifest {

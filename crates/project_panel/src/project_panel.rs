@@ -1461,7 +1461,7 @@ impl ProjectPanel {
                             if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
                             } else {
-                                if event.down.modifiers.command {
+                                if event.down.modifiers.secondary() {
                                     this.split_entry(entry_id, cx);
                                 } else {
                                     let click_count = event.up.click_count;
@@ -1601,6 +1601,7 @@ impl Render for ProjectPanel {
                             .anchor(gpui::AnchorCorner::TopLeft)
                             .child(menu.clone()),
                     )
+                    .with_priority(1)
                 }))
         } else {
             v_flex()

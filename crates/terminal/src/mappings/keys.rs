@@ -18,7 +18,7 @@ impl AlacModifiers {
             ks.modifiers.alt,
             ks.modifiers.control,
             ks.modifiers.shift,
-            ks.modifiers.command,
+            ks.modifiers.platform,
         ) {
             (false, false, false, false) => AlacModifiers::None,
             (true, false, false, false) => AlacModifiers::Alt,
@@ -336,7 +336,7 @@ mod test {
                 control: false,
                 alt: false,
                 shift: false,
-                command: false,
+                platform: false,
                 function: false,
             },
             key: "🖖🏻".to_string(), //2 char string

@@ -1695,38 +1695,39 @@ mod tests {
                 while inlay_indices.len() < inlay_highlight_count {
                     inlay_indices.insert(rng.gen_range(0..inlays.len()));
                 }
-                let new_highlights = inlay_indices
-                    .into_iter()
-                    .filter_map(|i| {
-                        let (_, inlay) = &inlays[i];
-                        let inlay_text_len = inlay.text.len();
-                        match inlay_text_len {
-                            0 => None,
-                            1 => Some(InlayHighlight {
-                                inlay: inlay.id,
-                                inlay_position: inlay.position,
-                                range: 0..1,
-                            }),
-                            n => {
-                                let inlay_text = inlay.text.to_string();
-                                let mut highlight_end = rng.gen_range(1..n);
-                                let mut highlight_start = rng.gen_range(0..highlight_end);
-                                while !inlay_text.is_char_boundary(highlight_end) {
-                                    highlight_end += 1;
-                                }
-                                while !inlay_text.is_char_boundary(highlight_start) {
-                                    highlight_start -= 1;
-                                }
-                                Some(InlayHighlight {
+                let new_highlights = TreeMap::from_ordered_entries(
+                    inlay_indices
+                        .into_iter()
+                        .filter_map(|i| {
+                            let (_, inlay) = &inlays[i];
+                            let inlay_text_len = inlay.text.len();
+                            match inlay_text_len {
+                                0 => None,
+                                1 => Some(InlayHighlight {
                                     inlay: inlay.id,
                                     inlay_position: inlay.position,
-                                    range: highlight_start..highlight_end,
-                                })
+                                    range: 0..1,
+                                }),
+                                n => {
+                                    let inlay_text = inlay.text.to_string();
+                                    let mut highlight_end = rng.gen_range(1..n);
+                                    let mut highlight_start = rng.gen_range(0..highlight_end);
+                                    while !inlay_text.is_char_boundary(highlight_end) {
+                                        highlight_end += 1;
+                                    }
+                                    while !inlay_text.is_char_boundary(highlight_start) {
+                                        highlight_start -= 1;
+                                    }
+                                    Some(InlayHighlight {
+                                        inlay: inlay.id,
+                                        inlay_position: inlay.position,
+                                        range: highlight_start..highlight_end,
+                                    })
+                                }
                             }
-                        }
-                    })
-                    .map(|highlight| (highlight.inlay, (HighlightStyle::default(), highlight)))
-                    .collect();
+                        })
+                        .map(|highlight| (highlight.inlay, (HighlightStyle::default(), highlight))),
+                );
                 log::info!("highlighting inlay ranges {new_highlights:?}");
                 inlay_highlights.insert(TypeId::of::<()>(), new_highlights);
             }

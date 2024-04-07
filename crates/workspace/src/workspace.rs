@@ -638,7 +638,7 @@ impl Workspace {
 
                 project::Event::LanguageServerPrompt(request) => {
                     let mut hasher = DefaultHasher::new();
-                    request.message.as_str().hash(&mut hasher);
+                    request.lsp_name.as_str().hash(&mut hasher);
                     let id = hasher.finish();
 
                     this.show_notification(id as usize, cx, |cx| {

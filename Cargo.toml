@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/activity_indicator",
+    "crates/anthropic",
     "crates/assets",
     "crates/assistant",
     "crates/audio",
@@ -99,10 +100,14 @@ members = [
     "crates/zed_actions",
 
     "extensions/astro",
+    "extensions/clojure",
     "extensions/csharp",
+    "extensions/dart",
+    "extensions/emmet",
     "extensions/erlang",
     "extensions/gleam",
     "extensions/haskell",
+    "extensions/html",
     "extensions/php",
     "extensions/prisma",
     "extensions/purescript",
@@ -119,6 +124,7 @@ resolver = "2"
 [workspace.dependencies]
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
+anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 audio = { path = "crates/audio" }
@@ -217,6 +223,7 @@ zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 
 anyhow = "1.0.57"
+any_vec = "0.13"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-fs = "1.6"
 async-recursion = "1.0.0"
@@ -300,10 +307,8 @@ tower-http = "0.4.4"
 tree-sitter = { version = "0.20", features = ["wasm"] }
 tree-sitter-bash = { git = "https://github.com/tree-sitter/tree-sitter-bash", rev = "7331995b19b8f8aba2d5e26deb51d2195c18bc94" }
 tree-sitter-c = "0.20.1"
-tree-sitter-clojure = { git = "https://github.com/prcastro/tree-sitter-clojure", branch = "update-ts" }
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
-tree-sitter-dart = { git = "https://github.com/agent3bood/tree-sitter-dart", rev = "48934e3bf757a9b78f17bdfaa3e2b4284656fdc7" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
 tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
 tree-sitter-embedded-template = "0.20.0"
@@ -392,6 +397,7 @@ debug = "limited"
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
+resvg = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
 wasmtime-cranelift = { opt-level = 3 }

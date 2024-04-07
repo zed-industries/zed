@@ -3,6 +3,7 @@ pub(crate) mod wit;
 use crate::ExtensionManifest;
 use anyhow::{anyhow, bail, Context as _, Result};
 use fs::{normalize_path, Fs};
+use futures::future::LocalBoxFuture;
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -11,7 +12,7 @@ use futures::{
     future::BoxFuture,
     Future, FutureExt, StreamExt as _,
 };
-use gpui::BackgroundExecutor;
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use semantic_version::SemanticVersion;
@@ -34,6 +35,8 @@ pub(crate) struct WasmHost {
     pub(crate) language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     pub(crate) work_dir: PathBuf,
+    _main_thread_message_task: Task<()>,
+    main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
 
 #[derive(Clone)]
@@ -50,6 +53,9 @@ pub(crate) struct WasmState {
     ctx: wasi::WasiCtx,
     pub(crate) host: Arc<WasmHost>,
 }
+
+type MainThreadCall =
+    Box<dyn Send + for<'a> FnOnce(&'a mut AsyncAppContext) -> LocalBoxFuture<'a, ()>>;
 
 type ExtensionCall = Box<
     dyn Send + for<'a> FnOnce(&'a mut Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, ()>,
@@ -75,7 +81,14 @@ impl WasmHost {
         node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
         work_dir: PathBuf,
+        cx: &mut AppContext,
     ) -> Arc<Self> {
+        let (tx, mut rx) = mpsc::unbounded::<MainThreadCall>();
+        let task = cx.spawn(|mut cx| async move {
+            while let Some(message) = rx.next().await {
+                message(&mut cx).await;
+            }
+        });
         Arc::new(Self {
             engine: wasm_engine(),
             fs,
@@ -83,6 +96,8 @@ impl WasmHost {
             http_client,
             node_runtime,
             language_registry,
+            _main_thread_message_task: task,
+            main_thread_message_tx: tx,
         })
     }
 
@@ -238,6 +253,26 @@ impl WasmExtension {
 }
 
 impl WasmState {
+    fn on_main_thread<T, Fn>(&self, f: Fn) -> impl 'static + Future<Output = T>
+    where
+        T: 'static + Send,
+        Fn: 'static + Send + for<'a> FnOnce(&'a mut AsyncAppContext) -> LocalBoxFuture<'a, T>,
+    {
+        let (return_tx, return_rx) = oneshot::channel();
+        self.host
+            .main_thread_message_tx
+            .clone()
+            .unbounded_send(Box::new(move |cx| {
+                async {
+                    let result = f(cx).await;
+                    return_tx.send(result).ok();
+                }
+                .boxed_local()
+            }))
+            .expect("main thread message channel should not be closed yet");
+        async move { return_rx.await.expect("main thread message channel") }
+    }
+
     fn work_dir(&self) -> PathBuf {
         self.host.work_dir.join(self.manifest.id.as_ref())
     }

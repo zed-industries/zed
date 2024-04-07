@@ -18,7 +18,7 @@ pub(crate) fn modifiers_from_state(state: xproto::KeyButMask) -> Modifiers {
         control: state.contains(xproto::KeyButMask::CONTROL),
         alt: state.contains(xproto::KeyButMask::MOD1),
         shift: state.contains(xproto::KeyButMask::SHIFT),
-        command: state.contains(xproto::KeyButMask::MOD4),
+        platform: state.contains(xproto::KeyButMask::MOD4),
         function: false,
     }
 }

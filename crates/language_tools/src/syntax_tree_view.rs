@@ -337,7 +337,7 @@ impl Render for SyntaxTreeView {
                                             tree_view.update_editor_with_range_for_descendant_ix(descendant_ix, cx, |editor, range, cx| {
                                                 editor.clear_background_highlights::<Self>(cx);
                                                 editor.highlight_background::<Self>(
-                                                    vec![range],
+                                                    &[range],
                                                     |theme| theme.editor_document_highlight_write_background,
                                                     cx,
                                                 );

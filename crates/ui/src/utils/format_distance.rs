@@ -296,15 +296,19 @@ mod tests {
     }
 
     #[test]
-    fn test_format_distance_from_now() {
+    fn test_format_distance_from_hms() {
         let date = DateTimeType::Naive(
-            NaiveDateTime::parse_from_str("1969-07-20T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ")
+            NaiveDateTime::parse_from_str("1969-07-20T11:22:33Z", "%Y-%m-%dT%H:%M:%SZ")
                 .expect("Invalid NaiveDateTime for date"),
+        );
+        let base_date = DateTimeType::Naive(
+            NaiveDateTime::parse_from_str("2024-02-01T00:00:00Z", "%Y-%m-%dT%H:%M:%SZ")
+                .expect("Invalid NaiveDateTime for base_date"),
         );
 
         assert_eq!(
             "over 54 years ago",
-            format_distance_from_now(date, false, true, false)
+            format_distance(date, base_date.to_naive(), false, true, false)
         );
     }
 

@@ -70,6 +70,7 @@ impl Render for SharedScreen {
         div()
             .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus)
+            .key_context("SharedScreen")
             .size_full()
             .children(
                 self.frame

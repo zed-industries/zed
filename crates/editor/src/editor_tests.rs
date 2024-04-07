@@ -2686,6 +2686,65 @@ fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_join_lines_with_git_diff_base(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        Line 0
+        Line 1
+        Line 2
+        Line 3
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        ˇLine 0
+        Line 1
+        Line 2
+        Line 3
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+
+    // Join lines
+    cx.update_editor(|editor, cx| {
+        editor.join_lines(&JoinLines, cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_editor_state(
+        &r#"
+        Line 0ˇ Line 1
+        Line 2
+        Line 3
+        "#
+        .unindent(),
+    );
+    // Join again
+    cx.update_editor(|editor, cx| {
+        editor.join_lines(&JoinLines, cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_editor_state(
+        &r#"
+        Line 0 Line 1ˇ Line 2
+        Line 3
+        "#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -3317,7 +3376,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 position: snapshot.anchor_after(Point::new(2, 0)),
                 disposition: BlockDisposition::Below,
                 height: 1,
-                render: Arc::new(|_| div().into_any()),
+                render: Box::new(|_| div().into_any()),
             }],
             Some(Autoscroll::fit()),
             cx,
@@ -4085,6 +4144,47 @@ let «fooˇ» = 2;
 let foo = 2;
 let foo = «2ˇ»;"#,
     );
+}
+
+#[gpui::test]
+async fn test_select_previous_multibuffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new_multibuffer(
+        cx,
+        [
+            indoc! {
+                "aaa\n«bbb\nccc\n»ddd"
+            },
+            indoc! {
+                "aaa\n«bbb\nccc\n»ddd"
+            },
+        ],
+    );
+
+    cx.assert_editor_state(indoc! {"
+        ˇbbb
+        ccc
+
+        bbb
+        ccc
+        "});
+    cx.dispatch_action(SelectPrevious::default());
+    cx.assert_editor_state(indoc! {"
+                «bbbˇ»
+                ccc
+
+                bbb
+                ccc
+                "});
+    cx.dispatch_action(SelectPrevious::default());
+    cx.assert_editor_state(indoc! {"
+                «bbbˇ»
+                ccc
+
+                «bbbˇ»
+                ccc
+                "});
 }
 
 #[gpui::test]
@@ -7222,7 +7322,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
 
         editor.highlight_background::<Type1>(
-            vec![
+            &[
                 anchor_range(Point::new(2, 1)..Point::new(2, 3)),
                 anchor_range(Point::new(4, 2)..Point::new(4, 4)),
                 anchor_range(Point::new(6, 3)..Point::new(6, 5)),
@@ -7232,7 +7332,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             cx,
         );
         editor.highlight_background::<Type2>(
-            vec![
+            &[
                 anchor_range(Point::new(3, 2)..Point::new(3, 5)),
                 anchor_range(Point::new(5, 3)..Point::new(5, 6)),
                 anchor_range(Point::new(7, 4)..Point::new(7, 7)),
@@ -8455,105 +8555,6 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         buffer_text.to_string() + prettier_format_suffix + "\n" + prettier_format_suffix,
         "Autoformatting (via test prettier) was not applied to the original buffer text",
     );
-}
-
-#[gpui::test]
-async fn test_find_all_references(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            document_formatting_provider: Some(lsp::OneOf::Left(true)),
-            ..Default::default()
-        },
-        cx,
-    )
-    .await;
-
-    cx.set_state(indoc! {"
-        fn foo(«paramˇ»: i64) {
-            println!(param);
-        }
-    "});
-
-    cx.lsp
-        .handle_request::<lsp::request::References, _, _>(move |_, _| async move {
-            Ok(Some(vec![
-                lsp::Location {
-                    uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-                    range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 12)),
-                },
-                lsp::Location {
-                    uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-                    range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 18)),
-                },
-            ]))
-        });
-
-    let references = cx
-        .update_editor(|editor, cx| editor.find_all_references(&FindAllReferences, cx))
-        .unwrap();
-
-    cx.executor().run_until_parked();
-
-    cx.executor().start_waiting();
-    references.await.unwrap();
-
-    cx.assert_editor_state(indoc! {"
-        fn foo(param: i64) {
-            println!(«paramˇ»);
-        }
-    "});
-
-    let references = cx
-        .update_editor(|editor, cx| editor.find_all_references(&FindAllReferences, cx))
-        .unwrap();
-
-    cx.executor().run_until_parked();
-
-    cx.executor().start_waiting();
-    references.await.unwrap();
-
-    cx.assert_editor_state(indoc! {"
-        fn foo(«paramˇ»: i64) {
-            println!(param);
-        }
-    "});
-
-    cx.set_state(indoc! {"
-        fn foo(param: i64) {
-            let a = param;
-            let aˇ = param;
-            let a = param;
-            println!(param);
-        }
-    "});
-
-    cx.lsp
-        .handle_request::<lsp::request::References, _, _>(move |_, _| async move {
-            Ok(Some(vec![lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir/file.rs").unwrap(),
-                range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 9)),
-            }]))
-        });
-
-    let references = cx
-        .update_editor(|editor, cx| editor.find_all_references(&FindAllReferences, cx))
-        .unwrap();
-
-    cx.executor().run_until_parked();
-
-    cx.executor().start_waiting();
-    references.await.unwrap();
-
-    cx.assert_editor_state(indoc! {"
-        fn foo(param: i64) {
-            let a = param;
-            let «aˇ» = param;
-            let a = param;
-            println!(param);
-        }
-    "});
 }
 
 #[gpui::test]
