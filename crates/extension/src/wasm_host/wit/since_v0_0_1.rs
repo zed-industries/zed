@@ -1,4 +1,5 @@
 use super::latest;
+use crate::wasm_host::wit::since_v0_0_4;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -7,11 +8,11 @@ use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
-pub const VERSION: SemanticVersion = SemanticVersion::new(0, 0, 1);
+pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 1);
 
 wasmtime::component::bindgen!({
     async: true,
-    path: "../extension_api/wit/0.0.1",
+    path: "../extension_api/wit/since_v0.0.1",
     with: {
          "worktree": ExtensionWorktree,
     },
@@ -82,8 +83,8 @@ impl From<DownloadedFileType> for latest::DownloadedFileType {
     }
 }
 
-impl From<latest::LanguageServerConfig> for LanguageServerConfig {
-    fn from(value: latest::LanguageServerConfig) -> Self {
+impl From<since_v0_0_4::LanguageServerConfig> for LanguageServerConfig {
+    fn from(value: since_v0_0_4::LanguageServerConfig) -> Self {
         Self {
             name: value.name,
             language_name: value.language_name,

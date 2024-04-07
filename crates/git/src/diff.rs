@@ -130,6 +130,7 @@ impl BufferDiff {
 
             if end_point.column > 0 {
                 end_point.row += 1;
+                end_point.column = 0;
             }
 
             Some(DiffHunk {

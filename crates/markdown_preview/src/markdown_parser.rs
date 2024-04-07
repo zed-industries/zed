@@ -188,6 +188,9 @@ impl<'a> MarkdownParser<'a> {
         let mut regions: Vec<ParsedRegion> = vec![];
         let mut highlights: Vec<(Range<usize>, MarkdownHighlight)> = vec![];
 
+        let mut link_urls: Vec<String> = vec![];
+        let mut link_ranges: Vec<Range<usize>> = vec![];
+
         loop {
             if self.eof() {
                 break;
@@ -226,28 +229,69 @@ impl<'a> MarkdownParser<'a> {
                         style.strikethrough = true;
                     }
 
-                    if let Some(link) = link.clone() {
+                    let last_run_len = if let Some(link) = link.clone() {
                         region_ranges.push(prev_len..text.len());
                         regions.push(ParsedRegion {
                             code: false,
                             link: Some(link),
                         });
                         style.underline = true;
-                    }
+                        prev_len
+                    } else {
+                        // Manually scan for links
+                        let mut finder = linkify::LinkFinder::new();
+                        finder.kinds(&[linkify::LinkKind::Url]);
+                        let mut last_link_len = prev_len;
+                        for link in finder.links(&t) {
+                            let start = link.start();
+                            let end = link.end();
+                            let range = (prev_len + start)..(prev_len + end);
+                            link_ranges.push(range.clone());
+                            link_urls.push(link.as_str().to_string());
 
-                    if style != MarkdownHighlightStyle::default() {
+                            // If there is a style before we match a link, we have to add this to the highlighted ranges
+                            if style != MarkdownHighlightStyle::default()
+                                && last_link_len < link.start()
+                            {
+                                highlights.push((
+                                    last_link_len..link.start(),
+                                    MarkdownHighlight::Style(style.clone()),
+                                ));
+                            }
+
+                            highlights.push((
+                                range.clone(),
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    underline: true,
+                                    ..style
+                                }),
+                            ));
+                            region_ranges.push(range.clone());
+                            regions.push(ParsedRegion {
+                                code: false,
+                                link: Some(Link::Web {
+                                    url: t[range].to_string(),
+                                }),
+                            });
+
+                            last_link_len = end;
+                        }
+                        last_link_len
+                    };
+
+                    if style != MarkdownHighlightStyle::default() && last_run_len < text.len() {
                         let mut new_highlight = true;
-                        if let Some((last_range, MarkdownHighlight::Style(last_style))) =
-                            highlights.last_mut()
-                        {
-                            if last_range.end == prev_len && last_style == &style {
+                        if let Some((last_range, last_style)) = highlights.last_mut() {
+                            if last_range.end == last_run_len
+                                && last_style == &MarkdownHighlight::Style(style.clone())
+                            {
                                 last_range.end = text.len();
                                 new_highlight = false;
                             }
                         }
                         if new_highlight {
-                            let range = prev_len..text.len();
-                            highlights.push((range, MarkdownHighlight::Style(style)));
+                            highlights
+                                .push((last_run_len..text.len(), MarkdownHighlight::Style(style)));
                         }
                     }
                 }
@@ -742,6 +786,42 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_raw_links_detection() {
+        let parsed = parse("Checkout this https://zed.dev link").await;
+
+        assert_eq!(
+            parsed.children,
+            vec![p("Checkout this https://zed.dev link", 0..34)]
+        );
+
+        let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+        assert_eq!(
+            paragraph.highlights,
+            vec![(
+                14..29,
+                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                    underline: true,
+                    ..Default::default()
+                }),
+            )]
+        );
+        assert_eq!(
+            paragraph.regions,
+            vec![ParsedRegion {
+                code: false,
+                link: Some(Link::Web {
+                    url: "https://zed.dev".to_string()
+                }),
+            }]
+        );
+        assert_eq!(paragraph.region_ranges, vec![14..29]);
     }
 
     #[gpui::test]

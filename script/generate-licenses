@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-OUTPUT_FILE=$(pwd)/assets/licenses.md
+OUTPUT_FILE="${1:-$(pwd)/assets/licenses.md}"
 
 > $OUTPUT_FILE
 

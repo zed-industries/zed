@@ -48,7 +48,8 @@
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
   // The key to use for adding multiple cursors
-  // Currently "alt" or "cmd" are supported.
+  // Currently "alt" or "cmd_or_ctrl"  (also aliased as
+  // "cmd" and "ctrl") are supported.
   "multi_cursor_modifier": "alt",
   // Whether to enable vim modes and key bindings
   "vim_mode": false,
@@ -69,7 +70,7 @@
   // documentation when not included in original completion list.
   "completion_documentation_secondary_query_debounce": 300,
   // Whether to show wrap guides in the editor. Setting this to true will
-  // show a guide at the 'preferred_line_length' value if softwrap is set to
+  // show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to
   // 'preferred_line_length', and will show any additional guides as specified
   // by the 'wrap_guides' setting.
   "show_wrap_guides": true,
@@ -544,6 +545,12 @@
   "file_types": {},
   // Different settings for specific languages.
   "languages": {
+    "C++": {
+      "format_on_save": "off"
+    },
+    "C": {
+      "format_on_save": "off"
+    },
     "Plain Text": {
       "soft_wrap": "preferred_line_length"
     },
@@ -559,6 +566,9 @@
       "code_actions_on_format": {
         "source.organizeImports": true
       }
+    },
+    "Make": {
+      "hard_tabs": true
     },
     "Markdown": {
       "tab_size": 2,
@@ -593,7 +603,7 @@
     }
   },
   // Zed's Prettier integration settings.
-  // If Prettier is enabled, Zed will use this its Prettier instance for any applicable file, if
+  // If Prettier is enabled, Zed will use this for its Prettier instance for any applicable file, if
   // project has no other Prettier installed.
   "prettier": {
     // Use regular Prettier json configuration:
