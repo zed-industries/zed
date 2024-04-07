@@ -2740,7 +2740,7 @@ impl EditorElement {
             let editor = self.editor.clone();
             let hitbox = layout.hitbox.clone();
             let mut delta = ScrollDelta::default();
-            let scroll_sensitivity = EditorSettings::get_global(cx).scrollbar.sensitivity;
+            let scroll_sensitivity = f32::abs(EditorSettings::get_global(cx).scrollbar.sensitivity);
 
             move |event: &ScrollWheelEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
