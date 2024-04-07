@@ -261,8 +261,8 @@ impl DirectWriteState {
                 continue;
             };
             let is_emoji = font_face.IsColorFont().as_bool();
-            let Some(direct_write_features) =
-                self.generate_font_features(font_features).log_err() else {
+            let Some(direct_write_features) = self.generate_font_features(font_features).log_err()
+            else {
                 continue;
             };
             let font_info = FontInfo {
