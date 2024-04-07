@@ -2740,6 +2740,7 @@ impl EditorElement {
             let editor = self.editor.clone();
             let hitbox = layout.hitbox.clone();
             let mut delta = ScrollDelta::default();
+            let scroll_sensitivity = EditorSettings::get_global(cx).scrollbar.sensitivity;
 
             move |event: &ScrollWheelEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
@@ -2765,8 +2766,11 @@ impl EditorElement {
                         };
 
                         let scroll_position = position_map.snapshot.scroll_position();
-                        let x = (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width;
-                        let y = (scroll_position.y * line_height - delta.y) / line_height;
+                        let x = (scroll_position.x * max_glyph_width
+                            - (delta.x * scroll_sensitivity))
+                            / max_glyph_width;
+                        let y = (scroll_position.y * line_height - (delta.y * scroll_sensitivity))
+                            / line_height;
                         let scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                         editor.scroll(scroll_position, axis, cx);

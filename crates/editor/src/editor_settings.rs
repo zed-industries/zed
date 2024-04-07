@@ -52,13 +52,14 @@ pub struct Toolbar {
     pub quick_actions: bool,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Scrollbar {
     pub show: ShowScrollbar,
     pub git_diff: bool,
     pub selections: bool,
     pub symbols_selections: bool,
     pub diagnostics: bool,
+    pub sensitivity: f32,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -177,7 +178,7 @@ pub struct ToolbarContent {
 }
 
 /// Scrollbar related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
     ///
@@ -199,6 +200,11 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub diagnostics: Option<bool>,
+    /// Scroll sensitivity multiplier. This multiplier is applied 
+    /// to both the horizontal and vertical delta values while scrolling.
+    ///
+    /// Default: 1.0
+    pub sensitivity: Option<f32>,
 }
 
 /// Gutter related settings
