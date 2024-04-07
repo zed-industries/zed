@@ -35,8 +35,7 @@ struct DirectWriteComponent {
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
     gdi: IDWriteGdiInterop,
-    text_renderer_inner: Arc<RwLock<TextRendererInner>>,
-    text_renderer: IDWriteTextRenderer,
+    text_renderer: Arc<TextRendererWrapper>,
 }
 
 struct DirectWriteState {
@@ -59,9 +58,7 @@ impl DirectWriteComponent {
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
             let gdi = factory.GetGdiInterop()?;
-            let text_renderer_inner = Arc::new(RwLock::new(TextRendererInner::new()));
-            let text_renderer: IDWriteTextRenderer =
-                TextRenderer::new(text_renderer_inner.clone(), &locale).into();
+            let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
 
             Ok(DirectWriteComponent {
                 locale,
@@ -69,7 +66,6 @@ impl DirectWriteComponent {
                 in_memory_loader,
                 builder,
                 gdi,
-                text_renderer_inner,
                 text_renderer,
             })
         }
@@ -301,8 +297,7 @@ impl DirectWriteState {
             return LineLayout::default();
         }
         unsafe {
-            let text_renderer_inner = self.components.text_renderer_inner.clone();
-            text_renderer_inner.write().reset();
+            let text_renderer = self.components.text_renderer.clone();
             let locale_wide = self
                 .components
                 .locale
@@ -397,39 +392,27 @@ impl DirectWriteState {
                     .unwrap();
             }
 
-            text_layout
-                .Draw(None, &self.components.text_renderer, 0.0, 0.0)
-                .unwrap();
-
-            let mut ix_converter = StringIndexConverter::new(text);
-            let runs = {
-                let mut vec = Vec::new();
-                for result in text_renderer_inner.read().runs.iter() {
-                    let font_id;
-                    if let Some(id) = self.font_id_by_postscript_name.get(&result.postscript) {
-                        font_id = *id;
-                    } else {
-                        font_id = self.select_font(&result.font_struct).unwrap();
-                    }
-                    let mut glyphs = SmallVec::new();
-                    for glyph in result.glyphs.iter() {
-                        ix_converter.advance_to_utf16_ix(glyph.index);
-                        glyphs.push(ShapedGlyph {
-                            id: glyph.id,
-                            position: glyph.position,
-                            index: ix_converter.utf8_ix,
-                            is_emoji: result.is_emoji,
-                        });
-                    }
-                    vec.push(ShapedRun { font_id, glyphs });
-                }
-                vec
+            let mut runs = Vec::new();
+            let renderer_context = RendererContext {
+                text_system: self,
+                index_converter: StringIndexConverter::new(text),
+                runs: &mut runs,
+                utf16_index: 0,
+                width: 0.0,
             };
-            let width = text_renderer_inner.read().width;
+            text_layout
+                .Draw(
+                    Some(&renderer_context as *const _ as _),
+                    &text_renderer.0,
+                    0.0,
+                    0.0,
+                )
+                .unwrap();
+            let width = px(renderer_context.width);
 
             LineLayout {
                 font_size,
-                width: px(width),
+                width,
                 ascent,
                 descent,
                 runs,
@@ -754,60 +737,34 @@ impl Drop for DirectWriteState {
     }
 }
 
+struct TextRendererWrapper(pub IDWriteTextRenderer);
+
+impl TextRendererWrapper {
+    pub fn new(locale_str: &str) -> Self {
+        let inner = TextRenderer::new(locale_str);
+        TextRendererWrapper(inner.into())
+    }
+}
+
 #[implement(IDWriteTextRenderer)]
 struct TextRenderer {
-    inner: Arc<RwLock<TextRendererInner>>,
     locale: String,
 }
 
 impl TextRenderer {
-    pub fn new(inner: Arc<RwLock<TextRendererInner>>, locale_str: &str) -> Self {
+    pub fn new(locale_str: &str) -> Self {
         TextRenderer {
-            inner,
             locale: locale_str.to_owned(),
         }
     }
 }
 
-struct RendererShapedGlyph {
-    id: GlyphId,
-    position: Point<Pixels>,
-    index: usize,
-}
-
-struct RendererShapedRun {
-    postscript: String,
-    font_struct: Font,
-    is_emoji: bool,
-    glyphs: SmallVec<[RendererShapedGlyph; 8]>,
-}
-
-struct TextRendererInner {
-    index: usize,
+struct RendererContext<'t, 'a, 'b> {
+    text_system: &'t mut DirectWriteState,
+    index_converter: StringIndexConverter<'a>,
+    runs: &'b mut Vec<ShapedRun>,
+    utf16_index: usize,
     width: f32,
-    runs: Vec<RendererShapedRun>,
-}
-
-impl TextRendererInner {
-    pub fn new() -> Self {
-        TextRendererInner {
-            index: 0,
-            width: 0.0,
-            runs: Vec::new(),
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.index = 0;
-        self.width = 0.0;
-        self.runs.clear();
-    }
-}
-
-struct GlyphRunResult {
-    id: GlyphId,
-    advance: f32,
-    index: usize,
 }
 
 #[allow(non_snake_case)]
@@ -849,7 +806,7 @@ impl IDWritePixelSnapping_Impl for TextRenderer {
 impl IDWriteTextRenderer_Impl for TextRenderer {
     fn DrawGlyphRun(
         &self,
-        _clientdrawingcontext: *const ::core::ffi::c_void,
+        clientdrawingcontext: *const ::core::ffi::c_void,
         _baselineoriginx: f32,
         _baselineoriginy: f32,
         _measuringmode: DWRITE_MEASURING_MODE,
@@ -862,6 +819,8 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             let desc = &*glyphrundescription;
             let glyph_count = glyphrun.glyphCount as usize;
             let utf16_length_per_glyph = desc.stringLength as usize / glyph_count;
+            let context =
+                &mut *(clientdrawingcontext as *const RendererContext as *mut RendererContext);
 
             if glyphrun.fontFace.is_none() {
                 return Ok(());
@@ -874,27 +833,32 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
                 return Ok(());
             };
 
-            let mut global_index = self.inner.read().index;
-            let mut position = self.inner.read().width;
             let mut glyphs = SmallVec::new();
             for index in 0..glyph_count {
                 let id = GlyphId(*glyphrun.glyphIndices.add(index) as u32);
-                glyphs.push(RendererShapedGlyph {
+                context
+                    .index_converter
+                    .advance_to_utf16_ix(context.utf16_index);
+                glyphs.push(ShapedGlyph {
                     id,
-                    position: point(px(position), px(0.0)),
-                    index: global_index,
+                    position: point(px(context.width), px(0.0)),
+                    index: context.index_converter.utf8_ix,
+                    is_emoji,
                 });
-                position += *glyphrun.glyphAdvances.add(index);
-                global_index += utf16_length_per_glyph;
+                context.utf16_index += utf16_length_per_glyph;
+                context.width += *glyphrun.glyphAdvances.add(index);
             }
-            self.inner.write().index = global_index;
-            self.inner.write().width = position;
-            self.inner.write().runs.push(RendererShapedRun {
-                postscript: postscript_name,
-                font_struct,
-                is_emoji,
-                glyphs,
-            });
+            let font_id;
+            if let Some(id) = context
+                .text_system
+                .font_id_by_postscript_name
+                .get(&postscript_name)
+            {
+                font_id = *id;
+            } else {
+                font_id = context.text_system.select_font(&font_struct).unwrap();
+            }
+            context.runs.push(ShapedRun { font_id, glyphs });
         }
         Ok(())
     }
