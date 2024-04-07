@@ -125,7 +125,10 @@ fn main() {
                 let range = search_result.range.clone();
                 let content = content[search_result.range].to_owned();
 
-                println!("✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄✄");
+                println!(
+                    "✄✄✄✄✄✄✄✄✄✄✄✄✄✄ {:?} @ {} ✄✄✄✄✄✄✄✄✄✄✄✄✄✄",
+                    path, search_result.score
+                );
                 println!("{:?}:{:?}:{:?}", path, range.start, range.end);
                 println!("{}", content);
             }
