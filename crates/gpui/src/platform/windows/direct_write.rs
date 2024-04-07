@@ -212,6 +212,15 @@ impl DirectWriteState {
         Ok(())
     }
 
+    unsafe fn generate_font_features(
+        &self,
+        font_features: &FontFeatures,
+    ) -> Result<IDWriteTypography> {
+        let direct_write_features = self.components.factory.CreateTypography()?;
+        apply_font_features(&direct_write_features, font_features)?;
+        Ok(direct_write_features)
+    }
+
     unsafe fn get_font_id_from_font_collection(
         &mut self,
         family_name: &str,
@@ -252,8 +261,10 @@ impl DirectWriteState {
                 continue;
             };
             let is_emoji = font_face.IsColorFont().as_bool();
-            let direct_write_features = self.components.factory.CreateTypography().unwrap();
-            apply_font_features(&direct_write_features, font_features);
+            let Some(direct_write_features) =
+                self.generate_font_features(font_features).log_err() else {
+                continue;
+            };
             let font_info = FontInfo {
                 font_family: family_name.to_owned(),
                 font_face,
@@ -1046,10 +1057,13 @@ unsafe fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Opt
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
-unsafe fn apply_font_features(direct_write_features: &IDWriteTypography, features: &FontFeatures) {
+unsafe fn apply_font_features(
+    direct_write_features: &IDWriteTypography,
+    features: &FontFeatures,
+) -> Result<()> {
     let tag_values = features.tag_value_list();
     if tag_values.is_empty() {
-        return;
+        return Ok(());
     }
 
     // All of these features are enabled by default by DirectWrite.
@@ -1072,13 +1086,13 @@ unsafe fn apply_font_features(direct_write_features: &IDWriteTypography, feature
             continue;
         }
 
-        direct_write_features
-            .AddFontFeature(make_direct_write_feature(&tag, enable))
-            .unwrap();
+        direct_write_features.AddFontFeature(make_direct_write_feature(&tag, enable))?;
     }
-    direct_write_features.AddFontFeature(feature_liga).unwrap();
-    direct_write_features.AddFontFeature(feature_clig).unwrap();
-    direct_write_features.AddFontFeature(feature_calt).unwrap();
+    direct_write_features.AddFontFeature(feature_liga)?;
+    direct_write_features.AddFontFeature(feature_clig)?;
+    direct_write_features.AddFontFeature(feature_calt)?;
+
+    Ok(())
 }
 
 #[inline]
