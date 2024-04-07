@@ -41,6 +41,10 @@ pub trait LspCommand: 'static + Sized + Send {
         true
     }
 
+    fn status(&self) -> Option<String> {
+        None
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -894,6 +898,10 @@ impl LspCommand for GetReferences {
     type Response = Vec<Location>;
     type LspRequest = lsp::request::References;
     type ProtoRequest = proto::GetReferences;
+
+    fn status(&self) -> Option<String> {
+        return Some("Finding references...".to_owned());
+    }
 
     fn to_lsp(
         &self,

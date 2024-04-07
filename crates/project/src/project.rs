@@ -55,7 +55,8 @@ use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus, ServerStatus,
+    LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
+    ServerStatus,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -5697,7 +5698,7 @@ impl Project {
     }
 
     fn code_actions_impl(
-        &self,
+        &mut self,
         buffer_handle: &Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
@@ -5777,7 +5778,7 @@ impl Project {
     }
 
     pub fn code_actions<T: Clone + ToOffset>(
-        &self,
+        &mut self,
         buffer_handle: &Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
@@ -6131,7 +6132,7 @@ impl Project {
     }
 
     fn prepare_rename_impl(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -6144,7 +6145,7 @@ impl Project {
         )
     }
     pub fn prepare_rename<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -6154,7 +6155,7 @@ impl Project {
     }
 
     fn perform_rename_impl(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: PointUtf16,
         new_name: String,
@@ -6174,7 +6175,7 @@ impl Project {
         )
     }
     pub fn perform_rename<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: T,
         new_name: String,
@@ -6186,7 +6187,7 @@ impl Project {
     }
 
     pub fn on_type_format_impl(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: PointUtf16,
         trigger: String,
@@ -6210,7 +6211,7 @@ impl Project {
     }
 
     pub fn on_type_format<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: T,
         trigger: String,
@@ -6222,7 +6223,7 @@ impl Project {
     }
 
     pub fn inlay_hints<T: ToOffset>(
-        &self,
+        &mut self,
         buffer_handle: Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
@@ -6232,7 +6233,7 @@ impl Project {
         self.inlay_hints_impl(buffer_handle, range, cx)
     }
     fn inlay_hints_impl(
-        &self,
+        &mut self,
         buffer_handle: Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
@@ -6711,12 +6712,34 @@ impl Project {
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
             if let (Some(file), Some(language_server)) = (file, language_server) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
+                let status = request.status();
                 return cx.spawn(move |this, cx| async move {
                     if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
                     }
 
-                    let result = language_server.request::<R::LspRequest>(lsp_params).await;
+                    let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
+
+                    let id = lsp_request.id();
+                    if status.is_some() {
+                        cx.update(|cx| {
+                            this.update(cx, |this, cx| {
+                                this.on_lsp_work_start(
+                                    language_server.server_id(),
+                                    id.to_string(),
+                                    LanguageServerProgress {
+                                        message: status.clone(),
+                                        percentage: None,
+                                        last_update_at: Instant::now(),
+                                    },
+                                    cx,
+                                );
+                            })
+                        })
+                        .log_err();
+                    }
+
+                    let result = lsp_request.await;
                     let response = match result {
                         Ok(response) => response,
 
@@ -6729,16 +6752,30 @@ impl Project {
                             return Err(err);
                         }
                     };
-
-                    request
+                    let result = request
                         .response_from_lsp(
                             response,
                             this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
                             buffer_handle,
                             language_server.server_id(),
-                            cx,
+                            cx.clone(),
                         )
-                        .await
+                        .await;
+
+                    if status.is_some() {
+                        cx.update(|cx| {
+                            this.update(cx, |this, cx| {
+                                this.on_lsp_work_end(
+                                    language_server.server_id(),
+                                    id.to_string(),
+                                    cx,
+                                );
+                            })
+                        })
+                        .log_err();
+                    }
+
+                    result
                 });
             }
         } else if let Some(project_id) = self.remote_id() {
