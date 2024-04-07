@@ -42,7 +42,7 @@ macro_rules! create_definitions {
                             None
                         };
                         if let Some(enable) = value {
-                            let tag_name = stringify!($name).to_string();
+                            let tag_name = stringify!($name).to_owned();
                             result.push((tag_name, enable));
                         }
                     }
