@@ -7,6 +7,7 @@ use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
 use git::diff::DiffHunk;
 use gpui::{AppContext, EventEmitter, Model, ModelContext};
+use itertools::Itertools;
 use language::{
     char_kind,
     language_settings::{language_settings, LanguageSettings},
@@ -15,6 +16,7 @@ use language::{
     Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
+use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cell::{Ref, RefCell},
@@ -1008,12 +1010,12 @@ impl MultiBuffer {
             anchor_ranges.extend(ranges.by_ref().take(range_count).map(|range| {
                 let start = Anchor {
                     buffer_id: Some(buffer_id),
-                    excerpt_id: excerpt_id,
+                    excerpt_id,
                     text_anchor: buffer_snapshot.anchor_after(range.start),
                 };
                 let end = Anchor {
                     buffer_id: Some(buffer_id),
-                    excerpt_id: excerpt_id,
+                    excerpt_id,
                     text_anchor: buffer_snapshot.anchor_after(range.end),
                 };
                 start..end
@@ -1571,6 +1573,56 @@ impl MultiBuffer {
     #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self, cx: &AppContext) -> bool {
         self.as_singleton().unwrap().read(cx).is_parsing()
+    }
+
+    pub fn expand_excerpts(
+        &mut self,
+        ids: impl IntoIterator<Item = ExcerptId>,
+        line_count: u32,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let snapshot = self.snapshot(cx);
+        let locators = snapshot.excerpt_locators_for_ids(ids);
+        let mut new_excerpts = SumTree::new();
+        let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
+
+        for locator in &locators {
+            let prefix = cursor.slice(&Some(locator), Bias::Left, &());
+            new_excerpts.append(prefix, &());
+
+            let mut excerpt = cursor.item().unwrap().clone();
+
+            let start_row = excerpt
+                .range
+                .context
+                .start
+                .to_point(&excerpt.buffer)
+                .row
+                .saturating_sub(line_count);
+            let start_point = Point::new(start_row, 0);
+            excerpt.range.context.start = excerpt.buffer.anchor_before(start_point);
+
+            let end_row = cmp::min(
+                excerpt.range.context.end.to_point(&excerpt.buffer).row + line_count,
+                excerpt.buffer.row_count() - 1,
+            );
+            let end_point = Point::new(end_row, 0);
+            excerpt.range.context.end = excerpt.buffer.anchor_after(end_point);
+            excerpt.max_buffer_row = end_row;
+
+            excerpt.text_summary = excerpt
+                .buffer
+                .text_summary_for_range(start_point..end_point);
+
+            new_excerpts.push(excerpt, &());
+            cursor.next(&());
+        }
+
+        new_excerpts.append(cursor.suffix(&()), &());
+
+        drop(cursor);
+        self.snapshot.borrow_mut().excerpts = new_excerpts;
+        cx.notify();
     }
 
     fn sync(&self, cx: &AppContext) {
@@ -3361,6 +3413,39 @@ impl MultiBufferSnapshot {
         }
     }
 
+    // Returns the locators referenced by the given excerpt ids, sorted by locator.
+    fn excerpt_locators_for_ids(
+        &self,
+        ids: impl IntoIterator<Item = ExcerptId>,
+    ) -> SmallVec<[Locator; 1]> {
+        let mut sorted_ids = ids.into_iter().collect::<SmallVec<[_; 1]>>();
+        sorted_ids.sort_unstable();
+        let mut locators = SmallVec::new();
+
+        while sorted_ids.last() == Some(&ExcerptId::max()) {
+            sorted_ids.pop();
+            locators.push(Locator::max());
+        }
+
+        let mut sorted_ids = sorted_ids.into_iter().dedup().peekable();
+        if sorted_ids.peek() == Some(&ExcerptId::min()) {
+            sorted_ids.next();
+            locators.push(Locator::min());
+        }
+
+        let mut cursor = self.excerpt_ids.cursor::<ExcerptId>();
+        for id in sorted_ids {
+            if cursor.seek_forward(&id, Bias::Left, &()) {
+                locators.push(cursor.item().unwrap().locator.clone());
+            } else {
+                panic!("invalid excerpt id {:?}", id);
+            }
+        }
+
+        locators.sort_unstable();
+        locators
+    }
+
     pub fn buffer_id_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<BufferId> {
         Some(self.excerpt(excerpt_id)?.buffer_id)
     }
@@ -4286,7 +4371,8 @@ where
         .peekable();
     while let Some(range) = range_iter.next() {
         let excerpt_start = Point::new(range.start.row.saturating_sub(context_line_count), 0);
-        let mut excerpt_end = Point::new(range.end.row + context_line_count, 0).min(max_point);
+        // These + 1s ensure that we select the whole next line
+        let mut excerpt_end = Point::new(range.end.row + 1 + context_line_count, 0).min(max_point);
 
         let mut ranges_in_excerpt = 1;
 
@@ -4722,6 +4808,65 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_expand_excerpts(cx: &mut AppContext) {
+        let buffer = cx.new_model(|cx| {
+            Buffer::new(
+                0,
+                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+                sample_text(20, 3, 'a'),
+            )
+        });
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.push_excerpts_with_context_lines(
+                buffer.clone(),
+                vec![
+                    // Note that in this test, this first excerpt
+                    // does not contain a new line
+                    Point::new(3, 2)..Point::new(3, 3),
+                    Point::new(7, 1)..Point::new(7, 3),
+                    Point::new(15, 0)..Point::new(15, 0),
+                ],
+                1,
+                cx,
+            )
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.expand_excerpts(multibuffer.excerpt_ids(), 1, cx)
+        });
+
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+
+        // Expanding context lines causes the line containing 'fff' to appear in two different excerpts.
+        // We don't attempt to merge them, because removing the excerpt could create inconsistency with other layers
+        // that are tracking excerpt ids.
+        assert_eq!(
+            snapshot.text(),
+            concat!(
+                "bbb\n", // Preserve newlines
+                "ccc\n", //
+                "ddd\n", //
+                "eee\n", //
+                "fff\n", // <- Same as below
+                "\n",    // Excerpt boundary
+                "fff\n", // <- Same as above
+                "ggg\n", //
+                "hhh\n", //
+                "iii\n", //
+                "jjj\n", //
+                "\n",    //
+                "nnn\n", //
+                "ooo\n", //
+                "ppp\n", //
+                "qqq\n", //
+                "rrr\n", //
+            )
+        );
+    }
+
+    #[gpui::test]
     fn test_push_excerpts_with_context_lines(cx: &mut AppContext) {
         let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
         let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
@@ -4729,6 +4874,8 @@ mod tests {
             multibuffer.push_excerpts_with_context_lines(
                 buffer.clone(),
                 vec![
+                    // Note that in this test, this first excerpt
+                    // does contain a new line
                     Point::new(3, 2)..Point::new(4, 2),
                     Point::new(7, 1)..Point::new(7, 3),
                     Point::new(15, 0)..Point::new(15, 0),
@@ -4741,7 +4888,23 @@ mod tests {
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(
             snapshot.text(),
-            "bbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\n\nnnn\nooo\nppp\nqqq\n"
+            concat!(
+                "bbb\n", // Preserve newlines
+                "ccc\n", //
+                "ddd\n", //
+                "eee\n", //
+                "fff\n", //
+                "ggg\n", //
+                "hhh\n", //
+                "iii\n", //
+                "jjj\n", //
+                "\n",    //
+                "nnn\n", //
+                "ooo\n", //
+                "ppp\n", //
+                "qqq\n", //
+                "rrr\n", //
+            )
         );
 
         assert_eq!(
@@ -4777,7 +4940,23 @@ mod tests {
         let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         assert_eq!(
             snapshot.text(),
-            "bbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\n\nnnn\nooo\nppp\nqqq\n"
+            concat!(
+                "bbb\n", //
+                "ccc\n", //
+                "ddd\n", //
+                "eee\n", //
+                "fff\n", //
+                "ggg\n", //
+                "hhh\n", //
+                "iii\n", //
+                "jjj\n", //
+                "\n",    //
+                "nnn\n", //
+                "ooo\n", //
+                "ppp\n", //
+                "qqq\n", //
+                "rrr\n", //
+            )
         );
 
         assert_eq!(

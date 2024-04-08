@@ -259,6 +259,9 @@ impl EditorElement {
         register_action(view, cx, Editor::move_to_enclosing_bracket);
         register_action(view, cx, Editor::undo_selection);
         register_action(view, cx, Editor::redo_selection);
+        if !view.read(cx).is_singleton(cx) {
+            register_action(view, cx, Editor::expand_excerpts);
+        }
         register_action(view, cx, Editor::go_to_diagnostic);
         register_action(view, cx, Editor::go_to_prev_diagnostic);
         register_action(view, cx, Editor::go_to_hunk);

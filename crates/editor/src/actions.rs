@@ -155,6 +155,7 @@ gpui::actions!(
         DisplayCursorNames,
         DuplicateLineUp,
         DuplicateLineDown,
+        ExpandExcerpt,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
@@ -254,6 +255,6 @@ gpui::actions!(
         UndoSelection,
         UnfoldLines,
         UniqueLinesCaseSensitive,
-        UniqueLinesCaseInsensitive
+        UniqueLinesCaseInsensitive,
     ]
 );
