@@ -1,5 +1,5 @@
 use crate::{motion::Motion, object::Object, state::Mode, Vim};
-use editor::Bias;
+use editor::{scroll::Autoscroll, Bias};
 use gpui::WindowContext;
 use language::BracketPair;
 use serde::Deserialize;
@@ -70,7 +70,9 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                     buffer.edit(edits, None, cx);
                 });
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(None, cx, |s| s.select_anchor_ranges(anchors));
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                    s.select_anchor_ranges(anchors)
+                });
             });
         });
         vim.switch_mode(Mode::Normal, false, cx);
@@ -159,7 +161,7 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                     }
                 }
 
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges(anchors);
                 });
                 edits.sort_by_key(|(range, _)| range.start);
@@ -271,7 +273,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                         buffer.edit(edits, None, cx);
                     });
                     editor.set_clip_at_line_ends(true, cx);
-                    editor.change_selections(None, cx, |s| {
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select_anchor_ranges(stable_anchors);
                     });
                 });
@@ -327,7 +329,7 @@ pub fn check_and_move_to_valid_bracket_pair(
                         anchors.push(start..start)
                     }
                 }
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges(anchors);
                 });
                 editor.set_clip_at_line_ends(true, cx);
