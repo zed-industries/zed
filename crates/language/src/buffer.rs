@@ -2777,10 +2777,13 @@ impl BufferSnapshot {
                         range.start + self.line_len(start.row as u32) as usize - start.column;
                 }
 
-                buffer_ranges.push((range, node_is_name));
+                if !range.is_empty() {
+                    buffer_ranges.push((range, node_is_name));
+                }
             }
 
             if buffer_ranges.is_empty() {
+                matches.advance();
                 continue;
             }
 
