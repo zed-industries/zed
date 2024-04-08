@@ -14,7 +14,7 @@ use language::{char_kind, BufferSnapshot, CharKind, Point, Selection};
 use serde::Deserialize;
 use workspace::Workspace;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Object {
     Word { ignore_punctuation: bool },
     Sentence,

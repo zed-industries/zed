@@ -12,6 +12,7 @@ mod normal;
 mod object;
 mod replace;
 mod state;
+mod surrounds;
 mod utils;
 mod visual;
 
@@ -37,6 +38,7 @@ use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
 use std::{ops::Range, sync::Arc};
+use surrounds::{add_surrounds, change_surrounds, delete_surrounds};
 use ui::BorrowAppContext;
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
@@ -170,7 +172,14 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
     }
 
     Vim::update(cx, |vim, cx| match vim.active_operator() {
-        Some(Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace) => {}
+        Some(
+            Operator::FindForward { .. }
+            | Operator::FindBackward { .. }
+            | Operator::Replace
+            | Operator::AddSurrounds { .. }
+            | Operator::ChangeSurrounds { .. }
+            | Operator::DeleteSurrounds,
+        ) => {}
         Some(_) => {
             vim.clear_operator(cx);
         }
@@ -620,6 +629,31 @@ impl Vim {
             Some(Operator::Replace) => match Vim::read(cx).state().mode {
                 Mode::Normal => normal_replace(text, cx),
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            Some(Operator::AddSurrounds { target }) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    if let Some(target) = target {
+                        add_surrounds(text, target, cx);
+                        Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+                    }
+                }
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            Some(Operator::ChangeSurrounds { target }) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    if let Some(target) = target {
+                        change_surrounds(text, target, cx);
+                        Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+                    }
+                }
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            Some(Operator::DeleteSurrounds) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    delete_surrounds(text, cx);
+                    Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+                }
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
             _ => match Vim::read(cx).state().mode {

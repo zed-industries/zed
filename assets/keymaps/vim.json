@@ -385,15 +385,43 @@
     }
   },
   {
+    "context": "Editor && vim_mode == normal && vim_operator == c",
+    "bindings": {
+      "s": [
+        "vim::PushOperator",
+        {
+          "ChangeSurrounds": {}
+        }
+      ]
+    }
+  },
+  {
     "context": "Editor && vim_operator == d",
     "bindings": {
       "d": "vim::CurrentLine"
     }
   },
   {
+    "context": "Editor && vim_mode == normal && vim_operator == d",
+    "bindings": {
+      "s": ["vim::PushOperator", "DeleteSurrounds"]
+    }
+  },
+  {
     "context": "Editor && vim_operator == y",
     "bindings": {
       "y": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_mode == normal && vim_operator == y",
+    "bindings": {
+      "s": [
+        "vim::PushOperator",
+        {
+          "AddSurrounds": {}
+        }
+      ]
     }
   },
   {
