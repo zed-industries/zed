@@ -435,6 +435,17 @@ impl Server {
                         app_state.config.google_ai_api_key.clone(),
                     )
                 })
+            })
+            .add_request_handler({
+                let app_state = app_state.clone();
+                user_handler(move |request, response, session| {
+                    embed_texts(
+                        request,
+                        response,
+                        session,
+                        app_state.config.openai_api_key.clone(),
+                    )
+                })
             });
 
         Arc::new(server)
@@ -3879,8 +3890,9 @@ async fn embed_texts(
     request: proto::EmbedTexts,
     response: Response<proto::EmbedTexts>,
     session: UserSession,
-    api_key: Arc<str>,
+    api_key: Option<Arc<str>>,
 ) -> Result<()> {
+    let api_key = api_key.context("no OpenAI API key configured on the server")?;
     authorize_access_to_language_models(&session).await?;
 
     session
