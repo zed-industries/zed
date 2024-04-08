@@ -12,8 +12,8 @@ use crate::{
     RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams, WindowTextSystem,
-    SUBPIXEL_VARIANTS,
+    WindowAppearance, WindowBackgroundAppearance, WindowOpenStatus, WindowOptions, WindowParams,
+    WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -592,23 +592,26 @@ impl Window {
         cx: &mut AppContext,
     ) -> Self {
         let WindowOptions {
-            open_status: bounds,
+            open_status,
             titlebar,
             focus,
             show,
             kind,
             is_movable,
             display_id,
-            fullscreen,
             window_background,
             app_id,
         } = options;
 
-        let bounds = bounds.unwrap_or_else(|| default_bounds(display_id, cx));
+        let open_status = if open_status == WindowOpenStatus::Windowed(None) {
+            WindowOpenStatus::Windowed(Some(default_bounds(display_id, cx)))
+        } else {
+            open_status
+        };
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
-                open_status: bounds,
+                open_status,
                 titlebar,
                 kind,
                 is_movable,
@@ -631,10 +634,6 @@ impl Window {
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
-
-        if fullscreen {
-            platform_window.toggle_fullscreen();
-        }
 
         platform_window.on_close(Box::new({
             let mut cx = cx.to_async();
