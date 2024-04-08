@@ -4288,7 +4288,8 @@ where
         .peekable();
     while let Some(range) = range_iter.next() {
         let excerpt_start = Point::new(range.start.row.saturating_sub(context_line_count), 0);
-        let mut excerpt_end = Point::new(range.end.row + 1 + context_line_count, 0).min(max_point);
+        let mut excerpt_end = Point::new(range.end.row + context_line_count, 0).min(max_point);
+
         let mut ranges_in_excerpt = 1;
 
         while let Some(next_range) = range_iter.peek() {
