@@ -903,6 +903,14 @@ impl LspCommand for GetReferences {
         return Some("Finding references...".to_owned());
     }
 
+    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
+        match &capabilities.references_provider {
+            Some(OneOf::Left(has_support)) => *has_support,
+            Some(OneOf::Right(_)) => true,
+            None => false,
+        }
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
