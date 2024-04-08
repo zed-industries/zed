@@ -99,7 +99,9 @@ pub struct GrammarManifestEntry {
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
     /// Deprecated in favor of `languages`.
-    language: Arc<str>,
+    #[serde(default)]
+    language: Option<Arc<str>>,
+    /// The list of languages this language server should work with.
     #[serde(default)]
     languages: Vec<Arc<str>>,
     #[serde(default)]
@@ -107,10 +109,20 @@ pub struct LanguageServerManifestEntry {
 }
 
 impl LanguageServerManifestEntry {
-    pub fn languages(&self) -> Vec<Arc<str>> {
-        let mut languages = self.languages.clone();
-        languages.push(self.language.clone());
-        languages
+    /// Returns the list of languages for the language server.
+    ///
+    /// Prefer this over accessing the `language` or `languages` fields directly,
+    /// as we currently support both.
+    ///
+    /// We can replace this with just field access for the `languages` field once
+    /// we have removed `language`.
+    pub fn languages(&self) -> impl IntoIterator<Item = Arc<str>> + '_ {
+        let language = if self.languages.is_empty() {
+            self.language.clone()
+        } else {
+            None
+        };
+        self.languages.iter().cloned().chain(language)
     }
 }
 
