@@ -571,6 +571,17 @@ pub(crate) struct WindowParams {
     pub window_background: WindowBackgroundAppearance,
 }
 
+/// TODO:
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum WindowOpenState {
+    /// windowed
+    Windowed(Option<Bounds<DevicePixels>>),
+    /// maximized
+    Maximized,
+    /// fullscreen
+    FullScreen,
+}
+
 impl Default for WindowOptions {
     fn default() -> Self {
         Self {
