@@ -3665,11 +3665,9 @@ impl Workspace {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
             let open_status = if cx.is_fullscreen() {
-                WindowOpenStatus::FullScreen
-            } else if cx.is_maximized() {
-                WindowOpenStatus::Maximized
+                Some(SerializedWindowOpenStatus(WindowOpenStatus::FullScreen))
             } else {
-                WindowOpenStatus::Windowed(None)
+                None
             };
             let serialized_workspace = SerializedWorkspace {
                 id: self.database_id,
@@ -3678,7 +3676,6 @@ impl Workspace {
                 open_status,
                 display: Default::default(),
                 docks,
-                fullscreen: cx.is_fullscreen(),
                 centered_layout: self.centered_layout,
             };
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));

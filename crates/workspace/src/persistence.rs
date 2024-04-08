@@ -59,7 +59,7 @@ impl sqlez::bindable::Column for SerializedAxis {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedWindowOpenStatus(pub(crate) WindowOpenStatus);
 
 impl StaticColumnCount for SerializedWindowOpenStatus {
