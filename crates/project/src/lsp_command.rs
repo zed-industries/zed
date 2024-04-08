@@ -896,6 +896,14 @@ impl LspCommand for GetReferences {
     type LspRequest = lsp::request::References;
     type ProtoRequest = proto::GetReferences;
 
+    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
+        match &capabilities.references_provider {
+            Some(OneOf::Left(has_support)) => *has_support,
+            Some(OneOf::Right(_)) => true,
+            None => false,
+        }
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
