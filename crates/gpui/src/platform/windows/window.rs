@@ -66,14 +66,10 @@ impl WindowsWindowInner {
         display: Rc<WindowsDisplay>,
     ) -> Self {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
-        let origin = Cell::new(Point {
-            x: DevicePixels(cs.x),
-            y: DevicePixels(cs.y),
-        });
-        let physical_size = Cell::new(Size {
-            width: DevicePixels(cs.cx),
-            height: DevicePixels(cs.cy),
-        });
+        let origin = Cell::new(point(DevicePixels(cs.x), DevicePixels(cs.y)));
+        let physical_size = Cell::new(size(DevicePixels(cs.cx), DevicePixels(cs.cy)));
+        let restore_origin = origin.clone();
+        let restore_size = physical_size.clone();
         let scale_factor = Cell::new(monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32);
         let input_handler = Cell::new(None);
         struct RawWindow {
@@ -123,10 +119,10 @@ impl WindowsWindowInner {
         let fullscreen = Cell::new(None);
         Self {
             hwnd,
-            origin: origin.clone(),
-            physical_size: physical_size.clone(),
-            restore_origin: origin,
-            restore_size: physical_size,
+            origin,
+            physical_size,
+            restore_origin,
+            restore_size,
             scale_factor,
             input_handler,
             renderer,
@@ -148,10 +144,17 @@ impl WindowsWindowInner {
         unsafe { IsIconic(self.hwnd) }.as_bool()
     }
 
-    fn restore_size(&self) -> Bounds<DevicePixels> {
-        Bounds {
+    fn restore_status(&self) -> WindowOpenStatus {
+        let bounds = Bounds {
             origin: self.restore_origin.get(),
             size: self.restore_size.get(),
+        };
+        if self.is_fullscreen() {
+            WindowOpenStatus::FullScreen(bounds)
+        } else if self.is_maximized() {
+            WindowOpenStatus::Maximized(bounds)
+        } else {
+            WindowOpenStatus::Windowed(Some(bounds))
         }
     }
 
@@ -361,7 +364,10 @@ impl WindowsWindowInner {
             width: width as f64,
             height: height as f64,
         });
-        if !(wparam.0 as u32 & SIZE_MAXIMIZED > 0 || wparam.0 as u32 & SIZE_MINIMIZED > 0) {
+        if !(wparam.0 as u32 & SIZE_MAXIMIZED > 0
+            || wparam.0 as u32 & SIZE_MINIMIZED > 0
+            || self.is_fullscreen())
+        {
             self.restore_size.set(new_physical_size);
         }
         let mut callbacks = self.callbacks.borrow_mut();
@@ -1416,8 +1422,8 @@ impl PlatformWindow for WindowsWindow {
         self.inner.is_minimized()
     }
 
-    fn restore_size(&self) -> Bounds<DevicePixels> {
-        self.inner.restore_size()
+    fn restore_status(&self) -> WindowOpenStatus {
+        self.inner.restore_status()
     }
 
     /// get the logical size of the app's drawable area.
