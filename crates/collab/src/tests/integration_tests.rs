@@ -4641,9 +4641,16 @@ async fn test_references(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a
-        .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
 
     client_a
         .fs()
