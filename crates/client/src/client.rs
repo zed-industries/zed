@@ -784,7 +784,6 @@ impl Client {
             }
             Status::UpgradeRequired => return Err(EstablishConnectionError::UpgradeRequired)?,
         };
-
         if was_disconnected {
             self.set_status(Status::Authenticating, cx);
         } else {

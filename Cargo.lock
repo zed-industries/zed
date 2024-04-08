@@ -1434,7 +1434,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=61cbd6b2c224791d52b150fe535cee665cc91bb2#61cbd6b2c224791d52b150fe535cee665cc91bb2"
+source = "git+https://github.com/zed-industries/blade?rev=85981c0f4890a5fcd08da2a53cc4a0459247af44#85981c0f4890a5fcd08da2a53cc4a0459247af44"
 dependencies = [
  "ash",
  "ash-window",
@@ -1464,7 +1464,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=61cbd6b2c224791d52b150fe535cee665cc91bb2#61cbd6b2c224791d52b150fe535cee665cc91bb2"
+source = "git+https://github.com/zed-industries/blade?rev=85981c0f4890a5fcd08da2a53cc4a0459247af44#85981c0f4890a5fcd08da2a53cc4a0459247af44"
 dependencies = [
  "proc-macro2",
  "quote",
