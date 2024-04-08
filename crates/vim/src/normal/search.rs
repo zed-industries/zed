@@ -101,7 +101,7 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
     };
     Vim::update(cx, |vim, cx| {
         let count = vim.take_count(cx).unwrap_or(1);
-        let prior_selection = vim.latest_editor_selection(cx);
+        let prior_selections = vim.editor_selections(cx);
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
@@ -121,7 +121,7 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
                         direction,
                         count,
                         initial_query: query.clone(),
-                        prior_selection,
+                        prior_selections,
                         prior_operator: vim.active_operator(),
                         prior_mode: vim.state().mode,
                     };
@@ -159,10 +159,10 @@ fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewConte
                     search_bar.select_match(direction, count, cx);
                     search_bar.focus_editor(&Default::default(), cx);
 
-                    let prior_selection = state.prior_selection.take();
+                    let prior_selections = state.prior_selections.drain(..).collect();
                     let prior_mode = state.prior_mode;
                     let prior_operator = state.prior_operator.take();
-                    let new_selection = vim.latest_editor_selection(cx);
+                    let new_selections = vim.editor_selections(cx);
 
                     if prior_mode != vim.state().mode {
                         vim.switch_mode(prior_mode, true, cx);
@@ -171,8 +171,8 @@ fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewConte
                         vim.push_operator(operator, cx);
                     };
                     motion = Some(Motion::ZedSearchResult {
-                        prior_selection,
-                        new_selection,
+                        prior_selections,
+                        new_selections,
                     });
                 });
             }
@@ -193,17 +193,17 @@ pub fn move_to_match_internal(
     Vim::update(cx, |vim, cx| {
         let pane = workspace.active_pane().clone();
         let count = vim.take_count(cx).unwrap_or(1);
-        let prior_selection = vim.latest_editor_selection(cx);
+        let prior_selections = vim.editor_selections(cx);
 
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 search_bar.update(cx, |search_bar, cx| {
                     search_bar.select_match(direction, count, cx);
 
-                    let new_selection = vim.latest_editor_selection(cx);
+                    let new_selections = vim.editor_selections(cx);
                     motion = Some(Motion::ZedSearchResult {
-                        prior_selection,
-                        new_selection,
+                        prior_selections,
+                        new_selections,
                     });
                 })
             }
@@ -223,7 +223,7 @@ pub fn move_to_internal(
     Vim::update(cx, |vim, cx| {
         let pane = workspace.active_pane().clone();
         let count = vim.take_count(cx).unwrap_or(1);
-        let prior_selection = vim.latest_editor_selection(cx);
+        let prior_selections = vim.editor_selections(cx);
 
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
@@ -252,16 +252,12 @@ pub fn move_to_internal(
                         search_bar.update(&mut cx, |search_bar, cx| {
                             search_bar.select_match(direction, count, cx);
 
-                            let new_selection = Vim::update(cx, |vim, cx| {
-                                vim.update_active_editor(cx, |_, editor, _| {
-                                    let selection = editor.selections.newest_anchor();
-                                    selection.start..selection.end
-                                })
-                            });
+                            let new_selections =
+                                Vim::update(cx, |vim, cx| vim.editor_selections(cx));
                             search_motion(
                                 Motion::ZedSearchResult {
-                                    prior_selection,
-                                    new_selection,
+                                    prior_selections,
+                                    new_selections,
                                 },
                                 cx,
                             )
@@ -450,6 +446,7 @@ fn parse_replace_all(query: &str) -> Replacement {
 #[cfg(test)]
 mod test {
     use editor::DisplayPoint;
+    use indoc::indoc;
     use search::BufferSearchBar;
 
     use crate::{
@@ -630,5 +627,28 @@ mod test {
         cx.assert_shared_state("a a a« aˇ» a a").await;
         cx.simulate_shared_keystrokes(["/", "enter"]).await;
         cx.assert_shared_state("a a a« a aˇ» a").await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_search(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "ˇone two
+             three four
+             five six
+             "
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["ctrl-v", "j", "/", "f"])
+            .await;
+        cx.simulate_shared_keystrokes(["enter"]).await;
+        cx.assert_shared_state(indoc! {
+            "«one twoˇ»
+             «three fˇ»our
+             five six
+             "
+        })
+        .await;
     }
 }

@@ -295,11 +295,16 @@ impl Vim {
         Some(editor.update(cx, |editor, cx| update(self, editor, cx)))
     }
 
-    fn latest_editor_selection(&mut self, cx: &mut WindowContext) -> Option<Range<Anchor>> {
+    fn editor_selections(&mut self, cx: &mut WindowContext) -> Vec<Range<Anchor>> {
         self.update_active_editor(cx, |_, editor, _| {
-            let selection = editor.selections.newest_anchor();
-            selection.tail()..selection.head()
+            editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .map(|selection| selection.tail()..selection.head())
+                .collect()
         })
+        .unwrap_or_default()
     }
 
     /// When doing an action that modifies the buffer, we start recording so that `.`

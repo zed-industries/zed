@@ -4,7 +4,7 @@ use editor::{
         self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
     },
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, ToOffset, ToPoint,
+    Anchor, Bias, DisplayPoint, ToOffset,
 };
 use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
 use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
@@ -102,8 +102,8 @@ pub enum Motion {
     // we handle search motions by running the search async and then
     // calling back into motion with this
     ZedSearchResult {
-        prior_selection: Option<Range<Anchor>>,
-        new_selection: Option<Range<Anchor>>,
+        prior_selections: Vec<Range<Anchor>>,
+        new_selections: Vec<Range<Anchor>>,
     },
 }
 
@@ -390,25 +390,24 @@ pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
 
 pub(crate) fn search_motion(m: Motion, cx: &mut WindowContext) {
     if let Motion::ZedSearchResult {
-        prior_selection,
-        new_selection,
+        prior_selections, ..
     } = &m
     {
-        if let Some(prior_selection) = prior_selection {
-            match Vim::read(cx).state().mode {
-                Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+        match Vim::read(cx).state().mode {
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                if !prior_selections.is_empty() {
                     Vim::update(cx, |vim, cx| {
                         vim.update_active_editor(cx, |_, editor, cx| {
                             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                                s.select_ranges([prior_selection.clone()])
+                                s.select_ranges(prior_selections.iter().cloned())
                             })
                         });
                     });
                 }
-                Mode::Normal | Mode::Replace | Mode::Insert => {
-                    if Vim::read(cx).active_operator().is_none() {
-                        return;
-                    }
+            }
+            Mode::Normal | Mode::Replace | Mode::Insert => {
+                if Vim::read(cx).active_operator().is_none() {
+                    return;
                 }
             }
         }
@@ -761,8 +760,10 @@ impl Motion {
             WindowTop => window_top(map, point, &text_layout_details, times - 1),
             WindowMiddle => window_middle(map, point, &text_layout_details),
             WindowBottom => window_bottom(map, point, &text_layout_details, times - 1),
-            ZedSearchResult { new_selection, .. } => {
-                if let Some(new_selection) = new_selection {
+            ZedSearchResult { new_selections, .. } => {
+                // There will be only one selection, as
+                // Search::SelectNextMatch selects a single match.
+                if let Some(new_selection) = new_selections.first() {
                     (
                         new_selection.start.to_display_point(map),
                         SelectionGoal::None,
@@ -786,12 +787,12 @@ impl Motion {
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Range<DisplayPoint>> {
         if let Motion::ZedSearchResult {
-            prior_selection,
-            new_selection,
+            prior_selections,
+            new_selections,
         } = self
         {
             if let Some((prior_selection, new_selection)) =
-                prior_selection.clone().zip(new_selection.clone())
+                prior_selections.first().zip(new_selections.first())
             {
                 let start = prior_selection
                     .start

@@ -144,7 +144,7 @@ pub struct SearchState {
     pub count: usize,
     pub initial_query: String,
 
-    pub prior_selection: Option<Range<Anchor>>,
+    pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
 }
