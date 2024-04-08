@@ -515,9 +515,8 @@ pub trait InputHandler: 'static {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
-    /// The bounds of the window in screen coordinates.
-    /// None -> inherit, Some(bounds) -> set bounds
-    pub bounds: Option<Bounds<DevicePixels>>,
+    /// TODO:
+    pub open_status: WindowOpenStatus,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
@@ -527,9 +526,6 @@ pub struct WindowOptions {
 
     /// Whether the window should be shown when created
     pub show: bool,
-
-    /// Whether the window should be fullscreen when created
-    pub fullscreen: bool,
 
     /// The kind of window to create
     pub kind: WindowKind,
@@ -551,7 +547,7 @@ pub struct WindowOptions {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub(crate) struct WindowParams {
-    pub bounds: Bounds<DevicePixels>,
+    pub open_status: WindowOpenStatus,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
@@ -573,8 +569,9 @@ pub(crate) struct WindowParams {
 
 /// TODO:
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum WindowOpenState {
-    /// windowed
+pub enum WindowOpenStatus {
+    /// The bounds of the window in screen coordinates.
+    /// None -> inherit, Some(bounds) -> set bounds
     Windowed(Option<Bounds<DevicePixels>>),
     /// maximized
     Maximized,
@@ -585,7 +582,7 @@ pub enum WindowOpenState {
 impl Default for WindowOptions {
     fn default() -> Self {
         Self {
-            bounds: None,
+            open_status: WindowOpenStatus::Windowed(None),
             titlebar: Some(TitlebarOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
@@ -596,7 +593,6 @@ impl Default for WindowOptions {
             kind: WindowKind::Normal,
             is_movable: true,
             display_id: None,
-            fullscreen: false,
             window_background: WindowBackgroundAppearance::default(),
             app_id: None,
         }

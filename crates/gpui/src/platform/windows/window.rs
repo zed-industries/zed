@@ -1264,10 +1264,10 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
-        let x = options.bounds.origin.x.0;
-        let y = options.bounds.origin.y.0;
-        let nwidth = options.bounds.size.width.0;
-        let nheight = options.bounds.size.height.0;
+        let x = options.open_status.origin.x.0;
+        let y = options.open_status.origin.y.0;
+        let nwidth = options.open_status.size.width.0;
+        let nheight = options.open_status.size.height.0;
         let hwndparent = HWND::default();
         let hmenu = HMENU::default();
         let hinstance = get_module_handle();

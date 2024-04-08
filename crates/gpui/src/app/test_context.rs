@@ -188,7 +188,7 @@ impl TestAppContext {
         let bounds = Bounds::maximized(None, &mut cx);
         cx.open_window(
             WindowOptions {
-                bounds: Some(bounds),
+                open_status: Some(bounds),
                 ..Default::default()
             },
             |cx| cx.new_view(build_window),
@@ -201,7 +201,7 @@ impl TestAppContext {
         let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
-                bounds: Some(bounds),
+                open_status: Some(bounds),
                 ..Default::default()
             },
             |cx| cx.new_view(|_| Empty),
@@ -224,7 +224,7 @@ impl TestAppContext {
         let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
-                bounds: Some(bounds),
+                open_status: Some(bounds),
                 ..Default::default()
             },
             |cx| cx.new_view(build_root_view),

@@ -85,7 +85,7 @@ fn main() {
         let bounds = Bounds::centered(None, size, cx);
         let _window = cx.open_window(
             WindowOptions {
-                bounds: Some(bounds),
+                open_status: Some(bounds),
                 ..Default::default()
             },
             move |cx| {
