@@ -59,7 +59,7 @@ To run your extension in Zed as you're developing it:
 
 Extensions created using newer versions of the Zed extension API won't be compatible with older versions of Zed.
 
-Here is the compability of the `zed_extension_api` with versions of Zed:
+Here is the compatibility of the `zed_extension_api` with versions of Zed:
 
 | Zed version | `zed_extension_api` version |
 | ----------- | --------------------------- |
