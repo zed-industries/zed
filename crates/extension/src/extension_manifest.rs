@@ -98,9 +98,20 @@ pub struct GrammarManifestEntry {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
-    pub language: Arc<str>,
+    /// Deprecated in favor of `languages`.
+    language: Arc<str>,
+    #[serde(default)]
+    languages: Vec<Arc<str>>,
     #[serde(default)]
     pub language_ids: HashMap<String, String>,
+}
+
+impl LanguageServerManifestEntry {
+    pub fn languages(&self) -> Vec<Arc<str>> {
+        let mut languages = self.languages.clone();
+        languages.push(self.language.clone());
+        languages
+    }
 }
 
 impl ExtensionManifest {
