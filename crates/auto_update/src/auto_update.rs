@@ -92,14 +92,19 @@ impl Settings for AutoUpdateSetting {
     type FileContent = AutoUpdateSettingOverride;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        Ok(Self(
-            sources
-                .release_channel
-                .or(sources.user)
-                .unwrap_or(sources.default)
-                .0
-                .ok_or_else(Self::missing_default)?,
-        ))
+        if let Some(release_channel_value) = sources.release_channel {
+            if let Some(value) = release_channel_value.0 {
+                return Ok(Self(value));
+            }
+        }
+
+        if let Some(user_value) = sources.user {
+            if let Some(value) = user_value.0 {
+                return Ok(Self(value));
+            }
+        }
+
+        Ok(Self(sources.default.0.ok_or_else(Self::missing_default)?))
     }
 }
 
