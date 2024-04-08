@@ -25,6 +25,7 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+any_vec.workspace = true
 async-recursion.workspace = true
 bincode = "1.2.1"
 call.workspace = true

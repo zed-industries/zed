@@ -11,13 +11,13 @@ use gpui::{
 };
 use isahc::AsyncBody;
 
-use markdown_preview::markdown_preview_view::MarkdownPreviewView;
+use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
 use smol::io::AsyncReadExt;
 
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs::File, process::Command};
 
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
@@ -91,13 +91,12 @@ impl Settings for AutoUpdateSetting {
 
     type FileContent = AutoUpdateSettingOverride;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         Ok(Self(
-            Self::json_merge(default_value, user_values)?
+            sources
+                .release_channel
+                .or(sources.user)
+                .unwrap_or(sources.default)
                 .0
                 .ok_or_else(Self::missing_default)?,
         ))
@@ -238,10 +237,11 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                                 .new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx));
                             let workspace_handle = workspace.weak_handle();
                             let view: View<MarkdownPreviewView> = MarkdownPreviewView::new(
+                                MarkdownPreviewMode::Default,
                                 editor,
                                 workspace_handle,
-                                Some(tab_description),
                                 language_registry,
+                                Some(tab_description),
                                 cx,
                             );
                             workspace.add_item_to_active_pane(Box::new(view.clone()), cx);

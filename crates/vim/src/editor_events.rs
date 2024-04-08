@@ -48,7 +48,6 @@ fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
                 .upgrade()
                 .is_some_and(|previous| previous == editor.clone())
             {
-                vim.sync_vim_settings(cx);
                 vim.clear_operator(cx);
             }
         }

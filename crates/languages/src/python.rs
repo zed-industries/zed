@@ -83,7 +83,7 @@ impl LspAdapter for PythonLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    async fn process_completion(&self, item: &mut lsp::CompletionItem) {
+    async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
         // Pyright assigns each completion item a `sortText` of the form `XX.YYYY.name`.
         // Where `XX` is the sorting category, `YYYY` is based on most recent usage,
         // and `name` is the symbol name itself.
@@ -94,14 +94,16 @@ impl LspAdapter for PythonLspAdapter {
         // to allow our own fuzzy score to be used to break ties.
         //
         // see https://github.com/microsoft/pyright/blob/95ef4e103b9b2f129c9320427e51b73ea7cf78bd/packages/pyright-internal/src/languageService/completionProvider.ts#LL2873
-        let Some(sort_text) = &mut item.sort_text else {
-            return;
-        };
-        let mut parts = sort_text.split('.');
-        let Some(first) = parts.next() else { return };
-        let Some(second) = parts.next() else { return };
-        let Some(_) = parts.next() else { return };
-        sort_text.replace_range(first.len() + second.len() + 1.., "");
+        for item in items {
+            let Some(sort_text) = &mut item.sort_text else {
+                continue;
+            };
+            let mut parts = sort_text.split('.');
+            let Some(first) = parts.next() else { continue };
+            let Some(second) = parts.next() else { continue };
+            let Some(_) = parts.next() else { continue };
+            sort_text.replace_range(first.len() + second.len() + 1.., "");
+        }
     }
 
     async fn label_for_completion(

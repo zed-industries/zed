@@ -1,21 +1,31 @@
-use crate::wasm_host::{wit::LanguageServerConfig, WasmExtension, WasmHost};
+use crate::wasm_host::{
+    wit::{self, LanguageServerConfig},
+    WasmExtension, WasmHost,
+};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
-use language::{Language, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{
+    CodeLabel, HighlightId, Language, LanguageServerName, LspAdapter, LspAdapterDelegate,
+};
 use lsp::LanguageServerBinary;
+use serde::Serialize;
+use serde_json::Value;
+use std::ops::Range;
 use std::{
     any::Any,
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
 };
+use util::{maybe, ResultExt};
 use wasmtime_wasi::WasiView as _;
 
 pub struct ExtensionLspAdapter {
     pub(crate) extension: WasmExtension,
+    pub(crate) language_server_id: LanguageServerName,
     pub(crate) config: LanguageServerConfig,
     pub(crate) host: Arc<WasmHost>,
 }
@@ -43,7 +53,12 @@ impl LspAdapter for ExtensionLspAdapter {
                         async move {
                             let resource = store.data_mut().table().push(delegate)?;
                             let command = extension
-                                .call_language_server_command(store, &this.config, resource)
+                                .call_language_server_command(
+                                    store,
+                                    &this.language_server_id,
+                                    &this.config,
+                                    resource,
+                                )
                                 .await?
                                 .map_err(|e| anyhow!("{}", e))?;
                             anyhow::Ok(command)
@@ -146,6 +161,7 @@ impl LspAdapter for ExtensionLspAdapter {
                         let options = extension
                             .call_language_server_initialization_options(
                                 store,
+                                &this.language_server_id,
                                 &this.config,
                                 resource,
                             )
@@ -165,4 +181,340 @@ impl LspAdapter for ExtensionLspAdapter {
             None
         })
     }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        let delegate = delegate.clone();
+        let json_options: Option<String> = self
+            .extension
+            .call({
+                let this = self.clone();
+                |extension, store| {
+                    async move {
+                        let resource = store.data_mut().table().push(delegate)?;
+                        let options = extension
+                            .call_language_server_workspace_configuration(
+                                store,
+                                &this.language_server_id,
+                                resource,
+                            )
+                            .await?
+                            .map_err(|e| anyhow!("{}", e))?;
+                        anyhow::Ok(options)
+                    }
+                    .boxed()
+                }
+            })
+            .await?;
+        Ok(if let Some(json_options) = json_options {
+            serde_json::from_str(&json_options).with_context(|| {
+                format!("failed to parse initialization_options from extension: {json_options}")
+            })?
+        } else {
+            serde_json::json!({})
+        })
+    }
+
+    async fn labels_for_completions(
+        self: Arc<Self>,
+        completions: &[lsp::CompletionItem],
+        language: &Arc<Language>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        let completions = completions
+            .into_iter()
+            .map(|completion| wit::Completion::from(completion.clone()))
+            .collect::<Vec<_>>();
+
+        let labels = self
+            .extension
+            .call({
+                let this = self.clone();
+                |extension, store| {
+                    async move {
+                        extension
+                            .call_labels_for_completions(
+                                store,
+                                &this.language_server_id,
+                                completions,
+                            )
+                            .await?
+                            .map_err(|e| anyhow!("{}", e))
+                    }
+                    .boxed()
+                }
+            })
+            .await?;
+
+        Ok(labels_from_wit(labels, language))
+    }
+
+    async fn labels_for_symbols(
+        self: Arc<Self>,
+        symbols: &[(String, lsp::SymbolKind)],
+        language: &Arc<Language>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        let symbols = symbols
+            .into_iter()
+            .cloned()
+            .map(|(name, kind)| wit::Symbol {
+                name,
+                kind: kind.into(),
+            })
+            .collect::<Vec<_>>();
+
+        let labels = self
+            .extension
+            .call({
+                let this = self.clone();
+                |extension, store| {
+                    async move {
+                        extension
+                            .call_labels_for_symbols(store, &this.language_server_id, symbols)
+                            .await?
+                            .map_err(|e| anyhow!("{}", e))
+                    }
+                    .boxed()
+                }
+            })
+            .await?;
+
+        Ok(labels_from_wit(labels, language))
+    }
+}
+
+fn labels_from_wit(
+    labels: Vec<Option<wit::CodeLabel>>,
+    language: &Arc<Language>,
+) -> Vec<Option<CodeLabel>> {
+    labels
+        .into_iter()
+        .map(|label| {
+            label.map(|label| {
+                build_code_label(
+                    &label,
+                    &language.highlight_text(&label.code.as_str().into(), 0..label.code.len()),
+                    &language,
+                )
+            })
+        })
+        .collect()
+}
+
+fn build_code_label(
+    label: &wit::CodeLabel,
+    parsed_runs: &[(Range<usize>, HighlightId)],
+    language: &Arc<Language>,
+) -> CodeLabel {
+    let mut text = String::new();
+    let mut runs = vec![];
+
+    for span in &label.spans {
+        match span {
+            wit::CodeLabelSpan::CodeRange(range) => {
+                let range = Range::from(*range);
+
+                let mut input_ix = range.start;
+                let mut output_ix = text.len();
+                for (run_range, id) in parsed_runs {
+                    if run_range.start >= range.end {
+                        break;
+                    }
+                    if run_range.end <= input_ix {
+                        continue;
+                    }
+
+                    if run_range.start > input_ix {
+                        output_ix += run_range.start - input_ix;
+                        input_ix = run_range.start;
+                    }
+
+                    {
+                        let len = range.end.min(run_range.end) - input_ix;
+                        runs.push((output_ix..output_ix + len, *id));
+                        output_ix += len;
+                        input_ix += len;
+                    }
+                }
+
+                text.push_str(&label.code[range]);
+            }
+            wit::CodeLabelSpan::Literal(span) => {
+                let highlight_id = language
+                    .grammar()
+                    .zip(span.highlight_name.as_ref())
+                    .and_then(|(grammar, highlight_name)| {
+                        grammar.highlight_id_for_name(&highlight_name)
+                    })
+                    .unwrap_or_default();
+                let ix = text.len();
+                runs.push((ix..ix + span.text.len(), highlight_id));
+                text.push_str(&span.text);
+            }
+        }
+    }
+
+    CodeLabel {
+        text,
+        runs,
+        filter_range: label.filter_range.into(),
+    }
+}
+
+impl From<wit::Range> for Range<usize> {
+    fn from(range: wit::Range) -> Self {
+        let start = range.start as usize;
+        let end = range.end as usize;
+        start..end
+    }
+}
+
+impl From<lsp::CompletionItem> for wit::Completion {
+    fn from(value: lsp::CompletionItem) -> Self {
+        Self {
+            label: value.label,
+            detail: value.detail,
+            kind: value.kind.map(Into::into),
+            insert_text_format: value.insert_text_format.map(Into::into),
+        }
+    }
+}
+
+impl From<lsp::CompletionItemKind> for wit::CompletionKind {
+    fn from(value: lsp::CompletionItemKind) -> Self {
+        match value {
+            lsp::CompletionItemKind::TEXT => Self::Text,
+            lsp::CompletionItemKind::METHOD => Self::Method,
+            lsp::CompletionItemKind::FUNCTION => Self::Function,
+            lsp::CompletionItemKind::CONSTRUCTOR => Self::Constructor,
+            lsp::CompletionItemKind::FIELD => Self::Field,
+            lsp::CompletionItemKind::VARIABLE => Self::Variable,
+            lsp::CompletionItemKind::CLASS => Self::Class,
+            lsp::CompletionItemKind::INTERFACE => Self::Interface,
+            lsp::CompletionItemKind::MODULE => Self::Module,
+            lsp::CompletionItemKind::PROPERTY => Self::Property,
+            lsp::CompletionItemKind::UNIT => Self::Unit,
+            lsp::CompletionItemKind::VALUE => Self::Value,
+            lsp::CompletionItemKind::ENUM => Self::Enum,
+            lsp::CompletionItemKind::KEYWORD => Self::Keyword,
+            lsp::CompletionItemKind::SNIPPET => Self::Snippet,
+            lsp::CompletionItemKind::COLOR => Self::Color,
+            lsp::CompletionItemKind::FILE => Self::File,
+            lsp::CompletionItemKind::REFERENCE => Self::Reference,
+            lsp::CompletionItemKind::FOLDER => Self::Folder,
+            lsp::CompletionItemKind::ENUM_MEMBER => Self::EnumMember,
+            lsp::CompletionItemKind::CONSTANT => Self::Constant,
+            lsp::CompletionItemKind::STRUCT => Self::Struct,
+            lsp::CompletionItemKind::EVENT => Self::Event,
+            lsp::CompletionItemKind::OPERATOR => Self::Operator,
+            lsp::CompletionItemKind::TYPE_PARAMETER => Self::TypeParameter,
+            _ => Self::Other(extract_int(value)),
+        }
+    }
+}
+
+impl From<lsp::InsertTextFormat> for wit::InsertTextFormat {
+    fn from(value: lsp::InsertTextFormat) -> Self {
+        match value {
+            lsp::InsertTextFormat::PLAIN_TEXT => Self::PlainText,
+            lsp::InsertTextFormat::SNIPPET => Self::Snippet,
+            _ => Self::Other(extract_int(value)),
+        }
+    }
+}
+
+impl From<lsp::SymbolKind> for wit::SymbolKind {
+    fn from(value: lsp::SymbolKind) -> Self {
+        match value {
+            lsp::SymbolKind::FILE => Self::File,
+            lsp::SymbolKind::MODULE => Self::Module,
+            lsp::SymbolKind::NAMESPACE => Self::Namespace,
+            lsp::SymbolKind::PACKAGE => Self::Package,
+            lsp::SymbolKind::CLASS => Self::Class,
+            lsp::SymbolKind::METHOD => Self::Method,
+            lsp::SymbolKind::PROPERTY => Self::Property,
+            lsp::SymbolKind::FIELD => Self::Field,
+            lsp::SymbolKind::CONSTRUCTOR => Self::Constructor,
+            lsp::SymbolKind::ENUM => Self::Enum,
+            lsp::SymbolKind::INTERFACE => Self::Interface,
+            lsp::SymbolKind::FUNCTION => Self::Function,
+            lsp::SymbolKind::VARIABLE => Self::Variable,
+            lsp::SymbolKind::CONSTANT => Self::Constant,
+            lsp::SymbolKind::STRING => Self::String,
+            lsp::SymbolKind::NUMBER => Self::Number,
+            lsp::SymbolKind::BOOLEAN => Self::Boolean,
+            lsp::SymbolKind::ARRAY => Self::Array,
+            lsp::SymbolKind::OBJECT => Self::Object,
+            lsp::SymbolKind::KEY => Self::Key,
+            lsp::SymbolKind::NULL => Self::Null,
+            lsp::SymbolKind::ENUM_MEMBER => Self::EnumMember,
+            lsp::SymbolKind::STRUCT => Self::Struct,
+            lsp::SymbolKind::EVENT => Self::Event,
+            lsp::SymbolKind::OPERATOR => Self::Operator,
+            lsp::SymbolKind::TYPE_PARAMETER => Self::TypeParameter,
+            _ => Self::Other(extract_int(value)),
+        }
+    }
+}
+
+fn extract_int<T: Serialize>(value: T) -> i32 {
+    maybe!({
+        let kind = serde_json::to_value(&value)?;
+        serde_json::from_value(kind)
+    })
+    .log_err()
+    .unwrap_or(-1)
+}
+
+#[test]
+fn test_build_code_label() {
+    use util::test::marked_text_ranges;
+
+    let (code, ranges) = marked_text_ranges(
+        "«const» «a»: «fn»(«Bcd»(«Efgh»)) -> «Ijklm» = pqrs.tuv",
+        false,
+    );
+    let runs = ranges
+        .iter()
+        .map(|range| (range.clone(), HighlightId(0)))
+        .collect::<Vec<_>>();
+
+    let label = build_code_label(
+        &wit::CodeLabel {
+            spans: vec![
+                wit::CodeLabelSpan::CodeRange(wit::Range {
+                    start: code.find("pqrs").unwrap() as u32,
+                    end: code.len() as u32,
+                }),
+                wit::CodeLabelSpan::CodeRange(wit::Range {
+                    start: code.find(": fn").unwrap() as u32,
+                    end: code.find(" = ").unwrap() as u32,
+                }),
+            ],
+            filter_range: wit::Range {
+                start: 0,
+                end: "pqrs.tuv".len() as u32,
+            },
+            code,
+        },
+        &runs,
+        &language::PLAIN_TEXT,
+    );
+
+    let (text, ranges) = marked_text_ranges("pqrs.tuv: «fn»(«Bcd»(«Efgh»)) -> «Ijklm»", false);
+    let runs = ranges
+        .iter()
+        .map(|range| (range.clone(), HighlightId(0)))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        label,
+        CodeLabel {
+            text,
+            runs,
+            filter_range: label.filter_range.clone()
+        }
+    )
 }

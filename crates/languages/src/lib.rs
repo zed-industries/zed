@@ -1,11 +1,12 @@
 use anyhow::Context;
-use gpui::AppContext;
+use gpui::{AppContext, BorrowAppContext};
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
+use smol::stream::StreamExt;
 use std::{str, sync::Arc};
-use util::asset_str;
+use util::{asset_str, ResultExt};
 
 use crate::{elixir::elixir_task_context, rust::RustContextProvider};
 
@@ -13,12 +14,10 @@ use self::{deno::DenoSettings, elixir::ElixirSettings};
 
 mod c;
 mod css;
-mod dart;
 mod deno;
 mod elixir;
 mod elm;
 mod go;
-mod html;
 mod json;
 mod lua;
 mod nu;
@@ -71,7 +70,6 @@ pub fn init(
         ("gowork", tree_sitter_gowork::language()),
         ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
-        ("html", tree_sitter_html::language()),
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("lua", tree_sitter_lua::language()),
@@ -94,7 +92,6 @@ pub fn init(
         ("typescript", tree_sitter_typescript::language_typescript()),
         ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
-        ("dart", tree_sitter_dart::language()),
     ]);
 
     macro_rules! language {
@@ -275,13 +272,6 @@ pub fn init(
         }
     }
 
-    language!(
-        "html",
-        vec![
-            Arc::new(html::HtmlLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
     language!("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
     language!(
         "erb",
@@ -321,10 +311,13 @@ pub fn init(
         vec![Arc::new(terraform::TerraformLspAdapter)]
     );
     language!("hcl", vec![]);
-    language!("dart", vec![Arc::new(dart::DartLanguageServer {})]);
 
     languages.register_secondary_lsp_adapter(
         "Astro".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
+    languages.register_secondary_lsp_adapter(
+        "HTML".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
     );
     languages.register_secondary_lsp_adapter(
@@ -335,6 +328,27 @@ pub fn init(
         "Svelte".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
     );
+
+    let mut subscription = languages.subscribe();
+    let mut prev_language_settings = languages.language_settings();
+
+    cx.spawn(|cx| async move {
+        while subscription.next().await.is_some() {
+            let language_settings = languages.language_settings();
+            if language_settings != prev_language_settings {
+                cx.update(|cx| {
+                    cx.update_global(|settings: &mut SettingsStore, cx| {
+                        settings
+                            .set_extension_settings(language_settings.clone(), cx)
+                            .log_err();
+                    });
+                })?;
+                prev_language_settings = language_settings;
+            }
+        }
+        anyhow::Ok(())
+    })
+    .detach();
 }
 
 #[cfg(any(test, feature = "test-support"))]
