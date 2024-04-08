@@ -85,13 +85,29 @@ impl Bind for SerializedWindowOpenStatus {
                     next_index,
                 )
             }
-            WindowOpenStatus::Maximized => {
+            WindowOpenStatus::Maximized(bounds) => {
                 let next_index = statement.bind(&"Maximized", start_index)?;
-                statement.bind(&(0.0, 0.0, 0.0, 0.0), next_index)
+                statement.bind(
+                    &(
+                        SerializedDevicePixels(bounds.origin.x),
+                        SerializedDevicePixels(bounds.origin.y),
+                        SerializedDevicePixels(bounds.size.width),
+                        SerializedDevicePixels(bounds.size.height),
+                    ),
+                    next_index,
+                )
             }
-            WindowOpenStatus::FullScreen => {
+            WindowOpenStatus::FullScreen(bounds) => {
                 let next_index = statement.bind(&"FullScreen", start_index)?;
-                statement.bind(&(0.0, 0.0, 0.0, 0.0), next_index)
+                statement.bind(
+                    &(
+                        SerializedDevicePixels(bounds.origin.x),
+                        SerializedDevicePixels(bounds.origin.y),
+                        SerializedDevicePixels(bounds.size.width),
+                        SerializedDevicePixels(bounds.size.height),
+                    ),
+                    next_index,
+                )
             }
         }
     }
@@ -112,8 +128,28 @@ impl Column for SerializedWindowOpenStatus {
                     size: size(width.into(), height.into()),
                 })))
             }
-            "Maximized" => SerializedWindowOpenStatus(WindowOpenStatus::Maximized),
-            "FullScreen" => SerializedWindowOpenStatus(WindowOpenStatus::FullScreen),
+            "Maximized" => {
+                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
+                let x: i32 = x;
+                let y: i32 = y;
+                let width: i32 = width;
+                let height: i32 = height;
+                SerializedWindowOpenStatus(WindowOpenStatus::Maximized(Bounds {
+                    origin: point(x.into(), y.into()),
+                    size: size(width.into(), height.into()),
+                }))
+            }
+            "FullScreen" => {
+                let ((x, y, width, height), _) = Column::column(statement, next_index)?;
+                let x: i32 = x;
+                let y: i32 = y;
+                let width: i32 = width;
+                let height: i32 = height;
+                SerializedWindowOpenStatus(WindowOpenStatus::FullScreen(Bounds {
+                    origin: point(x.into(), y.into()),
+                    size: size(width.into(), height.into()),
+                }))
+            }
             _ => bail!("Window State did not have a valid string"),
         };
 
