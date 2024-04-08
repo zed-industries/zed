@@ -231,14 +231,39 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
-        let (x, y, nwidth, nheight) = match params.open_status {
+        let (x, y, nwidth, nheight, show_cmd, fullscreen) = match params.open_status {
             WindowOpenStatus::Windowed(Some(bounds)) => (
                 bounds.origin.x.0,
                 bounds.origin.y.0,
                 bounds.size.width.0,
                 bounds.size.height.0,
+                SW_SHOW,
+                false,
             ),
-            _ => (CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT),
+            WindowOpenStatus::Maximized(bounds) => (
+                bounds.origin.x.0,
+                bounds.origin.y.0,
+                bounds.size.width.0,
+                bounds.size.height.0,
+                SW_SHOWMAXIMIZED,
+                false,
+            ),
+            WindowOpenStatus::FullScreen(bounds) => (
+                bounds.origin.x.0,
+                bounds.origin.y.0,
+                bounds.size.width.0,
+                bounds.size.height.0,
+                SW_SHOW,
+                true,
+            ),
+            _ => (
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                SW_SHOW,
+                false,
+            ),
         };
         let hwndparent = HWND::default();
         let hmenu = HMENU::default();
@@ -277,13 +302,8 @@ impl WindowsWindow {
         register_drag_drop(state_ptr.clone());
         let wnd = Self(state_ptr);
 
-        let show_cmd = match params.open_status {
-            WindowOpenStatus::Windowed(_) => SW_SHOW,
-            WindowOpenStatus::Maximized => SW_SHOWMAXIMIZED,
-            WindowOpenStatus::FullScreen => SW_SHOW,
-        };
         unsafe { ShowWindow(raw_hwnd, show_cmd) };
-        if params.open_status == WindowOpenStatus::FullScreen {
+        if fullscreen {
             wnd.toggle_fullscreen();
         }
 
