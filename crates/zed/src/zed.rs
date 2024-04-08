@@ -10,7 +10,7 @@ use collections::VecDeque;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
-    TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
+    TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOpenStatus, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
@@ -96,13 +96,12 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             appears_transparent: true,
             traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
-        open_status: None,
+        open_status: WindowOpenStatus::Windowed(None),
         focus: false,
         show: false,
         kind: WindowKind::Normal,
         is_movable: true,
         display_id: display.map(|display| display.id()),
-        fullscreen: false,
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
     }
