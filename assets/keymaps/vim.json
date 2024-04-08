@@ -137,8 +137,10 @@
       "g d": "editor::GoToDefinition",
       "g shift-d": "editor::GoToTypeDefinition",
       "g x": "editor::OpenUrl",
-      "g n": "vim::SelectNext",
-      "g shift-n": "vim::SelectPrevious",
+      "g n": "vim::SelectNextMatch",
+      "g shift-n": "vim::SelectPreviousMatch",
+      "g l": "vim::SelectNext",
+      "g shift-l": "vim::SelectPrevious",
       "g >": [
         "editor::SelectNext",
         {
@@ -383,15 +385,43 @@
     }
   },
   {
+    "context": "Editor && vim_mode == normal && vim_operator == c",
+    "bindings": {
+      "s": [
+        "vim::PushOperator",
+        {
+          "ChangeSurrounds": {}
+        }
+      ]
+    }
+  },
+  {
     "context": "Editor && vim_operator == d",
     "bindings": {
       "d": "vim::CurrentLine"
     }
   },
   {
+    "context": "Editor && vim_mode == normal && vim_operator == d",
+    "bindings": {
+      "s": ["vim::PushOperator", "DeleteSurrounds"]
+    }
+  },
+  {
     "context": "Editor && vim_operator == y",
     "bindings": {
       "y": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "Editor && vim_mode == normal && vim_operator == y",
+    "bindings": {
+      "s": [
+        "vim::PushOperator",
+        {
+          "AddSurrounds": {}
+        }
+      ]
     }
   },
   {
@@ -510,7 +540,7 @@
       "ctrl-[": "vim::NormalBefore",
       "ctrl-x ctrl-o": "editor::ShowCompletions",
       "ctrl-x ctrl-a": "assistant::InlineAssist", // zed specific
-      "ctrl-x ctrl-c": "copilot::Suggest", // zed specific
+      "ctrl-x ctrl-c": "editor::ShowInlineCompletion", // zed specific
       "ctrl-x ctrl-l": "editor::ToggleCodeActions", // zed specific
       "ctrl-x ctrl-z": "editor::Cancel",
       "ctrl-w": "editor::DeleteToPreviousWordStart",
@@ -544,6 +574,12 @@
     "bindings": {
       "enter": "vim::SearchSubmit",
       "escape": "buffer_search::Dismiss"
+    }
+  },
+  {
+    "context": "EmptyPane || SharedScreen",
+    "bindings": {
+      ":": "command_palette::Toggle"
     }
   },
   {

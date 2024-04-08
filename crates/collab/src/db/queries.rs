@@ -5,6 +5,7 @@ pub mod buffers;
 pub mod channels;
 pub mod contacts;
 pub mod contributors;
+pub mod dev_servers;
 pub mod extensions;
 pub mod hosted_projects;
 pub mod messages;

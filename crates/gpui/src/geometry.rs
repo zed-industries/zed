@@ -13,7 +13,7 @@ use std::{
     ops::{Add, Div, Mul, MulAssign, Sub},
 };
 
-use crate::AppContext;
+use crate::{AppContext, DisplayId};
 
 /// An axis along which a measurement can be made.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -363,11 +363,11 @@ pub struct Size<T: Clone + Default + Debug> {
     pub height: T,
 }
 
-impl From<Size<GlobalPixels>> for Size<Pixels> {
-    fn from(size: Size<GlobalPixels>) -> Self {
+impl From<Size<DevicePixels>> for Size<Pixels> {
+    fn from(size: Size<DevicePixels>) -> Self {
         Size {
-            width: Pixels(size.width.0),
-            height: Pixels(size.height.0),
+            width: Pixels(size.width.0 as f32),
+            height: Pixels(size.height.0 as f32),
         }
     }
 }
@@ -604,11 +604,11 @@ impl<T: Clone + Default + Debug> From<Point<T>> for Size<T> {
     }
 }
 
-impl From<Size<Pixels>> for Size<GlobalPixels> {
+impl From<Size<Pixels>> for Size<DevicePixels> {
     fn from(size: Size<Pixels>) -> Self {
         Size {
-            width: GlobalPixels(size.width.0),
-            height: GlobalPixels(size.height.0),
+            width: DevicePixels(size.width.0 as i32),
+            height: DevicePixels(size.height.0 as i32),
         }
     }
 }
@@ -693,31 +693,43 @@ pub struct Bounds<T: Clone + Default + Debug> {
     pub size: Size<T>,
 }
 
-impl Bounds<GlobalPixels> {
-    /// Generate a centered bounds for the primary display
-    pub fn centered(size: impl Into<Size<GlobalPixels>>, cx: &mut AppContext) -> Self {
+impl Bounds<DevicePixels> {
+    /// Generate a centered bounds for the given display or primary display if none is provided
+    pub fn centered(
+        display_id: Option<DisplayId>,
+        size: impl Into<Size<DevicePixels>>,
+        cx: &mut AppContext,
+    ) -> Self {
+        let display = display_id
+            .and_then(|id| cx.find_display(id))
+            .or_else(|| cx.primary_display());
+
         let size = size.into();
-        cx.primary_display()
+        display
             .map(|display| {
                 let center = display.bounds().center();
                 Bounds {
-                    origin: point(center.x - size.width / 2.0, center.y - size.height / 2.0),
+                    origin: point(center.x - size.width / 2, center.y - size.height / 2),
                     size,
                 }
             })
             .unwrap_or_else(|| Bounds {
-                origin: point(GlobalPixels(0.0), GlobalPixels(0.0)),
+                origin: point(DevicePixels(0), DevicePixels(0)),
                 size,
             })
     }
 
-    /// Generate maximized bounds for the primary display
-    pub fn maximized(cx: &mut AppContext) -> Self {
-        cx.primary_display()
+    /// Generate maximized bounds for the given display or primary display if none is provided
+    pub fn maximized(display_id: Option<DisplayId>, cx: &mut AppContext) -> Self {
+        let display = display_id
+            .and_then(|id| cx.find_display(id))
+            .or_else(|| cx.primary_display());
+
+        display
             .map(|display| display.bounds())
             .unwrap_or_else(|| Bounds {
-                origin: point(GlobalPixels(0.0), GlobalPixels(0.0)),
-                size: size(GlobalPixels(1024.0), GlobalPixels(768.0)),
+                origin: point(DevicePixels(0), DevicePixels(0)),
+                size: size(DevicePixels(1024), DevicePixels(768)),
             })
     }
 }
@@ -2455,34 +2467,6 @@ impl From<ScaledPixels> for f64 {
     }
 }
 
-/// Represents pixels in a global coordinate space, which can span across multiple displays.
-///
-/// `GlobalPixels` is used when dealing with a coordinate system that is not limited to a single
-/// display's boundaries. This type is particularly useful in multi-monitor setups where
-/// positioning and measurements need to be consistent and relative to a "global" origin point
-/// rather than being relative to any individual display.
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
-#[repr(transparent)]
-pub struct GlobalPixels(pub(crate) f32);
-
-impl Debug for GlobalPixels {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} px (global coordinate space)", self.0)
-    }
-}
-
-impl From<GlobalPixels> for f64 {
-    fn from(global_pixels: GlobalPixels) -> Self {
-        global_pixels.0 as f64
-    }
-}
-
-impl From<f64> for GlobalPixels {
-    fn from(global_pixels: f64) -> Self {
-        GlobalPixels(global_pixels as f32)
-    }
-}
-
 /// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [`WindowContext::set_rem_size`][set_rem_size].
 ///
 /// Rems are used for defining lengths that are scalable and consistent across different UI elements.
@@ -2495,6 +2479,13 @@ impl From<f64> for GlobalPixels {
 /// [set_rem_size]: crate::WindowContext::set_rem_size
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg, PartialEq)]
 pub struct Rems(pub f32);
+
+impl Rems {
+    /// Convert this Rem value to pixels.
+    pub fn to_pixels(&self, rem_size: Pixels) -> Pixels {
+        *self * rem_size
+    }
+}
 
 impl Mul<Pixels> for Rems {
     type Output = Pixels;
@@ -2571,7 +2562,7 @@ impl AbsoluteLength {
     pub fn to_pixels(&self, rem_size: Pixels) -> Pixels {
         match self {
             AbsoluteLength::Pixels(pixels) => *pixels,
-            AbsoluteLength::Rems(rems) => *rems * rem_size,
+            AbsoluteLength::Rems(rems) => rems.to_pixels(rem_size),
         }
     }
 }
@@ -2834,12 +2825,6 @@ impl Half for Rems {
     }
 }
 
-impl Half for GlobalPixels {
-    fn half(&self) -> Self {
-        Self(self.0 / 2.)
-    }
-}
-
 /// Provides a trait for types that can negate their values.
 pub trait Negate {
     /// Returns the negation of the given value
@@ -2877,12 +2862,6 @@ impl Negate for Pixels {
 }
 
 impl Negate for Rems {
-    fn negate(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl Negate for GlobalPixels {
     fn negate(self) -> Self {
         Self(-self.0)
     }

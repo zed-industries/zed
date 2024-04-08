@@ -1,0 +1,15 @@
+id = "zig"
+name = "Zig"
+description = "Zig support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Allan Calix <contact@acx.dev>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.zls]
+name = "zls"
+language = "Zig"
+
+[grammars.zig]
+repository = "https://github.com/maxxnino/tree-sitter-zig"
+commit = "0d08703e4c3f426ec61695d7617415fff97029bd"

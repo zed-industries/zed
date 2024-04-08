@@ -1,6 +1,6 @@
 # Contexts
 
-GPUI makes extensive use of *context parameters*, typically named `cx` and positioned at the end of the parameter list, unless they're before a final function parameter. A context reference provides access to application state and services.
+GPUI makes extensive use of _context parameters_, typically named `cx` and positioned at the end of the parameter list, unless they're before a final function parameter. A context reference provides access to application state and services.
 
 There are multiple kinds of contexts, and contexts implement the `Deref` trait so that a function taking `&mut AppContext` could be passed a `&mut WindowContext` or `&mut ViewContext` instead.
 
@@ -30,7 +30,7 @@ Available when you create or update a `Model<T>`. It derefs to an `AppContext`, 
 
 ## `ViewContext<V>`
 
-Available when you create or update a `View<V>`. It derefs to a `WindowContext`, but also contains methods specific to the particular view, such as the ability to notify change observers or emit events.
+Available when you create or update a `View<V>`. It derefs to a `WindowContext`, but also contains methods specific to the particular view, such as the ability to notify change observers or emit events.
 
 ## `AsyncAppContext` and `AsyncWindowContext`
 

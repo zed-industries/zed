@@ -66,6 +66,17 @@ impl KeyBinding {
 impl RenderOnce for KeyBinding {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
+            .debug_selector(|| {
+                format!(
+                    "KEY_BINDING-{}",
+                    self.key_binding
+                        .keystrokes()
+                        .iter()
+                        .map(|k| k.key.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            })
             .flex_none()
             .gap_2()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
@@ -102,7 +113,7 @@ impl RenderOnce for KeyBinding {
                             el.child(Key::new("Alt")).child(Key::new("+"))
                         }
                     })
-                    .when(keystroke.modifiers.command, |el| {
+                    .when(keystroke.modifiers.platform, |el| {
                         match self.platform_style {
                             PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Command)),
                             PlatformStyle::Linux => {

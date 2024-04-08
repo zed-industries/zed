@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::AppContext;
+use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{async_maybe, ResultExt};
+use util::{maybe, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/.bin/tailwindcss-language-server";
 
@@ -107,12 +107,16 @@ impl LspAdapter for TailwindLspAdapter {
         })))
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, _: &mut AppContext) -> Value {
-        json!({
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        Ok(json!({
             "tailwindCSS": {
                 "emmetCompletions": true,
             }
-        })
+        }))
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
@@ -127,6 +131,7 @@ impl LspAdapter for TailwindLspAdapter {
             ("HEEX".to_string(), "phoenix-heex".to_string()),
             ("ERB".to_string(), "erb".to_string()),
             ("PHP".to_string(), "php".to_string()),
+            ("Vue.js".to_string(), "vue".to_string()),
         ])
     }
 }
@@ -135,7 +140,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

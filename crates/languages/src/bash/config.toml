@@ -1,4 +1,5 @@
 name = "Shell Script"
+code_fence_block_name = "bash"
 grammar = "bash"
 path_suffixes = ["sh", "bash", "bashrc", "bash_profile", "bash_aliases", "bash_logout", "profile", "zsh", "zshrc", "zshenv", "zsh_profile", "zsh_aliases", "zsh_histfile", "zlogin", "zprofile", ".env"]
 line_comments = ["# "]

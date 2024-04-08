@@ -1,23 +1,23 @@
 use crate::{
     item::{ClosePosition, Item, ItemHandle, ItemSettings, WeakItemHandle},
     toolbar::Toolbar,
-    workspace_settings::{AutosaveSetting, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    actions, impl_actions, overlay, prelude::*, Action, AnchorCorner, AnyElement, AppContext,
-    AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, Model, MouseButton, NavigationDirection, Pixels,
-    Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext,
-    WeakFocusHandle, WeakView, WindowContext,
+    actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
+    AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
+    EventEmitter, ExternalPaths, FocusHandle, FocusableView, KeyContext, Model, MouseButton,
+    NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle, Subscription, Task,
+    View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{
     any::Any,
     cmp, fmt, mem,
@@ -159,6 +159,10 @@ impl fmt::Debug for Event {
     }
 }
 
+/// A container for 0 to many items that are open in the workspace.
+/// Treats all items uniformly via the [`ItemHandle`] trait, whether it's an editor, search results multibuffer, terminal or something else,
+/// responsible for managing item tabs, focus and zoom states and drag and drop features.
+/// Can be split, see `PaneGroup` for more details.
 pub struct Pane {
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
@@ -252,6 +256,7 @@ impl Pane {
             cx.on_focus(&focus_handle, Pane::focus_in),
             cx.on_focus_in(&focus_handle, Pane::focus_in),
             cx.on_focus_out(&focus_handle, Pane::focus_out),
+            cx.observe_global::<SettingsStore>(Self::settings_changed),
         ];
 
         let handle = cx.view().downgrade();
@@ -346,7 +351,7 @@ impl Pane {
                     })
                     .into_any_element()
             }),
-            display_nav_history_buttons: true,
+            display_nav_history_buttons: TabBarSettings::get_global(cx).show_nav_history_buttons,
             _subscriptions: subscriptions,
             double_click_dispatch_action,
         }
@@ -414,8 +419,17 @@ impl Pane {
         cx.notify();
     }
 
+    fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.display_nav_history_buttons = TabBarSettings::get_global(cx).show_nav_history_buttons;
+        cx.notify();
+    }
+
     pub fn active_item_index(&self) -> usize {
         self.active_item_index
+    }
+
+    pub fn activation_history(&self) -> &Vec<EntityId> {
+        &self.activation_history
     }
 
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
@@ -1305,17 +1319,7 @@ impl Pane {
 
         let label = item.tab_content(Some(detail), is_active, cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
-
-        let indicator = maybe!({
-            let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
-                (true, _) => Color::Warning,
-                (_, true) => Color::Accent,
-                (false, false) => return None,
-            };
-
-            Some(Indicator::dot().color(indicator_color))
-        });
-
+        let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
@@ -1525,7 +1529,7 @@ impl Pane {
                 self.items
                     .iter()
                     .enumerate()
-                    .zip(self.tab_details(cx))
+                    .zip(tab_details(&self.items, cx))
                     .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
             )
             .child(
@@ -1564,49 +1568,14 @@ impl Pane {
     }
 
     fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
-        div()
-            .absolute()
-            .bottom_0()
-            .right_0()
-            .size_0()
-            .child(overlay().anchor(AnchorCorner::TopRight).child(menu.clone()))
-    }
-
-    fn tab_details(&self, cx: &AppContext) -> Vec<usize> {
-        let mut tab_details = self.items.iter().map(|_| 0).collect::<Vec<_>>();
-
-        let mut tab_descriptions = HashMap::default();
-        let mut done = false;
-        while !done {
-            done = true;
-
-            // Store item indices by their tab description.
-            for (ix, (item, detail)) in self.items.iter().zip(&tab_details).enumerate() {
-                if let Some(description) = item.tab_description(*detail, cx) {
-                    if *detail == 0
-                        || Some(&description) != item.tab_description(detail - 1, cx).as_ref()
-                    {
-                        tab_descriptions
-                            .entry(description)
-                            .or_insert(Vec::new())
-                            .push(ix);
-                    }
-                }
-            }
-
-            // If two or more items have the same tab description, increase eir level
-            // of detail and try again.
-            for (_, item_ixs) in tab_descriptions.drain() {
-                if item_ixs.len() > 1 {
-                    done = false;
-                    for ix in item_ixs {
-                        tab_details[ix] += 1;
-                    }
-                }
-            }
-        }
-
-        tab_details
+        div().absolute().bottom_0().right_0().size_0().child(
+            deferred(
+                anchored()
+                    .anchor(AnchorCorner::TopRight)
+                    .child(menu.clone()),
+            )
+            .with_priority(1),
+        )
     }
 
     pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ViewContext<Self>) {
@@ -1770,8 +1739,14 @@ impl FocusableView for Pane {
 
 impl Render for Pane {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let mut key_context = KeyContext::default();
+        key_context.add("Pane");
+        if self.active_item().is_none() {
+            key_context.add("EmptyPane");
+        }
+
         v_flex()
-            .key_context("Pane")
+            .key_context(key_context)
             .track_focus(&self.focus_handle)
             .size_full()
             .flex_none()
@@ -2121,6 +2096,54 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
         .unwrap_or("This buffer");
     let path = truncate_and_remove_front(path, 80);
     format!("{path} contains unsaved edits. Do you want to save it?")
+}
+
+pub fn tab_details(items: &Vec<Box<dyn ItemHandle>>, cx: &AppContext) -> Vec<usize> {
+    let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
+    let mut tab_descriptions = HashMap::default();
+    let mut done = false;
+    while !done {
+        done = true;
+
+        // Store item indices by their tab description.
+        for (ix, (item, detail)) in items.iter().zip(&tab_details).enumerate() {
+            if let Some(description) = item.tab_description(*detail, cx) {
+                if *detail == 0
+                    || Some(&description) != item.tab_description(detail - 1, cx).as_ref()
+                {
+                    tab_descriptions
+                        .entry(description)
+                        .or_insert(Vec::new())
+                        .push(ix);
+                }
+            }
+        }
+
+        // If two or more items have the same tab description, increase their level
+        // of detail and try again.
+        for (_, item_ixs) in tab_descriptions.drain() {
+            if item_ixs.len() > 1 {
+                done = false;
+                for ix in item_ixs {
+                    tab_details[ix] += 1;
+                }
+            }
+        }
+    }
+
+    tab_details
+}
+
+pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> Option<Indicator> {
+    maybe!({
+        let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
+            (true, _) => Color::Warning,
+            (_, true) => Color::Accent,
+            (false, false) => return None,
+        };
+
+        Some(Indicator::dot().color(indicator_color))
+    })
 }
 
 #[cfg(test)]

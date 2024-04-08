@@ -7,10 +7,9 @@ use lsp::{CodeActionKind, LanguageServerBinary};
 use smol::fs::{self, File};
 use std::{any::Any, ffi::OsString, path::PathBuf};
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 fn terraform_ls_binary_arguments() -> Vec<OsString> {
@@ -154,7 +153,7 @@ fn build_download_url(version: String) -> Result<String> {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

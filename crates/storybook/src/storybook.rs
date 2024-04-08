@@ -85,7 +85,7 @@ fn main() {
         cx.set_menus(app_menus());
 
         let size = size(px(1500.), px(780.));
-        let bounds = Bounds::centered(size, cx);
+        let bounds = Bounds::centered(None, size, cx);
         let _window = cx.open_window(
             WindowOptions {
                 bounds: Some(bounds),

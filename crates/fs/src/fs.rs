@@ -9,7 +9,7 @@ use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
-use repository::GitRepository;
+use repository::{GitRepository, RealGitRepository};
 use rope::Rope;
 #[cfg(any(test, feature = "test-support"))]
 use smol::io::AsyncReadExt;
@@ -111,7 +111,16 @@ pub struct Metadata {
     pub is_dir: bool,
 }
 
-pub struct RealFs;
+#[derive(Default)]
+pub struct RealFs {
+    git_binary_path: Option<PathBuf>,
+}
+
+impl RealFs {
+    pub fn new(git_binary_path: Option<PathBuf>) -> Self {
+        Self { git_binary_path }
+    }
+}
 
 #[async_trait::async_trait]
 impl Fs for RealFs {
@@ -431,7 +440,10 @@ impl Fs for RealFs {
         LibGitRepository::open(dotgit_path)
             .log_err()
             .map::<Arc<Mutex<dyn GitRepository>>, _>(|libgit_repository| {
-                Arc::new(Mutex::new(libgit_repository))
+                Arc::new(Mutex::new(RealGitRepository::new(
+                    libgit_repository,
+                    self.git_binary_path.clone(),
+                )))
             })
     }
 
@@ -820,6 +832,17 @@ impl FakeFs {
                 head_state
                     .iter()
                     .map(|(path, content)| (path.to_path_buf(), content.clone())),
+            );
+        });
+    }
+
+    pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(&Path, git::blame::Blame)>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.blames.clear();
+            state.blames.extend(
+                blames
+                    .into_iter()
+                    .map(|(path, blame)| (path.to_path_buf(), blame)),
             );
         });
     }

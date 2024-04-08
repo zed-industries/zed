@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::AppContext;
+use gpui::AsyncAppContext;
 use language::{
     language_settings::all_language_settings, LanguageServerName, LspAdapter, LspAdapterDelegate,
 };
@@ -15,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{async_maybe, ResultExt};
+use util::{maybe, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/yaml-language-server/bin/yaml-language-server";
 
@@ -92,17 +92,26 @@ impl LspAdapter for YamlLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &*self.node).await
     }
-    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
-        serde_json::json!({
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        let tab_size = cx.update(|cx| {
+            all_language_settings(None, cx)
+                .language(Some("YAML"))
+                .tab_size
+        })?;
+
+        Ok(serde_json::json!({
             "yaml": {
                 "keyOrdering": false
             },
             "[yaml]": {
-                "editor.tabSize": all_language_settings(None, cx)
-                    .language(Some("YAML"))
-                    .tab_size,
+                "editor.tabSize": tab_size
             }
-        })
+        }))
     }
 }
 
@@ -110,7 +119,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

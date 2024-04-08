@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::AppContext;
+use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -15,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{async_maybe, ResultExt};
+use util::{maybe, ResultExt};
 
 const SERVER_NAME: &str = "elm-language-server";
 const SERVER_PATH: &str = "node_modules/@elm-tooling/elm-language-server/out/node/index.js";
@@ -94,16 +94,22 @@ impl LspAdapter for ElmLspAdapter {
         get_cached_server_binary(container_dir, &*self.node).await
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
         // elm-language-server expects workspace didChangeConfiguration notification
         // params to be the same as lsp initialization_options
-        let override_options = ProjectSettings::get_global(cx)
-            .lsp
-            .get(SERVER_NAME)
-            .and_then(|s| s.initialization_options.clone())
-            .unwrap_or_default();
+        let override_options = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(SERVER_NAME)
+                .and_then(|s| s.initialization_options.clone())
+                .unwrap_or_default()
+        })?;
 
-        match override_options.clone().as_object_mut() {
+        Ok(match override_options.clone().as_object_mut() {
             Some(op) => {
                 // elm-language-server requests workspace configuration
                 // for the `elmLS` section, so we have to nest
@@ -112,7 +118,7 @@ impl LspAdapter for ElmLspAdapter {
                 serde_json::to_value(op).unwrap_or_default()
             }
             None => override_options,
-        }
+        })
     }
 }
 
@@ -120,7 +126,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

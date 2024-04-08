@@ -2,9 +2,9 @@
 #![allow(unused)]
 
 use crate::{
-    platform::blade::BladeRenderer, size, Bounds, GlobalPixels, Modifiers, Pixels, PlatformAtlas,
+    platform::blade::BladeRenderer, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowOptions, WindowParams,
+    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
@@ -245,7 +245,7 @@ impl X11WindowState {
             x_window,
             callbacks: RefCell::new(Callbacks::default()),
             inner: RefCell::new(LinuxWindowInner {
-                bounds: params.bounds.map(|v| v.0 as i32),
+                bounds: params.bounds.map(|v| v.0),
                 scale_factor: 1.0,
                 renderer: BladeRenderer::new(gpu, gpu_extent),
                 input_handler: None,
@@ -325,12 +325,8 @@ impl X11WindowState {
 }
 
 impl PlatformWindow for X11Window {
-    fn bounds(&self) -> Bounds<GlobalPixels> {
-        self.0
-            .inner
-            .borrow_mut()
-            .bounds
-            .map(|v| GlobalPixels(v as f32))
+    fn bounds(&self) -> Bounds<DevicePixels> {
+        self.0.inner.borrow_mut().bounds.map(|v| v.into())
     }
 
     // todo(linux)
@@ -406,6 +402,11 @@ impl PlatformWindow for X11Window {
             .unwrap();
     }
 
+    // todo(linux)
+    fn is_active(&self) -> bool {
+        false
+    }
+
     fn set_title(&mut self, title: &str) {
         self.0
             .xcb_connection
@@ -421,6 +422,10 @@ impl PlatformWindow for X11Window {
 
     // todo(linux)
     fn set_edited(&mut self, edited: bool) {}
+
+    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
+        // todo(linux)
+    }
 
     // todo(linux), this corresponds to `orderFrontCharacterPalette` on macOS,
     // but it looks like the equivalent for Linux is GTK specific:

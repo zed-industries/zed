@@ -1,4 +1,6 @@
 use std::fs;
+use zed::lsp::CompletionKind;
+use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
 struct GleamExtension {
@@ -6,19 +8,24 @@ struct GleamExtension {
 }
 
 impl GleamExtension {
-    fn language_server_binary_path(&mut self, config: zed::LanguageServerConfig) -> Result<String> {
+    fn language_server_binary_path(
+        &mut self,
+        language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<String> {
         if let Some(path) = &self.cached_binary_path {
             if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
-                zed::set_language_server_installation_status(
-                    &config.name,
-                    &zed::LanguageServerInstallationStatus::Cached,
-                );
                 return Ok(path.clone());
             }
         }
 
+        if let Some(path) = worktree.which("gleam") {
+            self.cached_binary_path = Some(path.clone());
+            return Ok(path);
+        }
+
         zed::set_language_server_installation_status(
-            &config.name,
+            &language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
         );
         let release = zed::latest_github_release(
@@ -56,7 +63,7 @@ impl GleamExtension {
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
-                &config.name,
+                &language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
@@ -75,11 +82,6 @@ impl GleamExtension {
                     fs::remove_dir_all(&entry.path()).ok();
                 }
             }
-
-            zed::set_language_server_installation_status(
-                &config.name,
-                &zed::LanguageServerInstallationStatus::Downloaded,
-            );
         }
 
         self.cached_binary_path = Some(binary_path.clone());
@@ -96,13 +98,49 @@ impl zed::Extension for GleamExtension {
 
     fn language_server_command(
         &mut self,
-        config: zed::LanguageServerConfig,
-        _worktree: &zed::Worktree,
+        language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         Ok(zed::Command {
-            command: self.language_server_binary_path(config)?,
+            command: self.language_server_binary_path(language_server_id, worktree)?,
             args: vec!["lsp".to_string()],
             env: Default::default(),
+        })
+    }
+
+    fn label_for_completion(
+        &self,
+        _language_server_id: &LanguageServerId,
+        completion: zed::lsp::Completion,
+    ) -> Option<zed::CodeLabel> {
+        let name = &completion.label;
+        let ty = completion.detail?;
+        let let_binding = "let a";
+        let colon = ": ";
+        let assignment = " = ";
+        let call = match completion.kind? {
+            CompletionKind::Function | CompletionKind::Constructor => "()",
+            _ => "",
+        };
+        let code = format!("{let_binding}{colon}{ty}{assignment}{name}{call}");
+
+        Some(CodeLabel {
+            spans: vec![
+                CodeLabelSpan::code_range({
+                    let start = let_binding.len() + colon.len() + ty.len() + assignment.len();
+                    start..start + name.len()
+                }),
+                CodeLabelSpan::code_range({
+                    let start = let_binding.len();
+                    start..start + colon.len()
+                }),
+                CodeLabelSpan::code_range({
+                    let start = let_binding.len() + colon.len();
+                    start..start + ty.len()
+                }),
+            ],
+            filter_range: (0..name.len()).into(),
+            code,
         })
     }
 }

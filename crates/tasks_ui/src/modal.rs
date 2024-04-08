@@ -1,22 +1,23 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
+use crate::{active_item_selection_properties, schedule_task};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
-    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView,
+    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, Global,
+    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
+    ViewContext, VisualContext, WeakView,
 };
-use picker::{
-    highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
-    Picker, PickerDelegate,
-};
-use project::{Inventory, ProjectPath, TaskSourceKind};
+use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
+use project::{Inventory, TaskSourceKind};
 use task::{oneshot_source::OneshotSource, Task, TaskContext};
-use ui::{v_flex, ListItem, ListItemSpacing, RenderOnce, Selectable, WindowContext};
-use util::{paths::PathExt, ResultExt};
+use ui::{
+    div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon, IconButton,
+    IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
+    Tooltip, WindowContext,
+};
+use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-use crate::schedule_task;
 use serde::Deserialize;
 
 /// Spawn a task with name or open tasks modal
@@ -29,6 +30,11 @@ pub struct Spawn {
     pub task_name: Option<String>,
 }
 
+impl Spawn {
+    pub(crate) fn modal() -> Self {
+        Self { task_name: None }
+    }
+}
 /// Rerun last task
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct Rerun {
@@ -45,12 +51,13 @@ impl_actions!(task, [Rerun, Spawn]);
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
-    candidates: Vec<(TaskSourceKind, Arc<dyn Task>)>,
+    candidates: Option<Vec<(TaskSourceKind, Arc<dyn Task>)>>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
     prompt: String,
     task_context: TaskContext,
+    placeholder_text: Arc<str>,
 }
 
 impl TasksModalDelegate {
@@ -62,15 +69,20 @@ impl TasksModalDelegate {
         Self {
             inventory,
             workspace,
-            candidates: Vec::new(),
+            candidates: None,
             matches: Vec::new(),
             selected_index: 0,
             prompt: String::default(),
             task_context,
+            placeholder_text: Arc::from("Run a task..."),
         }
     }
 
     fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<Arc<dyn Task>> {
+        if self.prompt.trim().is_empty() {
+            return None;
+        }
+
         self.inventory
             .update(cx, |inventory, _| inventory.source::<OneshotSource>())?
             .update(cx, |oneshot_source, _| {
@@ -83,19 +95,28 @@ impl TasksModalDelegate {
             })
     }
 
-    fn active_item_path(
-        &mut self,
-        cx: &mut ViewContext<'_, Picker<Self>>,
-    ) -> Option<(PathBuf, ProjectPath)> {
-        let workspace = self.workspace.upgrade()?.read(cx);
-        let project = workspace.project().read(cx);
-        let active_item = workspace.active_item(cx)?;
-        active_item.project_path(cx).and_then(|project_path| {
-            project
-                .worktree_for_id(project_path.worktree_id, cx)
-                .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path))
-                .zip(Some(project_path))
-        })
+    fn delete_oneshot(&mut self, ix: usize, cx: &mut AppContext) {
+        let Some(candidates) = self.candidates.as_mut() else {
+            return;
+        };
+        let Some(task) = candidates.get(ix).map(|(_, task)| task.clone()) else {
+            return;
+        };
+        // We remove this candidate manually instead of .taking() the candidates, as we already know the index;
+        // it doesn't make sense to requery the inventory for new candidates, as that's potentially costly and more often than not it should just return back
+        // the original list without a removed entry.
+        candidates.remove(ix);
+        self.inventory.update(cx, |inventory, cx| {
+            let oneshot_source = inventory.source::<OneshotSource>()?;
+            let task_id = task.id();
+
+            oneshot_source.update(cx, |this, _| {
+                let oneshot_source = this.as_any().downcast_mut::<OneshotSource>()?;
+                oneshot_source.remove(task_id);
+                Some(())
+            });
+            Some(())
+        });
     }
 }
 
@@ -128,16 +149,11 @@ impl TasksModal {
 }
 
 impl Render for TasksModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
         v_flex()
             .key_context("TasksModal")
             .w(rems(34.))
             .child(self.picker.clone())
-            .on_mouse_down_out(cx.listener(|modal, _, cx| {
-                modal.picker.update(cx, |picker, cx| {
-                    picker.cancel(&Default::default(), cx);
-                })
-            }))
     }
 }
 
@@ -166,13 +182,8 @@ impl PickerDelegate for TasksModalDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, cx: &mut WindowContext) -> Arc<str> {
-        Arc::from(format!(
-            "{} use task name as prompt, {} spawns a bash-like task from the prompt, {} runs the selected task",
-            cx.keystroke_text_for(&menu::UseSelectedQuery),
-            cx.keystroke_text_for(&menu::SecondaryConfirm),
-            cx.keystroke_text_for(&menu::Confirm),
-        ))
+    fn placeholder_text(&self, _: &mut WindowContext) -> Arc<str> {
+        self.placeholder_text.clone()
     }
 
     fn update_matches(
@@ -183,19 +194,15 @@ impl PickerDelegate for TasksModalDelegate {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
-                    let (path, worktree) = match picker.delegate.active_item_path(cx) {
-                        Some((abs_path, project_path)) => {
-                            (Some(abs_path), Some(project_path.worktree_id))
-                        }
-                        None => (None, None),
-                    };
-                    picker.delegate.candidates =
+                    let candidates = picker.delegate.candidates.get_or_insert_with(|| {
+                        let (worktree, language) =
+                            active_item_selection_properties(&picker.delegate.workspace, cx);
                         picker.delegate.inventory.update(cx, |inventory, cx| {
-                            inventory.list_tasks(path.as_deref(), worktree, true, cx)
-                        });
-                    picker
-                        .delegate
-                        .candidates
+                            inventory.list_tasks(language, worktree, true, cx)
+                        })
+                    });
+
+                    candidates
                         .iter()
                         .enumerate()
                         .map(|(index, (_, candidate))| StringMatchCandidate {
@@ -235,28 +242,30 @@ impl PickerDelegate for TasksModalDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
+    fn confirm(&mut self, omit_history_entry: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
         let current_match_index = self.selected_index();
-        let task = if secondary {
-            if !self.prompt.trim().is_empty() {
-                self.spawn_oneshot(cx)
-            } else {
-                None
-            }
-        } else {
-            self.matches.get(current_match_index).map(|current_match| {
+        let task = self
+            .matches
+            .get(current_match_index)
+            .and_then(|current_match| {
                 let ix = current_match.candidate_id;
-                self.candidates[ix].1.clone()
-            })
-        };
-
+                self.candidates
+                    .as_ref()
+                    .map(|candidates| candidates[ix].1.clone())
+            });
         let Some(task) = task else {
             return;
         };
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_task(workspace, task.as_ref(), self.task_context.clone(), cx);
+                schedule_task(
+                    workspace,
+                    &task,
+                    self.task_context.clone(),
+                    omit_history_entry,
+                    cx,
+                );
             })
             .ok();
         cx.emit(DismissEvent);
@@ -272,38 +281,94 @@ impl PickerDelegate for TasksModalDelegate {
         selected: bool,
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
-        let (source_kind, _) = &self.candidates[hit.candidate_id];
-        let details = match source_kind {
-            TaskSourceKind::UserInput => "user input".to_string(),
-            TaskSourceKind::Worktree { abs_path, .. } | TaskSourceKind::AbsPath(abs_path) => {
-                abs_path.compact().to_string_lossy().to_string()
-            }
+        let (source_kind, _) = &candidates[hit.candidate_id];
+        let language_name = if let TaskSourceKind::Language { name } = source_kind {
+            Some(name)
+        } else {
+            None
         };
 
-        let highlighted_location = HighlightedMatchWithPaths {
-            match_label: HighlightedText {
-                text: hit.string.clone(),
-                highlight_positions: hit.positions.clone(),
-                char_count: hit.string.chars().count(),
-            },
-            paths: vec![HighlightedText {
-                char_count: details.chars().count(),
-                highlight_positions: Vec::new(),
-                text: details,
-            }],
+        let highlighted_location = HighlightedText {
+            text: hit.string.clone(),
+            highlight_positions: hit.positions.clone(),
+            char_count: hit.string.chars().count(),
         };
+        let language_icon = language_name
+            .and_then(|language| {
+                let language = language.to_lowercase();
+                file_icons::FileIcons::get(cx).get_type_icon(&language)
+            })
+            .map(|icon_path| Icon::from_path(icon_path));
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
+                .map(|this| {
+                    let this = if matches!(source_kind, TaskSourceKind::UserInput) {
+                        let task_index = hit.candidate_id;
+                        let delete_button = div().child(
+                            IconButton::new("delete", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .icon_color(Color::Muted)
+                                .size(ButtonSize::None)
+                                .icon_size(IconSize::XSmall)
+                                .on_click(cx.listener(move |this, _event, cx| {
+                                    cx.stop_propagation();
+                                    cx.prevent_default();
+
+                                    this.delegate.delete_oneshot(task_index, cx);
+                                    this.refresh(cx);
+                                }))
+                                .tooltip(|cx| Tooltip::text("Delete an one-shot task", cx)),
+                        );
+                        this.end_hover_slot(delete_button)
+                    } else {
+                        this
+                    };
+                    if let Some(icon) = language_icon {
+                        this.end_slot(icon)
+                    } else {
+                        this
+                    }
+                })
                 .selected(selected)
                 .child(highlighted_location.render(cx)),
         )
     }
 
     fn selected_as_query(&self) -> Option<String> {
-        Some(self.matches.get(self.selected_index())?.string.clone())
+        use itertools::intersperse;
+        let task_index = self.matches.get(self.selected_index())?.candidate_id;
+        let tasks = self.candidates.as_ref()?;
+        let (_, task) = tasks.get(task_index)?;
+        let mut spawn_prompt = task.prepare_exec(self.task_context.clone())?;
+        if !spawn_prompt.args.is_empty() {
+            spawn_prompt.command.push(' ');
+            spawn_prompt
+                .command
+                .extend(intersperse(spawn_prompt.args, " ".to_string()));
+        }
+        Some(spawn_prompt.command)
+    }
+
+    fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
+        let Some(task) = self.spawn_oneshot(cx) else {
+            return;
+        };
+        self.workspace
+            .update(cx, |workspace, cx| {
+                schedule_task(
+                    workspace,
+                    &task,
+                    self.task_context.clone(),
+                    omit_history_entry,
+                    cx,
+                );
+            })
+            .ok();
+        cx.emit(DismissEvent);
     }
 }
 
@@ -371,18 +436,18 @@ mod tests {
             "Only one task should match the query {query_str}"
         );
 
-        cx.dispatch_action(menu::UseSelectedQuery);
+        cx.dispatch_action(picker::UseSelectedQuery);
         assert_eq!(
             query(&tasks_picker, cx),
-            "example task",
-            "Query should be set to the selected task's name"
+            "echo 4",
+            "Query should be set to the selected task's command"
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["example task"],
-            "No other tasks should be listed"
+            Vec::<String>::new(),
+            "No task should be listed"
         );
-        cx.dispatch_action(menu::Confirm);
+        cx.dispatch_action(picker::ConfirmInput { secondary: false });
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -392,8 +457,8 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["example task", "another one"],
-            "Last recently used task should be listed first"
+            vec!["echo 4", "another one", "example task"],
+            "New oneshot task should be listed first"
         );
 
         let query_str = "echo 4";
@@ -401,11 +466,11 @@ mod tests {
         assert_eq!(query(&tasks_picker, cx), query_str);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "No tasks should match custom command query"
+            vec!["echo 4"],
+            "New oneshot should match custom command query"
         );
 
-        cx.dispatch_action(menu::SecondaryConfirm);
+        cx.dispatch_action(picker::ConfirmInput { secondary: false });
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             query(&tasks_picker, cx),
@@ -414,11 +479,11 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec![query_str, "example task", "another one"],
+            vec![query_str, "another one", "example task"],
             "Last recently used one show task should be listed first"
         );
 
-        cx.dispatch_action(menu::UseSelectedQuery);
+        cx.dispatch_action(picker::UseSelectedQuery);
         assert_eq!(
             query(&tasks_picker, cx),
             query_str,
@@ -428,6 +493,28 @@ mod tests {
             task_names(&tasks_picker, cx),
             vec![query_str],
             "Only custom task should be listed"
+        );
+
+        let query_str = "0";
+        cx.simulate_input(query_str);
+        assert_eq!(query(&tasks_picker, cx), "echo 40");
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            Vec::<String>::new(),
+            "New oneshot should not match any command query"
+        );
+
+        cx.dispatch_action(picker::ConfirmInput { secondary: true });
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            query(&tasks_picker, cx),
+            "",
+            "Query should be reset after confirming"
+        );
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["echo 4", "another one", "example task", "echo 40"],
+            "Last recently used one show task should be listed last, as it is a fire-and-forget task"
         );
     }
 

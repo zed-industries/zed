@@ -3,14 +3,12 @@ pub mod fs;
 pub mod github;
 pub mod http;
 pub mod paths;
-mod semantic_version;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
 use futures::Future;
 use lazy_static::lazy_static;
 use rand::{seq::SliceRandom, Rng};
-pub use semantic_version::*;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -90,6 +88,19 @@ pub fn truncate_and_remove_front(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// Takes only `max_lines` from the string and, if there were more than `max_lines-1`, appends a
+/// a newline and "..." to the string, so that `max_lines` are returned.
+/// Returns string unchanged if its length is smaller than max_lines.
+pub fn truncate_lines_and_trailoff(s: &str, max_lines: usize) -> String {
+    let mut lines = s.lines().take(max_lines).collect::<Vec<_>>();
+    if lines.len() > max_lines - 1 {
+        lines.pop();
+        lines.join("\n") + "\n…"
+    } else {
+        lines.join("\n")
+    }
+}
+
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
     *value += T::from(1);
@@ -116,6 +127,32 @@ where
             }
             start_index = index;
         }
+    }
+}
+
+/// Parse the result of calling `usr/bin/env` with no arguments
+pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
+    let mut current_key: Option<String> = None;
+    let mut current_value: Option<String> = None;
+
+    for line in env.split_terminator('\n') {
+        if let Some(separator_index) = line.find('=') {
+            if &line[..separator_index] != "" {
+                if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
+                    f(key, value)
+                }
+                current_key = Some(line[..separator_index].to_string());
+                current_value = Some(line[separator_index + 1..].to_string());
+                continue;
+            };
+        }
+        if let Some(value) = current_value.as_mut() {
+            value.push('\n');
+            value.push_str(line);
+        }
+    }
+    if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
+        f(key, value)
     }
 }
 
@@ -356,6 +393,7 @@ impl<F: FnOnce()> Drop for Deferred<F> {
 }
 
 /// Run the given function when the returned value is dropped (unless it's cancelled).
+#[must_use]
 pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
     Deferred(Some(f))
 }
@@ -426,21 +464,20 @@ pub fn unzip_option<T, U>(option: Option<(T, U)>) -> (Option<T>, Option<U>) {
     }
 }
 
-/// Evaluates to an immediately invoked function expression. Good for using the ? operator
-/// in functions which do not return an Option or Result
+/// Expands to an immediately-invoked function expression. Good for using the ? operator
+/// in functions which do not return an Option or Result.
+///
+/// Accepts a normal block, an async block, or an async move block.
 #[macro_export]
 macro_rules! maybe {
     ($block:block) => {
         (|| $block)()
     };
-}
-
-/// Evaluates to an immediately invoked function expression. Good for using the ? operator
-/// in functions which do not return an Option or Result, but async.
-#[macro_export]
-macro_rules! async_maybe {
-    ($block:block) => {
-        (|| async move { $block })()
+    (async $block:block) => {
+        (|| async $block)()
+    };
+    (async move $block:block) => {
+        (|| async move $block)()
     };
 }
 
@@ -497,9 +534,8 @@ pub struct NumericPrefixWithSuffix<'a>(i32, &'a str);
 
 impl<'a> NumericPrefixWithSuffix<'a> {
     pub fn from_numeric_prefixed_str(str: &'a str) -> Option<Self> {
-        let mut chars = str.chars();
-        let prefix: String = chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
-        let remainder = chars.as_str();
+        let i = str.chars().take_while(|c| c.is_ascii_digit()).count();
+        let (prefix, remainder) = str.split_at(i);
 
         match prefix.parse::<i32>() {
             Ok(prefix) => Some(NumericPrefixWithSuffix(prefix, remainder)),
@@ -581,6 +617,33 @@ mod tests {
     }
 
     #[test]
+    fn test_numeric_prefix_str_method() {
+        let target = "1a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, "a"))
+        );
+
+        let target = "12ab";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, "ab"))
+        );
+
+        let target = "12_ab";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, "_ab"))
+        );
+
+        let target = "1_2ab";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, "_2ab"))
+        );
+    }
+
+    #[test]
     fn test_numeric_prefix_with_suffix() {
         let mut sorted = vec!["1-abc", "10", "11def", "2", "21-abc"];
         sorted.sort_by_key(|s| {
@@ -614,5 +677,32 @@ mod tests {
         for (text, expected_result) in words_to_test {
             assert_eq!(word_consists_of_emojis(text), expected_result);
         }
+    }
+
+    #[test]
+    fn test_truncate_lines_and_trailoff() {
+        let text = r#"Line 1
+Line 2
+Line 3"#;
+
+        assert_eq!(
+            truncate_lines_and_trailoff(text, 2),
+            r#"Line 1
+…"#
+        );
+
+        assert_eq!(
+            truncate_lines_and_trailoff(text, 3),
+            r#"Line 1
+Line 2
+…"#
+        );
+
+        assert_eq!(
+            truncate_lines_and_trailoff(text, 4),
+            r#"Line 1
+Line 2
+Line 3"#
+        );
     }
 }

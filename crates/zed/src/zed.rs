@@ -33,6 +33,8 @@ use task::{
     oneshot_source::OneshotSource,
     static_source::{StaticSource, TrackedFile},
 };
+use theme::ActiveTheme;
+
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
     asset_str,
@@ -93,7 +95,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         titlebar: Some(TitlebarOptions {
             title: None,
             appears_transparent: true,
-            traffic_light_position: Some(point(px(9.5), px(9.5))),
+            traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
         bounds: None,
         focus: false,
@@ -102,6 +104,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         is_movable: true,
         display_id: display.map(|display| display.id()),
         fullscreen: false,
+        window_background: cx.theme().window_background_appearance(),
     }
 }
 
@@ -124,6 +127,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
+        let tasks_indicator = tasks_ui::TaskStatusIndicator::new(workspace.weak_handle(), cx);
         let active_buffer_language =
             cx.new_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let vim_mode_indicator = cx.new_view(|cx| vim::ModeIndicator::new(cx));
@@ -133,6 +137,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(copilot, cx);
+            status_bar.add_right_item(tasks_indicator, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);
@@ -872,8 +877,8 @@ mod tests {
     use collections::HashSet;
     use editor::{scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
-        actions, Action, AnyWindowHandle, AppContext, AssetSource, Entity, TestAppContext,
-        VisualTestContext, WindowHandle,
+        actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity,
+        TestAppContext, VisualTestContext, WindowHandle,
     };
     use language::{LanguageMatcher, LanguageRegistry};
     use project::{Project, ProjectPath, WorktreeSettings};
@@ -3066,6 +3071,7 @@ mod tests {
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
+            command_palette::init(cx);
             language::init(cx);
             editor::init(cx);
             project_panel::init_settings(cx);
@@ -3073,6 +3079,7 @@ mod tests {
             project_panel::init((), cx);
             terminal_view::init(cx);
             assistant::init(app_state.client.clone(), cx);
+            tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state
         })

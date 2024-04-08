@@ -36,18 +36,21 @@ impl Task for OneshotTask {
         None
     }
 
-    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
+    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
         if self.id().0.is_empty() {
             return None;
         }
-        let TaskContext { cwd, env } = cx;
+        let TaskContext {
+            cwd,
+            task_variables,
+        } = cx;
         Some(SpawnInTerminal {
             id: self.id().clone(),
             label: self.name().to_owned(),
             command: self.id().0.clone(),
             args: vec![],
             cwd,
-            env,
+            env: task_variables.into_env_variables(),
             use_new_terminal: Default::default(),
             allow_concurrent_runs: Default::default(),
             reveal: RevealStrategy::default(),
@@ -63,9 +66,21 @@ impl OneshotSource {
 
     /// Spawns a certain task based on the user prompt.
     pub fn spawn(&mut self, prompt: String) -> Arc<dyn Task> {
-        let ret = Arc::new(OneshotTask::new(prompt));
-        self.tasks.push(ret.clone());
-        ret
+        if let Some(task) = self.tasks.iter().find(|task| task.id().0 == prompt) {
+            // If we already have an oneshot task with that command, let's just reuse it.
+            task.clone()
+        } else {
+            let new_oneshot = Arc::new(OneshotTask::new(prompt));
+            self.tasks.push(new_oneshot.clone());
+            new_oneshot
+        }
+    }
+    /// Removes a task with a given ID from this source.
+    pub fn remove(&mut self, id: &TaskId) {
+        let position = self.tasks.iter().position(|task| task.id() == id);
+        if let Some(position) = position {
+            self.tasks.remove(position);
+        }
     }
 }
 
@@ -74,9 +89,8 @@ impl TaskSource for OneshotSource {
         self
     }
 
-    fn tasks_for_path(
+    fn tasks_to_schedule(
         &mut self,
-        _path: Option<&std::path::Path>,
         _cx: &mut gpui::ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks.clone()

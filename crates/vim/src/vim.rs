@@ -12,6 +12,7 @@ mod normal;
 mod object;
 mod replace;
 mod state;
+mod surrounds;
 mod utils;
 mod visual;
 
@@ -23,8 +24,8 @@ use editor::{
     Editor, EditorEvent, EditorMode,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, EntityId, Global, KeystrokeEvent, Subscription,
-    View, ViewContext, WeakView, WindowContext,
+    actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
+    Subscription, View, ViewContext, WeakView, WindowContext,
 };
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
@@ -37,6 +38,8 @@ use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
 use std::{ops::Range, sync::Arc};
+use surrounds::{add_surrounds, change_surrounds, delete_surrounds};
+use ui::BorrowAppContext;
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
 
@@ -169,7 +172,14 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
     }
 
     Vim::update(cx, |vim, cx| match vim.active_operator() {
-        Some(Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace) => {}
+        Some(
+            Operator::FindForward { .. }
+            | Operator::FindBackward { .. }
+            | Operator::Replace
+            | Operator::AddSurrounds { .. }
+            | Operator::ChangeSurrounds { .. }
+            | Operator::DeleteSurrounds,
+        ) => {}
         Some(_) => {
             vim.clear_operator(cx);
         }
@@ -389,7 +399,7 @@ impl Vim {
             {
                 visual_block_motion(true, editor, cx, |_, point, goal| Some((point, goal)))
             }
-            if last_mode == Mode::Insert {
+            if last_mode == Mode::Insert || last_mode == Mode::Replace {
                 if let Some(prior_tx) = prior_tx {
                     editor.group_until_transaction(prior_tx, cx)
                 }
@@ -501,7 +511,9 @@ impl Vim {
 
     fn transaction_begun(&mut self, transaction_id: TransactionId, _: &mut WindowContext) {
         self.update_state(|state| {
-            let mode = if (state.mode == Mode::Insert || state.mode == Mode::Normal)
+            let mode = if (state.mode == Mode::Insert
+                || state.mode == Mode::Replace
+                || state.mode == Mode::Normal)
                 && state.current_tx.is_none()
             {
                 state.current_tx = Some(transaction_id);
@@ -619,6 +631,31 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
+            Some(Operator::AddSurrounds { target }) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    if let Some(target) = target {
+                        add_surrounds(text, target, cx);
+                        Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+                    }
+                }
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            Some(Operator::ChangeSurrounds { target }) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    if let Some(target) = target {
+                        change_surrounds(text, target, cx);
+                        Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+                    }
+                }
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            Some(Operator::DeleteSurrounds) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    delete_surrounds(text, cx);
+                    Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+                }
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
             _ => match Vim::read(cx).state().mode {
                 Mode::Replace => multi_replace(text, cx),
                 _ => {}
@@ -699,8 +736,10 @@ impl Vim {
             editor.selections.line_mode = matches!(state.mode, Mode::VisualLine);
             if editor.is_focused(cx) {
                 editor.set_keymap_context_layer::<Self>(state.keymap_context_layer(), cx);
-            } else {
-                editor.remove_keymap_context_layer::<Self>(cx);
+            // disables vim if the rename editor is focused,
+            // but not if the command palette is open.
+            } else if editor.focus_handle(cx).contains_focused(cx) {
+                editor.remove_keymap_context_layer::<Self>(cx)
             }
         });
     }

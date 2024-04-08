@@ -8,17 +8,19 @@ use editor::{
 use gpui::{actions, impl_actions, px, ViewContext, WindowContext};
 use language::{char_kind, CharKind, Point, Selection, SelectionGoal};
 use serde::Deserialize;
+use std::ops::Range;
 use workspace::Workspace;
 
 use crate::{
     normal::normal_motion,
     state::{Mode, Operator},
+    surrounds::SurroundsType,
     utils::coerce_punctuation,
     visual::visual_motion,
     Vim,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub enum Motion {
     Left,
     Backspace,
@@ -385,15 +387,31 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
     }
 
     let count = Vim::update(cx, |vim, cx| vim.take_count(cx));
-    let operator = Vim::read(cx).active_operator();
+    let active_operator = Vim::read(cx).active_operator();
+    let mut waiting_operator: Option<Operator> = None;
     match Vim::read(cx).state().mode {
-        Mode::Normal | Mode::Replace => normal_motion(motion, operator, count, cx),
-        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_motion(motion, count, cx),
+        Mode::Normal | Mode::Replace => {
+            if active_operator == Some(Operator::AddSurrounds { target: None }) {
+                waiting_operator = Some(Operator::AddSurrounds {
+                    target: Some(SurroundsType::Motion(motion)),
+                });
+            } else {
+                normal_motion(motion.clone(), active_operator.clone(), count, cx)
+            }
+        }
+        Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+            visual_motion(motion.clone(), count, cx)
+        }
         Mode::Insert => {
             // Shouldn't execute a motion in insert mode. Ignoring
         }
     }
-    Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+    Vim::update(cx, |vim, cx| {
+        vim.clear_operator(cx);
+        if let Some(operator) = waiting_operator {
+            vim.push_operator(operator, cx);
+        }
+    });
 }
 
 // Motion handling is specified here:
@@ -707,15 +725,15 @@ impl Motion {
         (new_point != point || infallible).then_some((new_point, goal))
     }
 
-    // Expands a selection using self motion for an operator
-    pub fn expand_selection(
+    // Get the range value after self is applied to the specified selection.
+    pub fn range(
         &self,
         map: &DisplaySnapshot,
-        selection: &mut Selection<DisplayPoint>,
+        selection: Selection<DisplayPoint>,
         times: Option<usize>,
         expand_to_surrounding_newline: bool,
         text_layout_details: &TextLayoutDetails,
-    ) -> bool {
+    ) -> Option<Range<DisplayPoint>> {
         if let Some((new_head, goal)) = self.move_point(
             map,
             selection.head(),
@@ -723,6 +741,7 @@ impl Motion {
             times,
             &text_layout_details,
         ) {
+            let mut selection = selection.clone();
             selection.set_head(new_head, goal);
 
             if self.linewise() {
@@ -734,7 +753,7 @@ impl Motion {
                         *selection.end.column_mut() = 0;
                         selection.end = map.clip_point(selection.end, Bias::Right);
                         // Don't reset the end here
-                        return true;
+                        return Some(selection.start..selection.end);
                     } else if selection.start.row() > 0 {
                         *selection.start.row_mut() -= 1;
                         *selection.start.column_mut() = map.line_len(selection.start.row());
@@ -742,7 +761,7 @@ impl Motion {
                     }
                 }
 
-                (_, selection.end) = map.next_line_boundary(selection.end.to_point(map));
+                selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
             } else {
                 // Another special case: When using the "w" motion in combination with an
                 // operator and the last word moved over is at the end of a line, the end of
@@ -783,6 +802,30 @@ impl Motion {
                     *selection.end.column_mut() += 1;
                 }
             }
+            Some(selection.start..selection.end)
+        } else {
+            None
+        }
+    }
+
+    // Expands a selection using self for an operator
+    pub fn expand_selection(
+        &self,
+        map: &DisplaySnapshot,
+        selection: &mut Selection<DisplayPoint>,
+        times: Option<usize>,
+        expand_to_surrounding_newline: bool,
+        text_layout_details: &TextLayoutDetails,
+    ) -> bool {
+        if let Some(range) = self.range(
+            map,
+            selection.clone(),
+            times,
+            expand_to_surrounding_newline,
+            text_layout_details,
+        ) {
+            selection.start = range.start;
+            selection.end = range.end;
             true
         } else {
             false
@@ -1283,21 +1326,21 @@ pub(crate) fn first_non_whitespace(
     display_lines: bool,
     from: DisplayPoint,
 ) -> DisplayPoint {
-    let mut last_point = start_of_line(map, display_lines, from);
+    let mut start_offset = start_of_line(map, display_lines, from).to_offset(map, Bias::Left);
     let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
-    for (ch, point) in map.chars_at(last_point) {
+    for (ch, offset) in map.buffer_chars_at(start_offset) {
         if ch == '\n' {
             return from;
         }
 
-        last_point = point;
+        start_offset = offset;
 
         if char_kind(&scope, ch) != CharKind::Whitespace {
             break;
         }
     }
 
-    map.clip_point(last_point, Bias::Left)
+    start_offset.to_display_point(map)
 }
 
 pub(crate) fn start_of_line(
@@ -1354,6 +1397,7 @@ fn end_of_document(
 
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
+    let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot);
 
@@ -2106,6 +2150,25 @@ mod test {
           123 234 34ˇ5
           4;5.6 567 678
           789 890 901
+        "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_visual_match_eol(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            fn aˇ() {
+              return
+            }
+        "})
+            .await;
+        cx.simulate_shared_keystrokes(["v", "$", "%"]).await;
+        cx.assert_shared_state(indoc! {"
+            fn a«() {
+              return
+            }ˇ»
         "})
             .await;
     }

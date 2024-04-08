@@ -3,7 +3,10 @@ use collections::HashMap;
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::static_source::{Definition, DefinitionProvider};
+use crate::{
+    static_source::{Definition, TaskDefinitions},
+    VariableName,
+};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -124,15 +127,21 @@ pub struct VsCodeTaskFile {
     tasks: Vec<VsCodeTaskDefinition>,
 }
 
-impl TryFrom<VsCodeTaskFile> for DefinitionProvider {
+impl TryFrom<VsCodeTaskFile> for TaskDefinitions {
     type Error = anyhow::Error;
 
     fn try_from(value: VsCodeTaskFile) -> Result<Self, Self::Error> {
         let replacer = EnvVariableReplacer::new(HashMap::from_iter([
-            ("workspaceFolder".to_owned(), "ZED_WORKTREE_ROOT".to_owned()),
-            ("file".to_owned(), "ZED_FILE".to_owned()),
-            ("lineNumber".to_owned(), "ZED_ROW".to_owned()),
-            ("selectedText".to_owned(), "ZED_SELECTED_TEXT".to_owned()),
+            (
+                "workspaceFolder".to_owned(),
+                VariableName::WorktreeRoot.to_string(),
+            ),
+            ("file".to_owned(), VariableName::File.to_string()),
+            ("lineNumber".to_owned(), VariableName::Row.to_string()),
+            (
+                "selectedText".to_owned(),
+                VariableName::SelectedText.to_string(),
+            ),
         ]));
         let definitions = value
             .tasks
@@ -148,7 +157,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        static_source::{Definition, DefinitionProvider},
+        static_source::{Definition, TaskDefinitions},
         vscode_format::{Command, VsCodeTaskDefinition},
         VsCodeTaskFile,
     };
@@ -279,7 +288,7 @@ mod tests {
             },
         ];
 
-        let tasks: DefinitionProvider = vscode_definitions.try_into().unwrap();
+        let tasks: TaskDefinitions = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
     }
 
@@ -380,7 +389,7 @@ mod tests {
                 ..Default::default()
             },
         ];
-        let tasks: DefinitionProvider = vscode_definitions.try_into().unwrap();
+        let tasks: TaskDefinitions = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
     }
 }

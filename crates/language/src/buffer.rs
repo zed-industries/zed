@@ -13,7 +13,7 @@ use crate::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
         SyntaxSnapshot, ToTreeSitterPoint,
     },
-    CodeLabel, LanguageScope, Outline,
+    LanguageScope, Outline,
 };
 use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
@@ -248,34 +248,6 @@ pub enum Documentation {
     MultiLinePlainText(String),
     /// Markdown documentation.
     MultiLineMarkdown(ParsedMarkdown),
-}
-
-/// A completion provided by a language server
-#[derive(Clone, Debug)]
-pub struct Completion {
-    /// The range of the buffer that will be replaced.
-    pub old_range: Range<Anchor>,
-    /// The new text that will be inserted.
-    pub new_text: String,
-    /// A label for this completion that is shown in the menu.
-    pub label: CodeLabel,
-    /// The id of the language server that produced this completion.
-    pub server_id: LanguageServerId,
-    /// The documentation for this completion.
-    pub documentation: Option<Documentation>,
-    /// The raw completion provided by the language server.
-    pub lsp_completion: lsp::CompletionItem,
-}
-
-/// A code action provided by a language server.
-#[derive(Clone, Debug)]
-pub struct CodeAction {
-    /// The id of the language server that produced this code action.
-    pub server_id: LanguageServerId,
-    /// The range of the buffer where this code action is applicable.
-    pub range: Range<Anchor>,
-    /// The raw code action provided by the language server.
-    pub lsp_action: lsp::CodeAction,
 }
 
 /// An operation used to synchronize this buffer with its other replicas.
@@ -577,7 +549,6 @@ impl Buffer {
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
-        this.file_fingerprint = proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
         this.saved_mtime = message.saved_mtime.map(|time| time.into());
         Ok(this)
     }
@@ -2527,6 +2498,11 @@ impl BufferSnapshot {
             .last()
     }
 
+    /// Returns the main [Language]
+    pub fn language(&self) -> Option<&Arc<Language>> {
+        self.language.as_ref()
+    }
+
     /// Returns the [Language] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {
         self.syntax_layer_at(position)
@@ -2778,10 +2754,13 @@ impl BufferSnapshot {
                         range.start + self.line_len(start.row as u32) as usize - start.column;
                 }
 
-                buffer_ranges.push((range, node_is_name));
+                if !range.is_empty() {
+                    buffer_ranges.push((range, node_is_name));
+                }
             }
 
             if buffer_ranges.is_empty() {
+                matches.advance();
                 continue;
             }
 
@@ -3506,24 +3485,6 @@ impl IndentSize {
             }
         }
         self
-    }
-}
-
-impl Completion {
-    /// A key that can be used to sort completions when displaying
-    /// them to the user.
-    pub fn sort_key(&self) -> (usize, &str) {
-        let kind_key = match self.lsp_completion.kind {
-            Some(lsp::CompletionItemKind::KEYWORD) => 0,
-            Some(lsp::CompletionItemKind::VARIABLE) => 1,
-            _ => 2,
-        };
-        (kind_key, &self.label.text[self.label.filter_range.clone()])
-    }
-
-    /// Whether this completion is a snippet.
-    pub fn is_snippet(&self) -> bool {
-        self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
 }
 

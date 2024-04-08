@@ -40,9 +40,11 @@ if [[ -n $dnf ]]; then
     libzstd-devel
     vulkan-loader
   )
-  # libxkbcommon-x11-devel is in the crb repo
-  $maysudo "$dnf" config-manager --set-enabled crb
-  $maysudo "$dnf" install epel-release epel-next-release
+
+  # libxkbcommon-x11-devel is in the crb repo on RHEL and CentOS, not needed for Fedora
+  if ! grep -q "Fedora" /etc/redhat-release; then
+    $maysudo "$dnf" config-manager --set-enabled crb
+  fi
 
   $maysudo "$dnf" install -y "${deps[@]}"
   exit 0

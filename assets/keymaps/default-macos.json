@@ -13,12 +13,15 @@
       "cmd-up": "menu::SelectFirst",
       "cmd-down": "menu::SelectLast",
       "enter": "menu::Confirm",
-      "ctrl-enter": "menu::ShowContextMenu",
+      "ctrl-enter": "menu::SecondaryConfirm",
       "cmd-enter": "menu::SecondaryConfirm",
       "escape": "menu::Cancel",
       "cmd-escape": "menu::Cancel",
+      "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
-      "shift-enter": "menu::UseSelectedQuery",
+      "shift-enter": "picker::UseSelectedQuery",
+      "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
+      "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
@@ -155,7 +158,8 @@
       ],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
-      "cmd-alt-z": "editor::RevertSelectedHunks"
+      "cmd-alt-z": "editor::RevertSelectedHunks",
+      "cmd-alt-g b": "editor::ToggleGitBlame"
     }
   },
   {
@@ -176,17 +180,17 @@
     }
   },
   {
-    "context": "Editor && mode == full && copilot_suggestion",
+    "context": "Editor && mode == full && inline_completion",
     "bindings": {
-      "alt-]": "copilot::NextSuggestion",
-      "alt-[": "copilot::PreviousSuggestion",
-      "alt-right": "editor::AcceptPartialCopilotSuggestion"
+      "alt-]": "editor::NextInlineCompletion",
+      "alt-[": "editor::PreviousInlineCompletion",
+      "alt-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
-    "context": "Editor && !copilot_suggestion",
+    "context": "Editor && !inline_completion",
     "bindings": {
-      "alt-\\": "copilot::Suggest"
+      "alt-\\": "editor::ShowInlineCompletion"
     }
   },
   {
@@ -313,13 +317,8 @@
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
-      "alt-shift-up": [
-        "editor::DuplicateLine",
-        {
-          "move_upwards": true
-        }
-      ],
-      "alt-shift-down": "editor::DuplicateLine",
+      "alt-shift-up": "editor::DuplicateLineUp",
+      "alt-shift-down": "editor::DuplicateLineDown",
       "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
       "cmd-d": [
@@ -362,6 +361,7 @@
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
       "cmd-f12": "editor::GoToTypeDefinition",
+      "shift-f12": "editor::GoToImplementation",
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket",
@@ -436,6 +436,8 @@
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
+      "ctrl-tab": "tab_switcher::Toggle",
+      "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -596,7 +598,14 @@
   },
   {
     "context": "FileFinder",
-    "bindings": { "cmd-shift-p": "menu::SelectPrev" }
+    "bindings": { "cmd-shift-p": "file_finder::SelectPrev" }
+  },
+  {
+    "context": "TabSwitcher",
+    "bindings": {
+      "ctrl-shift-tab": "menu::SelectPrev",
+      "ctrl-backspace": "tab_switcher::CloseSelectedItem"
+    }
   },
   {
     "context": "Terminal",
