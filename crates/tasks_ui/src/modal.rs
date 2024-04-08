@@ -3,22 +3,19 @@ use std::sync::Arc;
 use crate::{active_item_selection_properties, schedule_task};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
-    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView,
+    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, Global,
+    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
+    ViewContext, VisualContext, WeakView,
 };
-use picker::{
-    highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
-    Picker, PickerDelegate,
-};
+use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
 use task::{oneshot_source::OneshotSource, Task, TaskContext};
 use ui::{
-    div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, IconButton,
+    div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon, IconButton,
     IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
     Tooltip, WindowContext,
 };
-use util::{paths::PathExt, ResultExt};
+use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
 use serde::Deserialize;
@@ -285,34 +282,31 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
-        let hit = &self.matches.get(ix)?;
-        let (source_kind, _) = &candidates.get(hit.candidate_id)?;
-        let details = match source_kind {
-            TaskSourceKind::UserInput => "user input".to_string(),
-            TaskSourceKind::Language { name } => format!("{name} language"),
-            TaskSourceKind::Worktree { abs_path, .. } | TaskSourceKind::AbsPath(abs_path) => {
-                abs_path.compact().to_string_lossy().to_string()
-            }
+        let hit = &self.matches[ix];
+        let (source_kind, _) = &candidates[hit.candidate_id];
+        let language_name = if let TaskSourceKind::Language { name } = source_kind {
+            Some(name)
+        } else {
+            None
         };
 
-        let highlighted_location = HighlightedMatchWithPaths {
-            match_label: HighlightedText {
-                text: hit.string.clone(),
-                highlight_positions: hit.positions.clone(),
-                char_count: hit.string.chars().count(),
-            },
-            paths: vec![HighlightedText {
-                char_count: details.chars().count(),
-                highlight_positions: Vec::new(),
-                text: details,
-            }],
+        let highlighted_location = HighlightedText {
+            text: hit.string.clone(),
+            highlight_positions: hit.positions.clone(),
+            char_count: hit.string.chars().count(),
         };
+        let language_icon = language_name
+            .and_then(|language| {
+                let language = language.to_lowercase();
+                file_icons::FileIcons::get(cx).get_type_icon(&language)
+            })
+            .map(|icon_path| Icon::from_path(icon_path));
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .map(|this| {
-                    if matches!(source_kind, TaskSourceKind::UserInput) {
+                    let this = if matches!(source_kind, TaskSourceKind::UserInput) {
                         let task_index = hit.candidate_id;
                         let delete_button = div().child(
                             IconButton::new("delete", IconName::Close)
@@ -330,6 +324,11 @@ impl PickerDelegate for TasksModalDelegate {
                                 .tooltip(|cx| Tooltip::text("Delete an one-shot task", cx)),
                         );
                         this.end_hover_slot(delete_button)
+                    } else {
+                        this
+                    };
+                    if let Some(icon) = language_icon {
+                        this.end_slot(icon)
                     } else {
                         this
                     }
