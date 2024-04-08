@@ -1,9 +1,9 @@
 mod ollama;
-mod openai;
+mod open_ai;
 mod zed;
 
 pub use ollama::*;
-pub use openai::*;
+pub use open_ai::*;
 pub use zed::*;
 
 use anyhow::Result;

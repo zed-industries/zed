@@ -31,6 +31,7 @@ use axum::{
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
+use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
 
 use futures::{
     channel::oneshot,
@@ -3602,8 +3603,6 @@ async fn complete_with_open_ai(
     session: UserSession,
     api_key: Arc<str>,
 ) -> Result<()> {
-    const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
-
     let mut completion_stream = open_ai::stream_completion(
         &session.http_client,
         OPEN_AI_API_URL,
@@ -3853,6 +3852,58 @@ async fn count_tokens_with_language_model(
     .await?;
     response.send(proto::CountTokensResponse {
         token_count: tokens_response.total_tokens as u32,
+    })?;
+    Ok(())
+}
+
+struct EmbedTextsRateLimit;
+
+impl RateLimit for EmbedTextsRateLimit {
+    fn capacity() -> usize {
+        std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(120) // Picked arbitrarily
+    }
+
+    fn refill_duration() -> chrono::Duration {
+        chrono::Duration::hours(1)
+    }
+
+    fn db_name() -> &'static str {
+        "embed-texts"
+    }
+}
+
+async fn embed_texts(
+    request: proto::EmbedTexts,
+    response: Response<proto::EmbedTexts>,
+    session: UserSession,
+    api_key: Arc<str>,
+) -> Result<()> {
+    authorize_access_to_language_models(&session).await?;
+
+    session
+        .rate_limiter
+        .check::<EmbedTextsRateLimit>(session.user_id())
+        .await?;
+
+    let embeddings = open_ai::embed(
+        &session.http_client,
+        OPEN_AI_API_URL,
+        &api_key,
+        OpenAiEmbeddingModel::TextEmbedding3Small,
+        request.texts.iter().map(|text| text.as_str()),
+    )
+    .await?;
+    response.send(proto::EmbedTextsResponse {
+        embeddings: embeddings
+            .data
+            .into_iter()
+            .map(|embedding| proto::Embedding {
+                dimensions: embedding.embedding,
+            })
+            .collect(),
     })?;
     Ok(())
 }

@@ -8622,6 +8622,7 @@ dependencies = [
  "language",
  "languages",
  "log",
+ "open_ai",
  "project",
  "serde",
  "serde_json",

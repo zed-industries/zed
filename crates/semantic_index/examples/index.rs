@@ -3,7 +3,7 @@ use futures::channel::oneshot;
 use gpui::{App, Global, TestAppContext};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
-use semantic_index::{OpenaiEmbeddingModel, OpenaiEmbeddingProvider, SemanticIndex};
+use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticIndex};
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
 use util::http::HttpClientWithUrl;
@@ -50,9 +50,10 @@ fn main() {
         // let embedding_provider = semantic_index::FakeEmbeddingProvider;
 
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-        let embedding_provider = OpenaiEmbeddingProvider::new(
+        let embedding_provider = OpenAiEmbeddingProvider::new(
             http.clone(),
-            OpenaiEmbeddingModel::TextEmbedding3Small,
+            OpenAiEmbeddingModel::TextEmbedding3Small,
+            open_ai::OPEN_AI_API_URL.to_string(),
             api_key,
         );
 
