@@ -486,7 +486,7 @@ impl ToolbarItemView for BufferSearchBar {
 
 impl BufferSearchBar {
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
-        registrar.register_handler(ForDeployed(|this, action: &FocusSearch, cx| {
+        registrar.register_handler(ForDeployed(|this, _: &FocusSearch, cx| {
             this.query_editor.focus_handle(cx).focus(cx);
         }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleCaseSensitive, cx| {

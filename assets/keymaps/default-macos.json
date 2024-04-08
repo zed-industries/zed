@@ -170,6 +170,13 @@
       "cmd-shift-enter": "editor::NewlineAbove",
       "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
+      "cmd-f": "buffer_search::Deploy",
+      "cmd-alt-f": [
+        "buffer_search::Deploy",
+        {
+          "replace_enabled": true
+        }
+      ],
       "cmd-e": [
         "buffer_search::Deploy",
         {
