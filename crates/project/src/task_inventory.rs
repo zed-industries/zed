@@ -10,7 +10,7 @@ use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use itertools::Itertools;
 use language::Language;
-use task::{from_template_definition, ResolvedTask, Task, TaskId, TaskSource};
+use task::{from_template, ResolvedTask, Task, TaskId, TaskSource};
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
@@ -145,10 +145,7 @@ impl Inventory {
             .into_iter()
             .flat_map(|(tasks, language)| {
                 tasks.0.into_iter().map(move |definition| {
-                    from_template_definition(
-                        TaskId(format!("language_{}", language.name())),
-                        definition,
-                    )
+                    from_template(TaskId(format!("language_{}", language.name())), definition)
                 })
             })
             .flat_map(|task| Some((task_source_kind.as_ref()?, task as Arc<dyn Task>)));

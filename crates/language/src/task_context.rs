@@ -2,7 +2,7 @@ use crate::Location;
 
 use anyhow::Result;
 use gpui::AppContext;
-use task::{TaskDefinitions, TaskVariables, VariableName};
+use task::{TaskTemplates, TaskVariables, VariableName};
 
 /// Language Contexts are used by Zed tasks to extract information about source file.
 pub trait ContextProvider: Send + Sync {
@@ -10,7 +10,7 @@ pub trait ContextProvider: Send + Sync {
         Ok(TaskVariables::default())
     }
 
-    fn associated_tasks(&self) -> Option<TaskDefinitions> {
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
         None
     }
 }
@@ -45,18 +45,20 @@ impl ContextProvider for SymbolContextProvider {
 
 /// A ContextProvider that doesn't provide any task variables on it's own, though it has some associated tasks.
 pub struct ContextProviderWithTasks {
-    definitions: TaskDefinitions,
+    templates: TaskTemplates,
 }
 
 impl ContextProviderWithTasks {
-    pub fn new(definitions: TaskDefinitions) -> Self {
-        Self { definitions }
+    pub fn new(definitions: TaskTemplates) -> Self {
+        Self {
+            templates: definitions,
+        }
     }
 }
 
 impl ContextProvider for ContextProviderWithTasks {
-    fn associated_tasks(&self) -> Option<TaskDefinitions> {
-        Some(self.definitions.clone())
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
+        Some(self.templates.clone())
     }
 
     fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<TaskVariables> {

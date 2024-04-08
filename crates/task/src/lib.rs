@@ -16,22 +16,22 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use task_template::TaskTemplate;
+use task_template::TaskForTemplate;
 pub use vscode_format::VsCodeTaskFile;
 
 /// TODO kb docs
-pub fn from_template_definition(id: TaskId, definition: Definition) -> Arc<dyn Task> {
-    Arc::new(TaskTemplate { id, definition })
+pub fn from_template(id: TaskId, template: TaskTemplate) -> Arc<dyn Task> {
+    Arc::new(TaskForTemplate { id, template })
 }
 
 /// TODO kb docs
 pub fn oneshot_task(prompt: String) -> Arc<dyn Task> {
-    Arc::new(TaskTemplate {
+    Arc::new(TaskForTemplate {
         id: TaskId(prompt.clone()),
-        definition: Definition {
+        template: TaskTemplate {
             label: prompt.clone(),
             command: prompt,
-            ..Definition::default()
+            ..TaskTemplate::default()
         },
     })
 }
@@ -193,11 +193,11 @@ pub trait Task {
     fn resolve_task(&self, cx: TaskContext) -> Option<ResolvedTask>;
 }
 
-/// Static task definition from the tasks config file.
+/// Static task template from the tasks config file.
 /// May use the [`VariableName`] to get the corresponding substitutions into its fields.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub struct Definition {
+pub struct TaskTemplate {
     /// Human readable name of the task to display in the UI.
     pub label: String,
     /// Executable command to spawn.
@@ -237,10 +237,10 @@ pub enum RevealStrategy {
 
 /// A group of Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct TaskDefinitions(pub Vec<Definition>);
+pub struct TaskTemplates(pub Vec<TaskTemplate>);
 
-impl TaskDefinitions {
-    /// Generates JSON schema of Tasks JSON definition format.
+impl TaskTemplates {
+    /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema() -> serde_json_lenient::Value {
         let schema = SchemaSettings::draft07()
             .with(|settings| settings.option_add_null_type = false)

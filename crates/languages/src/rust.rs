@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Definition, TaskDefinitions, TaskVariables, VariableName};
+use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
@@ -352,9 +352,9 @@ impl ContextProvider for RustContextProvider {
         Ok(context)
     }
 
-    fn associated_tasks(&self) -> Option<TaskDefinitions> {
-        Some(TaskDefinitions(vec![
-            Definition {
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
+        Some(TaskTemplates(vec![
+            TaskTemplate {
                 label: "Rust: Test current crate".to_owned(),
                 command: "cargo".into(),
                 args: vec![
@@ -362,9 +362,9 @@ impl ContextProvider for RustContextProvider {
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ],
-                ..Definition::default()
+                ..TaskTemplate::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "Rust: Test current function".to_owned(),
                 command: "cargo".into(),
                 args: vec![
@@ -375,15 +375,15 @@ impl ContextProvider for RustContextProvider {
                     "--".into(),
                     "--nocapture".into(),
                 ],
-                ..Definition::default()
+                ..TaskTemplate::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "Rust: cargo run".into(),
                 command: "cargo".into(),
                 args: vec!["run".into()],
-                ..Definition::default()
+                ..TaskTemplate::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "Rust: cargo check current crate".into(),
                 command: "cargo".into(),
                 args: vec![
@@ -391,13 +391,13 @@ impl ContextProvider for RustContextProvider {
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ],
-                ..Definition::default()
+                ..TaskTemplate::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "Rust: cargo check workspace".into(),
                 command: "cargo".into(),
                 args: vec!["check".into(), "--workspace".into()],
-                ..Definition::default()
+                ..TaskTemplate::default()
             },
         ]))
     }

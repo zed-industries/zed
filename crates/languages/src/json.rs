@@ -52,7 +52,7 @@ impl JsonLspAdapter {
             },
             cx,
         );
-        let tasks_schema = task::TaskDefinitions::generate_json_schema();
+        let tasks_schema = task::TaskTemplates::generate_json_schema();
         serde_json::json!({
             "json": {
                 "format": {

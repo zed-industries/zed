@@ -7,13 +7,13 @@ use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::{from_template_definition, Task, TaskDefinitions, TaskId, TaskSource};
+use crate::{from_template, Task, TaskId, TaskSource, TaskTemplates};
 use futures::channel::mpsc::UnboundedReceiver;
 
 /// The source of tasks defined in a tasks config file.
 pub struct StaticSource {
     tasks: Vec<Arc<dyn Task>>,
-    _definitions: Model<TrackedFile<TaskDefinitions>>,
+    _templates: Model<TrackedFile<TaskTemplates>>,
     _subscription: Subscription,
 }
 
@@ -104,26 +104,26 @@ impl StaticSource {
     /// Initializes the static source, reacting on tasks config changes.
     pub fn new(
         id_base: impl Into<Cow<'static, str>>,
-        definitions: Model<TrackedFile<TaskDefinitions>>,
+        templates: Model<TrackedFile<TaskTemplates>>,
         cx: &mut AppContext,
     ) -> Model<Box<dyn TaskSource>> {
         cx.new_model(|cx| {
             let id_base = id_base.into();
             let _subscription = cx.observe(
-                &definitions,
-                move |source: &mut Box<(dyn TaskSource + 'static)>, new_definitions, cx| {
+                &templates,
+                move |source: &mut Box<(dyn TaskSource + 'static)>, new_templates, cx| {
                     if let Some(static_source) = source.as_any().downcast_mut::<Self>() {
-                        static_source.tasks = new_definitions
+                        static_source.tasks = new_templates
                             .read(cx)
                             .get()
                             .0
                             .clone()
                             .into_iter()
                             .enumerate()
-                            .map(|(i, definition)| {
-                                from_template_definition(
-                                    TaskId(format!("static_{id_base}_{i}_{}", definition.label)),
-                                    definition,
+                            .map(|(i, template)| {
+                                from_template(
+                                    TaskId(format!("static_{id_base}_{i}_{}", template.label)),
+                                    template,
                                 )
                             })
                             .collect();
@@ -133,7 +133,7 @@ impl StaticSource {
             );
             Box::new(Self {
                 tasks: Vec::new(),
-                _definitions: definitions,
+                _templates: templates,
                 _subscription,
             })
         })
