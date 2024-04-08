@@ -2025,7 +2025,7 @@ pub mod tests {
                         .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
                 });
 
-                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch, cx)
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch::find(), cx)
             })
             .unwrap();
 
@@ -2174,7 +2174,7 @@ pub mod tests {
 
         workspace
             .update(cx, |workspace, cx| {
-                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch, cx)
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch::find(), cx)
             })
             .unwrap();
         window.update(cx, |_, cx| {
@@ -3273,7 +3273,7 @@ pub mod tests {
             .unwrap();
 
         // Deploy a new search
-        cx.dispatch_action(window.into(), DeploySearch);
+        cx.dispatch_action(window.into(), DeploySearch::find());
 
         // Both panes should now have a project search in them
         window
@@ -3298,7 +3298,7 @@ pub mod tests {
             .unwrap();
 
         // Deploy a new search
-        cx.dispatch_action(window.into(), DeploySearch);
+        cx.dispatch_action(window.into(), DeploySearch::find());
 
         // The project search view should now be focused in the second pane
         // And the number of items should be unchanged.
