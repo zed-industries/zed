@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
+use ::settings::Settings;
 use editor::Editor;
 use gpui::{AppContext, ViewContext, WeakView, WindowContext};
 use language::{Language, Point};
@@ -10,8 +11,13 @@ use util::ResultExt;
 use workspace::Workspace;
 
 mod modal;
+mod settings;
+mod status_indicator;
+
+pub use status_indicator::TaskStatusIndicator;
 
 pub fn init(cx: &mut AppContext) {
+    settings::TaskSettings::register(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace

@@ -30,6 +30,11 @@ pub struct Spawn {
     pub task_name: Option<String>,
 }
 
+impl Spawn {
+    pub(crate) fn modal() -> Self {
+        Self { task_name: None }
+    }
+}
 /// Rerun last task
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct Rerun {
@@ -144,16 +149,11 @@ impl TasksModal {
 }
 
 impl Render for TasksModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
         v_flex()
             .key_context("TasksModal")
             .w(rems(34.))
             .child(self.picker.clone())
-            .on_mouse_down_out(cx.listener(|modal, _, cx| {
-                modal.picker.update(cx, |picker, cx| {
-                    picker.cancel(&Default::default(), cx);
-                })
-            }))
     }
 }
 
