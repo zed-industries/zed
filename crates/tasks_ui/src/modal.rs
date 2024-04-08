@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
-use task::{oneshot_source::OneshotSource, Task, TaskContext};
+use task::{oneshot_source::OneshotSource, ResolvedTask, Task, TaskContext};
 use ui::{
     div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon, IconButton,
     IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
@@ -346,14 +346,18 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        let mut spawn_prompt = task.prepare_exec(self.task_context.clone())?;
-        if !spawn_prompt.args.is_empty() {
-            spawn_prompt.command.push(' ');
-            spawn_prompt
-                .command
-                .extend(intersperse(spawn_prompt.args, " ".to_string()));
+        if let Some(ResolvedTask::SpawnInTerminal(spawn_prompt)) =
+            task.resolve_task(self.task_context.clone())
+        {
+            if !spawn_prompt.args.is_empty() {
+                let mut command = spawn_prompt.command;
+                command.push(' ');
+                command.extend(intersperse(spawn_prompt.args, " ".to_string()));
+                return Some(command);
+            }
         }
-        Some(spawn_prompt.command)
+
+        None
     }
 
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {

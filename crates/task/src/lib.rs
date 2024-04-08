@@ -44,6 +44,14 @@ pub struct SpawnInTerminal {
     pub reveal: RevealStrategy,
 }
 
+/// TODO kb docs
+pub enum ResolvedTask {
+    /// TODO kb docs
+    SpawnInTerminal(SpawnInTerminal),
+    /// TODO kb docs
+    Noop,
+}
+
 /// Variables, available for use in [`TaskContext`] when a Zed's task gets turned into real command.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum VariableName {
@@ -142,15 +150,16 @@ pub trait Task {
     fn cwd(&self) -> Option<&str>;
     /// Sets up everything needed to spawn the task in the given directory (`cwd`).
     /// If a task is intended to be spawned in the terminal, it should return the corresponding struct filled with the data necessary.
-    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal>;
+    /// TODO kb docs
+    fn resolve_task(&self, cx: TaskContext) -> Option<ResolvedTask>;
 }
 
 /// TODO kb proper docs
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskTemplate {
-    /// TODO kb proper docs
+    /// TODO kb docs
     pub id: TaskId,
-    /// TODO kb proper docs
+    /// TODO kb docs
     pub definition: Definition,
 }
 
@@ -168,7 +177,7 @@ impl TaskTemplate {
 }
 
 impl Task for TaskTemplate {
-    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
+    fn resolve_task(&self, cx: TaskContext) -> Option<ResolvedTask> {
         let TaskContext {
             cwd,
             task_variables,
@@ -177,7 +186,7 @@ impl Task for TaskTemplate {
         let task_variables = task_variables.into_env_variables();
         let cwd = self
             .definition
-            .cwd
+            .cwd_template
             .clone()
             .and_then(|path| {
                 subst::substitute(&path, &task_variables)
@@ -187,7 +196,7 @@ impl Task for TaskTemplate {
             .or(cwd);
         let mut definition_env = self.definition.env.clone();
         definition_env.extend(task_variables);
-        Some(SpawnInTerminal {
+        Some(ResolvedTask::SpawnInTerminal(SpawnInTerminal {
             id: self.id.clone(),
             cwd,
             use_new_terminal: self.definition.use_new_terminal,
@@ -198,7 +207,7 @@ impl Task for TaskTemplate {
             args: self.definition.args.clone(),
             reveal: self.definition.reveal,
             env: definition_env,
-        })
+        }))
     }
 
     fn name(&self) -> &str {
@@ -210,7 +219,7 @@ impl Task for TaskTemplate {
     }
 
     fn cwd(&self) -> Option<&str> {
-        self.definition.cwd.as_deref()
+        self.definition.cwd_template.as_deref()
     }
 }
 
@@ -230,7 +239,7 @@ pub struct Definition {
     pub env: HashMap<String, String>,
     /// Current working directory to spawn the command into, defaults to current project root.
     #[serde(default)]
-    pub cwd: Option<String>,
+    pub cwd_template: Option<String>,
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
     #[serde(default)]
     pub use_new_terminal: bool,

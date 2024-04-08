@@ -111,7 +111,7 @@ impl VsCodeTaskDefinition {
             ..Default::default()
         };
         if let Some(options) = self.options {
-            ret.cwd = options.cwd.map(|cwd| replacer.replace(&cwd));
+            ret.cwd_template = options.cwd.map(|cwd| replacer.replace(&cwd));
             ret.env = options.env;
         }
         Ok(ret)

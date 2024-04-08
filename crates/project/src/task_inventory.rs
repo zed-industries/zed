@@ -246,7 +246,7 @@ pub mod test_inventory {
     use std::sync::Arc;
 
     use gpui::{AppContext, Context as _, Model, ModelContext, TestAppContext};
-    use task::{Task, TaskContext, TaskId, TaskSource};
+    use task::{ResolvedTask, Task, TaskContext, TaskId, TaskSource};
     use worktree::WorktreeId;
 
     use crate::Inventory;
@@ -272,8 +272,8 @@ pub mod test_inventory {
             None
         }
 
-        fn prepare_exec(&self, _cwd: TaskContext) -> Option<task::SpawnInTerminal> {
-            None
+        fn resolve_task(&self, _cwd: TaskContext) -> Option<ResolvedTask> {
+            Some(ResolvedTask::Noop)
         }
     }
 

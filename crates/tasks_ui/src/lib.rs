@@ -219,8 +219,8 @@ fn schedule_task(
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
-    let spawn_in_terminal = task.prepare_exec(task_cx.clone());
-    if let Some(spawn_in_terminal) = spawn_in_terminal {
+    let spawn_in_terminal = task.resolve_task(task_cx.clone());
+    if let Some(task::ResolvedTask::SpawnInTerminal(spawn_in_terminal)) = spawn_in_terminal {
         if !omit_history {
             workspace.project().update(cx, |project, cx| {
                 project.task_inventory().update(cx, |inventory, _| {
