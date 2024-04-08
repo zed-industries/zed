@@ -304,9 +304,6 @@ impl MarkdownPreviewView {
         editor: View<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let editor = editor.read(cx);
-        let contents = editor.buffer().read(cx).snapshot(cx).text();
-        let file_location = MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
         let language_registry = self.language_registry.clone();
 
         cx.spawn(move |view, mut cx| async move {
@@ -314,6 +311,13 @@ impl MarkdownPreviewView {
                 // Wait for the user to stop typing
                 cx.background_executor().timer(REPARSE_DEBOUNCE).await;
             }
+
+            let (contents, file_location) = view.update(&mut cx, |_, cx| {
+                let editor = editor.read(cx);
+                let contents = editor.buffer().read(cx).snapshot(cx).text();
+                let file_location = MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
+                (contents, file_location)
+            })?;
 
             let parsing_task = cx.background_executor().spawn(async move {
                 parse_markdown(&contents, file_location, Some(language_registry)).await
