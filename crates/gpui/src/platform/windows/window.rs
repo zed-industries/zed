@@ -1247,16 +1247,16 @@ impl WindowsWindow {
     pub(crate) fn new(
         platform_inner: Rc<WindowsPlatformInner>,
         handle: AnyWindowHandle,
-        options: WindowParams,
+        params: WindowParams,
     ) -> Self {
         let classname = register_wnd_class(platform_inner.icon);
-        let hide_title_bar = options
+        let hide_title_bar = params
             .titlebar
             .as_ref()
             .map(|titlebar| titlebar.appears_transparent)
             .unwrap_or(false);
         let windowname = HSTRING::from(
-            options
+            params
                 .titlebar
                 .as_ref()
                 .and_then(|titlebar| titlebar.title.as_ref())
@@ -1264,10 +1264,15 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
-        let x = options.open_status.origin.x.0;
-        let y = options.open_status.origin.y.0;
-        let nwidth = options.open_status.size.width.0;
-        let nheight = options.open_status.size.height.0;
+        let (x, y, nwidth, nheight) = match params.open_status {
+            WindowOpenStatus::Windowed(Some(bounds)) => (
+                bounds.origin.x.0,
+                bounds.origin.y.0,
+                bounds.size.width.0,
+                bounds.size.height.0,
+            ),
+            _ => (CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT),
+        };
         let hwndparent = HWND::default();
         let hmenu = HMENU::default();
         let hinstance = get_module_handle();
@@ -1316,7 +1321,19 @@ impl WindowsWindow {
             .write()
             .push(wnd.inner.hwnd);
 
-        unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOW) };
+        let show_cmd = match params.open_status {
+            WindowOpenStatus::Windowed(_) => SW_SHOW,
+            WindowOpenStatus::Maximized => SW_SHOWMAXIMIZED,
+            WindowOpenStatus::FullScreen => SW_SHOW,
+        };
+        unsafe { ShowWindow(wnd.inner.hwnd, show_cmd) };
+        if !params.focus {
+            unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOWNOACTIVATE) };
+        }
+        if params.open_status == WindowOpenStatus::FullScreen {
+            wnd.toggle_fullscreen();
+        }
+
         wnd
     }
 }
