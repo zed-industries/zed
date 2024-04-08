@@ -1081,8 +1081,7 @@ impl CollabPanel {
     ) -> impl IntoElement {
         let id = remote_project.id;
         let name = remote_project.name.clone();
-        let maybe_project_id = remote_project.project_id.clone();
-        //TODO grey out if project is not hosted yet
+        let maybe_project_id = remote_project.project_id;
 
         let dev_server = self
             .channel_store

@@ -567,7 +567,7 @@ impl Database {
                     connection,
                     PrincipalId::UserId(user_id),
                     Capability::ReadOnly,
-                    &*tx,
+                    &tx,
                 )
                 .await?;
             self.join_project_internal(project, user_id, connection, role, &tx)
@@ -914,7 +914,7 @@ impl Database {
     ) -> Result<(project::Model, ChannelRole)> {
         let (project, remote_project) = project::Entity::find_by_id(project_id)
             .find_also_related(remote_project::Entity)
-            .one(&*tx)
+            .one(tx)
             .await?
             .ok_or_else(|| anyhow!("no such project"))?;
 
@@ -933,18 +933,18 @@ impl Database {
 
         let role = if let Some(remote_project) = remote_project {
             let channel = channel::Entity::find_by_id(remote_project.channel_id)
-                .one(&*tx)
+                .one(tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such channel"))?;
 
-            self.check_user_is_channel_participant(&channel, user_id, &*tx)
+            self.check_user_is_channel_participant(&channel, user_id, &tx)
                 .await?
         } else if let Some(room_id) = project.room_id {
             // what's the users role?
             let current_participant = room_participant::Entity::find()
                 .filter(room_participant::Column::RoomId.eq(room_id))
                 .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.id))
-                .one(&*tx)
+                .one(tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such room"))?;
 
@@ -983,7 +983,7 @@ impl Database {
                     connection_id,
                     PrincipalId::UserId(user_id),
                     Capability::ReadOnly,
-                    &*tx,
+                    &tx,
                 )
                 .await?;
             project.host_connection()
@@ -1006,7 +1006,7 @@ impl Database {
                     connection_id,
                     PrincipalId::UserId(user_id),
                     Capability::ReadWrite,
-                    &*tx,
+                    &tx,
                 )
                 .await?;
             project.host_connection()
@@ -1025,7 +1025,7 @@ impl Database {
         self.project_transaction(project_id, |tx| async move {
             // Authorize
             let (project, _) = self
-                .access_project(project_id, connection_id, principal_id, capability, &*tx)
+                .access_project(project_id, connection_id, principal_id, capability, &tx)
                 .await?;
 
             let host_connection_id = project.host_connection()?;

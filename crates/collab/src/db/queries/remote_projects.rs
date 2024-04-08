@@ -102,8 +102,8 @@ impl Database {
         user_id: UserId,
     ) -> crate::Result<(channel::Model, remote_project::Model)> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &*tx).await?;
-            self.check_user_is_channel_admin(&channel, user_id, &*tx)
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            self.check_user_is_channel_admin(&channel, user_id, &tx)
                 .await?;
 
             let project = remote_project::Entity::insert(remote_project::ActiveModel {

@@ -211,7 +211,7 @@ impl DevServer {
         let mut client_status = client.status();
 
         let _ = client_status.try_recv();
-        let current_status = client_status.borrow().clone();
+        let current_status = *client_status.borrow();
         if current_status.is_connected() {
             // wait for first disconnect
             client_status.recv().await;

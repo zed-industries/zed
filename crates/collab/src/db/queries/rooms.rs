@@ -600,12 +600,12 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<Option<RejoinedProject>> {
         let project_id = ProjectId::from_proto(rejoined_project.id);
-        let Some(project) = project::Entity::find_by_id(project_id).one(&*tx).await? else {
+        let Some(project) = project::Entity::find_by_id(project_id).one(tx).await? else {
             return Ok(None);
         };
 
         let mut worktrees = Vec::new();
-        let db_worktrees = project.find_related(worktree::Entity).all(&*tx).await?;
+        let db_worktrees = project.find_related(worktree::Entity).all(tx).await?;
         for db_worktree in db_worktrees {
             let mut worktree = RejoinedWorktree {
                 id: db_worktree.id as u64,
@@ -642,7 +642,7 @@ impl Database {
                             .add(worktree_entry::Column::WorktreeId.eq(worktree.id))
                             .add(entry_filter),
                     )
-                    .stream(&*tx)
+                    .stream(tx)
                     .await?;
 
                 while let Some(db_entry) = db_entries.next().await {
@@ -683,7 +683,7 @@ impl Database {
                             .add(worktree_repository::Column::WorktreeId.eq(worktree.id))
                             .add(repository_entry_filter),
                     )
-                    .stream(&*tx)
+                    .stream(tx)
                     .await?;
 
                 while let Some(db_repository) = db_repositories.next().await {
@@ -706,7 +706,7 @@ impl Database {
 
         let language_servers = project
             .find_related(language_server::Entity)
-            .all(&*tx)
+            .all(tx)
             .await?
             .into_iter()
             .map(|language_server| proto::LanguageServer {
@@ -718,7 +718,7 @@ impl Database {
         {
             let mut db_settings_files = worktree_settings_file::Entity::find()
                 .filter(worktree_settings_file::Column::ProjectId.eq(project_id))
-                .stream(&*tx)
+                .stream(tx)
                 .await?;
             while let Some(db_settings_file) = db_settings_files.next().await {
                 let db_settings_file = db_settings_file?;
@@ -736,7 +736,7 @@ impl Database {
 
         let mut collaborators = project
             .find_related(project_collaborator::Entity)
-            .all(&*tx)
+            .all(tx)
             .await?;
         let self_collaborator = if let Some(self_collaborator_ix) = collaborators
             .iter()
@@ -752,7 +752,7 @@ impl Database {
             connection_server_id: ActiveValue::set(ServerId(connection.owner_id as i32)),
             ..self_collaborator.into_active_model()
         })
-        .exec(&*tx)
+        .exec(tx)
         .await?;
 
         let collaborators = collaborators
