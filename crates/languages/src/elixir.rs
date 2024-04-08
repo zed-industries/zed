@@ -1,14 +1,14 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::{AsyncAppContext, Task};
+use gpui::{AppContext, AsyncAppContext, Task};
 pub use language::*;
 use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
 use project::project_settings::ProjectSettings;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 use smol::fs::{self, File};
 use std::{
     any::Any,
@@ -56,15 +56,8 @@ impl Settings for ElixirSettings {
 
     type FileContent = ElixirSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut gpui::AppContext,
-    ) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        Self::load_via_json_merge(default_value, user_values)
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
     }
 }
 

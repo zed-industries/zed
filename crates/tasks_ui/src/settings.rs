@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsSources};
 
 #[derive(Serialize, Deserialize, PartialEq, Default)]
 pub(crate) struct TaskSettings {
@@ -13,22 +14,15 @@ pub(crate) struct TaskSettingsContent {
     show_status_indicator: Option<bool>,
 }
 
-impl settings::Settings for TaskSettings {
+impl Settings for TaskSettings {
     const KEY: Option<&'static str> = Some("task");
 
     type FileContent = TaskSettingsContent;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
-    ) -> gpui::Result<Self>
-    where
-        Self: Sized,
-    {
-        let this = Self::json_merge(default_value, user_values)?;
-        Ok(Self {
-            show_status_indicator: this.show_status_indicator.unwrap_or(true),
-        })
+    ) -> gpui::Result<Self> {
+        sources.json_merge()
     }
 }

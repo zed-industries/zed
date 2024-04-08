@@ -3,7 +3,7 @@ use collections::HashMap;
 use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 use std::sync::Arc;
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
@@ -26,14 +26,7 @@ impl Settings for ExtensionSettings {
 
     type FileContent = Self;
 
-    fn load(
-        _default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _cx: &mut AppContext,
-    ) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        Ok(user_values.get(0).copied().cloned().unwrap_or_default())
+    fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut AppContext) -> Result<Self> {
+        Ok(sources.user.cloned().unwrap_or_default())
     }
 }

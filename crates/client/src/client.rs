@@ -28,7 +28,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsSources, SettingsStore};
 use std::fmt;
 use std::{
     any::TypeId,
@@ -97,15 +97,11 @@ impl Settings for ClientSettings {
 
     type FileContent = ClientSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self>
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self>
     where
         Self: Sized,
     {
-        let mut result = Self::load_via_json_merge(default_value, user_values)?;
+        let mut result = sources.json_merge::<Self>()?;
         if let Some(server_url) = &*ZED_SERVER_URL {
             result.server_url = server_url.clone()
         }
@@ -427,21 +423,19 @@ impl settings::Settings for TelemetrySettings {
 
     type FileContent = TelemetrySettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         Ok(Self {
-            diagnostics: user_values.first().and_then(|v| v.diagnostics).unwrap_or(
-                default_value
+            diagnostics: sources.user.as_ref().and_then(|v| v.diagnostics).unwrap_or(
+                sources
+                    .default
                     .diagnostics
                     .ok_or_else(Self::missing_default)?,
             ),
-            metrics: user_values
-                .first()
+            metrics: sources
+                .user
+                .as_ref()
                 .and_then(|v| v.metrics)
-                .unwrap_or(default_value.metrics.ok_or_else(Self::missing_default)?),
+                .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
         })
     }
 }

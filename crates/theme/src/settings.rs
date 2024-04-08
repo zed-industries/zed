@@ -14,7 +14,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{Settings, SettingsJsonSchemaParams};
+use settings::{Settings, SettingsJsonSchemaParams, SettingsSources};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -316,14 +316,11 @@ impl settings::Settings for ThemeSettings {
 
     type FileContent = ThemeSettingsContent;
 
-    fn load(
-        defaults: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        cx: &mut AppContext,
-    ) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, cx: &mut AppContext) -> Result<Self> {
         let themes = ThemeRegistry::default_global(cx);
         let system_appearance = SystemAppearance::default_global(cx);
 
+        let defaults = sources.default;
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
@@ -348,15 +345,15 @@ impl settings::Settings for ThemeSettings {
             theme_overrides: None,
         };
 
-        for value in user_values.iter().copied().cloned() {
-            if let Some(value) = value.buffer_font_family {
+        for value in sources.user.into_iter().chain(sources.release_channel) {
+            if let Some(value) = value.buffer_font_family.clone() {
                 this.buffer_font.family = value.into();
             }
             if let Some(value) = value.buffer_font_features {
                 this.buffer_font.features = value;
             }
 
-            if let Some(value) = value.ui_font_family {
+            if let Some(value) = value.ui_font_family.clone() {
                 this.ui_font.family = value.into();
             }
             if let Some(value) = value.ui_font_features {
@@ -373,7 +370,7 @@ impl settings::Settings for ThemeSettings {
                 }
             }
 
-            this.theme_overrides = value.theme_overrides;
+            this.theme_overrides = value.theme_overrides.clone();
             this.apply_theme_overrides();
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));

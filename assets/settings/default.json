@@ -556,52 +556,16 @@
     "C": {
       "format_on_save": "off"
     },
-    "Plain Text": {
-      "soft_wrap": "preferred_line_length"
-    },
-    "Elixir": {
-      "tab_size": 2
-    },
     "Gleam": {
       "tab_size": 2
     },
     "Go": {
-      "tab_size": 4,
-      "hard_tabs": true,
       "code_actions_on_format": {
         "source.organizeImports": true
       }
     },
     "Make": {
       "hard_tabs": true
-    },
-    "Markdown": {
-      "tab_size": 2,
-      "soft_wrap": "preferred_line_length"
-    },
-    "JavaScript": {
-      "tab_size": 2
-    },
-    "Terraform": {
-      "tab_size": 2
-    },
-    "TypeScript": {
-      "tab_size": 2
-    },
-    "TSX": {
-      "tab_size": 2
-    },
-    "YAML": {
-      "tab_size": 2
-    },
-    "JSON": {
-      "tab_size": 2
-    },
-    "OCaml": {
-      "tab_size": 2
-    },
-    "OCaml Interface": {
-      "tab_size": 2
     },
     "Prisma": {
       "tab_size": 2

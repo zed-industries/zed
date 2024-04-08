@@ -607,6 +607,7 @@ pub fn handle_keymap_file_changes(
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
+
         if new_base_keymap != old_base_keymap || new_vim_enabled != old_vim_enabled {
             old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
@@ -3062,6 +3063,7 @@ mod tests {
             let mut app_state = AppState::test(cx);
 
             let state = Arc::get_mut(&mut app_state).unwrap();
+            env_logger::try_init().ok();
 
             state.build_window_options = build_window_options;
             theme::init(theme::LoadThemes::JustBase, cx);
