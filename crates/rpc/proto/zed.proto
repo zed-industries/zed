@@ -1800,8 +1800,7 @@ message CountTokensResponse {
 }
 
 message EmbedTexts {
-    string model = 1;
-    repeated string texts = 2;
+    repeated string texts = 1;
 }
 
 message EmbedTextsResponse {

@@ -15,7 +15,7 @@ use std::{fmt, future};
 pub struct Embedding(Vec<f32>);
 
 impl Embedding {
-    fn new(mut embedding: Vec<f32>) -> Self {
+    pub fn new(mut embedding: Vec<f32>) -> Self {
         let len = embedding.len();
         let mut norm = 0f32;
 
@@ -79,7 +79,7 @@ impl EmbeddingProvider for FakeEmbeddingProvider {
     fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
         let embeddings = texts
             .iter()
-            .map(|text| {
+            .map(|_text| {
                 let mut embedding = vec![0f32; 1536];
                 for i in 0..embedding.len() {
                     embedding[i] = i as f32;
