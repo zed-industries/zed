@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{active_item_selection_properties, schedule_task};
+use crate::{active_item_selection_properties, schedule_resolved_task};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, Global,
@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
-use task::{oneshot_source::OneshotSource, ResolvedTask, Task, TaskContext};
+use task::{oneshot_source::OneshotSource, ResolvedTask, TaskContext};
 use ui::{
     div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon, IconButton,
     IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
@@ -51,8 +51,7 @@ impl_actions!(task, [Rerun, Spawn]);
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
-    // TODO kb resolve those already
-    candidates: Option<Vec<(TaskSourceKind, Arc<dyn Task>)>>,
+    candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
@@ -79,7 +78,7 @@ impl TasksModalDelegate {
         }
     }
 
-    fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<Arc<dyn Task>> {
+    fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<ResolvedTask> {
         if self.prompt.trim().is_empty() {
             return None;
         }
@@ -94,6 +93,7 @@ impl TasksModalDelegate {
                         .spawn(self.prompt.clone()),
                 )
             })
+            .and_then(|task| task.resolve_task(self.task_context.clone()))
     }
 
     fn delete_oneshot(&mut self, ix: usize, cx: &mut AppContext) {
@@ -203,9 +203,20 @@ impl PickerDelegate for TasksModalDelegate {
                         else {
                             return Vec::new();
                         };
-                        picker.delegate.inventory.update(cx, |inventory, cx| {
-                            inventory.list_tasks(language, worktree, true, cx)
-                        })
+                        picker
+                            .delegate
+                            .inventory
+                            .update(cx, |inventory, cx| {
+                                inventory.list_tasks(language, worktree, true, cx)
+                            })
+                            .into_iter()
+                            .filter_map(|(kind, task)| {
+                                Some((
+                                    kind,
+                                    task.resolve_task(picker.delegate.task_context.clone())?,
+                                ))
+                            })
+                            .collect()
                     });
 
                     candidates
@@ -265,13 +276,7 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_task(
-                    workspace,
-                    &task,
-                    self.task_context.clone(),
-                    omit_history_entry,
-                    cx,
-                );
+                schedule_resolved_task(workspace, task, omit_history_entry, cx);
             })
             .ok();
         cx.emit(DismissEvent);
@@ -347,13 +352,11 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        if let Some(ResolvedTask::SpawnInTerminal(spawn_prompt, _)) =
-            task.resolve_task(self.task_context.clone())
-        {
+        if let ResolvedTask::SpawnInTerminal(spawn_prompt, _) = task {
             if !spawn_prompt.args.is_empty() {
-                let mut command = spawn_prompt.command;
+                let mut command = spawn_prompt.command.clone();
                 command.push(' ');
-                command.extend(intersperse(spawn_prompt.args, " ".to_string()));
+                command.extend(intersperse(spawn_prompt.args.clone(), " ".to_string()));
                 return Some(command);
             }
         }
@@ -367,13 +370,7 @@ impl PickerDelegate for TasksModalDelegate {
         };
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_task(
-                    workspace,
-                    &task,
-                    self.task_context.clone(),
-                    omit_history_entry,
-                    cx,
-                );
+                schedule_resolved_task(workspace, task, omit_history_entry, cx);
             })
             .ok();
         cx.emit(DismissEvent);

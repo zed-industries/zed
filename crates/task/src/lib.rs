@@ -88,6 +88,14 @@ impl ResolvedTask {
             Self::Noop(task) => task,
         }
     }
+
+    /// TODO kb docs
+    pub fn name(&self) -> &str {
+        match self {
+            Self::SpawnInTerminal(resolved_task, _) => &resolved_task.label,
+            Self::Noop(task) => task.name(),
+        }
+    }
 }
 
 /// Variables, available for use in [`TaskContext`] when a Zed's task gets turned into real command.

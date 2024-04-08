@@ -160,6 +160,7 @@ impl Inventory {
                 HashMap::default(),
                 |mut tasks, resolved_task| {
                     tasks
+                        // TODO kb this now can be wrong: multiple resolved tasks will have the same id.
                         .entry(resolved_task.id().clone())
                         .or_insert_with(|| post_inc(&mut lru_score));
                     tasks
@@ -194,6 +195,7 @@ impl Inventory {
                 };
                 (task, usages)
             })
+            // TODO kb move this into tasks' modal.rs and sort by kinds too
             .sorted_unstable_by(
                 |((kind_a, task_a), usages_a), ((kind_b, task_b), usages_b)| {
                     usages_a
