@@ -307,8 +307,8 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
-        let hit = &self.matches[ix];
-        let (source_kind, _) = &candidates[hit.candidate_id];
+        let hit = &self.matches.get(ix)?;
+        let (source_kind, _) = &candidates.get(hit.candidate_id)?;
         let details = match source_kind {
             TaskSourceKind::UserInput => "user input".to_string(),
             TaskSourceKind::Buffer => "language extension".to_string(),
