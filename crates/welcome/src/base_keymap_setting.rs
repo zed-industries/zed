@@ -73,9 +73,9 @@ impl Settings for BaseKeymap {
         sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
-        Ok(sources
-            .user
-            .unwrap_or(sources.default)
-            .ok_or_else(Self::missing_default)?)
+        if let Some(Some(user_value)) = sources.user.cloned() {
+            return Ok(user_value);
+        }
+        Ok(sources.default.ok_or_else(Self::missing_default)?.clone())
     }
 }

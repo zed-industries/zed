@@ -763,12 +763,9 @@ impl Settings for VimModeSetting {
     type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        Ok(Self(
-            sources
-                .user
-                .unwrap_or(sources.default)
-                .ok_or_else(Self::missing_default)?,
-        ))
+        Ok(Self(sources.user.copied().flatten().unwrap_or(
+            sources.default.ok_or_else(Self::missing_default)?,
+        )))
     }
 }
 

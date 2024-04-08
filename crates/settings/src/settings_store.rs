@@ -87,7 +87,7 @@ pub trait Settings: 'static + Send + Sync {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SettingsSources<'a, T> {
     /// The default Zed settings.
     pub default: &'a T,
@@ -588,9 +588,6 @@ impl SettingsStore {
         for setting_value in self.setting_values.values_mut() {
             let default_settings = setting_value.deserialize_setting(&self.raw_default_settings)?;
 
-            project_settings_stack.clear();
-            paths_stack.clear();
-
             let extension_settings = setting_value
                 .deserialize_setting(&self.raw_extension_settings)
                 .log_err();
@@ -599,7 +596,7 @@ impl SettingsStore {
                 .deserialize_setting(&self.raw_user_settings)
                 .log_err();
 
-            let mut release_channel_value = None;
+            let mut release_channel_settings = None;
             if let Some(release_settings) = &self
                 .raw_user_settings
                 .get(release_channel::RELEASE_CHANNEL.dev_name())
@@ -608,11 +605,13 @@ impl SettingsStore {
                     .deserialize_setting(release_settings)
                     .log_err()
                 {
-                    release_channel_value = Some(release_settings);
+                    release_channel_settings = Some(release_settings);
                 }
             }
 
             // If the global settings file changed, reload the global value for the field.
+            project_settings_stack.clear();
+            paths_stack.clear();
             if changed_local_path.is_none() {
                 if let Some(value) = setting_value
                     .load_setting(
@@ -620,7 +619,7 @@ impl SettingsStore {
                             default: &default_settings,
                             extensions: extension_settings.as_ref(),
                             user: user_settings.as_ref(),
-                            release_channel: release_channel_value.as_ref(),
+                            release_channel: release_channel_settings.as_ref(),
                             project: &[],
                         },
                         cx,
@@ -665,7 +664,7 @@ impl SettingsStore {
                                 default: &default_settings,
                                 extensions: extension_settings.as_ref(),
                                 user: user_settings.as_ref(),
-                                release_channel: release_channel_value.as_ref(),
+                                release_channel: release_channel_settings.as_ref(),
                                 project: &project_settings_stack.iter().collect::<Vec<_>>(),
                             },
                             cx,
