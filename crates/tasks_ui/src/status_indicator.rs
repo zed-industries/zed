@@ -1,11 +1,12 @@
 use gpui::{IntoElement, Render, View, WeakView};
+use settings::Settings;
 use ui::{
-    ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, Tooltip, VisualContext,
-    WindowContext,
+    div, ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, Tooltip,
+    VisualContext, WindowContext,
 };
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-use crate::modal::Spawn;
+use crate::{modal::Spawn, settings::TaskSettings};
 
 enum TaskStatus {
     Failed,
@@ -64,6 +65,9 @@ impl TaskStatusIndicator {
 
 impl Render for TaskStatusIndicator {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+        if !TaskSettings::get_global(cx).show_status_indicator {
+            return div().into_any_element();
+        }
         let current_status = self.current_status(cx);
         let color = current_status.map(|status| match status {
             TaskStatus::Failed => Color::Error,
@@ -80,6 +84,7 @@ impl Render for TaskStatusIndicator {
                     .ok();
             }))
             .tooltip(|cx| Tooltip::for_action("Spawn tasks", &Spawn { task_name: None }, cx))
+            .into_any_element()
     }
 }
 
