@@ -15,7 +15,7 @@ use workspace::{searchable::Direction, Workspace};
 
 use crate::{
     motion::{start_of_line, Motion},
-    normal::{move_cursor, substitute::substitute},
+    normal::substitute::substitute,
     object::Object,
     state::{Mode, Operator},
     utils::{copy_selections_content, yank_selections_content},
@@ -536,6 +536,11 @@ pub fn select_match(
             });
         }
     });
+    if !match_exists {
+        vim.clear_operator(cx);
+        vim.stop_replaying();
+        return;
+    }
     vim.update_active_editor(cx, |_, editor, cx| {
         let latest = editor.selections.newest::<usize>(cx);
         if vim_is_normal {
@@ -554,24 +559,14 @@ pub fn select_match(
         editor.set_collapse_matches(true);
     });
 
-    if match_exists {
-        match vim.maybe_pop_operator() {
-            Some(Operator::Change) => substitute(vim, None, false, cx),
-            Some(Operator::Delete) => {
-                vim.stop_recording();
-                delete(vim, cx)
-            }
-            Some(Operator::Yank) => yank(vim, cx),
-            _ => {} // Ignoring other operators
+    match vim.maybe_pop_operator() {
+        Some(Operator::Change) => substitute(vim, None, false, cx),
+        Some(Operator::Delete) => {
+            vim.stop_recording();
+            delete(vim, cx)
         }
-    } else {
-        vim.clear_operator(cx);
-        vim.workspace_state.recording = false;
-        vim.workspace_state.recorded_actions = Default::default();
-        vim.workspace_state.recorded_count = None;
-        if vim.workspace_state.replaying {
-            move_cursor(vim, Motion::Right, Some(1), cx);
-        }
+        Some(Operator::Yank) => yank(vim, cx),
+        _ => {} // Ignoring other operators
     }
 }
 
@@ -1205,5 +1200,30 @@ mod test {
         cx.assert_shared_state("aa ˇx aa aa aa").await;
         cx.simulate_shared_keystrokes(["."]).await;
         cx.assert_shared_state("aa x ˇx aa aa").await;
+    }
+
+    #[gpui::test]
+    async fn test_cgn_nomatch(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("aaˇ aa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["/", "b", "b", "enter"])
+            .await;
+        cx.assert_shared_state("aaˇ aa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["c", "g", "n", "x", "escape"])
+            .await;
+        cx.assert_shared_state("aaˇaa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        cx.assert_shared_state("aaˇa aa aa aa").await;
+
+        cx.set_shared_state("aaˇ bb aa aa aa").await;
+        cx.simulate_shared_keystrokes(["/", "b", "b", "enter"])
+            .await;
+        cx.assert_shared_state("aa ˇbb aa aa aa").await;
+        cx.simulate_shared_keystrokes(["c", "g", "n", "x", "escape"])
+            .await;
+        cx.assert_shared_state("aa ˇx aa aa aa").await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        cx.assert_shared_state("aa ˇx aa aa aa").await;
     }
 }
