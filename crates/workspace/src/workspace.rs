@@ -2315,11 +2315,13 @@ impl Workspace {
     }
 
     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
+        // This is explicitly hoisted out of the following check for pane identity as
+        // terminal panel panes are not registered as a center panes.
+        self.status_bar.update(cx, |status_bar, cx| {
+            status_bar.set_active_pane(&pane, cx);
+        });
         if self.active_pane != pane {
             self.active_pane = pane.clone();
-            self.status_bar.update(cx, |status_bar, cx| {
-                status_bar.set_active_pane(&self.active_pane, cx);
-            });
             self.active_item_path_changed(cx);
             self.last_active_center_pane = Some(pane.downgrade());
         }
