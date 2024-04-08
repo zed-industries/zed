@@ -55,6 +55,8 @@ struct ActiveSettings(HashMap<WeakModel<Project>, ProjectSearchSettings>);
 
 impl Global for ActiveSettings {}
 
+const SEARCH_CONTEXT: u32 = 2;
+
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
@@ -235,8 +237,12 @@ impl ProjectSearch {
                             .update(&mut cx, |this, cx| {
                                 this.no_results = Some(false);
                                 this.excerpts.update(cx, |excerpts, cx| {
-                                    excerpts
-                                        .stream_excerpts_with_context_lines(buffer, ranges, 1, cx)
+                                    excerpts.stream_excerpts_with_context_lines(
+                                        buffer,
+                                        ranges,
+                                        SEARCH_CONTEXT,
+                                        cx,
+                                    )
                                 })
                             })
                             .ok()?;
