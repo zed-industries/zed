@@ -955,12 +955,10 @@ impl Workspace {
                         .and_then(|workspace| Some((workspace.display?, workspace.open_status?)))
                         .or_else(|| {
                             let (display, open_status, _fullscreen) = DB.last_window().log_err()?;
-                            Some((display?, open_status?.0))
+                            Some((display?, open_status?))
                         });
 
-                    if let Some((serialized_display, serialized_status, fullscreen)) =
-                        restorable_bounds
-                    {
+                    if let Some((serialized_display, serialized_status)) = restorable_bounds {
                         (serialized_status.0, Some(serialized_display))
                     } else {
                         (WindowOpenStatus::Windowed(None), None)
@@ -3667,11 +3665,11 @@ impl Workspace {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
             let open_status = if cx.is_fullscreen() {
-                WindowOpenStauts::FullScreen
+                WindowOpenStatus::FullScreen
             } else if cx.is_maximized() {
                 WindowOpenStatus::Maximized
             } else {
-                WindowOpenStauts::Windowed(None)
+                WindowOpenStatus::Windowed(None)
             };
             let serialized_workspace = SerializedWorkspace {
                 id: self.database_id,
