@@ -42,6 +42,7 @@ pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
     origin: Cell<Point<DevicePixels>>,
     physical_size: Cell<Size<DevicePixels>>,
+    restore_size: Cell<Bounds<DevicePixels>>,
     scale_factor: Cell<f32>,
     input_handler: Cell<Option<PlatformInputHandler>>,
     renderer: RefCell<BladeRenderer>,
@@ -71,6 +72,10 @@ impl WindowsWindowInner {
         let physical_size = Cell::new(Size {
             width: DevicePixels(cs.cx),
             height: DevicePixels(cs.cy),
+        });
+        let restore_size = Cell::new(Bounds {
+            origin: point(DevicePixels(cs.x), DevicePixels(cs.y)),
+            size: size(DevicePixels(cs.cx), DevicePixels(cs.cy)),
         });
         let scale_factor = Cell::new(monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32);
         let input_handler = Cell::new(None);
@@ -123,6 +128,7 @@ impl WindowsWindowInner {
             hwnd,
             origin,
             physical_size,
+            restore_size,
             scale_factor,
             input_handler,
             renderer,
@@ -142,6 +148,10 @@ impl WindowsWindowInner {
 
     fn is_minimized(&self) -> bool {
         unsafe { IsIconic(self.hwnd) }.as_bool()
+    }
+
+    fn restore_size(&self) -> Bounds<DevicePixels> {
+        self.restore_size.get()
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -256,7 +266,7 @@ impl WindowsWindowInner {
             WM_ACTIVATE => self.handle_activate_msg(wparam),
             WM_CREATE => self.handle_create_msg(lparam),
             WM_MOVE => self.handle_move_msg(lparam),
-            WM_SIZE => self.handle_size_msg(lparam),
+            WM_SIZE => self.handle_size_msg(wparam, lparam),
             WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => self.handle_size_move_loop(),
             WM_EXITSIZEMOVE | WM_EXITMENULOOP => self.handle_size_move_loop_exit(),
             WM_TIMER => self.handle_timer_msg(wparam),
@@ -308,6 +318,9 @@ impl WindowsWindowInner {
             x: DevicePixels(x),
             y: DevicePixels(y),
         });
+        if !self.is_fullscreen() && !self.is_maximized() && !self.is_minimized() {
+            self.restore_size.get_mut().origin = point(DevicePixels(x), DevicePixels(y));
+        }
         let size = self.physical_size.get();
         let center_x = x + size.width.0 / 2;
         let center_y = y + size.height.0 / 2;
@@ -331,7 +344,7 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_size_msg(&self, lparam: LPARAM) -> Option<isize> {
+    fn handle_size_msg(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let width = lparam.loword().max(1) as i32;
         let height = lparam.hiword().max(1) as i32;
         let scale_factor = self.scale_factor.get();
@@ -344,6 +357,9 @@ impl WindowsWindowInner {
             width: width as f64,
             height: height as f64,
         });
+        if !(wparam.0 as u32 & SIZE_MAXIMIZED > 0 || wparam.0 as u32 & SIZE_MINIMIZED > 0) {
+            self.restore_size.get_mut().size = new_physical_size;
+        }
         let mut callbacks = self.callbacks.borrow_mut();
         if let Some(callback) = callbacks.resize.as_mut() {
             let logical_size = logical_size(new_physical_size, scale_factor);
@@ -1394,6 +1410,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn is_minimized(&self) -> bool {
         self.inner.is_minimized()
+    }
+
+    fn restore_size(&self) -> Bounds<DevicePixels> {
+        self.inner.restore_size()
     }
 
     /// get the logical size of the app's drawable area.

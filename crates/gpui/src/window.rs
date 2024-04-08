@@ -948,6 +948,12 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_minimized()
     }
 
+    /// Return the restore size to indicate that how a window should be opened
+    /// after it has been closed
+    pub fn restore_size(&self) -> Bounds<DevicePixels> {
+        self.window.platform_window.restore_size()
+    }
+
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
         let focus_handle = self.focused();
