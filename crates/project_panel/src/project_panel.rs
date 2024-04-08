@@ -130,6 +130,7 @@ actions!(
         Paste,
         Rename,
         Open,
+        OpenPermanent,
         ToggleFocus,
         NewSearchInDirectory,
     ]
@@ -595,9 +596,17 @@ impl ProjectPanel {
     }
 
     fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
+        self.open_internal(true, cx);
+    }
+
+    fn open_preview(&mut self, _: &OpenPermanent, cx: &mut ViewContext<Self>) {
+        self.open_internal(false, cx);
+    }
+
+    fn open_internal(&mut self, allow_preview: bool, cx: &mut ViewContext<Self>) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
-                self.open_entry(entry.id, true, true, cx);
+                self.open_entry(entry.id, false, allow_preview, cx);
             } else {
                 self.toggle_expanded(entry.id, cx);
             }
@@ -1544,6 +1553,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
                 .on_action(cx.listener(Self::open))
+                .on_action(cx.listener(Self::open_preview))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))

@@ -1873,15 +1873,17 @@ impl Render for Pane {
             .on_action(cx.listener(|pane: &mut Pane, _: &ActivateNextItem, cx| {
                 pane.activate_next_item(true, cx);
             }))
-            .on_action(cx.listener(|pane: &mut Self, _: &TogglePreviewTab, cx| {
-                if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
-                    if pane.is_active_preview_item(active_item_id) {
-                        pane.set_preview_item_id(None, cx);
-                    } else {
-                        pane.set_preview_item_id(Some(active_item_id), cx);
+            .when(ItemSettings::get_global(cx).enable_preview_tabs, |this| {
+                this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, cx| {
+                    if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
+                        if pane.is_active_preview_item(active_item_id) {
+                            pane.set_preview_item_id(None, cx);
+                        } else {
+                            pane.set_preview_item_id(Some(active_item_id), cx);
+                        }
                     }
-                }
-            }))
+                }))
+            })
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
                     if let Some(task) = pane.close_active_item(action, cx) {
