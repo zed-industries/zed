@@ -960,10 +960,9 @@ mod tests {
             id: WorkspaceId(1),
             location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            open_status: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -971,10 +970,9 @@ mod tests {
             id: WorkspaceId(2),
             location: LocalPaths::new(["/tmp"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            open_status: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -1071,10 +1069,9 @@ mod tests {
             id: WorkspaceId(5),
             location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group,
-            bounds: Default::default(),
+            open_status: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -1101,10 +1098,9 @@ mod tests {
             id: WorkspaceId(1),
             location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            open_status: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -1112,10 +1108,9 @@ mod tests {
             id: WorkspaceId(2),
             location: LocalPaths::new(["/tmp"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            open_status: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -1150,10 +1145,9 @@ mod tests {
             id: WorkspaceId(3),
             location: LocalPaths::new(&["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
-            bounds: Default::default(),
+            open_status: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         };
 
@@ -1185,10 +1179,9 @@ mod tests {
             id: WorkspaceId(4),
             location: LocalPaths::new(workspace_id).into(),
             center_group: center_group.clone(),
-            bounds: Default::default(),
+            open_status: Default::default(),
             display: Default::default(),
             docks: Default::default(),
-            fullscreen: false,
             centered_layout: false,
         }
     }
