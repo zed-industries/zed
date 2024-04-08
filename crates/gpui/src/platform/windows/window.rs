@@ -71,10 +71,6 @@ impl WindowsWindowState {
     ) -> Self {
         let origin = point(cs.x.into(), cs.y.into());
         let physical_size = size(cs.cx.into(), cs.cy.into());
-        let restore_size = Cell::new(Bounds {
-            origin: point(DevicePixels(cs.x), DevicePixels(cs.y)),
-            size: size(DevicePixels(cs.cx), DevicePixels(cs.cy)),
-        });
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
@@ -86,9 +82,10 @@ impl WindowsWindowState {
         let fullscreen = None;
 
         Self {
-            origin,
-            physical_size,
-            restore_size,
+            origin: origin.clone(),
+            physical_size: physical_size.clone(),
+            restore_origin: origin,
+            restore_size: physical_size,
             scale_factor,
             callbacks,
             input_handler,
