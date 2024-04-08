@@ -1,12 +1,14 @@
 use std::sync::Arc;
+use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
 
+use anyhow::Result;
 use editor::scroll::{Autoscroll, AutoscrollStrategy};
 use editor::{Editor, EditorEvent};
 use gpui::{
     list, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, ListState, ParentElement, Render, Styled, Subscription, View,
-    ViewContext, WeakView,
+    InteractiveElement, IntoElement, ListState, ParentElement, Render, Styled, Subscription, Task,
+    View, ViewContext, WeakView,
 };
 use language::LanguageRegistry;
 use ui::prelude::*;
@@ -21,6 +23,8 @@ use crate::{
     OpenPreview,
 };
 
+const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
+
 pub struct MarkdownPreviewView {
     workspace: WeakView<Workspace>,
     active_editor: Option<EditorState>,
@@ -31,6 +35,7 @@ pub struct MarkdownPreviewView {
     tab_description: Option<String>,
     fallback_tab_description: SharedString,
     language_registry: Arc<LanguageRegistry>,
+    parsing_markdown_task: Option<Task<Result<()>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -203,6 +208,7 @@ impl MarkdownPreviewView {
                 language_registry,
                 fallback_tab_description: fallback_description
                     .unwrap_or_else(|| "Markdown Preview".into()),
+                parsing_markdown_task: None,
             };
 
             this.set_editor(active_editor, cx);
@@ -279,30 +285,49 @@ impl MarkdownPreviewView {
             _subscription: subscription,
         });
 
-        self.on_editor_edited(cx);
+        if let Some(state) = &self.active_editor {
+            self.parsing_markdown_task =
+                Some(self.parse_markdown_in_background(false, state.editor.clone(), cx));
+        }
     }
 
     fn on_editor_edited(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(state) = &self.active_editor {
-            let editor = state.editor.read(cx);
-            let contents = editor.buffer().read(cx).snapshot(cx).text();
-            let file_location = MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
-            let language_registry = self.language_registry.clone();
-            cx.spawn(move |view, mut cx| async move {
-                let contents =
-                    parse_markdown(&contents, file_location, Some(language_registry)).await;
-                view.update(&mut cx, move |view, cx| {
-                    let markdown_blocks_count = contents.children.len();
-                    view.contents = Some(contents);
-
-                    let scroll_top = view.list_state.logical_scroll_top();
-                    view.list_state.reset(markdown_blocks_count);
-                    view.list_state.scroll_to(scroll_top);
-                    cx.notify();
-                })
-            })
-            .detach();
+            self.parsing_markdown_task =
+                Some(self.parse_markdown_in_background(true, state.editor.clone(), cx));
         }
+    }
+
+    fn parse_markdown_in_background(
+        &mut self,
+        wait_for_debounce: bool,
+        editor: View<Editor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let editor = editor.read(cx);
+        let contents = editor.buffer().read(cx).snapshot(cx).text();
+        let file_location = MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
+        let language_registry = self.language_registry.clone();
+
+        cx.spawn(move |view, mut cx| async move {
+            if wait_for_debounce {
+                // Wait for the user to stop typing
+                cx.background_executor().timer(REPARSE_DEBOUNCE).await;
+            }
+
+            let parsing_task = cx.background_executor().spawn(async move {
+                parse_markdown(&contents, file_location, Some(language_registry)).await
+            });
+            let contents = parsing_task.await;
+            view.update(&mut cx, move |view, cx| {
+                let markdown_blocks_count = contents.children.len();
+                view.contents = Some(contents);
+                let scroll_top = view.list_state.logical_scroll_top();
+                view.list_state.reset(markdown_blocks_count);
+                view.list_state.scroll_to(scroll_top);
+                cx.notify();
+            })
+        })
     }
 
     fn move_cursor_to_block(&self, cx: &mut ViewContext<Self>, selection: Range<usize>) {
