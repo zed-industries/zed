@@ -969,7 +969,7 @@ impl Workspace {
 
                 // Use the serialized workspace to construct the new window
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
-                options.bounds = bounds;
+                options.open_status = bounds;
                 options.fullscreen = fullscreen;
                 let centered_layout = serialized_workspace
                     .as_ref()
@@ -4867,7 +4867,7 @@ pub fn join_hosted_project(
             let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
-                options.bounds = window_bounds_override;
+                options.open_status = window_bounds_override;
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
@@ -4993,7 +4993,7 @@ pub fn join_in_room_project(
             let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
-                options.bounds = window_bounds_override;
+                options.open_status = window_bounds_override;
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)

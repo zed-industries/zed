@@ -592,7 +592,7 @@ impl Window {
         cx: &mut AppContext,
     ) -> Self {
         let WindowOptions {
-            bounds,
+            open_status: bounds,
             titlebar,
             focus,
             show,
@@ -608,7 +608,7 @@ impl Window {
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
-                bounds,
+                open_status: bounds,
                 titlebar,
                 kind,
                 is_movable,

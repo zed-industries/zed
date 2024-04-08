@@ -56,7 +56,7 @@ impl TestWindow {
         display: Rc<dyn PlatformDisplay>,
     ) -> Self {
         Self(Arc::new(Mutex::new(TestWindowState {
-            bounds: params.bounds,
+            bounds: params.open_status,
             display,
             platform,
             handle,
