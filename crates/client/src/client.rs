@@ -97,10 +97,7 @@ impl Settings for ClientSettings {
 
     type FileContent = ClientSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self>
-    where
-        Self: Sized,
-    {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         let mut result = sources.json_merge::<Self>()?;
         if let Some(server_url) = &*ZED_SERVER_URL {
             result.server_url = server_url.clone()
