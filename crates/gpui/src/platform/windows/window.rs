@@ -71,6 +71,10 @@ impl WindowsWindowState {
     ) -> Self {
         let origin = point(cs.x.into(), cs.y.into());
         let physical_size = size(cs.cx.into(), cs.cy.into());
+        let restore_size = Cell::new(Bounds {
+            origin: point(DevicePixels(cs.x), DevicePixels(cs.y)),
+            size: size(DevicePixels(cs.cx), DevicePixels(cs.cy)),
+        });
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
@@ -84,6 +88,7 @@ impl WindowsWindowState {
         Self {
             origin,
             physical_size,
+            restore_size,
             scale_factor,
             callbacks,
             input_handler,
@@ -104,6 +109,10 @@ impl WindowsWindowState {
 
     pub(crate) fn is_maximized(&self) -> bool {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
+    }
+
+    fn restore_size(&self) -> Bounds<DevicePixels> {
+        self.restore_size.get()
     }
 
     fn bounds(&self) -> Bounds<DevicePixels> {
@@ -356,6 +365,14 @@ impl PlatformWindow for WindowsWindow {
 
     fn is_minimized(&self) -> bool {
         self.0.is_minimized()
+    }
+
+    fn restore_size(&self) -> Bounds<DevicePixels> {
+        self.inner.restore_size()
+    }
+
+    fn restore_size(&self) -> Bounds<DevicePixels> {
+        self.inner.restore_size()
     }
 
     /// get the logical size of the app's drawable area.
