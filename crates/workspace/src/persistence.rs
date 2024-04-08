@@ -340,14 +340,22 @@ impl WorkspaceDb {
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
         let (
+            
             workspace_id,
+           
             local_paths,
             dev_server_project_id,
-            bounds,
+           
+            open_status,
+           
             display,
+           
             fullscreen,
+           
             centered_layout,
+           
             docks,
+        ,
         ): (
             WorkspaceId,
             Option<LocalPaths>,
@@ -413,8 +421,7 @@ impl WorkspaceDb {
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
                 .log_err()?,
-            bounds: bounds.map(|bounds| bounds.0),
-            fullscreen: fullscreen.unwrap_or(false),
+            open_status,
             centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
