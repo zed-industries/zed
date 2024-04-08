@@ -1,7 +1,8 @@
 use anyhow::anyhow;
 use rpc::{proto, ConnectionId};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DatabaseTransaction, EntityTrait, ModelTrait, QueryFilter
+    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DatabaseTransaction, EntityTrait,
+    ModelTrait, QueryFilter,
 };
 
 use crate::db::ProjectId;
@@ -73,16 +74,23 @@ impl Database {
         .await
     }
 
-    pub async fn get_stale_dev_server_projects(&self, connection: ConnectionId) -> crate::Result<Vec<ProjectId>> {
+    pub async fn get_stale_dev_server_projects(
+        &self,
+        connection: ConnectionId,
+    ) -> crate::Result<Vec<ProjectId>> {
         self.transaction(|tx| async move {
-            let projects = project::Entity::find().filter(
-                Condition::all()
-                    .add(project::Column::HostConnectionId.eq(connection.id))
-                    .add(project::Column::HostConnectionServerId.eq(connection.owner_id))
-            ).all(&*tx).await?;
+            let projects = project::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(project::Column::HostConnectionId.eq(connection.id))
+                        .add(project::Column::HostConnectionServerId.eq(connection.owner_id)),
+                )
+                .all(&*tx)
+                .await?;
 
-            Ok(projects.into_iter().map(|p|p.id).collect())
-        }).await
+            Ok(projects.into_iter().map(|p| p.id).collect())
+        })
+        .await
     }
 
     pub async fn create_remote_project(

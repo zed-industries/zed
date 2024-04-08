@@ -4690,7 +4690,11 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
 
 async fn lost_dev_server_connection(session: &Session) -> Result<()> {
     log::info!("lost dev server connection, unsharing projects");
-    let project_ids =  session.db().await.get_stale_dev_server_projects(session.connection_id).await?;
+    let project_ids = session
+        .db()
+        .await
+        .get_stale_dev_server_projects(session.connection_id)
+        .await?;
 
     for project_id in project_ids {
         // not unshare re-checks the connection ids match, so we get away with no transaction
