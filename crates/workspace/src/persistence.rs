@@ -293,10 +293,6 @@ define_connection! {
     sql!(
         ALTER TABLE pane_groups ADD COLUMN flexes TEXT;
     ),
-    // Add fullscreen field to workspace
-    sql!(
-        ALTER TABLE workspaces ADD COLUMN fullscreen INTEGER; //bool
-    ),
     // Add preview field to items
     sql!(
         ALTER TABLE items ADD COLUMN preview INTEGER; //bool
@@ -849,7 +845,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub(crate) async fn set_window_bounds(workspace_id: WorkspaceId, bounds: SerializedWindowOpenStatus, display: Uuid) -> Result<()> {
+        pub(crate) async fn set_window_open_status(workspace_id: WorkspaceId, bounds: SerializedWindowOpenStatus, display: Uuid) -> Result<()> {
             UPDATE workspaces
             SET window_state = ?2,
                 window_x = ?3,
@@ -857,14 +853,6 @@ impl WorkspaceDb {
                 window_width = ?5,
                 window_height = ?6,
                 display = ?7
-            WHERE workspace_id = ?1
-        }
-    }
-
-    query! {
-        pub(crate) async fn set_fullscreen(workspace_id: WorkspaceId, fullscreen: bool) -> Result<()> {
-            UPDATE workspaces
-            SET fullscreen = ?2
             WHERE workspace_id = ?1
         }
     }
