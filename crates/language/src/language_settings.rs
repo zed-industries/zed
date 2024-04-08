@@ -119,7 +119,7 @@ pub struct CopilotSettings {
 }
 
 /// The settings for all languages.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
@@ -140,7 +140,7 @@ pub struct AllLanguageSettingsContent {
 }
 
 /// The settings for a particular language.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
@@ -249,7 +249,7 @@ pub struct LanguageSettingsContent {
 }
 
 /// The contents of the GitHub Copilot settings.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CopilotSettingsContent {
     /// A list of globs representing files that Copilot should be disabled for.
     #[serde(default)]
@@ -257,7 +257,7 @@ pub struct CopilotSettingsContent {
 }
 
 /// The settings for enabling/disabling features.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
     /// Whether the GitHub Copilot feature is enabled.

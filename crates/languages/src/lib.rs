@@ -1,11 +1,12 @@
 use anyhow::Context;
-use gpui::AppContext;
+use gpui::{AppContext, BorrowAppContext};
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
+use smol::stream::StreamExt;
 use std::{str, sync::Arc};
-use util::asset_str;
+use util::{asset_str, ResultExt};
 
 use crate::{elixir::elixir_task_context, rust::RustContextProvider};
 
@@ -327,6 +328,27 @@ pub fn init(
         "Svelte".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
     );
+
+    let mut subscription = languages.subscribe();
+    let mut prev_language_settings = languages.language_settings();
+
+    cx.spawn(|cx| async move {
+        while subscription.next().await.is_some() {
+            let language_settings = languages.language_settings();
+            if language_settings != prev_language_settings {
+                cx.update(|cx| {
+                    cx.update_global(|settings: &mut SettingsStore, cx| {
+                        settings
+                            .set_extension_settings(language_settings.clone(), cx)
+                            .log_err();
+                    });
+                })?;
+                prev_language_settings = language_settings;
+            }
+        }
+        anyhow::Ok(())
+    })
+    .detach();
 }
 
 #[cfg(any(test, feature = "test-support"))]

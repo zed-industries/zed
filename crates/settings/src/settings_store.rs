@@ -136,6 +136,7 @@ pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
+    raw_extension_settings: serde_json::Value,
     raw_local_settings: BTreeMap<(usize, Arc<Path>), serde_json::Value>,
     tab_size_callback: Option<(
         TypeId,
@@ -151,6 +152,7 @@ impl Default for SettingsStore {
             setting_values: Default::default(),
             raw_default_settings: serde_json::json!({}),
             raw_user_settings: serde_json::json!({}),
+            raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
             tab_size_callback: Default::default(),
         }
@@ -425,6 +427,21 @@ impl SettingsStore {
         Ok(())
     }
 
+    pub fn set_extension_settings<T: Serialize>(
+        &mut self,
+        content: T,
+        cx: &mut AppContext,
+    ) -> Result<()> {
+        let settings: serde_json::Value = serde_json::to_value(content)?;
+        if settings.is_object() {
+            self.raw_extension_settings = settings;
+            self.recompute_values(None, cx)?;
+            Ok(())
+        } else {
+            Err(anyhow!("settings must be an object"))
+        }
+    }
+
     /// Add or remove a set of local settings via a JSON string.
     pub fn clear_local_settings(&mut self, root_id: usize, cx: &mut AppContext) -> Result<()> {
         self.raw_local_settings.retain(|k, _| k.0 != root_id);
@@ -558,6 +575,14 @@ impl SettingsStore {
 
             user_settings_stack.clear();
             paths_stack.clear();
+
+            if let Some(settings) = setting_value
+                .deserialize_setting(&self.raw_extension_settings)
+                .log_err()
+            {
+                user_settings_stack.push(settings);
+                paths_stack.push(None);
+            }
 
             if let Some(user_settings) = setting_value
                 .deserialize_setting(&self.raw_user_settings)
