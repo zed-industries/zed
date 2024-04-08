@@ -1,4 +1,3 @@
-use self::zed::extension::*;
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
 use ::settings::Settings;
 use anyhow::{anyhow, bail, Result};
@@ -29,6 +28,8 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
     },
 });
+
+pub use self::zed::extension::*;
 
 mod settings {
     include!("../../../../extension_api/wit/since_v0.0.6/settings.rs");

@@ -130,8 +130,7 @@ impl ExtensionImports for WasmState {
         repo: String,
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        latest::zed::extension::github::Host::latest_github_release(self, repo, options.into())
-            .await
+        latest::zed::extension::github::Host::latest_github_release(self, repo, options).await
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
