@@ -270,7 +270,7 @@ impl<'a> MarkdownParser<'a> {
                             regions.push(ParsedRegion {
                                 code: false,
                                 link: Some(Link::Web {
-                                    url: t[range].to_string(),
+                                    url: link.as_str().to_string(),
                                 }),
                             });
 

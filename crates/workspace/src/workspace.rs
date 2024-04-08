@@ -2267,7 +2267,7 @@ impl Workspace {
         }
     }
 
-    fn find_pane_in_direction(
+    pub fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
         cx: &WindowContext,
