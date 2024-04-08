@@ -51,6 +51,7 @@ impl_actions!(task, [Rerun, Spawn]);
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
+    // TODO kb resolve those already
     candidates: Option<Vec<(TaskSourceKind, Arc<dyn Task>)>>,
     matches: Vec<StringMatch>,
     selected_index: usize,
