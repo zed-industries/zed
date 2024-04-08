@@ -87,12 +87,13 @@ impl SemanticIndex {
 
 pub struct ProjectIndex {
     db_connection: heed::Env,
-    project: WeakModel<Project>,
+    project: Model<Project>,
     worktree_indices: HashMap<EntityId, WorktreeIndexHandle>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     last_status: Status,
     embedding_provider: Arc<dyn EmbeddingProvider>,
+    _subscription: Subscription,
 }
 
 enum WorktreeIndexHandle {
@@ -116,60 +117,86 @@ impl ProjectIndex {
         let fs = project.read(cx).fs().clone();
         let mut this = ProjectIndex {
             db_connection,
-            project: project.downgrade(),
+            project: project.clone(),
             worktree_indices: HashMap::default(),
             language_registry,
             fs,
             last_status: Status::Idle,
             embedding_provider,
+            _subscription: cx.subscribe(&project, Self::handle_project_event),
         };
-
-        for worktree in project.read(cx).worktrees().collect::<Vec<_>>() {
-            this.add_worktree(worktree, cx);
-        }
-
+        this.update_worktree_indices(cx);
         this
     }
 
-    fn add_worktree(&mut self, worktree: Model<Worktree>, cx: &mut ModelContext<Self>) {
-        if !worktree.read(cx).is_local() {
-            return;
+    fn handle_project_event(
+        &mut self,
+        _: Model<Project>,
+        event: &project::Event,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {
+                self.update_worktree_indices(cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn update_worktree_indices(&mut self, cx: &mut ModelContext<Self>) {
+        let worktrees = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .filter_map(|worktree| {
+                if worktree.read(cx).is_local() {
+                    Some((worktree.entity_id(), worktree))
+                } else {
+                    None
+                }
+            })
+            .collect::<HashMap<_, _>>();
+
+        self.worktree_indices
+            .retain(|worktree_id, _| worktrees.contains_key(worktree_id));
+        for (worktree_id, worktree) in worktrees {
+            self.worktree_indices.entry(worktree_id).or_insert_with(|| {
+                let worktree_index = WorktreeIndex::load(
+                    worktree.clone(),
+                    self.db_connection.clone(),
+                    self.language_registry.clone(),
+                    self.fs.clone(),
+                    self.embedding_provider.clone(),
+                    cx,
+                );
+
+                let load_worktree = cx.spawn(|this, mut cx| async move {
+                    if let Some(index) = worktree_index.await.log_err() {
+                        this.update(&mut cx, |this, cx| {
+                            this.worktree_indices.insert(
+                                worktree_id,
+                                WorktreeIndexHandle::Loaded {
+                                    _subscription: cx
+                                        .observe(&index, |this, _, cx| this.update_status(cx)),
+                                    index,
+                                },
+                            );
+                        })?;
+                    } else {
+                        this.update(&mut cx, |this, _cx| {
+                            this.worktree_indices.remove(&worktree_id)
+                        })?;
+                    }
+
+                    this.update(&mut cx, |this, cx| this.update_status(cx))
+                });
+
+                WorktreeIndexHandle::Loading {
+                    _task: load_worktree,
+                }
+            });
         }
 
-        let worktree_entity_id = worktree.entity_id();
-        let worktree_index = WorktreeIndex::load(
-            worktree.clone(),
-            self.db_connection.clone(),
-            self.language_registry.clone(),
-            self.fs.clone(),
-            self.embedding_provider.clone(),
-            cx,
-        );
-        let load_worktree = cx.spawn(|this, mut cx| async move {
-            if let Some(index) = worktree_index.await.log_err() {
-                this.update(&mut cx, |this, cx| {
-                    this.worktree_indices.insert(
-                        worktree_entity_id,
-                        WorktreeIndexHandle::Loaded {
-                            _subscription: cx.observe(&index, |this, _, cx| this.update_status(cx)),
-                            index,
-                        },
-                    );
-                })?;
-            } else {
-                this.update(&mut cx, |this, _cx| {
-                    this.worktree_indices.remove(&worktree_entity_id)
-                })?;
-            }
-
-            this.update(&mut cx, |this, cx| this.update_status(cx))
-        });
-        self.worktree_indices.insert(
-            worktree_entity_id,
-            WorktreeIndexHandle::Loading {
-                _task: load_worktree,
-            },
-        );
         self.update_status(cx);
     }
 
