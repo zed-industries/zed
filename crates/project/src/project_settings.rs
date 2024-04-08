@@ -2,7 +2,7 @@ use collections::HashMap;
 use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 use std::sync::Arc;
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -61,10 +61,9 @@ impl Settings for ProjectSettings {
     type FileContent = Self;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
 }

@@ -10,7 +10,7 @@ use schemars::{
     JsonSchema,
 };
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation};
+use settings::{Settings, SettingsLocation, SettingsSources};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
 
 impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
@@ -473,11 +473,9 @@ impl settings::Settings for AllLanguageSettings {
 
     type FileContent = AllLanguageSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_settings: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        let default_value = sources.default;
+
         // A default is provided for all settings.
         let mut defaults: LanguageSettings =
             serde_json::from_value(serde_json::to_value(&default_value.defaults)?)?;
@@ -500,7 +498,8 @@ impl settings::Settings for AllLanguageSettings {
             .and_then(|c| c.disabled_globs.as_ref())
             .ok_or_else(Self::missing_default)?;
 
-        for user_settings in user_settings {
+        let mut file_types: HashMap<Arc<str>, Vec<String>> = HashMap::default();
+        for user_settings in sources.customizations() {
             if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
                 copilot_enabled = copilot;
             }
@@ -528,11 +527,8 @@ impl settings::Settings for AllLanguageSettings {
                     user_language_settings,
                 );
             }
-        }
 
-        let mut file_types: HashMap<Arc<str>, Vec<String>> = HashMap::default();
-        for user_file_types in user_settings.iter().map(|s| &s.file_types) {
-            for (language, suffixes) in user_file_types {
+            for (language, suffixes) in &user_settings.file_types {
                 file_types
                     .entry(language.clone())
                     .or_default()

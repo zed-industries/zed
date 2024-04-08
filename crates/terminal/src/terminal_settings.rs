@@ -7,7 +7,7 @@ use schemars::{
 };
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::SettingsJsonSchemaParams;
+use settings::{SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -171,12 +171,12 @@ impl settings::Settings for TerminalSettings {
     type FileContent = TerminalSettingsContent;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
+
     fn json_schema(
         generator: &mut SchemaGenerator,
         params: &SettingsJsonSchemaParams,
