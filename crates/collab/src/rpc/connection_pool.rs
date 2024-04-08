@@ -83,8 +83,8 @@ impl ConnectionPool {
                 zed_version,
             },
         );
-        let connected_dev_server = self
-            .connected_dev_servers
+
+        self.connected_dev_servers
             .insert(dev_server_id, connection_id);
     }
 

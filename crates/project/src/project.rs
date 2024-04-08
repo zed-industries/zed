@@ -7961,7 +7961,6 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        dbg!(&envelope.payload);
         let old_peer_id = envelope
             .payload
             .old_peer_id

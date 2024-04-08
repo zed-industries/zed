@@ -262,6 +262,7 @@ enum ErrorCode {
     WrongMoveTarget = 11;
     UnsharedItem = 12;
     NoSuchProject = 13;
+    DevServerAlreadyOnline = 14;
     reserved 6;
 }
 

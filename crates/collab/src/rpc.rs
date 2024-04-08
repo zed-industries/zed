@@ -1062,6 +1062,10 @@ impl Server {
             Principal::DevServer(dev_server) => {
                 {
                     let mut pool = self.connection_pool.lock();
+                    if dbg!(pool.dev_server_connection_id(dbg!(dev_server.id)).is_some()) {
+                        dbg!("Returning error...");
+                        return Err(anyhow!(ErrorCode::DevServerAlreadyOnline))?;
+                    };
                     pool.add_dev_server(connection_id, dev_server.id, zed_version);
                 }
                 update_dev_server_status(dev_server, proto::DevServerStatus::Online, &session)
