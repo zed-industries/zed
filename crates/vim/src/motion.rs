@@ -21,7 +21,7 @@ use crate::{
     Vim,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Motion {
     Left,
     Backspace,
@@ -394,18 +394,13 @@ pub(crate) fn search_motion(m: Motion, cx: &mut WindowContext) {
         new_selection,
     } = &m
     {
-        if let Some((prior_selection, new_selection)) =
-            prior_selection.clone().zip(new_selection.clone())
-        {
+        if let Some(prior_selection) = prior_selection {
             match Vim::read(cx).state().mode {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     Vim::update(cx, |vim, cx| {
                         vim.update_active_editor(cx, |_, editor, cx| {
-                            let snapshot = editor.buffer().read(cx).snapshot(cx);
                             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                                let prior_selection = prior_selection.start.to_point(&snapshot)
-                                    ..prior_selection.end.to_point(&snapshot);
-                                s.select_ranges([prior_selection])
+                                s.select_ranges([prior_selection.clone()])
                             })
                         });
                     });

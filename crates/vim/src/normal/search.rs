@@ -234,7 +234,7 @@ pub fn move_to_internal(
                     }
                     let Some(query) = search_bar.query_suggestion(cx) else {
                         vim.clear_operator(cx);
-                        search_bar.search("", None, cx);
+                        let _ = search_bar.search("", None, cx);
                         return None;
                     };
                     let mut query = regex::escape(&query);
