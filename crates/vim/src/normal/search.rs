@@ -233,6 +233,8 @@ pub fn move_to_internal(
                         return None;
                     }
                     let Some(query) = search_bar.query_suggestion(cx) else {
+                        vim.clear_operator(cx);
+                        search_bar.search("", None, cx);
                         return None;
                     };
                     let mut query = regex::escape(&query);
@@ -613,5 +615,20 @@ mod test {
         cx.simulate_shared_keystrokes(["v", "/", "c", "d"]).await;
         cx.simulate_shared_keystrokes(["enter"]).await;
         cx.assert_shared_state("«a.c. abcˇ»d a.c. abcd").await;
+
+        cx.set_shared_state("a a aˇ a a a").await;
+        cx.simulate_shared_keystrokes(["v", "/", "a"]).await;
+        cx.simulate_shared_keystrokes(["enter"]).await;
+        cx.assert_shared_state("a a a« aˇ» a a").await;
+        cx.simulate_shared_keystrokes(["/", "enter"]).await;
+        cx.assert_shared_state("a a a« a aˇ» a").await;
+        cx.simulate_shared_keystrokes(["?", "enter"]).await;
+        cx.assert_shared_state("a a a« aˇ» a a").await;
+        cx.simulate_shared_keystrokes(["?", "enter"]).await;
+        cx.assert_shared_state("a a «ˇa »a a a").await;
+        cx.simulate_shared_keystrokes(["/", "enter"]).await;
+        cx.assert_shared_state("a a a« aˇ» a a").await;
+        cx.simulate_shared_keystrokes(["/", "enter"]).await;
+        cx.assert_shared_state("a a a« a aˇ» a").await;
     }
 }

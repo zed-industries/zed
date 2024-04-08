@@ -404,28 +404,17 @@ pub(crate) fn search_motion(m: Motion, cx: &mut WindowContext) {
                             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                                 let prior_selection = prior_selection.start.to_point(&snapshot)
                                     ..prior_selection.end.to_point(&snapshot);
-                                let new_selection = new_selection.start.to_point(&snapshot)
-                                    ..new_selection.end.to_point(&snapshot);
-
-                                let range = if prior_selection.start < new_selection.start {
-                                    let end = snapshot.clip_point(
-                                        new_selection.end + Point::new(0, 1),
-                                        Bias::Left,
-                                    );
-                                    prior_selection.start..end
-                                } else {
-                                    prior_selection.end..new_selection.start
-                                };
-                                s.select_ranges([range])
+                                s.select_ranges([prior_selection])
                             })
                         });
                     });
                 }
-                Mode::Normal | Mode::Replace | Mode::Insert => {}
+                Mode::Normal | Mode::Replace | Mode::Insert => {
+                    if Vim::read(cx).active_operator().is_none() {
+                        return;
+                    }
+                }
             }
-        }
-        if Vim::read(cx).active_operator().is_none() {
-            return;
         }
     }
 

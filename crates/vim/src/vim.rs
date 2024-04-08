@@ -289,7 +289,7 @@ impl Vim {
     fn latest_editor_selection(&mut self, cx: &mut WindowContext) -> Option<Range<Anchor>> {
         self.update_active_editor(cx, |_, editor, _| {
             let selection = editor.selections.newest_anchor();
-            selection.start..selection.end
+            selection.tail()..selection.head()
         })
     }
 
