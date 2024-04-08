@@ -45,11 +45,29 @@ pub struct SpawnInTerminal {
 }
 
 /// TODO kb docs
+#[derive(Clone)]
 pub enum ResolvedTask {
     /// TODO kb docs
-    SpawnInTerminal(SpawnInTerminal),
+    SpawnInTerminal(SpawnInTerminal, Arc<dyn Task>),
     /// TODO kb docs
-    Noop,
+    Noop(Arc<dyn Task>),
+}
+impl ResolvedTask {
+    /// TODO kb docs
+    pub fn id(&self) -> &TaskId {
+        match self {
+            Self::SpawnInTerminal(task, _) => &task.id,
+            Self::Noop(task) => task.id(),
+        }
+    }
+
+    /// TODO kb docs
+    pub fn original_task(&self) -> &Arc<dyn Task> {
+        match self {
+            Self::SpawnInTerminal(_, task) => task,
+            Self::Noop(task) => task,
+        }
+    }
 }
 
 /// Variables, available for use in [`TaskContext`] when a Zed's task gets turned into real command.
@@ -154,7 +172,7 @@ pub trait Task {
     fn resolve_task(&self, cx: TaskContext) -> Option<ResolvedTask>;
 }
 
-/// TODO kb proper docs
+/// TODO kb docs
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskTemplate {
     /// TODO kb docs
@@ -186,7 +204,7 @@ impl Task for TaskTemplate {
         let task_variables = task_variables.into_env_variables();
         let cwd = self
             .definition
-            .cwd_template
+            .cwd
             .clone()
             .and_then(|path| {
                 subst::substitute(&path, &task_variables)
@@ -196,18 +214,21 @@ impl Task for TaskTemplate {
             .or(cwd);
         let mut definition_env = self.definition.env.clone();
         definition_env.extend(task_variables);
-        Some(ResolvedTask::SpawnInTerminal(SpawnInTerminal {
-            id: self.id.clone(),
-            cwd,
-            use_new_terminal: self.definition.use_new_terminal,
-            allow_concurrent_runs: self.definition.allow_concurrent_runs,
-            // TODO kb use expanded label here
-            label: self.definition.label.clone(),
-            command: self.definition.command.clone(),
-            args: self.definition.args.clone(),
-            reveal: self.definition.reveal,
-            env: definition_env,
-        }))
+        Some(ResolvedTask::SpawnInTerminal(
+            SpawnInTerminal {
+                id: self.id.clone(),
+                cwd,
+                use_new_terminal: self.definition.use_new_terminal,
+                allow_concurrent_runs: self.definition.allow_concurrent_runs,
+                // TODO kb use expanded label here
+                label: self.definition.label.clone(),
+                command: self.definition.command.clone(),
+                args: self.definition.args.clone(),
+                reveal: self.definition.reveal,
+                env: definition_env,
+            },
+            Arc::new(self.clone()),
+        ))
     }
 
     fn name(&self) -> &str {
@@ -219,11 +240,12 @@ impl Task for TaskTemplate {
     }
 
     fn cwd(&self) -> Option<&str> {
-        self.definition.cwd_template.as_deref()
+        self.definition.cwd.as_deref()
     }
 }
 
 /// Static task definition from the tasks config file.
+/// May use the [`VariableName`] to get the corresponding substitutions into its fields.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct Definition {
@@ -239,7 +261,7 @@ pub struct Definition {
     pub env: HashMap<String, String>,
     /// Current working directory to spawn the command into, defaults to current project root.
     #[serde(default)]
-    pub cwd_template: Option<String>,
+    pub cwd: Option<String>,
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
     #[serde(default)]
     pub use_new_terminal: bool,

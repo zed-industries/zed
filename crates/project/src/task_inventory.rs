@@ -10,14 +10,14 @@ use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use itertools::Itertools;
 use language::Language;
-use task::{Task, TaskContext, TaskId, TaskSource, TaskTemplate};
+use task::{ResolvedTask, Task, TaskId, TaskSource, TaskTemplate};
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
     sources: Vec<SourceInInventory>,
-    last_scheduled_tasks: VecDeque<(Arc<dyn Task>, TaskContext)>,
+    last_scheduled_tasks: VecDeque<ResolvedTask>,
 }
 
 struct SourceInInventory {
@@ -158,18 +158,17 @@ impl Inventory {
         let tasks_by_usage = if lru {
             self.last_scheduled_tasks.iter().rev().fold(
                 HashMap::default(),
-                |mut tasks, (task, context)| {
+                |mut tasks, resolved_task| {
                     tasks
-                        .entry(task.id().clone())
-                        .or_insert_with(|| (post_inc(&mut lru_score), Some(context)));
+                        .entry(resolved_task.id().clone())
+                        .or_insert_with(|| post_inc(&mut lru_score));
                     tasks
                 },
             )
         } else {
             HashMap::default()
         };
-        let not_used_task_context = None;
-        let not_used_score = (post_inc(&mut lru_score), not_used_task_context);
+        let not_used_score = post_inc(&mut lru_score);
         self.sources
             .iter()
             .filter(|source| {
@@ -198,8 +197,7 @@ impl Inventory {
             .sorted_unstable_by(
                 |((kind_a, task_a), usages_a), ((kind_b, task_b), usages_b)| {
                     usages_a
-                        .0
-                        .cmp(&usages_b.0)
+                        .cmp(&usages_b)
                         .then(
                             kind_a
                                 .worktree()
@@ -228,13 +226,13 @@ impl Inventory {
     }
 
     /// Returns the last scheduled task, if any of the sources contains one with the matching id.
-    pub fn last_scheduled_task(&self) -> Option<(Arc<dyn Task>, TaskContext)> {
+    pub fn last_scheduled_task(&self) -> Option<ResolvedTask> {
         self.last_scheduled_tasks.back().cloned()
     }
 
     /// Registers task "usage" as being scheduled – to be used for LRU sorting when listing all tasks.
-    pub fn task_scheduled(&mut self, task: Arc<dyn Task>, task_context: TaskContext) {
-        self.last_scheduled_tasks.push_back((task, task_context));
+    pub fn task_scheduled(&mut self, resolved_task: ResolvedTask) {
+        self.last_scheduled_tasks.push_back(resolved_task);
         if self.last_scheduled_tasks.len() > 5_000 {
             self.last_scheduled_tasks.pop_front();
         }
@@ -272,8 +270,8 @@ pub mod test_inventory {
             None
         }
 
-        fn resolve_task(&self, _cwd: TaskContext) -> Option<ResolvedTask> {
-            Some(ResolvedTask::Noop)
+        fn resolve_task(&self, _: TaskContext) -> Option<ResolvedTask> {
+            Some(ResolvedTask::Noop(Arc::new(self.clone())))
         }
     }
 
@@ -339,12 +337,15 @@ pub mod test_inventory {
         cx: &mut TestAppContext,
     ) {
         inventory.update(cx, |inventory, cx| {
-            let task = inventory
+            let (_, task) = inventory
                 .list_tasks(None, None, false, cx)
                 .into_iter()
                 .find(|(_, task)| task.name() == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
-            inventory.task_scheduled(task.1, TaskContext::default());
+            inventory.task_scheduled(
+                task.resolve_task(TaskContext::default())
+                    .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
+            );
         });
     }
 

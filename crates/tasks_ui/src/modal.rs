@@ -346,7 +346,7 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        if let Some(ResolvedTask::SpawnInTerminal(spawn_prompt)) =
+        if let Some(ResolvedTask::SpawnInTerminal(spawn_prompt, _)) =
             task.resolve_task(self.task_context.clone())
         {
             if !spawn_prompt.args.is_empty() {
