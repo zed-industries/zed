@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{point, size, Axis, Bounds};
+use gpui::{point, size, Axis, Bounds, WindowOpenStatus};
 
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -60,49 +60,64 @@ impl sqlez::bindable::Column for SerializedAxis {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SerializedWindowsBounds(pub(crate) Bounds<gpui::DevicePixels>);
+pub(crate) struct SerializedWindowOpenStatus(pub(crate) WindowOpenStatus);
 
-impl StaticColumnCount for SerializedWindowsBounds {
+impl StaticColumnCount for SerializedWindowOpenStatus {
     fn column_count() -> usize {
         5
     }
 }
 
-impl Bind for SerializedWindowsBounds {
+impl Bind for SerializedWindowOpenStatus {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(&"Fixed", start_index)?;
-
-        statement.bind(
-            &(
-                SerializedDevicePixels(self.0.origin.x),
-                SerializedDevicePixels(self.0.origin.y),
-                SerializedDevicePixels(self.0.size.width),
-                SerializedDevicePixels(self.0.size.height),
-            ),
-            next_index,
-        )
+        match self.0 {
+            WindowOpenStatus::Windowed(bounds) => {
+                let next_index = statement.bind(&"Windowed", start_index)?;
+                // this can not be None
+                let bounds = bounds.unwrap();
+                statement.bind(
+                    &(
+                        SerializedDevicePixels(bounds.origin.x),
+                        SerializedDevicePixels(bounds.origin.y),
+                        SerializedDevicePixels(bounds.size.width),
+                        SerializedDevicePixels(bounds.size.height),
+                    ),
+                    next_index,
+                )
+            }
+            WindowOpenStatus::Maximized => {
+                let next_index = statement.bind(&"Maximized", start_index)?;
+                statement.bind(&(0.0, 0.0, 0.0, 0.0), next_index)
+            }
+            WindowOpenStatus::FullScreen => {
+                let next_index = statement.bind(&"FullScreen", start_index)?;
+                statement.bind(&(0.0, 0.0, 0.0, 0.0), next_index)
+            }
+        }
     }
 }
 
-impl Column for SerializedWindowsBounds {
+impl Column for SerializedWindowOpenStatus {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (window_state, next_index) = String::column(statement, start_index)?;
-        let bounds = match window_state.as_str() {
-            "Fixed" => {
+        let status = match window_state.as_str() {
+            "Windowed" => {
                 let ((x, y, width, height), _) = Column::column(statement, next_index)?;
                 let x: i32 = x;
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowsBounds(Bounds {
+                SerializedWindowOpenStatus(WindowOpenStatus::Windowed(Some(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
-                })
+                })))
             }
+            "Maximized" => SerializedWindowOpenStatus(WindowOpenStatus::Maximized),
+            "FullScreen" => SerializedWindowOpenStatus(WindowOpenStatus::FullScreen),
             _ => bail!("Window State did not have a valid string"),
         };
 
-        Ok((bounds, next_index + 4))
+        Ok((status, next_index + 4))
     }
 }
 
@@ -337,7 +352,7 @@ impl WorkspaceDb {
             WorkspaceId,
             Option<LocalPaths>,
             Option<u64>,
-            Option<SerializedWindowsBounds>,
+            Option<SerializedWindowOpenStatus>,
             Option<Uuid>,
             Option<bool>,
             Option<bool>,
@@ -549,7 +564,7 @@ impl WorkspaceDb {
 
     pub(crate) fn last_window(
         &self,
-    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)> {
+    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowOpenStatus>, Option<bool>)> {
         let mut prepared_query =
             self.select::<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)>(sql!(
                 SELECT
@@ -829,7 +844,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub(crate) async fn set_window_bounds(workspace_id: WorkspaceId, bounds: SerializedWindowsBounds, display: Uuid) -> Result<()> {
+        pub(crate) async fn set_window_bounds(workspace_id: WorkspaceId, bounds: SerializedWindowOpenStatus, display: Uuid) -> Result<()> {
             UPDATE workspaces
             SET window_state = ?2,
                 window_x = ?3,
