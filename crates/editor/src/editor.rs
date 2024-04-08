@@ -10200,7 +10200,7 @@ impl Render for Editor {
                 background,
                 local_player: cx.theme().players().local(),
                 text: text_style,
-                scrollbar_width: px(12.),
+                scrollbar_width: px(13.),
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
                 inlay_hints_style: HighlightStyle {

@@ -1,7 +1,7 @@
 use crate::{
     item::{ClosePosition, Item, ItemHandle, ItemSettings, WeakItemHandle},
     toolbar::Toolbar,
-    workspace_settings::{AutosaveSetting, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
@@ -17,7 +17,7 @@ use gpui::{
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{
     any::Any,
     cmp, fmt, mem,
@@ -256,6 +256,7 @@ impl Pane {
             cx.on_focus(&focus_handle, Pane::focus_in),
             cx.on_focus_in(&focus_handle, Pane::focus_in),
             cx.on_focus_out(&focus_handle, Pane::focus_out),
+            cx.observe_global::<SettingsStore>(Self::settings_changed),
         ];
 
         let handle = cx.view().downgrade();
@@ -350,7 +351,7 @@ impl Pane {
                     })
                     .into_any_element()
             }),
-            display_nav_history_buttons: true,
+            display_nav_history_buttons: TabBarSettings::get_global(cx).show_nav_history_buttons,
             _subscriptions: subscriptions,
             double_click_dispatch_action,
         }
@@ -415,6 +416,11 @@ impl Pane {
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.focus_changed(false, cx);
         });
+        cx.notify();
+    }
+
+    fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.display_nav_history_buttons = TabBarSettings::get_global(cx).show_nav_history_buttons;
         cx.notify();
     }
 

@@ -5675,11 +5675,13 @@ dependencies = [
 name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-recursion 1.0.5",
  "editor",
  "gpui",
  "language",
  "linkify",
+ "log",
  "pretty_assertions",
  "pulldown-cmark",
  "theme",
@@ -9496,15 +9498,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
+ "file_icons",
  "fuzzy",
  "gpui",
  "itertools 0.11.0",
  "language",
  "picker",
  "project",
+ "schemars",
  "serde",
  "serde_json",
+ "settings",
  "task",
+ "terminal",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",

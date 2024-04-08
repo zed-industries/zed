@@ -1,13 +1,14 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
 use gpui::{
-    svg, AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EntityId, EventEmitter,
-    Global, PromptLevel, Render, Task, View, ViewContext, VisualContext, WindowContext,
+    svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, Entity, EntityId,
+    EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
+    VisualContext, WindowContext,
 };
 use language::DiagnosticSeverity;
 
 use std::{any::TypeId, ops::DerefMut};
-use ui::prelude::*;
+use ui::{prelude::*, Tooltip};
 use util::ResultExt;
 
 pub fn init(cx: &mut AppContext) {
@@ -100,22 +101,16 @@ impl Workspace {
         build_notification: impl FnOnce(&mut ViewContext<Self>) -> View<V>,
     ) {
         let type_id = TypeId::of::<V>();
-        if self
-            .notifications
-            .iter()
-            .all(|(existing_type_id, existing_id, _)| {
-                (*existing_type_id, *existing_id) != (type_id, id)
-            })
-        {
-            let notification = build_notification(cx);
-            cx.subscribe(&notification, move |this, _, _: &DismissEvent, cx| {
-                this.dismiss_notification_internal(type_id, id, cx);
-            })
-            .detach();
-            self.notifications
-                .push((type_id, id, Box::new(notification)));
-            cx.notify();
-        }
+        self.dismiss_notification_internal(type_id, id, cx);
+
+        let notification = build_notification(cx);
+        cx.subscribe(&notification, move |this, _, _: &DismissEvent, cx| {
+            this.dismiss_notification_internal(type_id, id, cx);
+        })
+        .detach();
+        self.notifications
+            .push((type_id, id, Box::new(notification)));
+        cx.notify();
     }
 
     pub fn show_error<E>(&mut self, err: &E, cx: &mut ViewContext<Self>)
@@ -174,12 +169,14 @@ impl Workspace {
 
 pub struct LanguageServerPrompt {
     request: Option<project::LanguageServerPromptRequest>,
+    scroll_handle: ScrollHandle,
 }
 
 impl LanguageServerPrompt {
     pub fn new(request: project::LanguageServerPromptRequest) -> Self {
         Self {
             request: Some(request),
+            scroll_handle: ScrollHandle::new(),
         }
     }
 
@@ -211,45 +208,88 @@ impl Render for LanguageServerPrompt {
 
         h_flex()
             .id("language_server_prompt_notification")
+            .occlude()
             .elevation_3(cx)
             .items_start()
             .justify_between()
             .p_2()
             .gap_2()
             .w_full()
+            .max_h(vh(0.8, cx))
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
+            .group("")
             .child(
                 v_flex()
+                    .w_full()
                     .overflow_hidden()
                     .child(
                         h_flex()
-                            .children(
-                                match request.level {
-                                    PromptLevel::Info => None,
-                                    PromptLevel::Warning => Some(DiagnosticSeverity::WARNING),
-                                    PromptLevel::Critical => Some(DiagnosticSeverity::ERROR),
-                                }
-                                .map(|severity| {
-                                    svg()
-                                        .size(cx.text_style().font_size)
-                                        .flex_none()
-                                        .mr_1()
-                                        .map(|icon| {
-                                            if severity == DiagnosticSeverity::ERROR {
-                                                icon.path(IconName::ExclamationTriangle.path())
-                                                    .text_color(Color::Error.color(cx))
-                                            } else {
-                                                icon.path(IconName::ExclamationTriangle.path())
-                                                    .text_color(Color::Warning.color(cx))
+                            .w_full()
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .flex_grow()
+                                    .children(
+                                        match request.level {
+                                            PromptLevel::Info => None,
+                                            PromptLevel::Warning => {
+                                                Some(DiagnosticSeverity::WARNING)
                                             }
-                                        })
-                                }),
+                                            PromptLevel::Critical => {
+                                                Some(DiagnosticSeverity::ERROR)
+                                            }
+                                        }
+                                        .map(|severity| {
+                                            svg()
+                                                .size(cx.text_style().font_size)
+                                                .flex_none()
+                                                .mr_1()
+                                                .mt(px(-2.0))
+                                                .map(|icon| {
+                                                    if severity == DiagnosticSeverity::ERROR {
+                                                        icon.path(
+                                                            IconName::ExclamationTriangle.path(),
+                                                        )
+                                                        .text_color(Color::Error.color(cx))
+                                                    } else {
+                                                        icon.path(
+                                                            IconName::ExclamationTriangle.path(),
+                                                        )
+                                                        .text_color(Color::Warning.color(cx))
+                                                    }
+                                                })
+                                        }),
+                                    )
+                                    .child(
+                                        Label::new(request.lsp_name.clone())
+                                            .size(LabelSize::Default),
+                                    ),
                             )
                             .child(
-                                Label::new(format!("{}:", request.lsp_name))
-                                    .size(LabelSize::Default),
+                                ui::IconButton::new("close", ui::IconName::Close)
+                                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
                             ),
                     )
-                    .child(Label::new(request.message.to_string()))
+                    .child(
+                        v_flex()
+                            .child(
+                                h_flex().absolute().right_0().rounded_md().child(
+                                    ui::IconButton::new("copy", ui::IconName::Copy)
+                                        .on_click({
+                                            let message = request.message.clone();
+                                            move |_, cx| {
+                                                cx.write_to_clipboard(ClipboardItem::new(
+                                                    message.clone(),
+                                                ))
+                                            }
+                                        })
+                                        .tooltip(|cx| Tooltip::text("Copy", cx))
+                                        .visible_on_hover(""),
+                                ),
+                            )
+                            .child(Label::new(request.message.to_string()).size(LabelSize::Small)),
+                    )
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
                         let this_handle = cx.view().clone();
                         ui::Button::new(ix, action.title.clone())
@@ -262,10 +302,6 @@ impl Render for LanguageServerPrompt {
                                 .detach()
                             })
                     })),
-            )
-            .child(
-                ui::IconButton::new("close", ui::IconName::Close)
-                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
             )
     }
 }

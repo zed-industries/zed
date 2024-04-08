@@ -1,5 +1,5 @@
 #[path = "../wit/since_v0.0.6/settings.rs"]
-pub mod types;
+mod types;
 
 use crate::{wit, Result, SettingsLocation, Worktree};
 use serde_json;
