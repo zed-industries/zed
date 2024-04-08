@@ -3,9 +3,9 @@ mod registrar;
 use crate::{
     mode::{next_mode, SearchMode},
     search_bar::render_nav_button,
-    ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery,
-    ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
+    ActivateRegexMode, ActivateTextMode, CycleMode, FocusSearch, NextHistoryQuery,
+    PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches,
+    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use any_vec::AnyVec;
 use collections::HashMap;
@@ -58,7 +58,7 @@ pub struct Deploy {
 
 impl_actions!(buffer_search, [Deploy]);
 
-actions!(buffer_search, [Dismiss, FocusSearch, FocusEditor]);
+actions!(buffer_search, [Dismiss, FocusEditor]);
 
 impl Deploy {
     pub fn find() -> Self {
