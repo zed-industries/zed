@@ -652,5 +652,10 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
+  },
+  // Task-related settings.
+  "task": {
+    // Whether to show task status indicator in the status bar. Default: true
+    "show_status_indicator": true
   }
 }
