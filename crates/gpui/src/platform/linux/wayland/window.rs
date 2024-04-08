@@ -19,7 +19,7 @@ use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
-use wayland_protocols::xdg::shell::client::xdg_toplevel;
+use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, WmCapabilities};
 
 use crate::platform::blade::BladeRenderer;
 use crate::platform::linux::wayland::display::WaylandDisplay;
@@ -72,13 +72,13 @@ pub struct WaylandWindowState {
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashSet<ObjectId>,
     globals: Globals,
-
     renderer: BladeRenderer,
     bounds: Bounds<u32>,
     scale: f32,
     input_handler: Option<PlatformInputHandler>,
     decoration_state: WaylandDecorationState,
     fullscreen: bool,
+    maximized: bool,
 }
 
 impl WaylandWindowState {
@@ -135,6 +135,7 @@ impl WaylandWindowState {
             input_handler: None,
             decoration_state: WaylandDecorationState::Client,
             fullscreen: false,
+            maximized: false,
         }
     }
 }
@@ -191,12 +192,13 @@ impl WaylandWindow {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
         };
 
+        // Kick things off
         surface.commit();
 
         (this, surface.id())
     }
 
-    pub fn update(&self) {
+    pub fn frame(&self) {
         let state = self.state.borrow_mut();
         state.surface.frame(&state.globals.qh, state.surface.id());
         drop(state);
@@ -205,9 +207,6 @@ impl WaylandWindow {
         if let Some(fun) = cb.request_frame.as_mut() {
             fun();
         }
-
-        let state = self.state.borrow_mut();
-        state.surface.commit();
     }
 
     pub fn handle_toplevel_decoration_event(&self, event: zxdg_toplevel_decoration_v1::Event) {
@@ -239,7 +238,7 @@ impl WaylandWindow {
         }
     }
 
-    pub fn handle_toplevel_event(&self, event: xdg_toplevel::Event) {
+    pub fn handle_toplevel_event(&self, event: xdg_toplevel::Event) -> bool {
         match event {
             xdg_toplevel::Event::Configure {
                 width,
@@ -249,21 +248,24 @@ impl WaylandWindow {
                 let width = NonZeroU32::new(width as u32);
                 let height = NonZeroU32::new(height as u32);
                 let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
-
+                let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
                 self.resize(width, height);
                 self.set_fullscreen(fullscreen);
-
-                let state = self.state.borrow_mut();
-                state.surface.commit();
+                let mut state = self.state.borrow_mut();
+                state.maximized = true;
+                false
             }
             xdg_toplevel::Event::Close => {
                 let mut cb = self.callbacks.borrow_mut();
-                // todo(linux) close or should_close?
-                if let Some(close) = cb.close.take() {
-                    (close)();
+                if let Some(mut should_close) = cb.should_close.take() {
+                    let result = (should_close)();
+                    cb.should_close = Some(should_close);
+                    result
+                } else {
+                    false
                 }
             }
-            _ => {}
+            _ => false,
         }
     }
 
@@ -455,18 +457,16 @@ impl HasDisplayHandle for WaylandWindow {
 }
 
 impl PlatformWindow for WaylandWindow {
-    // todo(linux)
     fn bounds(&self) -> Bounds<DevicePixels> {
-        unimplemented!()
+        self.state.borrow().bounds.map(|p| DevicePixels(p as i32))
     }
 
-    // todo(linux)
     fn is_maximized(&self) -> bool {
-        false
+        self.state.borrow().maximized
     }
 
-    // todo(linux)
     fn is_minimized(&self) -> bool {
+        // This cannot be determined by the client
         false
     }
 
@@ -615,7 +615,13 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        self.state.borrow_mut().renderer.draw(scene);
+        let mut state = self.state.borrow_mut();
+        state.renderer.draw(scene);
+    }
+
+    fn completed_frame(&self) {
+        let mut state = self.state.borrow_mut();
+        state.surface.commit();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

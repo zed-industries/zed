@@ -386,7 +386,7 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClient {
         drop(state);
         match event {
             wl_callback::Event::Done { callback_data } => {
-                window.update();
+                window.frame();
             }
             _ => {}
         }
@@ -446,12 +446,10 @@ impl Dispatch<xdg_surface::XdgSurface, ObjectId> for WaylandClient {
         _: &QueueHandle<Self>,
     ) {
         let mut state = state.0.borrow_mut();
+
+        // todo(linux): Apply the configuration changes as we go
         if let xdg_surface::Event::Configure { serial, .. } = event {
             xdg_surface.ack_configure(serial);
-            if let Some(window) = state.windows.get(surface_id).cloned() {
-                drop(state);
-                window.update();
-            }
         }
     }
 }
@@ -471,12 +469,11 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClient {
             return;
         };
 
-        let is_close = matches!(event, xdg_toplevel::Event::Close);
         drop(state);
-        window.handle_toplevel_event(event);
+        let should_close = window.handle_toplevel_event(event);
 
-        let mut state = this.0.borrow_mut();
-        if is_close {
+        if should_close {
+            let mut state = this.0.borrow_mut();
             state.windows.remove(surface_id);
         }
     }

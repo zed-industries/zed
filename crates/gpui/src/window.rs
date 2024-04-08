@@ -476,6 +476,12 @@ impl Window {
                 } else if needs_present {
                     handle.update(&mut cx, |_, cx| cx.present()).log_err();
                 }
+
+                handle
+                    .update(&mut cx, |_, cx| {
+                        cx.complete_frame();
+                    })
+                    .log_err();
             }
         }));
         platform_window.on_resize(Box::new({
@@ -1002,6 +1008,10 @@ impl<'a> WindowContext<'a> {
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.window.modifiers
+    }
+
+    fn complete_frame(&self) {
+        self.window.platform_window.completed_frame();
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show

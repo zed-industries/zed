@@ -353,7 +353,7 @@ impl WorkspaceDb {
                 conn.exec_bound(sql!(
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
-                .expect("Clearing old panes");
+                .context("Clearing old panes")?;
 
                 conn.exec_bound(sql!(
                     DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?
