@@ -509,7 +509,6 @@ pub fn select_match(
     vim.update_active_editor(cx, |_, editor, _| {
         editor.set_collapse_matches(false);
     });
-
     if vim_is_normal {
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
@@ -521,21 +520,27 @@ pub fn select_match(
             }
         });
     }
-
     vim.update_active_editor(cx, |_, editor, cx| {
         let latest = editor.selections.newest::<usize>(cx);
         start_selection = latest.start;
         end_selection = latest.end;
     });
 
+    let mut match_exists = false;
     pane.update(cx, |pane, cx| {
         if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
             search_bar.update(cx, |search_bar, cx| {
                 search_bar.update_match_index(cx);
                 search_bar.select_match(direction, count, cx);
+                match_exists = search_bar.match_exists(cx);
             });
         }
     });
+    if !match_exists {
+        vim.clear_operator(cx);
+        vim.stop_replaying();
+        return;
+    }
     vim.update_active_editor(cx, |_, editor, cx| {
         let latest = editor.selections.newest::<usize>(cx);
         if vim_is_normal {
@@ -553,6 +558,7 @@ pub fn select_match(
         });
         editor.set_collapse_matches(true);
     });
+
     match vim.maybe_pop_operator() {
         Some(Operator::Change) => substitute(vim, None, false, cx),
         Some(Operator::Delete) => {
@@ -561,7 +567,7 @@ pub fn select_match(
         }
         Some(Operator::Yank) => yank(vim, cx),
         _ => {} // Ignoring other operators
-    };
+    }
 }
 
 #[cfg(test)]
@@ -1194,5 +1200,30 @@ mod test {
         cx.assert_shared_state("aa ˇx aa aa aa").await;
         cx.simulate_shared_keystrokes(["."]).await;
         cx.assert_shared_state("aa x ˇx aa aa").await;
+    }
+
+    #[gpui::test]
+    async fn test_cgn_nomatch(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("aaˇ aa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["/", "b", "b", "enter"])
+            .await;
+        cx.assert_shared_state("aaˇ aa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["c", "g", "n", "x", "escape"])
+            .await;
+        cx.assert_shared_state("aaˇaa aa aa aa").await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        cx.assert_shared_state("aaˇa aa aa aa").await;
+
+        cx.set_shared_state("aaˇ bb aa aa aa").await;
+        cx.simulate_shared_keystrokes(["/", "b", "b", "enter"])
+            .await;
+        cx.assert_shared_state("aa ˇbb aa aa aa").await;
+        cx.simulate_shared_keystrokes(["c", "g", "n", "x", "escape"])
+            .await;
+        cx.assert_shared_state("aa ˇx aa aa aa").await;
+        cx.simulate_shared_keystrokes(["."]).await;
+        cx.assert_shared_state("aa ˇx aa aa aa").await;
     }
 }

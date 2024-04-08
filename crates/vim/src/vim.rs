@@ -341,6 +341,10 @@ impl Vim {
         }
     }
 
+    pub fn stop_replaying(&mut self) {
+        self.workspace_state.replaying = false;
+    }
+
     /// When finishing an action that modifies the buffer, stop recording.
     /// as you usually call this within a keystroke handler we also ensure that
     /// the current action is recorded.
@@ -499,6 +503,7 @@ impl Vim {
         self.sync_vim_settings(cx);
         popped_operator
     }
+
     fn clear_operator(&mut self, cx: &mut WindowContext) {
         self.take_count(cx);
         self.update_state(|state| state.operator_stack.clear());
