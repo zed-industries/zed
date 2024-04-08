@@ -11,7 +11,7 @@ use gpui::{
 use language::LanguageRegistry;
 use ui::prelude::*;
 use workspace::item::{Item, ItemHandle};
-use workspace::Workspace;
+use workspace::{Pane, Workspace};
 
 use crate::OpenPreviewToTheSide;
 use crate::{
@@ -52,7 +52,11 @@ impl MarkdownPreviewView {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
                 let view = Self::create_markdown_view(workspace, editor, cx);
                 workspace.active_pane().update(cx, |pane, cx| {
-                    pane.add_item(Box::new(view.clone()), true, true, None, cx)
+                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane) {
+                        pane.activate_item(existing_view_idx, true, true, cx);
+                    } else {
+                        pane.add_item(Box::new(view.clone()), true, true, None, cx)
+                    }
                 });
                 cx.notify();
             }
@@ -71,12 +75,22 @@ impl MarkdownPreviewView {
                         )
                     });
                 pane.update(cx, |pane, cx| {
-                    pane.add_item(Box::new(view.clone()), false, false, None, cx)
+                    if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane) {
+                        pane.activate_item(existing_view_idx, true, true, cx);
+                    } else {
+                        pane.add_item(Box::new(view.clone()), false, false, None, cx)
+                    }
                 });
                 editor.focus_handle(cx).focus(cx);
                 cx.notify();
             }
         });
+    }
+
+    fn find_existing_preview_item_idx(pane: &Pane) -> Option<usize> {
+        pane.items_of_type::<MarkdownPreviewView>()
+            .nth(0)
+            .and_then(|view| pane.index_for_item(&view))
     }
 
     fn resolve_active_item_as_markdown_editor(
