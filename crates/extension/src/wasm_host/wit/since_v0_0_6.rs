@@ -1,13 +1,13 @@
-use crate::wasm_host::wit::ToWasmtimeResult;
-use crate::wasm_host::WasmState;
+use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
 use ::settings::Settings;
 use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, FutureExt as _};
-use language::language_settings::AllLanguageSettings;
-use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
+use language::{
+    language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
+};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -28,6 +28,8 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
     },
 });
+
+pub use self::zed::extension::*;
 
 mod settings {
     include!("../../../../extension_api/wit/since_v0.0.6/settings.rs");
@@ -96,7 +98,106 @@ impl HostWorktree for WasmState {
     }
 }
 
-impl self::zed::extension::lsp::Host for WasmState {}
+#[async_trait]
+impl nodejs::Host for WasmState {
+    async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
+        self.host
+            .node_runtime
+            .binary_path()
+            .await
+            .map(|path| path.to_string_lossy().to_string())
+            .to_wasmtime_result()
+    }
+
+    async fn npm_package_latest_version(
+        &mut self,
+        package_name: String,
+    ) -> wasmtime::Result<Result<String, String>> {
+        self.host
+            .node_runtime
+            .npm_package_latest_version(&package_name)
+            .await
+            .to_wasmtime_result()
+    }
+
+    async fn npm_package_installed_version(
+        &mut self,
+        package_name: String,
+    ) -> wasmtime::Result<Result<Option<String>, String>> {
+        self.host
+            .node_runtime
+            .npm_package_installed_version(&self.work_dir(), &package_name)
+            .await
+            .to_wasmtime_result()
+    }
+
+    async fn npm_install_package(
+        &mut self,
+        package_name: String,
+        version: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        self.host
+            .node_runtime
+            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
+            .await
+            .to_wasmtime_result()
+    }
+}
+
+#[async_trait]
+impl lsp::Host for WasmState {}
+
+#[async_trait]
+impl github::Host for WasmState {
+    async fn latest_github_release(
+        &mut self,
+        repo: String,
+        options: github::GithubReleaseOptions,
+    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
+        maybe!(async {
+            let release = util::github::latest_github_release(
+                &repo,
+                options.require_assets,
+                options.pre_release,
+                self.host.http_client.clone(),
+            )
+            .await?;
+            Ok(github::GithubRelease {
+                version: release.tag_name,
+                assets: release
+                    .assets
+                    .into_iter()
+                    .map(|asset| github::GithubReleaseAsset {
+                        name: asset.name,
+                        download_url: asset.browser_download_url,
+                    })
+                    .collect(),
+            })
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
+
+#[async_trait]
+impl platform::Host for WasmState {
+    async fn current_platform(&mut self) -> Result<(platform::Os, platform::Architecture)> {
+        Ok((
+            match env::consts::OS {
+                "macos" => platform::Os::Mac,
+                "linux" => platform::Os::Linux,
+                "windows" => platform::Os::Windows,
+                _ => panic!("unsupported os"),
+            },
+            match env::consts::ARCH {
+                "aarch64" => platform::Architecture::Aarch64,
+                "x86" => platform::Architecture::X86,
+                "x86_64" => platform::Architecture::X8664,
+                _ => panic!("unsupported architecture"),
+            },
+        ))
+    }
+}
 
 #[async_trait]
 impl ExtensionImports for WasmState {
@@ -150,95 +251,6 @@ impl ExtensionImports for WasmState {
         })
         .await?
         .to_wasmtime_result()
-    }
-
-    async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .binary_path()
-            .await
-            .map(|path| path.to_string_lossy().to_string())
-            .to_wasmtime_result()
-    }
-
-    async fn npm_package_latest_version(
-        &mut self,
-        package_name: String,
-    ) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .npm_package_latest_version(&package_name)
-            .await
-            .to_wasmtime_result()
-    }
-
-    async fn npm_package_installed_version(
-        &mut self,
-        package_name: String,
-    ) -> wasmtime::Result<Result<Option<String>, String>> {
-        self.host
-            .node_runtime
-            .npm_package_installed_version(&self.work_dir(), &package_name)
-            .await
-            .to_wasmtime_result()
-    }
-
-    async fn npm_install_package(
-        &mut self,
-        package_name: String,
-        version: String,
-    ) -> wasmtime::Result<Result<(), String>> {
-        self.host
-            .node_runtime
-            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
-            .await
-            .to_wasmtime_result()
-    }
-
-    async fn latest_github_release(
-        &mut self,
-        repo: String,
-        options: GithubReleaseOptions,
-    ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        maybe!(async {
-            let release = util::github::latest_github_release(
-                &repo,
-                options.require_assets,
-                options.pre_release,
-                self.host.http_client.clone(),
-            )
-            .await?;
-            Ok(GithubRelease {
-                version: release.tag_name,
-                assets: release
-                    .assets
-                    .into_iter()
-                    .map(|asset| GithubReleaseAsset {
-                        name: asset.name,
-                        download_url: asset.browser_download_url,
-                    })
-                    .collect(),
-            })
-        })
-        .await
-        .to_wasmtime_result()
-    }
-
-    async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
-        Ok((
-            match env::consts::OS {
-                "macos" => Os::Mac,
-                "linux" => Os::Linux,
-                "windows" => Os::Windows,
-                _ => panic!("unsupported os"),
-            },
-            match env::consts::ARCH {
-                "aarch64" => Architecture::Aarch64,
-                "x86" => Architecture::X86,
-                "x86_64" => Architecture::X8664,
-                _ => panic!("unsupported architecture"),
-            },
-        ))
     }
 
     async fn set_language_server_installation_status(
