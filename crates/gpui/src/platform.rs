@@ -567,16 +567,25 @@ pub(crate) struct WindowParams {
     pub window_background: WindowBackgroundAppearance,
 }
 
-/// TODO:
+/// Represents the status of how a window should be opened.
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum WindowOpenStatus {
-    /// The bounds of the window in screen coordinates.
-    /// None -> inherit, Some(bounds) -> set bounds
+    /// Specifies the bounds of the window in screen coordinates.
+    /// - `None`: Inherit the bounds.
+    /// - `Some(bounds)`: Set the bounds to the specified value.
     Windowed(Option<Bounds<DevicePixels>>),
-    /// maximized
-    Maximized,
-    /// fullscreen
-    FullScreen,
+    /// Indicates that the window should open in a maximized state.
+    /// The bounds provided here represent the restore size of the window.
+    Maximized(Bounds<DevicePixels>),
+    /// Indicates that the window should open in fullscreen mode.
+    /// The bounds provided here represent the restore size of the window.
+    FullScreen(Bounds<DevicePixels>),
+}
+
+impl Default for WindowOpenStatus {
+    fn default() -> Self {
+        WindowOpenStatus::Windowed(None)
+    }
 }
 
 impl Default for WindowOptions {
