@@ -81,7 +81,7 @@ use ui::{
 };
 use util::ResultExt;
 use uuid::Uuid;
-pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
+pub use workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings};
 
 use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
@@ -260,6 +260,7 @@ impl Column for WorkspaceId {
 pub fn init_settings(cx: &mut AppContext) {
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
+    TabBarSettings::register(cx);
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
