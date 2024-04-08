@@ -363,7 +363,6 @@ impl WorkspaceDb {
             Option<SerializedWindowOpenStatus>,
             Option<Uuid>,
             Option<bool>,
-            Option<bool>,
             DockStructure,
         ) = self
             .select_row_bound(sql! {
@@ -377,7 +376,6 @@ impl WorkspaceDb {
                     window_width,
                     window_height,
                     display,
-                    fullscreen,
                     centered_layout,
                     left_dock_visible,
                     left_dock_active_panel,

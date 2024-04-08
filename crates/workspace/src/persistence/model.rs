@@ -7,7 +7,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Bounds, DevicePixels, Model, Task, View, WeakView};
+use gpui::{AsyncWindowContext, Model, Task, View, WeakView};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{
