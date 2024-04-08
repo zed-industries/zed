@@ -283,9 +283,6 @@ impl WindowsWindow {
             WindowOpenStatus::FullScreen => SW_SHOW,
         };
         unsafe { ShowWindow(raw_hwnd, show_cmd) };
-        if !params.focus {
-            unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOWNOACTIVATE) };
-        }
         if params.open_status == WindowOpenStatus::FullScreen {
             wnd.toggle_fullscreen();
         }
