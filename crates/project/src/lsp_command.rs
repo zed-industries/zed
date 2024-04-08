@@ -1699,9 +1699,10 @@ impl LspCommand for GetCodeActions {
     ) -> lsp::CodeActionParams {
         let relevant_diagnostics = buffer
             .snapshot()
-            .diagnostics_in_range::<_, usize>(self.range.clone(), false)
+            .diagnostics_in_range::<_, language::PointUtf16>(self.range.clone(), false)
             .map(|entry| entry.to_lsp_diagnostic_stub())
-            .collect();
+            .collect::<Vec<_>>();
+
         lsp::CodeActionParams {
             text_document: lsp::TextDocumentIdentifier::new(
                 lsp::Url::from_file_path(path).unwrap(),
