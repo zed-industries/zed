@@ -32,7 +32,6 @@ use std::{
     mem,
     ops::Range,
     path::PathBuf,
-    sync::Arc,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
@@ -805,7 +804,7 @@ impl Item for ProjectDiagnosticsEditor {
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic);
     let message: SharedString = message;
-    Arc::new(move |cx| {
+    Box::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_flex()
             .id("diagnostic header")

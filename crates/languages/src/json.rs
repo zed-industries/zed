@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
-use gpui::AppContext;
+use gpui::{AppContext, AsyncAppContext};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -152,10 +152,16 @@ impl LspAdapter for JsonLspAdapter {
         })))
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
-        self.workspace_config
-            .get_or_init(|| Self::get_workspace_config(self.languages.language_names(), cx))
-            .clone()
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        cx.update(|cx| {
+            self.workspace_config
+                .get_or_init(|| Self::get_workspace_config(self.languages.language_names(), cx))
+                .clone()
+        })
     }
 
     fn language_ids(&self) -> HashMap<String, String> {

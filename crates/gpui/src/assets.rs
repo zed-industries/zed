@@ -1,6 +1,6 @@
 use crate::{size, DevicePixels, Result, SharedString, Size};
 use anyhow::anyhow;
-use image::RgbaImage;
+use image::{Bgra, ImageBuffer};
 use std::{
     borrow::Cow,
     fmt,
@@ -43,12 +43,12 @@ pub(crate) struct RenderImageParams {
 pub struct ImageData {
     /// The ID associated with this image
     pub id: ImageId,
-    data: RgbaImage,
+    data: ImageBuffer<Bgra<u8>, Vec<u8>>,
 }
 
 impl ImageData {
     /// Create a new image from the given data.
-    pub fn new(data: RgbaImage) -> Self {
+    pub fn new(data: ImageBuffer<Bgra<u8>, Vec<u8>>) -> Self {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
         Self {

@@ -159,8 +159,8 @@ impl PlatformWindow for TestWindow {
     fn prompt(
         &self,
         _level: crate::PromptLevel,
-        _msg: &str,
-        _detail: Option<&str>,
+        msg: &str,
+        detail: Option<&str>,
         _answers: &[&str],
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
         Some(
@@ -169,7 +169,7 @@ impl PlatformWindow for TestWindow {
                 .platform
                 .upgrade()
                 .expect("platform dropped")
-                .prompt(),
+                .prompt(msg, detail),
         )
     }
 

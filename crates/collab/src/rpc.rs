@@ -868,7 +868,13 @@ impl Server {
         executor: Executor,
     ) -> impl Future<Output = ()> {
         let this = self.clone();
-        let span = info_span!("handle connection", %address, impersonator = field::Empty, connection_id = field::Empty);
+        let span = info_span!("handle connection", %address,
+            connection_id=field::Empty,
+            user_id=field::Empty,
+            login=field::Empty,
+            impersonator=field::Empty,
+            dev_server_id=field::Empty
+        );
         principal.update_span(&span);
 
         let mut teardown = self.teardown.subscribe();
@@ -946,7 +952,12 @@ impl Server {
                             let type_name = message.payload_type_name();
                             // note: we copy all the fields from the parent span so we can query them in the logs.
                             // (https://github.com/tokio-rs/tracing/issues/2670).
-                            let span = tracing::info_span!("receive message", %connection_id, %address, type_name);
+                            let span = tracing::info_span!("receive message", %connection_id, %address, type_name,
+                                user_id=field::Empty,
+                                login=field::Empty,
+                                impersonator=field::Empty,
+                                dev_server_id=field::Empty
+                            );
                             principal.update_span(&span);
                             let span_enter = span.enter();
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
@@ -1349,7 +1360,7 @@ async fn connection_lost(
                     let session = session.for_user().unwrap();
 
                     log::info!("connection lost, removing all resources for user:{}, connection:{:?}", session.user_id(), session.connection_id);
-                    leave_room_for_session(&session).await.trace_err();
+                    leave_room_for_session(&session, session.connection_id).await.trace_err();
                     leave_channel_buffers_for_session(&session)
                         .await
                         .trace_err();
@@ -1681,7 +1692,7 @@ async fn leave_room(
     response: Response<proto::LeaveRoom>,
     session: UserSession,
 ) -> Result<()> {
-    leave_room_for_session(&session).await?;
+    leave_room_for_session(&session, session.connection_id).await?;
     response.send(proto::Ack {})?;
     Ok(())
 }
@@ -3425,8 +3436,19 @@ async fn join_channel_internal(
     session: UserSession,
 ) -> Result<()> {
     let joined_room = {
-        leave_room_for_session(&session).await?;
-        let db = session.db().await;
+        let mut db = session.db().await;
+        // If zed quits without leaving the room, and the user re-opens zed before the
+        // RECONNECT_TIMEOUT, we need to make sure that we kick the user out of the previous
+        // room they were in.
+        if let Some(connection) = db.stale_room_connection(session.user_id()).await? {
+            tracing::info!(
+                stale_connection_id = %connection,
+                "cleaning up stale connection",
+            );
+            drop(db);
+            leave_room_for_session(&session, connection).await?;
+            db = session.db().await;
+        }
 
         let (joined_room, membership_updated, role) = db
             .join_channel(channel_id, session.user_id(), session.connection_id)
@@ -3779,14 +3801,30 @@ async fn remove_channel_message(
 ) -> Result<()> {
     let channel_id = ChannelId::from_proto(request.channel_id);
     let message_id = MessageId::from_proto(request.message_id);
-    let connection_ids = session
+    let (connection_ids, existing_notification_ids) = session
         .db()
         .await
         .remove_channel_message(channel_id, message_id, session.user_id())
         .await?;
-    broadcast(Some(session.connection_id), connection_ids, |connection| {
-        session.peer.send(connection, request.clone())
-    });
+
+    broadcast(
+        Some(session.connection_id),
+        connection_ids,
+        move |connection| {
+            session.peer.send(connection, request.clone())?;
+
+            for notification_id in &existing_notification_ids {
+                session.peer.send(
+                    connection,
+                    proto::DeleteNotification {
+                        notification_id: (*notification_id).to_proto(),
+                    },
+                )?;
+            }
+
+            Ok(())
+        },
+    );
     response.send(proto::Ack {})?;
     Ok(())
 }
@@ -3805,6 +3843,8 @@ async fn update_channel_message(
         notifications,
         reply_to_message_id,
         timestamp,
+        deleted_mention_notification_ids,
+        updated_mention_notifications,
     } = session
         .db()
         .await
@@ -3847,7 +3887,27 @@ async fn update_channel_message(
                     channel_id: channel_id.to_proto(),
                     message: Some(message.clone()),
                 },
-            )
+            )?;
+
+            for notification_id in &deleted_mention_notification_ids {
+                session.peer.send(
+                    connection,
+                    proto::DeleteNotification {
+                        notification_id: (*notification_id).to_proto(),
+                    },
+                )?;
+            }
+
+            for notification in &updated_mention_notifications {
+                session.peer.send(
+                    connection,
+                    proto::UpdateNotification {
+                        notification: Some(notification.clone()),
+                    },
+                )?;
+            }
+
+            Ok(())
         },
     );
 
@@ -4640,7 +4700,7 @@ async fn lost_dev_server_connection(session: &Session) -> Result<()> {
     Ok(())
 }
 
-async fn leave_room_for_session(session: &UserSession) -> Result<()> {
+async fn leave_room_for_session(session: &UserSession, connection_id: ConnectionId) -> Result<()> {
     let mut contacts_to_update = HashSet::default();
 
     let room_id;
@@ -4650,7 +4710,7 @@ async fn leave_room_for_session(session: &UserSession) -> Result<()> {
     let room;
     let channel;
 
-    if let Some(mut left_room) = session.db().await.leave_room(session.connection_id).await? {
+    if let Some(mut left_room) = session.db().await.leave_room(connection_id).await? {
         contacts_to_update.insert(session.user_id());
 
         for project in left_room.left_projects.values() {

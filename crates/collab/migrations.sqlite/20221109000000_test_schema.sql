@@ -399,7 +399,7 @@ CREATE TABLE hosted_projects (
     visibility TEXT NOT NULL,
     deleted_at TIMESTAMP NULL,
     dev_server_id INTEGER REFERENCES dev_servers(id),
-    dev_server_path TEXT,
+    dev_server_path TEXT
 );
 CREATE INDEX idx_hosted_projects_on_channel_id ON hosted_projects (channel_id);
 CREATE UNIQUE INDEX uix_hosted_projects_on_channel_id_and_name ON hosted_projects (channel_id, name) WHERE (deleted_at IS NULL);

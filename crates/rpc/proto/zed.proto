@@ -210,18 +210,23 @@ message Envelope {
         BlameBuffer blame_buffer = 172;
         BlameBufferResponse blame_buffer_response = 173;
 
-        CreateRemoteProject create_remote_project = 174;
-        CreateDevServer create_dev_server = 175;
-        CreateDevServerResponse create_dev_server_response = 176;
-        ShutdownDevServer shutdown_dev_server = 177;
-        DevServerInstructions dev_server_instructions = 178;
-        ReconnectDevServer reconnect_dev_server = 179;
-        ReconnectDevServerResponse reconnect_dev_server_response = 180;
+        UpdateNotification update_notification = 174;
 
-        ShareRemoteProject share_remote_project = 181;
-        JoinRemoteProject join_remote_project = 182;
-        RejoinRemoteProjects rejoin_remote_projects = 183;
-        RejoinRemoteProjectsResponse rejoin_remote_projects_response = 184; // Current max
+        MultiLspQuery multi_lsp_query = 175;
+        MultiLspQueryResponse multi_lsp_query_response = 176; // current max
+
+        CreateRemoteProject create_remote_project = 177;
+        CreateDevServer create_dev_server = 178;
+        CreateDevServerResponse create_dev_server_response = 179;
+        ShutdownDevServer shutdown_dev_server = 180;
+        DevServerInstructions dev_server_instructions = 181;
+        ReconnectDevServer reconnect_dev_server = 182;
+        ReconnectDevServerResponse reconnect_dev_server_response = 183;
+
+        ShareRemoteProject share_remote_project = 184;
+        JoinRemoteProject join_remote_project = 185;
+        RejoinRemoteProjects rejoin_remote_projects = 186;
+        RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
     }
 
     reserved 158 to 161;
@@ -1805,6 +1810,10 @@ message DeleteNotification {
     uint64 notification_id = 1;
 }
 
+message UpdateNotification {
+    Notification notification = 1;
+}
+
 message MarkNotificationRead {
     uint64 notification_id = 1;
 }
@@ -1921,4 +1930,30 @@ message BlameBufferResponse {
     repeated BlameEntry entries = 1;
     repeated CommitMessage messages = 2;
     repeated CommitPermalink permalinks = 3;
+}
+
+message MultiLspQuery {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+    oneof strategy {
+        AllLanguageServers all = 4;
+    }
+    oneof request {
+        GetHover get_hover = 5;
+        GetCodeActions get_code_actions = 6;
+    }
+}
+
+message AllLanguageServers {}
+
+message MultiLspQueryResponse {
+    repeated LspResponse responses = 1;
+}
+
+message LspResponse {
+    oneof response {
+        GetHoverResponse get_hover_response = 1;
+        GetCodeActionsResponse get_code_actions_response = 2;
+    }
 }

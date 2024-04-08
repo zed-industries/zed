@@ -36,7 +36,7 @@ impl Task for OneshotTask {
         None
     }
 
-    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
+    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
         if self.id().0.is_empty() {
             return None;
         }
@@ -50,7 +50,7 @@ impl Task for OneshotTask {
             command: self.id().0.clone(),
             args: vec![],
             cwd,
-            env: task_variables.0,
+            env: task_variables.into_env_variables(),
             use_new_terminal: Default::default(),
             allow_concurrent_runs: Default::default(),
             reveal: RevealStrategy::default(),
@@ -75,6 +75,13 @@ impl OneshotSource {
             new_oneshot
         }
     }
+    /// Removes a task with a given ID from this source.
+    pub fn remove(&mut self, id: &TaskId) {
+        let position = self.tasks.iter().position(|task| task.id() == id);
+        if let Some(position) = position {
+            self.tasks.remove(position);
+        }
+    }
 }
 
 impl TaskSource for OneshotSource {
@@ -82,9 +89,8 @@ impl TaskSource for OneshotSource {
         self
     }
 
-    fn tasks_for_path(
+    fn tasks_to_schedule(
         &mut self,
-        _path: Option<&std::path::Path>,
         _cx: &mut gpui::ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks.clone()

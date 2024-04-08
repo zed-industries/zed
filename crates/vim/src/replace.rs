@@ -349,4 +349,13 @@ mod test {
         ]);
         cx.assert_state("ˇabˇcabcabc", Mode::Replace);
     }
+
+    #[gpui::test]
+    async fn test_replace_undo(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇaaaa", Mode::Normal);
+        cx.simulate_keystrokes(["0", "shift-r", "b", "b", "b", "escape", "u"]);
+        cx.assert_state("ˇaaaa", Mode::Normal);
+    }
 }

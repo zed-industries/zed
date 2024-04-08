@@ -634,6 +634,25 @@ async fn test_folds_panic(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes(["g", "g"]).await;
     cx.simulate_shared_keystrokes(["5", "d", "j"]).await;
     cx.assert_shared_state(indoc! { "ˇ"}).await;
+
+    cx.set_shared_state(indoc! { "
+            fn boop() {
+              ˇbarp()
+              bazp()
+            }
+        "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-v", "j", "j", "z", "f"])
+        .await;
+    cx.simulate_shared_keystrokes(["escape"]).await;
+    cx.simulate_shared_keystrokes(["shift-g", "shift-v"]).await;
+    cx.assert_shared_state(indoc! { "
+            fn boop() {
+              barp()
+              bazp()
+            }
+            ˇ"})
+        .await;
 }
 
 #[gpui::test]
@@ -1037,13 +1056,4 @@ async fn test_undo(cx: &mut gpui::TestAppContext) {
         2
         3"})
         .await;
-}
-
-#[gpui::test]
-async fn test_command_palette(cx: &mut gpui::TestAppContext) {
-    let mut cx = VimTestContext::new(cx, true).await;
-    cx.simulate_keystroke(":");
-    cx.simulate_input("go to definition");
-    assert!(cx.debug_bounds("KEY_BINDING-f12").is_none());
-    assert!(cx.debug_bounds("KEY_BINDING-g d").is_some());
 }

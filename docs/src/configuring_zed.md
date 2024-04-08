@@ -306,6 +306,21 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
+3. Or to use code actions provided by the connected language servers, use `"code_actions"` (requires Zed `0.130.x`):
+
+```json
+{
+  "formatter": {
+    "code_actions": {
+      // Use ESLint's --fix:
+      "source.fixAll.eslint": true,
+      // Organize imports on save:
+      "source.organizeImports": true
+    }
+  }
+}
+```
+
 ## Code Actions On Format
 
 - Description: The code actions to perform with the primary language server when formatting the buffer.

@@ -55,9 +55,7 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
-pub use task_context::{
-    ContextProvider, ContextProviderWithTasks, LanguageSource, SymbolContextProvider,
-};
+pub use task_context::{ContextProvider, ContextProviderWithTasks, SymbolContextProvider};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, WasmStore};
 use util::http::HttpClient;
@@ -197,35 +195,34 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
-        self.adapter.workspace_configuration(workspace_root, cx)
-    }
-
     pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         self.adapter.process_diagnostics(params)
     }
 
-    pub async fn process_completion(&self, completion_item: &mut lsp::CompletionItem) {
-        self.adapter.process_completion(completion_item).await
+    pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
+        self.adapter.process_completions(completion_items).await
     }
 
-    pub async fn label_for_completion(
+    pub async fn labels_for_completions(
         &self,
-        completion_item: &lsp::CompletionItem,
+        completion_items: &[lsp::CompletionItem],
         language: &Arc<Language>,
-    ) -> Option<CodeLabel> {
+    ) -> Result<Vec<Option<CodeLabel>>> {
         self.adapter
-            .label_for_completion(completion_item, language)
+            .clone()
+            .labels_for_completions(completion_items, language)
             .await
     }
 
-    pub async fn label_for_symbol(
+    pub async fn labels_for_symbols(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbols: &[(String, lsp::SymbolKind)],
         language: &Arc<Language>,
-    ) -> Option<CodeLabel> {
-        self.adapter.label_for_symbol(name, kind, language).await
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        self.adapter
+            .clone()
+            .labels_for_symbols(symbols, language)
+            .await
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -240,6 +237,8 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
+    fn worktree_id(&self) -> u64;
+    fn worktree_root_path(&self) -> &Path;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
 
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
@@ -382,10 +381,24 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    /// A callback called for each [`lsp::CompletionItem`] obtained from LSP server.
-    /// Some LspAdapter implementations might want to modify the obtained item to
-    /// change how it's displayed.
-    async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
+    /// Post-processes completions provided by the language server.
+    async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
+
+    async fn labels_for_completions(
+        self: Arc<Self>,
+        completions: &[lsp::CompletionItem],
+        language: &Arc<Language>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        let mut labels = Vec::new();
+        for (ix, completion) in completions.into_iter().enumerate() {
+            let label = self.label_for_completion(completion, language).await;
+            if let Some(label) = label {
+                labels.resize(ix + 1, None);
+                *labels.last_mut().unwrap() = Some(label);
+            }
+        }
+        Ok(labels)
+    }
 
     async fn label_for_completion(
         &self,
@@ -393,6 +406,22 @@ pub trait LspAdapter: 'static + Send + Sync {
         _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
+    }
+
+    async fn labels_for_symbols(
+        self: Arc<Self>,
+        symbols: &[(String, lsp::SymbolKind)],
+        language: &Arc<Language>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        let mut labels = Vec::new();
+        for (ix, (name, kind)) in symbols.into_iter().enumerate() {
+            let label = self.label_for_symbol(name, *kind, language).await;
+            if let Some(label) = label {
+                labels.resize(ix + 1, None);
+                *labels.last_mut().unwrap() = Some(label);
+            }
+        }
+        Ok(labels)
     }
 
     async fn label_for_symbol(
@@ -412,8 +441,12 @@ pub trait LspAdapter: 'static + Send + Sync {
         Ok(None)
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, _cx: &mut AppContext) -> Value {
-        serde_json::json!({})
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        Ok(serde_json::json!({}))
     }
 
     /// Returns a list of code actions supported by a given LspAdapter

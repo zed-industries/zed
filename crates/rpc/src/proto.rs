@@ -163,6 +163,7 @@ messages!(
     (DeclineCall, Foreground),
     (DeleteChannel, Foreground),
     (DeleteNotification, Foreground),
+    (UpdateNotification, Foreground),
     (DeleteProjectEntry, Foreground),
     (EndStream, Foreground),
     (Error, Foreground),
@@ -309,6 +310,8 @@ messages!(
     (JoinRemoteProject, Foreground),
     (RejoinRemoteProjects, Foreground),
     (RejoinRemoteProjectsResponse, Foreground),
+    (MultiLspQuery, Background),
+    (MultiLspQueryResponse, Background),
 );
 
 request_messages!(
@@ -407,6 +410,7 @@ request_messages!(
     (JoinRemoteProject, JoinProjectResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
     (ReconnectDevServer, ReconnectDevServerResponse),
+    (MultiLspQuery, MultiLspQueryResponse),
 );
 
 entity_messages!(
@@ -435,6 +439,7 @@ entity_messages!(
     InlayHints,
     JoinProject,
     LeaveProject,
+    MultiLspQuery,
     OnTypeFormatting,
     OpenBufferById,
     OpenBufferByPath,

@@ -342,7 +342,7 @@ fn show_hover(
                 } else {
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
-                        hover_highlights,
+                        &hover_highlights,
                         |theme| theme.element_hover, // todo update theme
                         cx,
                     );
@@ -375,12 +375,12 @@ async fn parse_blocks(
         match &block.kind {
             HoverBlockKind::PlainText => {
                 markdown::new_paragraph(&mut text, &mut Vec::new());
-                text.push_str(&block.text);
+                text.push_str(&block.text.replace("\\n", "\n"));
             }
 
             HoverBlockKind::Markdown => {
                 markdown::parse_markdown_block(
-                    &block.text,
+                    &block.text.replace("\\n", "\n"),
                     language_registry,
                     language.clone(),
                     &mut text,
