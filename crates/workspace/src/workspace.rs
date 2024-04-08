@@ -3665,7 +3665,9 @@ impl Workspace {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
             let open_status = if cx.is_fullscreen() {
-                Some(SerializedWindowOpenStatus(WindowOpenStatus::FullScreen))
+                Some(SerializedWindowOpenStatus(WindowOpenStatus::FullScreen(
+                        Bounds::default(),
+                    )))
             } else {
                 None
             };
