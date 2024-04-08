@@ -143,9 +143,13 @@ impl Inventory {
                 Some((tasks, language))
             })
             .into_iter()
-            .flat_map(|(tasks, language)| {
+            .enumerate()
+            .flat_map(|(i, (tasks, language))| {
                 tasks.0.into_iter().map(move |definition| {
-                    from_template(TaskId(format!("language_{}", language.name())), definition)
+                    from_template(
+                        TaskId(format!("language_{}_{}", language.name(), i)),
+                        definition,
+                    )
                 })
             })
             .flat_map(|task| Some((task_source_kind.as_ref()?, task as Arc<dyn Task>)));
