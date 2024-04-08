@@ -7,12 +7,12 @@ use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::{Task, TaskDefinitions, TaskId, TaskSource, TaskTemplate};
+use crate::{from_template_definition, Task, TaskDefinitions, TaskId, TaskSource};
 use futures::channel::mpsc::UnboundedReceiver;
 
 /// The source of tasks defined in a tasks config file.
 pub struct StaticSource {
-    tasks: Vec<Arc<TaskTemplate>>,
+    tasks: Vec<Arc<dyn Task>>,
     _definitions: Model<TrackedFile<TaskDefinitions>>,
     _subscription: Subscription,
 }
@@ -120,11 +120,12 @@ impl StaticSource {
                             .clone()
                             .into_iter()
                             .enumerate()
-                            .map(|(i, definition)| TaskTemplate {
-                                id: TaskId(format!("static_{id_base}_{i}_{}", definition.label)),
-                                definition,
+                            .map(|(i, definition)| {
+                                from_template_definition(
+                                    TaskId(format!("static_{id_base}_{i}_{}", definition.label)),
+                                    definition,
+                                )
                             })
-                            .map(Arc::new)
                             .collect();
                         cx.notify();
                     }

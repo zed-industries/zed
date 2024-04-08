@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::{Task, TaskId, TaskSource, TaskTemplate};
+use crate::{oneshot_task, Task, TaskId, TaskSource};
 use gpui::{AppContext, Context, Model};
 
 /// A storage and source of tasks generated out of user command prompt inputs.
@@ -22,7 +22,7 @@ impl OneshotSource {
             // If we already have an oneshot task with that command, let's just reuse it.
             task.clone()
         } else {
-            let new_oneshot = TaskTemplate::oneshot(prompt);
+            let new_oneshot = oneshot_task(prompt);
             self.tasks.push(new_oneshot.clone());
             new_oneshot
         }

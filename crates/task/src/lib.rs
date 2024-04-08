@@ -3,6 +3,7 @@
 
 pub mod oneshot_source;
 pub mod static_source;
+mod task_template;
 mod vscode_format;
 
 use collections::HashMap;
@@ -14,7 +15,26 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use task_template::TaskTemplate;
 pub use vscode_format::VsCodeTaskFile;
+
+/// TODO kb docs
+pub fn from_template_definition(id: TaskId, definition: Definition) -> Arc<dyn Task> {
+    Arc::new(TaskTemplate { id, definition })
+}
+
+/// TODO kb docs
+pub fn oneshot_task(prompt: String) -> Arc<dyn Task> {
+    Arc::new(TaskTemplate {
+        id: TaskId(prompt.clone()),
+        definition: Definition {
+            label: prompt.clone(),
+            command: prompt,
+            ..Definition::default()
+        },
+    })
+}
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.
@@ -44,8 +64,8 @@ pub struct SpawnInTerminal {
     pub reveal: RevealStrategy,
 }
 
-/// TODO kb docs
 #[derive(Clone)]
+/// TODO kb docs
 pub enum ResolvedTask {
     /// TODO kb docs
     SpawnInTerminal(SpawnInTerminal, Arc<dyn Task>),
@@ -102,18 +122,19 @@ impl VariableName {
     }
 }
 
+/// TODO kb docs
+pub const ZED_VARIABLE_NAME_PREFIX: &str = "ZED_TASK_";
+
 impl std::fmt::Display for VariableName {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            // TODO kb use `ZED_TASK_` prefix for the vars (and `ZED_TASK_CUSTOM_` too?),
-            // extract it into the const and check for substitution issues later
-            Self::File => write!(f, "ZED_FILE"),
-            Self::WorktreeRoot => write!(f, "ZED_WORKTREE_ROOT"),
-            Self::Symbol => write!(f, "ZED_SYMBOL"),
-            Self::Row => write!(f, "ZED_ROW"),
-            Self::Column => write!(f, "ZED_COLUMN"),
-            Self::SelectedText => write!(f, "ZED_SELECTED_TEXT"),
-            Self::Custom(s) => write!(f, "ZED_{s}"),
+            Self::File => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILE"),
+            Self::WorktreeRoot => write!(f, "{ZED_VARIABLE_NAME_PREFIX}WORKTREE_ROOT"),
+            Self::Symbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SYMBOL"),
+            Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
+            Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
+            Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
+            Self::Custom(s) => write!(f, "{ZED_VARIABLE_NAME_PREFIX}CUSTOM_{s}"),
         }
     }
 }
@@ -170,78 +191,6 @@ pub trait Task {
     /// If a task is intended to be spawned in the terminal, it should return the corresponding struct filled with the data necessary.
     /// TODO kb docs
     fn resolve_task(&self, cx: TaskContext) -> Option<ResolvedTask>;
-}
-
-/// TODO kb docs
-#[derive(Clone, Debug, PartialEq)]
-pub struct TaskTemplate {
-    /// TODO kb docs
-    pub id: TaskId,
-    /// TODO kb docs
-    pub definition: Definition,
-}
-
-impl TaskTemplate {
-    fn oneshot(prompt: String) -> Arc<dyn Task> {
-        Arc::new(Self {
-            id: TaskId(prompt.clone()),
-            definition: Definition {
-                label: prompt.clone(),
-                command: prompt,
-                ..Definition::default()
-            },
-        })
-    }
-}
-
-impl Task for TaskTemplate {
-    fn resolve_task(&self, cx: TaskContext) -> Option<ResolvedTask> {
-        let TaskContext {
-            cwd,
-            task_variables,
-        } = cx;
-        // TODO kb ensure all substitutions are possible to do: no `cwd` has the task prefix, no `env`, `args`, `label`, or `command` have vars with task prefix that are not in `task_variables`. Omit such tasks. + test this
-        let task_variables = task_variables.into_env_variables();
-        let cwd = self
-            .definition
-            .cwd
-            .clone()
-            .and_then(|path| {
-                subst::substitute(&path, &task_variables)
-                    .map(Into::into)
-                    .ok()
-            })
-            .or(cwd);
-        let mut definition_env = self.definition.env.clone();
-        definition_env.extend(task_variables);
-        Some(ResolvedTask::SpawnInTerminal(
-            SpawnInTerminal {
-                id: self.id.clone(),
-                cwd,
-                use_new_terminal: self.definition.use_new_terminal,
-                allow_concurrent_runs: self.definition.allow_concurrent_runs,
-                // TODO kb use expanded label here
-                label: self.definition.label.clone(),
-                command: self.definition.command.clone(),
-                args: self.definition.args.clone(),
-                reveal: self.definition.reveal,
-                env: definition_env,
-            },
-            Arc::new(self.clone()),
-        ))
-    }
-
-    fn name(&self) -> &str {
-        &self.definition.label
-    }
-
-    fn id(&self) -> &TaskId {
-        &self.id
-    }
-
-    fn cwd(&self) -> Option<&str> {
-        self.definition.cwd.as_deref()
-    }
 }
 
 /// Static task definition from the tasks config file.
