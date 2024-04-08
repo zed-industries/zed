@@ -4,8 +4,9 @@ use futures::task::waker;
 use gpui::{App, Global, TestAppContext};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
-use semantic_index::embedding::{EmbeddingModel, FakeEmbeddingProvider, OpenaiEmbeddingProvider};
-use semantic_index::SemanticIndex;
+use semantic_index::{
+    EmbeddingModel, FakeEmbeddingProvider, OpenaiEmbeddingProvider, SemanticIndex,
+};
 use settings::SettingsStore;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
