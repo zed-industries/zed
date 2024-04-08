@@ -376,8 +376,9 @@ impl ContextProvider for RustContextProvider {
                     "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    "--".into(),
                     VariableName::Symbol.template_value(),
+                    "--".into(),
+                    "--nocapture".into(),
                 ],
                 ..Definition::default()
             },
