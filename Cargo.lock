@@ -9506,6 +9506,7 @@ dependencies = [
  "serde",
  "serde_json",
  "task",
+ "terminal",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",

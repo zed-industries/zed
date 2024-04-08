@@ -10,6 +10,9 @@ use util::ResultExt;
 use workspace::Workspace;
 
 mod modal;
+mod status_indicator;
+
+pub use status_indicator::TaskStatusIndicator;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
