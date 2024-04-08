@@ -138,21 +138,15 @@ impl Clone for ReplayableAction {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default, Debug)]
 pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
     pub initial_query: String,
-}
 
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            direction: Direction::Next,
-            count: 1,
-            initial_query: "".to_string(),
-        }
-    }
+    pub prior_selections: Vec<Range<Anchor>>,
+    pub prior_operator: Option<Operator>,
+    pub prior_mode: Mode,
 }
 
 impl EditorState {

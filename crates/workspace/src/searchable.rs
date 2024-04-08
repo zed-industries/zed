@@ -18,9 +18,10 @@ pub enum SearchEvent {
     ActiveMatchChanged,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Direction {
     Prev,
+    #[default]
     Next,
 }
 

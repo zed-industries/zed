@@ -4,10 +4,20 @@ use gpui::WindowContext;
 use language::BracketPair;
 use serde::Deserialize;
 use std::sync::Arc;
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurroundsType {
     Motion(Motion),
     Object(Object),
+}
+
+// This exists so that we can have Deserialize on Operators, but not on Motions.
+impl<'de> Deserialize<'de> for SurroundsType {
+    fn deserialize<D>(_: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Err(serde::de::Error::custom("Cannot deserialize SurroundsType"))
+    }
 }
 
 pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowContext) {

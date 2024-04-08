@@ -21,7 +21,7 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{
     movement::{self, FindRange},
-    Editor, EditorEvent, EditorMode,
+    Anchor, Editor, EditorEvent, EditorMode,
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
@@ -293,6 +293,18 @@ impl Vim {
     ) -> Option<S> {
         let editor = self.active_editor.clone()?.upgrade()?;
         Some(editor.update(cx, |editor, cx| update(self, editor, cx)))
+    }
+
+    fn editor_selections(&mut self, cx: &mut WindowContext) -> Vec<Range<Anchor>> {
+        self.update_active_editor(cx, |_, editor, _| {
+            editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .map(|selection| selection.tail()..selection.head())
+                .collect()
+        })
+        .unwrap_or_default()
     }
 
     /// When doing an action that modifies the buffer, we start recording so that `.`
