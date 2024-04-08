@@ -204,6 +204,8 @@ message Envelope {
         LanguageModelResponse language_model_response = 167;
         CountTokensWithLanguageModel count_tokens_with_language_model = 168;
         CountTokensResponse count_tokens_response = 169;
+        EmbedTexts embed_texts = 177;
+        EmbedTextsResponse embed_texts_response = 178; // current max
         UpdateChannelMessage update_channel_message = 170;
         ChannelMessageUpdate channel_message_update = 171;
 
@@ -213,7 +215,7 @@ message Envelope {
         UpdateNotification update_notification = 174;
 
         MultiLspQuery multi_lsp_query = 175;
-        MultiLspQueryResponse multi_lsp_query_response = 176; // current max
+        MultiLspQueryResponse multi_lsp_query_response = 176;
     }
 
     reserved 158 to 161;
@@ -1795,6 +1797,19 @@ message CountTokensWithLanguageModel {
 
 message CountTokensResponse {
     uint32 token_count = 1;
+}
+
+message EmbedTexts {
+    string model = 1;
+    repeated string texts = 2;
+}
+
+message EmbedTextsResponse {
+    repeated Embedding embeddings = 1;
+}
+
+message Embedding {
+    repeated float dimensions = 1;
 }
 
 message BlameBuffer {

@@ -1,17 +1,11 @@
 use client::Client;
 use futures::channel::oneshot;
-use futures::task::waker;
 use gpui::{App, Global, TestAppContext};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
-use semantic_index::{
-    EmbeddingModel, FakeEmbeddingProvider, OpenaiEmbeddingProvider, SemanticIndex,
-};
+use semantic_index::{OpenaiEmbeddingModel, OpenaiEmbeddingProvider, SemanticIndex};
 use settings::SettingsStore;
-use std::fs;
-use std::io::{self, Read, Seek, SeekFrom};
 use std::{path::Path, sync::Arc};
-use tempfile::tempdir;
 use util::http::HttpClientWithUrl;
 
 pub fn init_test(cx: &mut TestAppContext) {
@@ -53,12 +47,12 @@ fn main() {
             return;
         }
 
-        //let embedding_provider = FakeEmbeddingProvider::new();
+        // let embedding_provider = FakeEmbeddingProvider::new();
 
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
         let embedding_provider = OpenaiEmbeddingProvider::new(
             http.clone(),
-            EmbeddingModel::OpenaiTextEmbedding3Small,
+            OpenaiEmbeddingModel::TextEmbedding3Small,
             api_key,
         );
 
@@ -134,7 +128,11 @@ fn main() {
                 println!("{}", content);
             }
 
-            cx.update(|cx| cx.quit()).unwrap();
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(100000))
+                .await;
+
+            // cx.update(|cx| cx.quit()).unwrap();
         })
         .detach();
     });
