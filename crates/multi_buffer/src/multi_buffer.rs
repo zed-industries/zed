@@ -4780,7 +4780,7 @@ mod tests {
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(
             snapshot.text(),
-            "bbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\n\nnnn\nooo\nppp\nqqq\nrrr\n"
+            "bbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\n\nnnn\nooo\nppp\nqqq\n"
         );
 
         assert_eq!(
@@ -4822,7 +4822,7 @@ mod tests {
         let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         assert_eq!(
             snapshot.text(),
-            "bbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\n\nnnn\nooo\nppp\nqqq\nrrr\n"
+            "bbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\n\nnnn\nooo\nppp\nqqq\n"
         );
 
         assert_eq!(
