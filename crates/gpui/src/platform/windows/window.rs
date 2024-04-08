@@ -82,10 +82,10 @@ impl WindowsWindowState {
         let fullscreen = None;
 
         Self {
-            origin: origin.clone(),
-            physical_size: physical_size.clone(),
-            restore_origin: origin,
-            restore_size: physical_size,
+            origin,
+            physical_size,
+            restore_origin,
+            restore_size,
             scale_factor,
             callbacks,
             input_handler,
@@ -108,14 +108,21 @@ impl WindowsWindowState {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
-    fn restore_size(&self) -> Bounds<DevicePixels> {
+    fn restore_status(&self) -> WindowOpenStatus {
         self.restore_size.get()
     }
 
     fn bounds(&self) -> Bounds<DevicePixels> {
-        Bounds {
+        let bounds = Bounds {
             origin: self.origin,
             size: self.physical_size,
+        };
+        if self.is_fullscreen() {
+            WindowOpenStatus::FullScreen(bounds)
+        } else if self.is_maximized() {
+            WindowOpenStatus::Maximized(bounds)
+        } else {
+            WindowOpenStatus::Windowed(Some(bounds))
         }
     }
 
@@ -364,12 +371,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.is_minimized()
     }
 
-    fn restore_size(&self) -> Bounds<DevicePixels> {
-        self.inner.restore_size()
-    }
-
-    fn restore_size(&self) -> Bounds<DevicePixels> {
-        self.inner.restore_size()
+    fn restore_status(&self) -> WindowOpenStatus {
+        self.inner.restore_status()
     }
 
     /// get the logical size of the app's drawable area.
