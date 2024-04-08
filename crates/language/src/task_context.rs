@@ -2,7 +2,7 @@ use crate::Location;
 
 use anyhow::Result;
 use gpui::AppContext;
-use task::{static_source::TaskDefinitions, TaskVariables, VariableName};
+use task::{TaskDefinitions, TaskVariables, VariableName};
 
 /// Language Contexts are used by Zed tasks to extract information about source file.
 pub trait ContextProvider: Send + Sync {

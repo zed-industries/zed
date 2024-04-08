@@ -2,60 +2,12 @@
 
 use std::sync::Arc;
 
-use crate::{
-    static_source::RevealStrategy, SpawnInTerminal, Task, TaskContext, TaskId, TaskSource,
-};
+use crate::{Task, TaskId, TaskSource, TaskTemplate};
 use gpui::{AppContext, Context, Model};
 
 /// A storage and source of tasks generated out of user command prompt inputs.
 pub struct OneshotSource {
     tasks: Vec<Arc<dyn Task>>,
-}
-
-#[derive(Clone)]
-struct OneshotTask {
-    id: TaskId,
-}
-
-impl OneshotTask {
-    fn new(prompt: String) -> Self {
-        Self { id: TaskId(prompt) }
-    }
-}
-
-impl Task for OneshotTask {
-    fn id(&self) -> &TaskId {
-        &self.id
-    }
-
-    fn name(&self) -> &str {
-        &self.id.0
-    }
-
-    fn cwd(&self) -> Option<&str> {
-        None
-    }
-
-    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
-        if self.id().0.is_empty() {
-            return None;
-        }
-        let TaskContext {
-            cwd,
-            task_variables,
-        } = cx;
-        Some(SpawnInTerminal {
-            id: self.id().clone(),
-            label: self.name().to_owned(),
-            command: self.id().0.clone(),
-            args: vec![],
-            cwd,
-            env: task_variables.into_env_variables(),
-            use_new_terminal: Default::default(),
-            allow_concurrent_runs: Default::default(),
-            reveal: RevealStrategy::default(),
-        })
-    }
 }
 
 impl OneshotSource {
@@ -70,7 +22,7 @@ impl OneshotSource {
             // If we already have an oneshot task with that command, let's just reuse it.
             task.clone()
         } else {
-            let new_oneshot = Arc::new(OneshotTask::new(prompt));
+            let new_oneshot = TaskTemplate::oneshot(prompt);
             self.tasks.push(new_oneshot.clone());
             new_oneshot
         }

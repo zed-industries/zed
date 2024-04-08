@@ -2,153 +2,21 @@
 
 use std::{borrow::Cow, sync::Arc};
 
-use collections::HashMap;
 use futures::StreamExt;
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use schemars::{gen::SchemaSettings, JsonSchema};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use util::ResultExt;
 
-use crate::{SpawnInTerminal, Task, TaskContext, TaskId, TaskSource};
+use crate::{Task, TaskDefinitions, TaskId, TaskSource, TaskTemplate};
 use futures::channel::mpsc::UnboundedReceiver;
-
-/// A single config file entry with the deserialized task definition.
-#[derive(Clone, Debug, PartialEq)]
-struct StaticTask {
-    id: TaskId,
-    definition: Definition,
-}
-
-impl StaticTask {
-    fn new(definition: Definition, (id_base, index_in_file): (&str, usize)) -> Arc<Self> {
-        Arc::new(Self {
-            id: TaskId(format!(
-                "static_{id_base}_{index_in_file}_{}",
-                definition.label
-            )),
-            definition,
-        })
-    }
-}
-
-/// TODO: doc
-pub fn tasks_for(tasks: TaskDefinitions, id_base: &str) -> Vec<Arc<dyn Task>> {
-    tasks
-        .0
-        .into_iter()
-        .enumerate()
-        .map(|(index, task)| StaticTask::new(task, (id_base, index)) as Arc<_>)
-        .collect()
-}
-
-impl Task for StaticTask {
-    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
-        let TaskContext {
-            cwd,
-            task_variables,
-        } = cx;
-        let task_variables = task_variables.into_env_variables();
-        let cwd = self
-            .definition
-            .cwd
-            .clone()
-            .and_then(|path| {
-                subst::substitute(&path, &task_variables)
-                    .map(Into::into)
-                    .ok()
-            })
-            .or(cwd);
-        let mut definition_env = self.definition.env.clone();
-        definition_env.extend(task_variables);
-        Some(SpawnInTerminal {
-            id: self.id.clone(),
-            cwd,
-            use_new_terminal: self.definition.use_new_terminal,
-            allow_concurrent_runs: self.definition.allow_concurrent_runs,
-            label: self.definition.label.clone(),
-            command: self.definition.command.clone(),
-            args: self.definition.args.clone(),
-            reveal: self.definition.reveal,
-            env: definition_env,
-        })
-    }
-
-    fn name(&self) -> &str {
-        &self.definition.label
-    }
-
-    fn id(&self) -> &TaskId {
-        &self.id
-    }
-
-    fn cwd(&self) -> Option<&str> {
-        self.definition.cwd.as_deref()
-    }
-}
 
 /// The source of tasks defined in a tasks config file.
 pub struct StaticSource {
-    tasks: Vec<Arc<StaticTask>>,
+    tasks: Vec<Arc<TaskTemplate>>,
     _definitions: Model<TrackedFile<TaskDefinitions>>,
     _subscription: Subscription,
 }
 
-/// Static task definition from the tasks config file.
-#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub struct Definition {
-    /// Human readable name of the task to display in the UI.
-    pub label: String,
-    /// Executable command to spawn.
-    pub command: String,
-    /// Arguments to the command.
-    #[serde(default)]
-    pub args: Vec<String>,
-    /// Env overrides for the command, will be appended to the terminal's environment from the settings.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-    /// Current working directory to spawn the command into, defaults to current project root.
-    #[serde(default)]
-    pub cwd: Option<String>,
-    /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
-    #[serde(default)]
-    pub use_new_terminal: bool,
-    /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
-    #[serde(default)]
-    pub allow_concurrent_runs: bool,
-    /// What to do with the terminal pane and tab, after the command was started:
-    /// * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
-    /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
-    #[serde(default)]
-    pub reveal: RevealStrategy,
-}
-
-/// What to do with the terminal pane and tab, after the command was started.
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RevealStrategy {
-    /// Always show the terminal pane, add and focus the corresponding task's tab in it.
-    #[default]
-    Always,
-    /// Do not change terminal pane focus, but still add/reuse the task's tab there.
-    Never,
-}
-
-/// A group of Tasks defined in a JSON file.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct TaskDefinitions(pub Vec<Definition>);
-
-impl TaskDefinitions {
-    /// Generates JSON schema of Tasks JSON definition format.
-    pub fn generate_json_schema() -> serde_json_lenient::Value {
-        let schema = SchemaSettings::draft07()
-            .with(|settings| settings.option_add_null_type = false)
-            .into_generator()
-            .into_root_schema_for::<Self>();
-
-        serde_json_lenient::to_value(schema).unwrap()
-    }
-}
 /// A Wrapper around deserializable T that keeps track of its contents
 /// via a provided channel. Once T value changes, the observers of [`TrackedFile`] are
 /// notified.
@@ -252,7 +120,11 @@ impl StaticSource {
                             .clone()
                             .into_iter()
                             .enumerate()
-                            .map(|(i, definition)| StaticTask::new(definition, (&id_base, i)))
+                            .map(|(i, definition)| TaskTemplate {
+                                id: TaskId(format!("static_{id_base}_{i}_{}", definition.label)),
+                                definition,
+                            })
+                            .map(Arc::new)
                             .collect();
                         cx.notify();
                     }

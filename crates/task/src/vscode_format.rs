@@ -3,10 +3,7 @@ use collections::HashMap;
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::{
-    static_source::{Definition, TaskDefinitions},
-    VariableName,
-};
+use crate::{Definition, TaskDefinitions, VariableName};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -157,9 +154,8 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        static_source::{Definition, TaskDefinitions},
         vscode_format::{Command, VsCodeTaskDefinition},
-        VsCodeTaskFile,
+        Definition, TaskDefinitions, VsCodeTaskFile,
     };
 
     use super::EnvVariableReplacer;

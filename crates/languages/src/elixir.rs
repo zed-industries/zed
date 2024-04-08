@@ -20,10 +20,7 @@ use std::{
         Arc,
     },
 };
-use task::{
-    static_source::{Definition, TaskDefinitions},
-    VariableName,
-};
+use task::{Definition, TaskDefinitions, VariableName};
 use util::{
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},

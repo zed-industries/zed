@@ -10,7 +10,7 @@ use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use itertools::Itertools;
 use language::Language;
-use task::{static_source::tasks_for, Task, TaskContext, TaskSource};
+use task::{Task, TaskContext, TaskId, TaskSource, TaskTemplate};
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
@@ -142,14 +142,17 @@ impl Inventory {
                 let tasks = language.context_provider()?.associated_tasks()?;
                 Some((tasks, language))
             })
-            .map(|(tasks, language)| {
-                let language_name = language.name();
-                let id_base = format!("buffer_source_{language_name}");
-                tasks_for(tasks, &id_base)
-            })
-            .unwrap_or_default()
             .into_iter()
-            .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
+            .flat_map(|(tasks, language)| {
+                tasks.0.into_iter().map(move |definition| {
+                    let language_name = language.name();
+                    TaskTemplate {
+                        id: TaskId(format!("language_{language_name}")),
+                        definition,
+                    }
+                })
+            })
+            .flat_map(|task| Some((task_source_kind.as_ref()?, Arc::new(task) as Arc<dyn Task>)));
 
         let mut lru_score = 0_u32;
         let tasks_by_usage = if lru {
@@ -252,8 +255,8 @@ pub mod test_inventory {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct TestTask {
-        pub id: task::TaskId,
-        pub name: String,
+        id: task::TaskId,
+        name: String,
     }
 
     impl Task for TestTask {

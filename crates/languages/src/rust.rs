@@ -17,10 +17,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{
-    static_source::{Definition, TaskDefinitions},
-    TaskVariables, VariableName,
-};
+use task::{Definition, TaskDefinitions, TaskVariables, VariableName};
 use util::{
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
