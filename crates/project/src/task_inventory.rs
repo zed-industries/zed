@@ -16,7 +16,7 @@ use worktree::WorktreeId;
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
     sources: Vec<SourceInInventory>,
-    last_scheduled_tasks: VecDeque<ResolvedTask>,
+    last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
 }
 
 struct SourceInInventory {
@@ -62,7 +62,20 @@ impl TaskSourceKind {
     }
 
     pub fn to_id_base(&self) -> String {
-        todo!("TODO kb")
+        match self {
+            TaskSourceKind::UserInput => "oneshot".to_string(),
+            TaskSourceKind::AbsPath { id_base, abs_path } => {
+                format!("{id_base}_{}", abs_path.display())
+            }
+            TaskSourceKind::Worktree {
+                id,
+                id_base,
+                abs_path,
+            } => {
+                format!("{id_base}_{id}_{}", abs_path.display())
+            }
+            TaskSourceKind::Language { name } => format!("language_{name}"),
+        }
     }
 }
 
@@ -200,7 +213,7 @@ impl Inventory {
                 };
                 (task, usages)
             })
-            // TODO kb move this into tasks' modal.rs and sort by kinds too
+            // TODO kb restore and sort by task source kinds too
             // .sorted_unstable_by(
             //     |((kind_a, task_a), usages_a), ((kind_b, task_b), usages_b)| {
             //         usages_a
@@ -233,13 +246,18 @@ impl Inventory {
     }
 
     /// Returns the last scheduled task, if any of the sources contains one with the matching id.
-    pub fn last_scheduled_task(&self) -> Option<ResolvedTask> {
+    pub fn last_scheduled_task(&self) -> Option<(TaskSourceKind, ResolvedTask)> {
         self.last_scheduled_tasks.back().cloned()
     }
 
     /// Registers task "usage" as being scheduled – to be used for LRU sorting when listing all tasks.
-    pub fn task_scheduled(&mut self, resolved_task: ResolvedTask) {
-        self.last_scheduled_tasks.push_back(resolved_task);
+    pub fn task_scheduled(
+        &mut self,
+        task_source_kind: TaskSourceKind,
+        resolved_task: ResolvedTask,
+    ) {
+        self.last_scheduled_tasks
+            .push_back((task_source_kind, resolved_task));
         if self.last_scheduled_tasks.len() > 5_000 {
             self.last_scheduled_tasks.pop_front();
         }
@@ -329,13 +347,15 @@ pub mod test_inventory {
         cx: &mut TestAppContext,
     ) {
         inventory.update(cx, |inventory, cx| {
-            let (_, task) = inventory
+            let (task_source_kind, task) = inventory
                 .list_tasks(None, None, false, cx)
                 .into_iter()
                 .find(|(_, task)| task.label == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
+            let id_base = task_source_kind.to_id_base();
             inventory.task_scheduled(
-                task.resolve_task("test source".to_string(), TaskContext::default())
+                task_source_kind,
+                task.resolve_task(id_base, TaskContext::default())
                     .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
             );
         });

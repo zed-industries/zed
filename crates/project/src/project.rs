@@ -7452,7 +7452,7 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
-                                id_base: "local_tasks_for_workspace",
+                                id_base: "local_tasks_for_worktree",
                             },
                             |cx| {
                                 let tasks_file_rx =
@@ -7474,7 +7474,7 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
-                                id_base: "local_vscode_tasks_for_workspace",
+                                id_base: "local_vscode_tasks_for_worktree",
                             },
                             |cx| {
                                 let tasks_file_rx =

@@ -78,7 +78,7 @@ impl TasksModalDelegate {
         }
     }
 
-    fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<ResolvedTask> {
+    fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<(TaskSourceKind, ResolvedTask)> {
         if self.prompt.trim().is_empty() {
             return None;
         }
@@ -91,7 +91,13 @@ impl TasksModalDelegate {
                 let oneshot_source = oneshot_source.as_any().downcast_mut::<OneshotSource>()?;
                 Some(oneshot_source.spawn(self.prompt.clone()))
             })
-            .and_then(|task| task.resolve_task(source_kind.to_id_base(), self.task_context.clone()))
+            .and_then(|task| {
+                let id_base = source_kind.to_id_base();
+                Some((
+                    source_kind,
+                    task.resolve_task(id_base, self.task_context.clone())?,
+                ))
+            })
     }
 
     fn delete_oneshot(&mut self, ix: usize, cx: &mut AppContext) {
@@ -268,15 +274,15 @@ impl PickerDelegate for TasksModalDelegate {
                 let ix = current_match.candidate_id;
                 self.candidates
                     .as_ref()
-                    .map(|candidates| candidates[ix].1.clone())
+                    .map(|candidates| candidates[ix].clone())
             });
-        let Some(task) = task else {
+        let Some((task_source_kind, task)) = task else {
             return;
         };
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task, omit_history_entry, cx);
+                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
             })
             .ok();
         cx.emit(DismissEvent);
@@ -365,12 +371,12 @@ impl PickerDelegate for TasksModalDelegate {
     }
 
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
-        let Some(task) = self.spawn_oneshot(cx) else {
+        let Some((task_source_kind, task)) = self.spawn_oneshot(cx) else {
             return;
         };
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task, omit_history_entry, cx);
+                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
             })
             .ok();
         cx.emit(DismissEvent);

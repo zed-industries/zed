@@ -87,7 +87,7 @@ impl TaskTemplate {
         let mut env = substitute_all_template_variables_in_map(self.env.clone(), &task_variables)?;
         env.extend(task_variables);
         let id = TaskId(format!(
-            "{id_base}_TODO kb calculate hash of the TaskContext"
+            "{id_base}_TODO kb calculate has of the TaskTemplate(self)_TODO kb calculate hash of the TaskContext"
         ));
         Some(ResolvedTask {
             id: id.clone(),
