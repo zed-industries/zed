@@ -59,7 +59,9 @@ fn rope_benchmarks(c: &mut Criterion) {
 
             b.iter(|| {
                 let mut rope = Rope::new();
-                rope.push(&text);
+                for _ in 0..10 {
+                    rope.push(&text);
+                }
             });
         });
     }
@@ -69,11 +71,16 @@ fn rope_benchmarks(c: &mut Criterion) {
     for size in sizes.iter() {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-            let rope_a = generate_random_rope(rng.clone(), *size);
+            let mut random_ropes = Vec::new();
+            for _ in 0..5 {
+                random_ropes.push(generate_random_rope(rng.clone(), *size));
+            }
 
             b.iter(|| {
                 let mut rope_b = Rope::new();
-                rope_b.append(rope_a.clone())
+                for rope in &random_ropes {
+                    rope_b.append(rope.clone())
+                }
             });
         });
     }
