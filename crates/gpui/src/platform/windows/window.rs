@@ -42,6 +42,8 @@ pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
     origin: Cell<Point<DevicePixels>>,
     physical_size: Cell<Size<DevicePixels>>,
+    fullscreen_restore_origin: Cell<Point<DevicePixels>>,
+    fullscreen_restore_size: Cell<Size<DevicePixels>>,
     scale_factor: Cell<f32>,
     input_handler: Cell<Option<PlatformInputHandler>>,
     renderer: RefCell<BladeRenderer>,
@@ -62,6 +64,7 @@ impl WindowsWindowInner {
         handle: AnyWindowHandle,
         hide_title_bar: bool,
         display: Rc<WindowsDisplay>,
+        fullscreen_restore_bounds: Option<Bounds<DevicePixels>>,
     ) -> Self {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = Cell::new(point(DevicePixels(cs.x), DevicePixels(cs.y)));
@@ -113,10 +116,22 @@ impl WindowsWindowInner {
         let display = RefCell::new(display);
         let click_state = RefCell::new(ClickState::new());
         let fullscreen = Cell::new(None);
+        let fullscreen_restore_origin;
+        let fullscreen_restore_size;
+        if let Some(bounds) = fullscreen_restore_bounds {
+            fullscreen_restore_origin = Cell::new(bounds.origin);
+            fullscreen_restore_size = Cell::new(bounds.size);
+        } else {
+            fullscreen_restore_origin = Cell::new(Point::default());
+            fullscreen_restore_size = Cell::new(Size::default());
+        }
+
         Self {
             hwnd,
             origin,
             physical_size,
+            fullscreen_restore_origin,
+            fullscreen_restore_size,
             scale_factor,
             input_handler,
             renderer,
@@ -157,12 +172,14 @@ impl WindowsWindowInner {
                 DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
             ),
         };
-        if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
-            if self.is_fullscreen() {
-                WindowOpenStatus::FullScreen(bounds)
-            } else {
-                WindowOpenStatus::Maximized(bounds)
-            }
+
+        if self.is_fullscreen() {
+            WindowOpenStatus::FullScreen(Bounds {
+                origin: self.fullscreen_restore_origin.get(),
+                size: self.fullscreen_restore_size.get(),
+            })
+        } else if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
+            WindowOpenStatus::Maximized(bounds)
         } else {
             WindowOpenStatus::Windowed(Some(bounds))
         }
@@ -176,6 +193,9 @@ impl WindowsWindowInner {
     }
 
     async fn toggle_fullscreen(self: Rc<Self>) {
+        println!("toggle_fullscreen");
+        self.fullscreen_restore_origin.set(self.origin.get());
+        self.fullscreen_restore_size.set(self.physical_size.get());
         let StyleAndBounds {
             style,
             x,
@@ -326,6 +346,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_move_msg(&self, lparam: LPARAM) -> Option<isize> {
+        println!("handle_move_msg");
         let x = lparam.signed_loword() as i32;
         let y = lparam.signed_hiword() as i32;
         let new_physical_point = Point {
@@ -357,6 +378,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_size_msg(&self, lparam: LPARAM) -> Option<isize> {
+        println!("handle_size_msg");
         let width = lparam.loword().max(1) as i32;
         let height = lparam.hiword().max(1) as i32;
         let scale_factor = self.scale_factor.get();
@@ -1266,6 +1288,7 @@ struct WindowCreateContext {
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: Rc<WindowsDisplay>,
+    fullscreen_restore_bounds: Option<Bounds<DevicePixels>>,
 }
 
 impl WindowsWindow {
@@ -1289,39 +1312,10 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
-        let (x, y, nwidth, nheight, show_cmd, fullscreen) = match params.open_status {
-            WindowOpenStatus::Windowed(Some(bounds)) => (
-                bounds.origin.x.0,
-                bounds.origin.y.0,
-                bounds.size.width.0,
-                bounds.size.height.0,
-                SW_SHOW,
-                false,
-            ),
-            WindowOpenStatus::Maximized(bounds) => (
-                bounds.origin.x.0,
-                bounds.origin.y.0,
-                bounds.size.width.0,
-                bounds.size.height.0,
-                SW_SHOWMAXIMIZED,
-                false,
-            ),
-            WindowOpenStatus::FullScreen(bounds) => (
-                bounds.origin.x.0,
-                bounds.origin.y.0,
-                bounds.size.width.0,
-                bounds.size.height.0,
-                SW_SHOW,
-                true,
-            ),
-            _ => (
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                SW_SHOW,
-                false,
-            ),
+        let (show_cmd, fullscreen, fullscreen_restore_bounds) = match params.open_status {
+            WindowOpenStatus::FullScreen(bounds) => (SW_SHOW, true, Some(bounds)),
+            WindowOpenStatus::Maximized(_) => (SW_SHOWMAXIMIZED, false, None),
+            _ => (SW_SHOW, false, None),
         };
         let hwndparent = HWND::default();
         let hmenu = HMENU::default();
@@ -1334,6 +1328,7 @@ impl WindowsWindow {
             // todo(windows) move window to target monitor
             // options.display_id
             display: Rc::new(WindowsDisplay::primary_monitor().unwrap()),
+            fullscreen_restore_bounds,
         };
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
@@ -1342,12 +1337,12 @@ impl WindowsWindow {
                 classname,
                 &windowname,
                 dwstyle,
-                x,
-                y,
-                nwidth,
-                nheight,
-                hwndparent,
-                hmenu,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                None,
+                None,
                 hinstance,
                 lpparam,
             )
@@ -1371,8 +1366,23 @@ impl WindowsWindow {
             .write()
             .push(wnd.inner.hwnd);
 
+        if let Some(restore_bounds) = params.open_status.get_bounds() {
+            unsafe {
+                let mut placement = WINDOWPLACEMENT {
+                    length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                    ..Default::default()
+                };
+                GetWindowPlacement(wnd.inner.hwnd, &mut placement).log_err();
+                placement.rcNormalPosition.left = restore_bounds.left().0;
+                placement.rcNormalPosition.right = restore_bounds.right().0;
+                placement.rcNormalPosition.top = restore_bounds.top().0;
+                placement.rcNormalPosition.bottom = restore_bounds.bottom().0;
+                SetWindowPlacement(wnd.inner.hwnd, &placement).log_err();
+            }
+        }
         unsafe { ShowWindow(wnd.inner.hwnd, show_cmd) };
         if fullscreen {
+            println!("Toggle fullscreen");
             wnd.toggle_fullscreen();
         }
 
@@ -1846,6 +1856,7 @@ unsafe extern "system" fn wnd_proc(
             ctx.handle,
             ctx.hide_title_bar,
             ctx.display.clone(),
+            ctx.fullscreen_restore_bounds,
         ));
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
