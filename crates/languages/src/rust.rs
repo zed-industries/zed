@@ -355,7 +355,10 @@ impl ContextProvider for RustContextProvider {
     fn associated_tasks(&self) -> Option<TaskTemplates> {
         Some(TaskTemplates(vec![
             TaskTemplate {
-                label: "Rust: Test current crate".to_owned(),
+                label: format!(
+                    "cargo test -p {}",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value()
+                ),
                 command: "cargo".into(),
                 args: vec![
                     "test".into(),
@@ -365,7 +368,11 @@ impl ContextProvider for RustContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Rust: Test current function".to_owned(),
+                label: format!(
+                    "cargo test -p {} {} -- --nocapture",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                ),
                 command: "cargo".into(),
                 args: vec![
                     "test".into(),
@@ -378,13 +385,16 @@ impl ContextProvider for RustContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Rust: cargo run".into(),
+                label: "cargo run".into(),
                 command: "cargo".into(),
                 args: vec!["run".into()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Rust: cargo check current crate".into(),
+                label: format!(
+                    "cargo check -p {}",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
                 command: "cargo".into(),
                 args: vec![
                     "check".into(),
@@ -394,7 +404,7 @@ impl ContextProvider for RustContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "Rust: cargo check workspace".into(),
+                label: "cargo check --workspace".into(),
                 command: "cargo".into(),
                 args: vec!["check".into(), "--workspace".into()],
                 ..TaskTemplate::default()

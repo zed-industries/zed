@@ -553,25 +553,29 @@ pub(super) fn elixir_task_context() -> ContextProviderWithTasks {
     // Taken from https://gist.github.com/josevalim/2e4f60a14ccd52728e3256571259d493#gistcomment-4995881
     ContextProviderWithTasks::new(TaskTemplates(vec![
         TaskTemplate {
-            label: "Elixir: test suite".to_owned(),
+            label: "mix test".to_owned(),
             command: "mix".to_owned(),
             args: vec!["test".to_owned()],
             ..TaskTemplate::default()
         },
         TaskTemplate {
-            label: "Elixir: failed tests suite".to_owned(),
+            label: "mix test --failed".to_owned(),
             command: "mix".to_owned(),
             args: vec!["test".to_owned(), "--failed".to_owned()],
             ..TaskTemplate::default()
         },
         TaskTemplate {
-            label: "Elixir: test file".to_owned(),
+            label: format!("mix test {}", VariableName::Symbol.template_value()),
             command: "mix".to_owned(),
             args: vec!["test".to_owned(), VariableName::Symbol.template_value()],
             ..TaskTemplate::default()
         },
         TaskTemplate {
-            label: "Elixir: test at current line".to_owned(),
+            label: format!(
+                "mix test {}:{}",
+                VariableName::File.template_value(),
+                VariableName::Row.template_value()
+            ),
             command: "mix".to_owned(),
             args: vec![
                 "test".to_owned(),
