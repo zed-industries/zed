@@ -133,7 +133,7 @@ fn main() {
                 .timer(std::time::Duration::from_secs(100000))
                 .await;
 
-            // cx.update(|cx| cx.quit()).unwrap();
+            cx.update(|cx| cx.quit()).unwrap();
         })
         .detach();
     });
