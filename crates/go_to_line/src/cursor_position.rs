@@ -83,15 +83,13 @@ impl CursorPosition {
         }
         write!(text, " (").unwrap();
         let mut wrote_once = false;
-        for cursor_data in [selections, lines, characters] {
-            if let Some((count, name)) = cursor_data {
-                if wrote_once {
-                    write!(text, ", ").unwrap();
-                }
-                let plural_suffix = if count > 1 { "s" } else { "" };
-                write!(text, "{count} {name}{plural_suffix}").unwrap();
-                wrote_once = true;
+        for (count, name) in [selections, lines, characters].into_iter().flatten() {
+            if wrote_once {
+                write!(text, ", ").unwrap();
             }
+            let plural_suffix = if count > 1 { "s" } else { "" };
+            write!(text, "{count} {name}{plural_suffix}").unwrap();
+            wrote_once = true;
         }
         text.push(')');
     }
