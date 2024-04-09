@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use collections::VecDeque;
+use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use language::Language;
 use task::{ResolvedTask, TaskSource, TaskTemplate};
@@ -27,7 +27,7 @@ struct SourceInInventory {
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TaskSourceKind {
     /// bash-like commands spawned by users, not associated with any path
     UserInput,
@@ -47,14 +47,14 @@ pub enum TaskSourceKind {
 }
 
 impl TaskSourceKind {
-    fn abs_path(&self) -> Option<&Path> {
+    pub fn abs_path(&self) -> Option<&Path> {
         match self {
             Self::AbsPath { abs_path, .. } | Self::Worktree { abs_path, .. } => Some(abs_path),
             Self::UserInput | Self::Language { .. } => None,
         }
     }
 
-    fn worktree(&self) -> Option<WorktreeId> {
+    pub fn worktree(&self) -> Option<WorktreeId> {
         match self {
             Self::Worktree { id, .. } => Some(*id),
             _ => None,
@@ -159,7 +159,7 @@ impl Inventory {
         worktree: Option<WorktreeId>,
         lru: bool,
         cx: &mut AppContext,
-    ) -> Vec<(TaskSourceKind, TaskTemplate)> {
+    ) -> Vec<(TaskSourceKind, TaskTemplate, u32)> {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name(),
         });
@@ -170,21 +170,21 @@ impl Inventory {
             .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
 
         let mut lru_score = 0_u32;
-        // TODO kb restore sorting
-        // let tasks_by_usage = if lru {
-        //     self.last_scheduled_tasks.iter().rev().fold(
-        //         HashMap::default(),
-        //         |mut tasks, resolved_task| {
-        //             tasks
-        //                 // TODO kb this now can be wrong: multiple resolved tasks will have the same id.
-        //                 .entry(resolved_task.id().clone())
-        //                 .or_insert_with(|| post_inc(&mut lru_score));
-        //             tasks
-        //         },
-        //     )
-        // } else {
-        //     HashMap::default()
-        // };
+        let tasks_by_usage = if lru {
+            self.last_scheduled_tasks.iter().rev().fold(
+                HashMap::default(),
+                |mut tasks, (task_source_kind, resolved_task)| {
+                    tasks
+                        .entry(task_source_kind)
+                        .or_insert_with(|| HashMap::default())
+                        .entry(&resolved_task.id)
+                        .or_insert_with(|| (resolved_task, post_inc(&mut lru_score)));
+                    tasks
+                },
+            )
+        } else {
+            HashMap::default()
+        };
         let not_used_score = post_inc(&mut lru_score);
         self.sources
             .iter()
@@ -201,47 +201,22 @@ impl Inventory {
                     .map(|task| (&source.kind, task))
             })
             .chain(language_tasks)
-            .map(|task| {
-                let usages = if lru {
-                    // TODO kb
-                    // tasks_by_usage
-                    //     .get(&task.1.id())
-                    //     .copied()
-                    None.unwrap_or(not_used_score)
+            .map(|(task_source_kind, task)| {
+                let lru_score = if lru {
+                    tasks_by_usage
+                        .get(task_source_kind)
+                        .and_then(|tasks| {
+                            tasks
+                                .values()
+                                .find(|(resolved_task, _)| resolved_task.original_task == task)
+                                .map(|(_, lru_score)| *lru_score)
+                        })
+                        .unwrap_or(not_used_score)
                 } else {
                     not_used_score
                 };
-                (task, usages)
+                (task_source_kind.clone(), task, lru_score)
             })
-            // TODO kb restore and sort by task source kinds too
-            // .sorted_unstable_by(
-            //     |((kind_a, task_a), usages_a), ((kind_b, task_b), usages_b)| {
-            //         usages_a
-            //             .cmp(&usages_b)
-            //             .then(
-            //                 kind_a
-            //                     .worktree()
-            //                     .is_none()
-            //                     .cmp(&kind_b.worktree().is_none()),
-            //             )
-            //             .then(kind_a.worktree().cmp(&kind_b.worktree()))
-            //             .then(
-            //                 kind_a
-            //                     .abs_path()
-            //                     .is_none()
-            //                     .cmp(&kind_b.abs_path().is_none()),
-            //             )
-            //             .then(kind_a.abs_path().cmp(&kind_b.abs_path()))
-            //             .then({
-            //                 NumericPrefixWithSuffix::from_numeric_prefixed_str(task_a.name())
-            //                     .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
-            //                         task_b.name(),
-            //                     ))
-            //                     .then(task_a.name().cmp(task_b.name()))
-            //             })
-            //     },
-            // )
-            .map(|((kind, task), _)| (kind.clone(), task))
             .collect()
     }
 
@@ -336,7 +311,7 @@ pub mod test_inventory {
             inventory
                 .list_tasks(None, worktree, lru, cx)
                 .into_iter()
-                .map(|(_, task)| task.label)
+                .map(|(_, task, _)| task.label)
                 .collect()
         })
     }
@@ -347,14 +322,14 @@ pub mod test_inventory {
         cx: &mut TestAppContext,
     ) {
         inventory.update(cx, |inventory, cx| {
-            let (task_source_kind, task) = inventory
+            let (task_source_kind, task, _) = inventory
                 .list_tasks(None, None, false, cx)
                 .into_iter()
-                .find(|(_, task)| task.label == task_name)
+                .find(|(_, task, _)| task.label == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
             let id_base = task_source_kind.to_id_base();
             inventory.task_scheduled(
-                task_source_kind,
+                task_source_kind.clone(),
                 task.resolve_task(id_base, TaskContext::default())
                     .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
             );
@@ -371,7 +346,7 @@ pub mod test_inventory {
             inventory
                 .list_tasks(None, worktree, lru, cx)
                 .into_iter()
-                .map(|(source_kind, task)| (source_kind, task.label))
+                .map(|(source_kind, task, _)| (source_kind, task.label))
                 .collect()
         })
     }

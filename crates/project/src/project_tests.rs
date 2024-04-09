@@ -164,7 +164,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 })
             })
             .into_iter()
-            .map(|(source_kind, task)| (source_kind, task.label))
+            .map(|(source_kind, task, _)| (source_kind, task.label))
             .collect::<Vec<_>>();
         assert_eq!(
             all_tasks,
