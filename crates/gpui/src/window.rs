@@ -882,7 +882,7 @@ impl<'a> WindowContext<'a> {
             .retain(&(), |callback| callback(self));
     }
 
-    fn window_closing(&mut self) {
+    pub fn window_closing(&mut self) {
         self.window
             .closing_observers
             .clone()

@@ -622,6 +622,7 @@ impl Workspace {
                 }
 
                 project::Event::Closed => {
+                    cx.window_closing();
                     cx.remove_window();
                 }
 
