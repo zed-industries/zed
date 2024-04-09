@@ -170,10 +170,11 @@
       "cmd-shift-enter": "editor::NewlineAbove",
       "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
-      "cmd-f": [
+      "cmd-f": "buffer_search::Deploy",
+      "cmd-alt-f": [
         "buffer_search::Deploy",
         {
-          "focus": true
+          "replace_enabled": true
         }
       ],
       "cmd-e": [
@@ -232,7 +233,9 @@
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
-      "alt-tab": "search::CycleMode"
+      "alt-tab": "search::CycleMode",
+      "cmd-f": "search::FocusSearch",
+      "cmd-alt-f": "search::ToggleReplace"
     }
   },
   {
@@ -254,6 +257,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "alt-tab": "search::CycleMode",
+      "cmd-shift-f": "search::FocusSearch",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ActivateRegexMode",
       "alt-cmd-x": "search::ActivateTextMode"
@@ -436,6 +440,12 @@
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "pane::DeploySearch",
+      "cmd-shift-h": [
+        "pane::DeploySearch",
+        {
+          "replace_enabled": true
+        }
+      ],
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",

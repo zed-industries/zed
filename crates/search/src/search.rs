@@ -22,6 +22,7 @@ actions!(
     search,
     [
         CycleMode,
+        FocusSearch,
         ToggleWholeWord,
         ToggleCaseSensitive,
         ToggleIncludeIgnored,

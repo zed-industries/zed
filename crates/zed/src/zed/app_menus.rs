@@ -67,7 +67,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::os_action("Copy", editor::actions::Copy, OsAction::Copy),
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
-                MenuItem::action("Find", search::buffer_search::Deploy { focus: true }),
+                MenuItem::action("Find", search::buffer_search::Deploy::find()),
                 MenuItem::action("Find In Project", workspace::NewSearch),
                 MenuItem::separator(),
                 MenuItem::action(
