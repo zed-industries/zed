@@ -543,7 +543,7 @@ fn init_paths() -> anyhow::Result<()> {
     .iter()
     {
         std::fs::create_dir_all(path)
-            .map_err(|e| anyhow!("Failed to create directory {:?}: {}", path, e))?;
+            .map_err(|e| anyhow!("Could not create directory {:?}: {}", path, e))?;
     }
     Ok(())
 }
