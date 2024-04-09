@@ -84,8 +84,6 @@ impl WindowsWindowState {
         Self {
             origin,
             physical_size,
-            restore_origin,
-            restore_size,
             scale_factor,
             callbacks,
             input_handler,
