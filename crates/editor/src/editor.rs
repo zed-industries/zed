@@ -1084,18 +1084,26 @@ impl CompletionsMenu {
             }
         }
 
+        for mat in &mut matches {
+            mat.string = mat.string.to_lowercase();
+        }
         let completions = self.completions.read();
+        let lowercase_query = if let Some(query) = query {
+            Some(query.to_lowercase())
+        } else {
+            None
+        };
         matches.sort_unstable_by_key(|mat| {
             let completion = &completions[mat.candidate_id];
             let sort_key = completion.sort_key();
             let sort_text = completion.lsp_completion.sort_text.as_deref();
             let score = Reverse(OrderedFloat(mat.score));
-            let equals = match query.as_deref() {
-                Some(_) => !mat.string.eq_ignore_ascii_case(query.unwrap()),
+            let equals = match lowercase_query {
+                Some(_) => !mat.string.eq(lowercase_query.as_ref().unwrap()),
                 None => true,
             };
-            let matching_index = match query.as_deref() {
-                Some(_) => mat.string.to_lowercase().find(&query.unwrap().to_lowercase()).or(Some(usize::MAX)),
+            let matching_index = match lowercase_query {
+                Some(_) => mat.string.find(lowercase_query.as_ref().unwrap()).or(Some(usize::MAX)),
                 None => Some(usize::MAX),
             };
             (
