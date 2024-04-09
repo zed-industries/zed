@@ -1,3 +1,10 @@
+//! # UI – Text Field
+//!
+//! This crate provides a text field component that can be used to create text fields like search inputs, form fields, etc.
+//!
+//! It can't be located in the `ui` crate because it depends on `editor`.
+//!
+
 use editor::*;
 use gpui::*;
 use settings::Settings;
@@ -17,13 +24,27 @@ pub struct TextFieldStyle {
     border_color: Hsla,
 }
 
+/// A Text Field view that can be used to create text fields like search inputs, form fields, etc.
+///
+/// It wraps a single line [Editor] view and allows for common field properties like labels, placeholders, icons, etc.
 pub struct TextField {
+    /// An optional label for the text field.
+    ///
+    /// It's position is determined by the [FieldLabelLayout]
     label: Option<SharedString>,
+    /// The placeholder text for the text field.
+    ///
+    /// All text fields must have placeholder text that is displayed when the field is empty.
     placeholder: SharedString,
-    /// Short term hack: This probably won't stay pub forever
+    /// Exposes the underlying View<[Editor]> to allow for customizing the editor beyond the provided API.
+    ///
+    /// This likely will only be public in the short term, ideally the API will be expanded to conver necessary use cases.
     pub editor: View<Editor>,
+    /// An optional icon that is displayed at the start of the text field.
+    ///
+    /// For example, a magnifying glass icon in a search field.
     start_icon: Option<IconName>,
-    error_message: Option<SharedString>,
+    /// The layout of the label relative to the text field.
     label_layout: FieldLabelLayout,
 }
 
@@ -48,7 +69,6 @@ impl TextField {
             placeholder: placeholder_text,
             editor,
             start_icon: None,
-            error_message: None,
             label_layout: FieldLabelLayout::default(),
         }
     }
@@ -67,6 +87,11 @@ impl TextField {
         self.start_icon = Some(icon);
         self
     }
+
+    pub fn label_layout(mut self, layout: FieldLabelLayout) -> Self {
+        self.label_layout = layout;
+        self
+    }
 }
 
 impl Render for TextField {
@@ -74,7 +99,7 @@ impl Render for TextField {
         let settings = ThemeSettings::get_global(cx);
         let theme_color = cx.theme().colors();
 
-        let mut style = TextFieldStyle {
+        let style = TextFieldStyle {
             text_color: theme_color.text,
             background_color: theme_color.ghost_element_background,
             border_color: theme_color.border_focused,
@@ -86,10 +111,10 @@ impl Render for TextField {
         //     style.border_color = theme_color.border_disabled;
         // }
 
-        if self.error_message.is_some() {
-            style.text_color = cx.theme().status().error;
-            style.border_color = cx.theme().status().error_border
-        }
+        // if self.error_message.is_some() {
+        //     style.text_color = cx.theme().status().error;
+        //     style.border_color = cx.theme().status().error_border
+        // }
 
         let text_style = TextStyle {
             font_family: settings.buffer_font.family.clone(),
