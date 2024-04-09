@@ -44,11 +44,13 @@ interface lsp {
         other(s32),
     }
 
+    /// An LSP symbol.
     record symbol {
         kind: symbol-kind,
         name: string,
     }
 
+    /// The kind of an LSP symbol.
     variant symbol-kind {
         file,
         module,
