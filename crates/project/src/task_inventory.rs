@@ -236,7 +236,6 @@ impl Inventory {
                 let id_base = kind.to_id_base();
                 Some((kind, task.resolve_task(id_base, task_context.clone())?))
             })
-            .unique_by(|(_, task)| task.id.clone())
             .map(|(kind, task)| {
                 let lru_score = task_usage
                     .remove(&task.id)
@@ -245,11 +244,11 @@ impl Inventory {
                 (kind.clone(), task, lru_score)
             })
             .collect::<Vec<_>>();
-        let previously_resolved_tasks = task_usage
+        let previous_resolved_tasks = task_usage
             .into_iter()
             .map(|(_, (kind, task, lru_score))| (kind.clone(), task.clone(), lru_score));
 
-        previously_resolved_tasks
+        previous_resolved_tasks
             .chain(current_resolved_tasks.into_iter())
             .sorted_unstable_by(
                 |(kind_a, task_a, lru_score_a), (kind_b, task_b, lru_score_b)| {
@@ -284,6 +283,7 @@ impl Inventory {
                         })
                 },
             )
+            .unique_by(|(kind, task, _)| (kind.clone(), task.resolved_label.clone()))
             .map(|(kind, task, _)| (kind, task))
             .collect()
     }
