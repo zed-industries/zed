@@ -737,7 +737,10 @@ impl Workspace {
 
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
-            cx.observe_window_bounds(move |_, cx| {
+            cx.observe_window_bounds(|_, cx| {
+                cx.notify();
+            }),
+            cx.observe_window_closing(move |_, cx| {
                 if let Some(display) = cx.display() {
                     let window_bounds = cx.window_bounds();
                     let fullscreen = cx.is_fullscreen();
@@ -764,7 +767,6 @@ impl Workspace {
                         }
                     }
                 }
-                cx.notify();
             }),
             cx.observe_window_appearance(|_, cx| {
                 let window_appearance = cx.appearance();
