@@ -8320,6 +8320,7 @@ dependencies = [
  "smol",
  "theme",
  "ui",
+ "ui_text_field",
  "unindent",
  "util",
  "workspace",
@@ -10575,6 +10576,24 @@ dependencies = [
  "story",
  "strum",
  "theme",
+ "windows 0.53.0",
+]
+
+[[package]]
+name = "ui_text_field"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "editor",
+ "gpui",
+ "itertools 0.11.0",
+ "menu",
+ "settings",
+ "smallvec",
+ "story",
+ "strum",
+ "theme",
+ "ui",
  "windows 0.53.0",
 ]
 
