@@ -6507,7 +6507,7 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     let language = Arc::new(Language::new(
         LanguageConfig {
-            line_comments: vec!["// ".into()],
+            line_comments: vec!["// ".into(), "//! ".into(), "/// ".into()],
             ..Default::default()
         },
         Some(tree_sitter_rust::language()),
@@ -6599,6 +6599,25 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
             // «a();
 
             // c();ˇ»
+        }
+    "});
+
+    // If a selection includes multiple comment prefixes, all lines are uncommented.
+    cx.set_state(indoc! {"
+        fn a() {
+            «// a();
+            /// b();
+            //! c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(&ToggleComments::default(), cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            «a();
+            b();
+            c();ˇ»
         }
     "});
 }
