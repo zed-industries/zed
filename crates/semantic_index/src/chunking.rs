@@ -1,4 +1,4 @@
-use language::{Grammar, Tree, PARSER};
+use language::{with_parser, Grammar, Tree};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{cmp, ops::Range, sync::Arc};
@@ -13,8 +13,7 @@ pub struct Chunk {
 
 pub fn chunk_text(text: &str, grammar: Option<&Arc<Grammar>>) -> Vec<Chunk> {
     if let Some(grammar) = grammar {
-        let tree = PARSER.with(|parser| {
-            let mut parser = parser.borrow_mut();
+        let tree = with_parser(|parser| {
             parser
                 .set_language(&grammar.ts_language)
                 .expect("incompatible grammar");

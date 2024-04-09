@@ -84,11 +84,21 @@ pub fn init(cx: &mut AppContext) {
 }
 
 thread_local! {
-    pub static PARSER: RefCell<Parser> = {
+    static PARSER: RefCell<Parser> = {
         let mut parser = Parser::new();
         parser.set_wasm_store(WasmStore::new(WASM_ENGINE.clone()).unwrap()).unwrap();
         RefCell::new(parser)
     };
+}
+
+pub fn with_parser<F, R>(func: F) -> R
+where
+    F: FnOnce(&mut Parser) -> R,
+{
+    PARSER.with(|parser| {
+        let mut parser = parser.borrow_mut();
+        func(&mut parser)
+    })
 }
 
 lazy_static! {
