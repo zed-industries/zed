@@ -4664,7 +4664,7 @@ async fn test_references(
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
-            name: "my-fake-lsp-adapter".into(),
+            name: "my-fake-lsp-adapter",
             capabilities: lsp::ServerCapabilities {
                 references_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
