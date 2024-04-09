@@ -1,4 +1,4 @@
-use crate::{Embedding, EmbeddingProvider};
+use crate::{Embedding, EmbeddingProvider, TextToEmbed};
 use anyhow::Result;
 use futures::{future::BoxFuture, FutureExt};
 pub use open_ai::OpenAiEmbeddingModel;
@@ -29,13 +29,13 @@ impl OpenAiEmbeddingProvider {
 }
 
 impl EmbeddingProvider for OpenAiEmbeddingProvider {
-    fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
+    fn embed<'a>(&'a self, texts: &'a [TextToEmbed<'a>]) -> BoxFuture<'a, Result<Vec<Embedding>>> {
         let embed = open_ai::embed(
             self.client.as_ref(),
             &self.api_url,
             &self.api_key,
             self.model,
-            texts.iter().map(|text| *text),
+            texts.iter().map(|to_embed| to_embed.text),
         );
         async move {
             let response = embed.await?;

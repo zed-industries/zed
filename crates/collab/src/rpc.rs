@@ -32,6 +32,7 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
+use sha2::Digest;
 
 use futures::{
     channel::oneshot,
@@ -437,9 +438,14 @@ impl Server {
                 })
             })
             .add_request_handler({
+                user_handler(move |request, response, session| {
+                    get_cached_embeddings(request, response, session)
+                })
+            })
+            .add_request_handler({
                 let app_state = app_state.clone();
                 user_handler(move |request, response, session| {
-                    embed_texts(
+                    compute_embeddings(
                         request,
                         response,
                         session,
@@ -3867,9 +3873,9 @@ async fn count_tokens_with_language_model(
     Ok(())
 }
 
-struct EmbedTextsRateLimit;
+struct ComputeEmbeddingsRateLimit;
 
-impl RateLimit for EmbedTextsRateLimit {
+impl RateLimit for ComputeEmbeddingsRateLimit {
     fn capacity() -> usize {
         std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
             .ok()
@@ -3882,13 +3888,13 @@ impl RateLimit for EmbedTextsRateLimit {
     }
 
     fn db_name() -> &'static str {
-        "embed-texts"
+        "compute-embeddings"
     }
 }
 
-async fn embed_texts(
-    request: proto::EmbedTexts,
-    response: Response<proto::EmbedTexts>,
+async fn compute_embeddings(
+    request: proto::ComputeEmbeddings,
+    response: Response<proto::ComputeEmbeddings>,
     session: UserSession,
     api_key: Option<Arc<str>>,
 ) -> Result<()> {
@@ -3897,24 +3903,95 @@ async fn embed_texts(
 
     session
         .rate_limiter
-        .check::<EmbedTextsRateLimit>(session.user_id())
+        .check::<ComputeEmbeddingsRateLimit>(session.user_id())
         .await?;
 
-    let embeddings = open_ai::embed(
-        &session.http_client,
-        OPEN_AI_API_URL,
-        &api_key,
-        OpenAiEmbeddingModel::TextEmbedding3Small,
-        request.texts.iter().map(|text| text.as_str()),
-    )
-    .await?;
-    response.send(proto::EmbedTextsResponse {
+    let embeddings = match request.provider.as_str() {
+        "openai/text-embedding-3-small" => {
+            open_ai::embed(
+                &session.http_client,
+                OPEN_AI_API_URL,
+                &api_key,
+                OpenAiEmbeddingModel::TextEmbedding3Small,
+                request.texts.iter().map(|text| text.as_str()),
+            )
+            .await?
+        }
+        provider => return Err(anyhow!("unsupported embedding provider {:?}", provider))?,
+    };
+
+    let embeddings = request
+        .texts
+        .iter()
+        .map(|text| {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(text.as_bytes());
+            let result = hasher.finalize();
+            result.to_vec()
+        })
+        .zip(
+            embeddings
+                .data
+                .into_iter()
+                .map(|embedding| embedding.embedding),
+        )
+        .collect::<HashMap<_, _>>();
+
+    let db = session.db().await;
+    db.save_embeddings(&request.provider, &embeddings)
+        .await
+        .context("failed to save embeddings")
+        .trace_err();
+
+    response.send(proto::ComputeEmbeddingsResponse {
         embeddings: embeddings
-            .data
             .into_iter()
-            .map(|embedding| proto::Embedding {
-                dimensions: embedding.embedding,
-            })
+            .map(|(digest, dimensions)| proto::Embedding { digest, dimensions })
+            .collect(),
+    })?;
+    Ok(())
+}
+
+struct GetCachedEmbeddingsRateLimit;
+
+impl RateLimit for GetCachedEmbeddingsRateLimit {
+    fn capacity() -> usize {
+        std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(120) // Picked arbitrarily
+    }
+
+    fn refill_duration() -> chrono::Duration {
+        chrono::Duration::hours(1)
+    }
+
+    fn db_name() -> &'static str {
+        "get-cached-embeddings"
+    }
+}
+
+async fn get_cached_embeddings(
+    request: proto::GetCachedEmbeddings,
+    response: Response<proto::GetCachedEmbeddings>,
+    session: UserSession,
+) -> Result<()> {
+    authorize_access_to_language_models(&session).await?;
+
+    session
+        .rate_limiter
+        .check::<GetCachedEmbeddingsRateLimit>(session.user_id())
+        .await?;
+
+    let db = session.db().await;
+    let embeddings = db
+        .get_embeddings(&request.provider, &request.digests)
+        .await?;
+
+    response.send(proto::GetCachedEmbeddingsResponse {
+        embeddings: embeddings
+            .into_iter()
+            .map(|(digest, dimensions)| proto::Embedding { digest, dimensions })
             .collect(),
     })?;
     Ok(())

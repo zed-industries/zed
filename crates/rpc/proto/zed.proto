@@ -204,8 +204,11 @@ message Envelope {
         LanguageModelResponse language_model_response = 167;
         CountTokensWithLanguageModel count_tokens_with_language_model = 168;
         CountTokensResponse count_tokens_response = 169;
-        EmbedTexts embed_texts = 177;
-        EmbedTextsResponse embed_texts_response = 178; // current max
+        GetCachedEmbeddings get_cached_embeddings = 177;
+        GetCachedEmbeddingsResponse get_cached_embeddings_response = 178;
+        ComputeEmbeddings compute_embeddings = 179;
+        ComputeEmbeddingsResponse compute_embeddings_response = 180; // current max
+
         UpdateChannelMessage update_channel_message = 170;
         ChannelMessageUpdate channel_message_update = 171;
 
@@ -1799,16 +1802,27 @@ message CountTokensResponse {
     uint32 token_count = 1;
 }
 
-message EmbedTexts {
-    repeated string texts = 1;
+message GetCachedEmbeddings {
+    string provider = 1;
+    repeated bytes digests = 2;
 }
 
-message EmbedTextsResponse {
+message GetCachedEmbeddingsResponse {
+    repeated Embedding embeddings = 1;
+}
+
+message ComputeEmbeddings {
+    string provider = 1;
+    repeated string texts = 2;
+}
+
+message ComputeEmbeddingsResponse {
     repeated Embedding embeddings = 1;
 }
 
 message Embedding {
-    repeated float dimensions = 1;
+    bytes digest = 1;
+    repeated float dimensions = 2;
 }
 
 message BlameBuffer {

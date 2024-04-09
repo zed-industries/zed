@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use util::http::HttpClient;
 
-use crate::{Embedding, EmbeddingProvider};
+use crate::{Embedding, EmbeddingProvider, TextToEmbed};
 
 pub enum OllamaEmbeddingModel {
     NomicEmbedText,
@@ -34,17 +34,17 @@ impl OllamaEmbeddingProvider {
 }
 
 impl EmbeddingProvider for OllamaEmbeddingProvider {
-    fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
+    fn embed<'a>(&'a self, texts: &'a [TextToEmbed<'a>]) -> BoxFuture<'a, Result<Vec<Embedding>>> {
         //
         let model = match self.model {
             OllamaEmbeddingModel::NomicEmbedText => "nomic-embed-text",
             OllamaEmbeddingModel::MxbaiEmbedLarge => "mxbai-embed-large",
         };
 
-        futures::future::try_join_all(texts.into_iter().map(|text| {
+        futures::future::try_join_all(texts.into_iter().map(|to_embed| {
             let request = OllamaEmbeddingRequest {
                 model: model.to_string(),
-                prompt: text.to_string(),
+                prompt: to_embed.text.to_string(),
             };
 
             let request = serde_json::to_string(&request).unwrap();

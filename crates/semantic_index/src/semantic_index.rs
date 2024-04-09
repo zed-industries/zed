@@ -590,9 +590,10 @@ impl WorktreeIndex {
                 let chunks = chunked_files
                     .iter()
                     .flat_map(|file| {
-                        file.chunks
-                            .iter()
-                            .map(|chunk| &file.text[chunk.range.clone()])
+                        file.chunks.iter().map(|chunk| TextToEmbed {
+                            text: &file.text[chunk.range.clone()],
+                            digest: chunk.digest,
+                        })
                     })
                     .collect::<Vec<_>>();
 
@@ -699,7 +700,9 @@ impl WorktreeIndex {
         let worktree = self.worktree.clone();
         cx.spawn(|cx| async move {
             let embedding_query_start = std::time::Instant::now();
-            let mut query_embeddings = embedding_provider.embed(&[&query]).await?;
+            let mut query_embeddings = embedding_provider
+                .embed(&[TextToEmbed::new(&query)])
+                .await?;
             dbg!(embedding_query_start.elapsed());
             let query_embedding = query_embeddings
                 .pop()

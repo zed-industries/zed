@@ -1,10 +1,11 @@
+mod cloud;
 mod ollama;
 mod open_ai;
-mod zed;
 
+pub use cloud::*;
 pub use ollama::*;
 pub use open_ai::*;
-pub use zed::*;
+use sha2::{Digest, Sha256};
 
 use anyhow::Result;
 use futures::{future::BoxFuture, FutureExt};
@@ -69,14 +70,30 @@ impl fmt::Display for Embedding {
 
 /// Trait for embedding providers. Texts in, vectors out.
 pub trait EmbeddingProvider: Sync + Send {
-    fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>>;
+    fn embed<'a>(&'a self, texts: &'a [TextToEmbed<'a>]) -> BoxFuture<'a, Result<Vec<Embedding>>>;
     fn batch_size(&self) -> usize;
+}
+
+#[derive(Debug)]
+pub struct TextToEmbed<'a> {
+    pub text: &'a str,
+    pub digest: [u8; 32],
+}
+
+impl<'a> TextToEmbed<'a> {
+    pub fn new(text: &'a str) -> Self {
+        let digest = Sha256::digest(text.as_bytes());
+        Self {
+            text,
+            digest: digest.into(),
+        }
+    }
 }
 
 pub struct FakeEmbeddingProvider;
 
 impl EmbeddingProvider for FakeEmbeddingProvider {
-    fn embed(&self, texts: &[&str]) -> BoxFuture<Result<Vec<Embedding>>> {
+    fn embed<'a>(&'a self, texts: &'a [TextToEmbed<'a>]) -> BoxFuture<'a, Result<Vec<Embedding>>> {
         let embeddings = texts
             .iter()
             .map(|_text| {

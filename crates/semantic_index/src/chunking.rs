@@ -8,7 +8,7 @@ const CHUNK_THRESHOLD: usize = 1500;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Chunk {
     pub range: Range<usize>,
-    digest: [u8; 32],
+    pub digest: [u8; 32],
 }
 
 pub fn chunk_text(text: &str, grammar: Option<&Arc<Grammar>>) -> Vec<Chunk> {
@@ -63,10 +63,7 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
                 return chunk_ranges
                     .into_iter()
                     .map(|range| {
-                        let mut hasher = Sha256::new();
-                        hasher.update(&text[range.clone()]);
-                        let mut digest = [0u8; 32];
-                        digest.copy_from_slice(hasher.finalize().as_slice());
+                        let digest = Sha256::digest(&text[range.clone()]).into();
                         Chunk { range, digest }
                     })
                     .collect();
