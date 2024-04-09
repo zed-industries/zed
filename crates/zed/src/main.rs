@@ -168,11 +168,7 @@ fn main() {
 
         load_embedded_fonts(cx);
 
-        let mut store = SettingsStore::default();
-        store
-            .set_default_settings(default_settings().as_ref(), cx)
-            .unwrap();
-        cx.set_global(store);
+        settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);

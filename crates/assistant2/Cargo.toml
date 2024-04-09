@@ -1,0 +1,28 @@
+[package]
+name = "assistant2"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/assistant2.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+editor.workspace = true
+gpui.workspace = true
+language.workspace = true
+semantic_index.workspace = true
+ui.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

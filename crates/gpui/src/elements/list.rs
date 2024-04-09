@@ -136,7 +136,7 @@ impl ListState {
     /// doesn't flicker or pop in when scrolling.
     pub fn new<F>(
         element_count: usize,
-        orientation: ListAlignment,
+        alignment: ListAlignment,
         overdraw: Pixels,
         render_item: F,
     ) -> Self
@@ -151,7 +151,7 @@ impl ListState {
             render_item: Box::new(render_item),
             items,
             logical_scroll_top: None,
-            alignment: orientation,
+            alignment,
             overdraw,
             scroll_handler: None,
             reset: false,

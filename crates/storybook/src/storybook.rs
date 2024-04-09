@@ -63,12 +63,7 @@ fn main() {
     gpui::App::new().with_assets(Assets).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
 
-        let mut store = SettingsStore::default();
-        store
-            .set_default_settings(default_settings().as_ref(), cx)
-            .unwrap();
-        cx.set_global(store);
-
+        settings::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
 
         let selector = story_selector;

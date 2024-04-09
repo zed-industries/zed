@@ -3033,11 +3033,7 @@ mod tests {
             ])
             .unwrap();
         let themes = ThemeRegistry::default();
-        let mut settings = SettingsStore::default();
-        settings
-            .set_default_settings(&settings::default_settings(), cx)
-            .unwrap();
-        cx.set_global(settings);
+        settings::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;
