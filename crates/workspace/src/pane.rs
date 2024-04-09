@@ -567,12 +567,6 @@ impl Pane {
         }
     }
 
-    fn on_enable_preview_tabs_setting_changed(&mut self, cx: &mut ViewContext<Self>) {
-        if !ItemSettings::get_global(cx).enable_preview_tabs {
-            self.preview_item_id = None;
-        }
-    }
-
     pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
         if let Some(preview_item_id) = self.preview_item_id {
             if preview_item_id == item_id {
