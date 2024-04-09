@@ -145,18 +145,30 @@ impl WindowsWindowInner {
     }
 
     fn restore_status(&self) -> WindowOpenStatus {
-        unsafe {
-            let mut placement = WINDOWPLACEMENT::default();
-            let x = GetWindowPlacement();
-        }
-        let bounds = Bounds {
-            origin: self.restore_origin.get(),
-            size: self.restore_size.get(),
+        let placement = unsafe {
+            let mut placement = WINDOWPLACEMENT {
+                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                ..Default::default()
+            };
+            GetWindowPlacement(self.hwnd, &mut placement).log_err();
+            placement
         };
-        if self.is_fullscreen() {
-            WindowOpenStatus::FullScreen(bounds)
-        } else if self.is_maximized() {
-            WindowOpenStatus::Maximized(bounds)
+        let bounds = Bounds {
+            origin: point(
+                DevicePixels(placement.rcNormalPosition.left),
+                DevicePixels(placement.rcNormalPosition.top),
+            ),
+            size: size(
+                DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
+                DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
+            ),
+        };
+        if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
+            if self.is_fullscreen() {
+                WindowOpenStatus::FullScreen(bounds)
+            } else {
+                WindowOpenStatus::Maximized(bounds)
+            }
         } else {
             WindowOpenStatus::Windowed(Some(bounds))
         }
