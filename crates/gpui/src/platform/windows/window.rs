@@ -145,6 +145,10 @@ impl WindowsWindowInner {
     }
 
     fn restore_status(&self) -> WindowOpenStatus {
+        unsafe {
+            let mut placement = WINDOWPLACEMENT::default();
+            let x = GetWindowPlacement();
+        }
         let bounds = Bounds {
             origin: self.restore_origin.get(),
             size: self.restore_size.get(),
