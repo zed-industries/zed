@@ -28,7 +28,7 @@
       "ctrl-0": "zed::ResetBufferFontSize",
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
-      "ctrl-h": "zed::Hide",
+      // "ctrl-h": "zed::Hide",
       "f11": "zed::ToggleFullScreen"
     }
   },
@@ -38,7 +38,6 @@
       "escape": "editor::Cancel",
       "backspace": "editor::Backspace",
       "shift-backspace": "editor::Backspace",
-      "ctrl-h": "editor::Backspace",
       "delete": "editor::Delete",
       "ctrl-d": "editor::Delete",
       "tab": "editor::Tab",
@@ -151,7 +150,7 @@
       "ctrl-enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
       "ctrl-f": "buffer_search::Deploy",
-      "ctrl-r": [
+      "ctrl-h": [
         "buffer_search::Deploy",
         {
           "replace_enabled": true
@@ -215,7 +214,7 @@
       "alt-enter": "search::SelectAllMatches",
       "alt-tab": "search::CycleMode",
       "ctrl-f": "search::FocusSearch",
-      "ctrl-r": "search::ToggleReplace"
+      "ctrl-h": "search::ToggleReplace"
     }
   },
   {
