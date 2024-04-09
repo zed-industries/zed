@@ -64,7 +64,9 @@ impl LspAdapter for ExtensionLspAdapter {
             // We can remove once the following extension versions no longer see any use:
             // - toml@0.0.2
             // - zig@0.0.1
-            if ["toml", "zig"].contains(&self.extension.manifest.id.as_ref()) {
+            if ["toml", "zig"].contains(&self.extension.manifest.id.as_ref())
+                && path.starts_with(&self.host.work_dir)
+            {
                 #[cfg(not(windows))]
                 {
                     use std::fs::{self, Permissions};
