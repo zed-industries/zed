@@ -10,7 +10,13 @@ use project::project_settings::ProjectSettings;
 use regex::Regex;
 use settings::Settings;
 use smol::fs::{self, File};
-use std::{any::Any, borrow::Cow, env::consts, path::PathBuf, sync::Arc};
+use std::{
+    any::Any,
+    borrow::Cow,
+    env::consts,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use task::{
     static_source::{Definition, TaskDefinitions},
     TaskVariables, VariableName,
@@ -333,25 +339,17 @@ impl ContextProvider for RustContextProvider {
     ) -> Result<TaskVariables> {
         let mut context = SymbolContextProvider.build_context(location.clone(), cx)?;
 
-        if let Some(path) = location.buffer.read(cx).file().and_then(|file| {
-            let local_file = file.as_local()?.abs_path(cx);
-            local_file.parent().map(PathBuf::from)
-        }) {
-            let Some(pkgid) = std::process::Command::new("cargo")
-                .current_dir(path)
-                .arg("pkgid")
-                .output()
-                .log_err()
-            else {
-                return Ok(context);
-            };
-            let package_name = String::from_utf8(pkgid.stdout)
-                .map(|name| name.trim().to_owned())
-                .ok();
-
-            if let Some(package_name) = package_name {
-                context.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
-            }
+        let local_abs_path = location
+            .buffer
+            .read(cx)
+            .file()
+            .and_then(|file| Some(file.as_local()?.abs_path(cx)));
+        if let Some(package_name) = local_abs_path
+            .as_deref()
+            .and_then(|local_abs_path| local_abs_path.parent())
+            .and_then(human_readable_package_name)
+        {
+            context.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
         }
 
         Ok(context)
@@ -406,6 +404,38 @@ impl ContextProvider for RustContextProvider {
             },
         ]))
     }
+}
+
+fn human_readable_package_name(package_directory: &Path) -> Option<String> {
+    fn split_off_suffix(input: &str, suffix_start: char) -> &str {
+        match input.rsplit_once(suffix_start) {
+            Some((without_suffix, _)) => without_suffix,
+            None => input,
+        }
+    }
+
+    let pkgid = String::from_utf8(
+        std::process::Command::new("cargo")
+            .current_dir(package_directory)
+            .arg("pkgid")
+            .output()
+            .log_err()?
+            .stdout,
+    )
+    .ok()?;
+    // For providing local `cargo check -p $pkgid` task, we do not need most of the information we have returned.
+    // Output example in the root of Zed project:
+    // ```bash
+    // ❯ cargo pkgid zed
+    // path+file:///absolute/path/to/project/zed/crates/zed#0.131.0
+    // ```
+    // Extrarct the package name from the output according to the spec:
+    // https://doc.rust-lang.org/cargo/reference/pkgid-spec.html#specification-grammar
+    let mut package_name = pkgid.trim();
+    package_name = split_off_suffix(package_name, '#');
+    package_name = split_off_suffix(package_name, '?');
+    let (_, package_name) = package_name.rsplit_once('/')?;
+    Some(package_name.to_string())
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
