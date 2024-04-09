@@ -21,7 +21,9 @@ use editor::{Editor, EditorMode};
 use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
-use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task, ViewContext};
+use gpui::{
+    App, AppContext, AsyncAppContext, Context, SemanticVersion, Task, ViewContext, VisualContext,
+};
 use image_viewer;
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
@@ -70,11 +72,31 @@ use zed::{
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+fn fail_to_launch(e: anyhow::Error) {
+    App::new().run(move |cx| {
+        let window = cx.open_window(gpui::WindowOptions::default(), |cx| cx.new_view(|_| gpui::Empty));
+        window.update(cx, |_, cx| {
+            let response = cx.prompt(gpui::PromptLevel::Critical, "Zed failed to launch", Some(&format!("{}\n\nFor help resolving this, please open an issue on https://github.com/zed-industries/zed", e)), &["Exit"]);
+
+            cx.spawn(|_, mut cx| async move {
+                response.await?;
+                cx.update(|cx| {
+                    cx.quit()
+                })
+            }).detach_and_log_err(cx);
+        }).log_err();
+    })
+}
+
 fn main() {
     menu::init();
     zed_actions::init();
 
-    init_paths();
+    if let Err(e) = init_paths() {
+        fail_to_launch(e);
+        return;
+    }
+
     init_logger();
 
     if ensure_only_instance() != IsOnlyInstance::Yes {
@@ -509,14 +531,21 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: AsyncAppConte
     .log_err();
 }
 
-fn init_paths() {
-    std::fs::create_dir_all(&*util::paths::CONFIG_DIR).expect("could not create config path");
-    std::fs::create_dir_all(&*util::paths::EXTENSIONS_DIR)
-        .expect("could not create extensions path");
-    std::fs::create_dir_all(&*util::paths::LANGUAGES_DIR).expect("could not create languages path");
-    std::fs::create_dir_all(&*util::paths::DB_DIR).expect("could not create database path");
-    std::fs::create_dir_all(&*util::paths::LOGS_DIR).expect("could not create logs path");
-    std::fs::create_dir_all(&*util::paths::TEMP_DIR).expect("could not create tmp path");
+fn init_paths() -> anyhow::Result<()> {
+    for path in [
+        &*util::paths::CONFIG_DIR,
+        &*util::paths::EXTENSIONS_DIR,
+        &*util::paths::LANGUAGES_DIR,
+        &*util::paths::DB_DIR,
+        &*util::paths::LOGS_DIR,
+        &*util::paths::TEMP_DIR,
+    ]
+    .iter()
+    {
+        std::fs::create_dir_all(path)
+            .map_err(|e| anyhow!("Could not create directory {:?}: {}", path, e))?;
+    }
+    Ok(())
 }
 
 fn init_logger() {
