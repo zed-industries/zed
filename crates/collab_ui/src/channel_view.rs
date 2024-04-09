@@ -22,6 +22,7 @@ use std::{
 };
 use ui::{prelude::*, Label};
 use util::ResultExt;
+use workspace::notifications::NotificationId;
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ItemHandle},
     register_followable_item,
@@ -269,7 +270,15 @@ impl ChannelView {
         cx.write_to_clipboard(ClipboardItem::new(link));
         self.workspace
             .update(cx, |workspace, cx| {
-                workspace.show_toast(Toast::new(0, "Link copied to clipboard"), cx);
+                struct CopyLinkForPositionToast;
+
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<CopyLinkForPositionToast>(),
+                        "Link copied to clipboard",
+                    ),
+                    cx,
+                );
             })
             .ok();
     }

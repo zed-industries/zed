@@ -14,6 +14,7 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use util::{paths, ResultExt};
+use workspace::notifications::NotificationId;
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -25,8 +26,10 @@ use workspace::{
 use zed_actions::OpenBrowser;
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
-const COPILOT_STARTING_TOAST_ID: usize = 1337;
-const COPILOT_ERROR_TOAST_ID: usize = 1338;
+
+struct CopilotStartingToast;
+
+struct CopilotErrorToast;
 
 pub struct CopilotButton {
     editor_subscription: Option<(Subscription, usize)>,
@@ -74,7 +77,7 @@ impl Render for CopilotButton {
                                 .update(cx, |workspace, cx| {
                                     workspace.show_toast(
                                         Toast::new(
-                                            COPILOT_ERROR_TOAST_ID,
+                                            NotificationId::unique::<CopilotErrorToast>(),
                                             format!("Copilot can't be started: {}", e),
                                         )
                                         .on_click(
@@ -350,7 +353,10 @@ pub fn initiate_sign_in(cx: &mut WindowContext) {
 
             let Ok(workspace) = workspace.update(cx, |workspace, cx| {
                 workspace.show_toast(
-                    Toast::new(COPILOT_STARTING_TOAST_ID, "Copilot is starting..."),
+                    Toast::new(
+                        NotificationId::unique::<CopilotStartingToast>(),
+                        "Copilot is starting...",
+                    ),
                     cx,
                 );
                 workspace.weak_handle()
@@ -364,11 +370,17 @@ pub fn initiate_sign_in(cx: &mut WindowContext) {
                     workspace
                         .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
                             Status::Authorized => workspace.show_toast(
-                                Toast::new(COPILOT_STARTING_TOAST_ID, "Copilot has started!"),
+                                Toast::new(
+                                    NotificationId::unique::<CopilotStartingToast>(),
+                                    "Copilot has started!",
+                                ),
                                 cx,
                             ),
                             _ => {
-                                workspace.dismiss_toast(COPILOT_STARTING_TOAST_ID, cx);
+                                workspace.dismiss_toast(
+                                    &NotificationId::unique::<CopilotStartingToast>(),
+                                    cx,
+                                );
                                 copilot
                                     .update(cx, |copilot, cx| copilot.sign_in(cx))
                                     .detach_and_log_err(cx);

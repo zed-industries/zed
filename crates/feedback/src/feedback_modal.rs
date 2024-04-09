@@ -17,6 +17,7 @@ use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::{http::HttpClient, ResultExt};
+use workspace::notifications::NotificationId;
 use workspace::{DismissDecision, ModalView, Toast, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedRepo};
@@ -127,11 +128,11 @@ impl FeedbackModal {
             let is_local_project = project.read(cx).is_local();
 
             if !is_local_project {
-                const TOAST_ID: usize = 0xdeadbeef;
+                struct FeedbackInRemoteProject;
 
                 workspace.show_toast(
                     Toast::new(
-                        TOAST_ID,
+                        NotificationId::unique::<FeedbackInRemoteProject>(),
                         "You can only submit feedback in your own project.",
                     ),
                     cx,
