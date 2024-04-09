@@ -255,10 +255,10 @@ impl Database {
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
     {
+        let room_id = Database::room_id_for_project(&self, project_id).await?;
         let body = async {
             let mut i = 0;
             loop {
-                let room_id = Database::room_id_for_project(&self, project_id).await?;
                 let lock = if let Some(room_id) = room_id {
                     self.rooms.entry(room_id).or_default().clone()
                 } else {

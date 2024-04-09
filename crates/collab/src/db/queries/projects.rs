@@ -117,14 +117,14 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("project not found"))?;
             if project.host_connection()? == connection {
-                project::Entity::delete(project.into_active_model())
-                    .exec(&*tx)
-                    .await?;
-                let room = if let Some(room_id) = self.room_id_for_project(project_id).await? {
+                let room = if let Some(room_id) = project.room_id {
                     Some(self.get_room(room_id, &tx).await?)
                 } else {
                     None
                 };
+                project::Entity::delete(project.into_active_model())
+                    .exec(&*tx)
+                    .await?;
                 Ok((room, guest_connection_ids))
             } else {
                 Err(anyhow!("cannot unshare a project hosted by another user"))?
