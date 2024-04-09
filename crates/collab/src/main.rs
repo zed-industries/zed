@@ -90,6 +90,7 @@ async fn main() -> Result<()> {
             };
 
             if is_collab {
+                state.db.purge_old_embeddings().await.trace_err();
                 RateLimiter::save_periodically(state.rate_limiter.clone(), state.executor.clone());
             }
 
