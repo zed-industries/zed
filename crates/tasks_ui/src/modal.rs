@@ -52,6 +52,7 @@ impl_actions!(task, [Rerun, Spawn]);
 pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
+    last_used_candidate_index: Option<usize>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
@@ -71,6 +72,7 @@ impl TasksModalDelegate {
             workspace,
             candidates: None,
             matches: Vec::new(),
+            last_used_candidate_index: None,
             selected_index: 0,
             prompt: String::default(),
             task_context,
@@ -197,23 +199,36 @@ impl PickerDelegate for TasksModalDelegate {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
-                    let candidates = picker.delegate.candidates.get_or_insert_with(|| {
-                        let Ok((worktree, language)) =
-                            picker.delegate.workspace.update(cx, |workspace, cx| {
+                    let candidates = match &mut picker.delegate.candidates {
+                        Some(candidates) => candidates,
+                        None => {
+                            let Ok((worktree, language)) =
+                                picker.delegate.workspace.update(cx, |workspace, cx| {
                                 active_item_selection_properties(workspace, cx)
                             })
                         else {
                             return Vec::new();
                         };
-                        picker.delegate.inventory.update(cx, |inventory, cx| {
-                            inventory.list_resolved_tasks(
-                                language,
-                                worktree,
-                                picker.delegate.task_context.clone(),
-                                cx,
-                            )
-                        })
-                    });
+                            let (used, current) =
+                                picker.delegate.inventory.update(cx, |inventory, cx| {
+                                    inventory.used_and_current_resolved_tasks(
+                                        language,
+                                        worktree,
+                                        picker.delegate.task_context.clone(),
+                                        cx,
+                                    )
+                                });
+                            picker.delegate.last_used_candidate_index = if used.is_empty() {
+                                None
+                            } else {
+                                Some(used.len() - 1)
+                            };
+
+                            let mut new_candidates = used;
+                            new_candidates.extend(current);
+                            picker.delegate.candidates.insert(new_candidates)
+                        }
+                    };
                     candidates
                         .iter()
                         .enumerate()
@@ -373,6 +388,14 @@ impl PickerDelegate for TasksModalDelegate {
             })
             .ok();
         cx.emit(DismissEvent);
+    }
+
+    fn separators_after_indices(&self) -> Vec<usize> {
+        if let Some(i) = self.last_used_candidate_index {
+            vec![i]
+        } else {
+            Vec::new()
+        }
     }
 }
 

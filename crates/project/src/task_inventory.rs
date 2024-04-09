@@ -8,7 +8,7 @@ use std::{
 
 use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use language::Language;
 use task::{ResolvedTask, TaskContext, TaskSource, TaskTemplate};
 use util::{post_inc, NumericPrefixWithSuffix};
@@ -189,13 +189,16 @@ impl Inventory {
     }
 
     /// TODO kb docs
-    pub fn list_resolved_tasks(
+    pub fn used_and_current_resolved_tasks(
         &self,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
         task_context: TaskContext,
         cx: &mut AppContext,
-    ) -> Vec<(TaskSourceKind, ResolvedTask)> {
+    ) -> (
+        Vec<(TaskSourceKind, ResolvedTask)>,
+        Vec<(TaskSourceKind, ResolvedTask)>,
+    ) {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name(),
         });
@@ -284,8 +287,13 @@ impl Inventory {
                 },
             )
             .unique_by(|(kind, task, _)| (kind.clone(), task.resolved_label.clone()))
-            .map(|(kind, task, _)| (kind, task))
-            .collect()
+            .partition_map(|(kind, task, lru_index)| {
+                if lru_index < not_used_score {
+                    Either::Left((kind, task))
+                } else {
+                    Either::Right((kind, task))
+                }
+            })
     }
 
     /// Returns the last scheduled task, if any of the sources contains one with the matching id.
@@ -387,9 +395,14 @@ pub mod test_inventory {
     ) -> Vec<String> {
         inventory.update(cx, |inventory, cx| {
             if lru {
-                inventory
-                    .list_resolved_tasks(None, worktree, TaskContext::default(), cx)
-                    .into_iter()
+                let (used, current) = inventory.used_and_current_resolved_tasks(
+                    None,
+                    worktree,
+                    TaskContext::default(),
+                    cx,
+                );
+                used.into_iter()
+                    .chain(current.into_iter())
                     .map(|(_, task)| task.original_task.label)
                     .collect()
             } else {
