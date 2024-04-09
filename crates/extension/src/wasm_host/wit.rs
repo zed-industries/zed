@@ -1,22 +1,20 @@
 mod since_v0_0_1;
 mod since_v0_0_4;
 mod since_v0_0_6;
+use since_v0_0_6 as latest;
 
-use std::ops::RangeInclusive;
-use std::sync::Arc;
-
+use super::{wasm_engine, WasmState};
 use anyhow::{Context, Result};
 use language::{LanguageServerName, LspAdapterDelegate};
 use semantic_version::SemanticVersion;
+use std::{ops::RangeInclusive, sync::Arc};
 use wasmtime::{
     component::{Component, Instance, Linker, Resource},
     Store,
 };
 
-use super::{wasm_engine, WasmState};
-
-use since_v0_0_6 as latest;
-
+#[cfg(test)]
+pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
     CodeLabel, CodeLabelSpan, Command, Range,
