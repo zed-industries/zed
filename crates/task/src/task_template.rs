@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 
+use anyhow::Context;
 use collections::HashMap;
 use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use util::ResultExt;
 
 use crate::{ResolvedTask, SpawnInTerminal, TaskContext, TaskId, ZED_VARIABLE_NAME_PREFIX};
 
@@ -84,11 +87,15 @@ impl TaskTemplate {
         let label = substitute_all_template_variables_in_str(&self.label, &task_variables)?;
         let command = substitute_all_template_variables_in_str(&self.command, &task_variables)?;
         let args = substitute_all_template_variables_in_vec(self.args.clone(), &task_variables)?;
+        let task_hash = to_hex_hash(self)
+            .context("hashing task template")
+            .log_err()?;
+        let variables_hash = to_hex_hash(&task_variables)
+            .context("hashing task variables")
+            .log_err()?;
+        let id = TaskId(format!("{id_base}_{task_hash}_{variables_hash}"));
         let mut env = substitute_all_template_variables_in_map(self.env.clone(), &task_variables)?;
         env.extend(task_variables);
-        let id = TaskId(format!(
-            "{id_base}_TODO kb calculate has of the TaskTemplate(self)_TODO kb calculate hash of the TaskContext"
-        ));
         Some(ResolvedTask {
             id: id.clone(),
             original_task: self.clone(),
@@ -106,6 +113,13 @@ impl TaskTemplate {
             }),
         })
     }
+}
+
+fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
+    let json = serde_json_lenient::to_string(&object).context("serializing the object")?;
+    let mut hasher = Sha256::new();
+    hasher.update(json.as_bytes());
+    Ok(hex::encode(hasher.finalize()))
 }
 
 fn substitute_all_template_variables_in_str(

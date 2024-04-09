@@ -8,6 +8,7 @@ mod vscode_format;
 
 use collections::HashMap;
 use gpui::ModelContext;
+use serde::Serialize;
 use std::any::Any;
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -57,7 +58,7 @@ pub struct ResolvedTask {
 }
 
 /// Variables, available for use in [`TaskContext`] when a Zed's task gets turned into real command.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub enum VariableName {
     /// An absolute path of the currently opened file.
     File,
@@ -106,7 +107,7 @@ impl std::fmt::Display for VariableName {
 }
 
 /// Container for predefined environment variables that describe state of Zed at the time the task was spawned.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TaskVariables(HashMap<VariableName, String>);
 
 impl TaskVariables {
@@ -136,7 +137,7 @@ impl FromIterator<(VariableName, String)> for TaskVariables {
 }
 
 /// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function)
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TaskContext {
     /// A path to a directory in which the task should be executed.
     pub cwd: Option<PathBuf>,
