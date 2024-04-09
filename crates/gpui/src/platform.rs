@@ -589,6 +589,17 @@ impl Default for WindowOpenStatus {
     }
 }
 
+impl WindowOpenStatus {
+    /// Retrieve the inner bounds
+    pub fn get_bounds(&self) -> Option<Bounds<DevicePixels>> {
+        match self {
+            WindowOpenStatus::Windowed(bounds) => *bounds,
+            WindowOpenStatus::Maximized(bounds) => Some(*bounds),
+            WindowOpenStatus::FullScreen(bounds) => Some(*bounds),
+        }
+    }
+}
+
 impl Default for WindowOptions {
     fn default() -> Self {
         Self {
