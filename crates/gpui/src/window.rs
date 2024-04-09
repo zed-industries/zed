@@ -438,9 +438,11 @@ impl Window {
             let mut cx = cx.to_async();
             move || {
                 handle
-                    .update(&mut cx, |_, cx| cx.window_closing())
+                    .update(&mut cx, |_, cx| {
+                        cx.window_closing();
+                        cx.remove_window()
+                    })
                     .log_err();
-                let _ = handle.update(&mut cx, |_, cx| cx.remove_window());
             }
         }));
         platform_window.on_request_frame(Box::new({
