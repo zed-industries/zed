@@ -84,23 +84,20 @@ struct AutoUpdateSetting(bool);
 /// Default: true
 #[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
 #[serde(transparent)]
-struct AutoUpdateSettingOverride(bool);
+struct AutoUpdateSettingContent(bool);
 
 impl Settings for AutoUpdateSetting {
     const KEY: Option<&'static str> = Some("auto_update");
 
-    type FileContent = Option<AutoUpdateSettingOverride>;
+    type FileContent = Option<AutoUpdateSettingContent>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        if let Some(Some(release_channel_value)) = sources.release_channel {
-            return Ok(Self(release_channel_value.0));
-        }
+        let auto_update = [sources.release_channel, sources.user]
+            .into_iter()
+            .find_map(|value| value.copied().flatten())
+            .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
 
-        if let Some(Some(user_value)) = sources.user {
-            return Ok(Self(user_value.0));
-        }
-
-        Ok(Self(sources.default.ok_or_else(Self::missing_default)?.0))
+        Ok(Self(auto_update.0))
     }
 }
 
