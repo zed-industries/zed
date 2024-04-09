@@ -1101,7 +1101,7 @@ impl CompletionsMenu {
             );
             let matching_index = lowercase_query
                 .as_ref()
-                .and_then(|query| mat.string.find(query).or(Some(usize::MAX)));
+                .and_then(|query| mat.string.find(query)).unwrap_or(usize::MAX);
             (equals, matching_index, sort_text, score, sort_key)
         });
 
