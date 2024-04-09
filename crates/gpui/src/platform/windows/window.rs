@@ -68,6 +68,7 @@ impl WindowsWindowState {
         mouse_wheel_settings: MouseWheelSettings,
         current_cursor: HCURSOR,
         display: WindowsDisplay,
+        fullscreen_restore_bounds: Option<Bounds<DevicePixels>>,
     ) -> Self {
         let origin = point(cs.x.into(), cs.y.into());
         let physical_size = size(cs.cx.into(), cs.cy.into());
@@ -81,9 +82,21 @@ impl WindowsWindowState {
         let click_state = ClickState::new();
         let fullscreen = None;
 
+        let fullscreen_restore_origin;
+        let fullscreen_restore_size;
+        if let Some(bounds) = fullscreen_restore_bounds {
+            fullscreen_restore_origin = Cell::new(bounds.origin);
+            fullscreen_restore_size = Cell::new(bounds.size);
+        } else {
+            fullscreen_restore_origin = Cell::new(Point::default());
+            fullscreen_restore_size = Cell::new(Size::default());
+        }
+
         Self {
             origin,
             physical_size,
+            fullscreen_restore_origin,
+            fullscreen_restore_size,
             scale_factor,
             callbacks,
             input_handler,
@@ -129,12 +142,14 @@ impl WindowsWindowState {
                 DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
             ),
         };
-        if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
-            if self.is_fullscreen() {
-                WindowOpenStatus::FullScreen(bounds)
-            } else {
-                WindowOpenStatus::Maximized(bounds)
-            }
+
+        if self.is_fullscreen() {
+            WindowOpenStatus::FullScreen(Bounds {
+                origin: self.fullscreen_restore_origin.get(),
+                size: self.fullscreen_restore_size.get(),
+            })
+        } else if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
+            WindowOpenStatus::Maximized(bounds)
         } else {
             WindowOpenStatus::Windowed(Some(bounds))
         }
@@ -231,6 +246,7 @@ struct WindowCreateContext {
     main_receiver: flume::Receiver<Runnable>,
     mouse_wheel_settings: MouseWheelSettings,
     current_cursor: HCURSOR,
+    fullscreen_restore_bounds: Option<Bounds<DevicePixels>>,
 }
 
 impl WindowsWindow {
@@ -258,39 +274,10 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
-        let (x, y, nwidth, nheight, show_cmd, fullscreen) = match params.open_status {
-            WindowOpenStatus::Windowed(Some(bounds)) => (
-                bounds.origin.x.0,
-                bounds.origin.y.0,
-                bounds.size.width.0,
-                bounds.size.height.0,
-                SW_SHOW,
-                false,
-            ),
-            WindowOpenStatus::Maximized(bounds) => (
-                bounds.origin.x.0,
-                bounds.origin.y.0,
-                bounds.size.width.0,
-                bounds.size.height.0,
-                SW_SHOWMAXIMIZED,
-                false,
-            ),
-            WindowOpenStatus::FullScreen(bounds) => (
-                bounds.origin.x.0,
-                bounds.origin.y.0,
-                bounds.size.width.0,
-                bounds.size.height.0,
-                SW_SHOW,
-                true,
-            ),
-            _ => (
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                SW_SHOW,
-                false,
-            ),
+        let (show_cmd, fullscreen, fullscreen_restore_bounds) = match params.open_status {
+            WindowOpenStatus::FullScreen(bounds) => (SW_SHOW, true, Some(bounds)),
+            WindowOpenStatus::Maximized(_) => (SW_SHOWMAXIMIZED, false, None),
+            _ => (SW_SHOW, false, None),
         };
         let hwndparent = HWND::default();
         let hmenu = HMENU::default();
@@ -307,6 +294,7 @@ impl WindowsWindow {
             main_receiver,
             mouse_wheel_settings,
             current_cursor,
+            fullscreen_restore_bounds,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let raw_hwnd = unsafe {
@@ -315,12 +303,12 @@ impl WindowsWindow {
                 classname,
                 &windowname,
                 dwstyle,
-                x,
-                y,
-                nwidth,
-                nheight,
-                hwndparent,
-                hmenu,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                None,
+                None,
                 hinstance,
                 lpparam,
             )
@@ -329,8 +317,23 @@ impl WindowsWindow {
         register_drag_drop(state_ptr.clone());
         let wnd = Self(state_ptr);
 
+        if let Some(restore_bounds) = params.open_status.get_bounds() {
+            unsafe {
+                let mut placement = WINDOWPLACEMENT {
+                    length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                    ..Default::default()
+                };
+                GetWindowPlacement(wnd.inner.hwnd, &mut placement).log_err();
+                placement.rcNormalPosition.left = restore_bounds.left().0;
+                placement.rcNormalPosition.right = restore_bounds.right().0;
+                placement.rcNormalPosition.top = restore_bounds.top().0;
+                placement.rcNormalPosition.bottom = restore_bounds.bottom().0;
+                SetWindowPlacement(wnd.inner.hwnd, &placement).log_err();
+            }
+        }
         unsafe { ShowWindow(raw_hwnd, show_cmd) };
         if fullscreen {
+            println!("Toggle fullscreen");
             wnd.toggle_fullscreen();
         }
 
