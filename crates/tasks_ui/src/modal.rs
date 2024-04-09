@@ -224,6 +224,7 @@ impl PickerDelegate for TasksModalDelegate {
                                     lru_score,
                                 ))
                             })
+                            .unique_by(|(_, task, _)| task.id.clone())
                             .sorted_unstable_by(
                                 |(kind_a, task_a, lru_score_a), (kind_b, task_b, lru_score_b)| {
                                     lru_score_a
@@ -423,10 +424,10 @@ impl PickerDelegate for TasksModalDelegate {
 
 fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
     match kind {
-        TaskSourceKind::Language { .. } => 4,
-        TaskSourceKind::UserInput => 3,
-        TaskSourceKind::Worktree { .. } => 2,
-        TaskSourceKind::AbsPath { .. } => 1,
+        TaskSourceKind::Language { .. } => 1,
+        TaskSourceKind::UserInput => 2,
+        TaskSourceKind::Worktree { .. } => 3,
+        TaskSourceKind::AbsPath { .. } => 4,
     }
 }
 

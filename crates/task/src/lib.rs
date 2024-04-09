@@ -90,7 +90,7 @@ impl VariableName {
 }
 
 /// TODO kb docs
-pub const ZED_VARIABLE_NAME_PREFIX: &str = "ZED_TASK_";
+pub const ZED_VARIABLE_NAME_PREFIX: &str = "ZED_";
 
 impl std::fmt::Display for VariableName {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
