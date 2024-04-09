@@ -113,6 +113,10 @@ impl WindowsWindowState {
     }
 
     fn bounds(&self) -> Bounds<DevicePixels> {
+        unsafe {
+            let mut placement = WINDOWPLACEMENT::default();
+            let x = GetWindowPlacement();
+        }
         let bounds = Bounds {
             origin: self.origin,
             size: self.physical_size,
