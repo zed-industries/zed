@@ -7096,22 +7096,13 @@ impl Editor {
                     .line_comment_prefixes()
                     .filter(|prefixes| !prefixes.is_empty())
                 {
-                    // Split the comment prefix's trailing whitespace into a separate string,
-                    // as that portion won't be used for detecting if a line is a comment.
-                    struct Comment {
-                        full_prefix: Arc<str>,
-                        trimmed_prefix_len: usize,
-                    }
-                    let prefixes: SmallVec<[Comment; 4]> = full_comment_prefixes
+                    let first_prefix = full_comment_prefixes
+                        .first()
+                        .expect("prefixes is non-empty");
+                    let prefix_trimmed_lengths = full_comment_prefixes
                         .iter()
-                        .map(|full_prefix| {
-                            let trimmed_prefix_len = full_prefix.trim_end_matches(' ').len();
-                            Comment {
-                                trimmed_prefix_len,
-                                full_prefix: full_prefix.clone(),
-                            }
-                        })
-                        .collect();
+                        .map(|p| p.trim_end_matches(' ').len())
+                        .collect::<SmallVec<[usize; 4]>>();
 
                     let mut all_selection_lines_are_comments = true;
 
@@ -7120,28 +7111,25 @@ impl Editor {
                             continue;
                         }
 
-                        let Some((prefix, prefix_range)) = prefixes
+                        let prefix_range = full_comment_prefixes
                             .iter()
-                            .map(|prefix| {
-                                (
-                                    prefix,
-                                    comment_prefix_range(
-                                        snapshot.deref(),
-                                        row,
-                                        &prefix.full_prefix[..prefix.trimmed_prefix_len],
-                                        &prefix.full_prefix[prefix.trimmed_prefix_len..],
-                                    ),
+                            .zip(prefix_trimmed_lengths.iter().copied())
+                            .map(|(prefix, trimmed_prefix_len)| {
+                                comment_prefix_range(
+                                    snapshot.deref(),
+                                    row,
+                                    &prefix[..trimmed_prefix_len],
+                                    &prefix[trimmed_prefix_len..],
                                 )
                             })
-                            .max_by_key(|(_, range)| range.end.column - range.start.column)
-                        else {
-                            // There has to be at least one prefix.
-                            break;
-                        };
+                            .max_by_key(|range| range.end.column - range.start.column)
+                            .expect("prefixes is non-empty");
+
                         if prefix_range.is_empty() {
                             all_selection_lines_are_comments = false;
                         }
-                        selection_edit_ranges.push((prefix_range, prefix.full_prefix.clone()));
+
+                        selection_edit_ranges.push(prefix_range);
                     }
 
                     if all_selection_lines_are_comments {
@@ -7149,17 +7137,17 @@ impl Editor {
                             selection_edit_ranges
                                 .iter()
                                 .cloned()
-                                .map(|(range, _)| (range, empty_str.clone())),
+                                .map(|range| (range, empty_str.clone())),
                         );
                     } else {
                         let min_column = selection_edit_ranges
                             .iter()
-                            .map(|(range, _)| range.start.column)
+                            .map(|range| range.start.column)
                             .min()
                             .unwrap_or(0);
-                        edits.extend(selection_edit_ranges.iter().map(|(range, prefix)| {
+                        edits.extend(selection_edit_ranges.iter().map(|range| {
                             let position = Point::new(range.start.row, min_column);
-                            (position..position, prefix.clone())
+                            (position..position, first_prefix.clone())
                         }));
                     }
                 } else if let Some((full_comment_prefix, comment_suffix)) =
