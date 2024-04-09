@@ -1,4 +1,4 @@
-use crate::offset::{self, Offset};
+use crate::{offset::Offset, MultiBuffer};
 
 use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
 use language::{OffsetUtf16, Point, TextDimension};
@@ -99,9 +99,8 @@ impl Anchor {
     }
 }
 
-impl ToOffset<offset::Buffer> for Anchor {
-    type Context = MultiBufferSnapshot;
-    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> Offset<offset::Buffer> {
+impl ToOffset<MultiBuffer> for Anchor {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> Offset<MultiBuffer> {
         let offset = self.summary(snapshot);
         Offset::new(offset)
     }

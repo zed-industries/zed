@@ -397,7 +397,7 @@ impl MultiBuffer {
         self.len(cx) != 0
     }
 
-    pub fn symbols_containing<T: ToOffset<offset::Buffer>>(
+    pub fn symbols_containing<T: ToOffset<MultiBuffer>>(
         &self,
         offset: T,
         theme: Option<&SyntaxTheme>,
@@ -413,7 +413,7 @@ impl MultiBuffer {
         cx: &mut ModelContext<Self>,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
-        S: ToOffset<offset::Buffer>,
+        S: ToOffset<MultiBuffer>,
         T: Into<Arc<str>>,
     {
         if self.buffers.borrow().is_empty() {
@@ -1223,7 +1223,7 @@ impl MultiBuffer {
 
     pub fn excerpt_containing(
         &self,
-        position: impl ToOffset<offset::Buffer>,
+        position: impl ToOffset<MultiBuffer>,
         cx: &AppContext,
     ) -> Option<(ExcerptId, Model<Buffer>, Range<text::Anchor>)> {
         let snapshot = self.read(cx);
@@ -1249,7 +1249,7 @@ impl MultiBuffer {
     }
 
     // If point is at the end of the buffer, the last excerpt is returned
-    pub fn point_to_buffer_offset<T: ToOffset<offset::Buffer>>(
+    pub fn point_to_buffer_offset<T: ToOffset<MultiBuffer>>(
         &self,
         point: T,
         cx: &AppContext,
@@ -1271,7 +1271,7 @@ impl MultiBuffer {
         })
     }
 
-    pub fn range_to_buffer_ranges<T: ToOffset<offset::Buffer>>(
+    pub fn range_to_buffer_ranges<T: ToOffset<MultiBuffer>>(
         &self,
         range: Range<T>,
         cx: &AppContext,
@@ -1428,7 +1428,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn text_anchor_for_position<T: ToOffset<offset::Buffer>>(
+    pub fn text_anchor_for_position<T: ToOffset<MultiBuffer>>(
         &self,
         position: T,
         cx: &AppContext,
@@ -1522,7 +1522,7 @@ impl MultiBuffer {
             .unwrap_or(false)
     }
 
-    pub fn language_at<T: ToOffset<offset::Buffer>>(
+    pub fn language_at<T: ToOffset<MultiBuffer>>(
         &self,
         point: T,
         cx: &AppContext,
@@ -1531,7 +1531,7 @@ impl MultiBuffer {
             .and_then(|(buffer, offset, _)| buffer.read(cx).language_at(offset))
     }
 
-    pub fn settings_at<'a, T: ToOffset<offset::Buffer>>(
+    pub fn settings_at<'a, T: ToOffset<MultiBuffer>>(
         &self,
         point: T,
         cx: &'a AppContext,
@@ -1938,17 +1938,18 @@ impl MultiBufferSnapshot {
             .collect()
     }
 
-    pub fn reversed_chars_at<T: ToOffset<offset::Buffer>>(
+    pub fn reversed_chars_at<T: ToOffset<MultiBuffer>>(
         &self,
         position: T,
     ) -> impl Iterator<Item = char> + '_ {
         let mut offset = position.to_offset(self);
-        let mut cursor = self.excerpts.cursor::<usize>();
+        let mut cursor = self.excerpts.cursor::<Offset<MultiBuffer>>();
         cursor.seek(&offset, Bias::Left, &());
         let mut excerpt_chunks = cursor.item().map(|excerpt| {
-            let end_before_footer = cursor.start() + excerpt.text_summary.len;
-            let start = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let end = start + (cmp::min(offset, end_before_footer) - cursor.start());
+            let start = excerpt.range.context.start.to_offset(&excerpt.buffer); // buffer coords.
+
+            let end = start + cmp::min(offset - *cursor.start(), excerpt.text_summary.len);
+
             excerpt.buffer.reversed_chunks_in_range(start..end)
         });
         iter::from_fn(move || {
@@ -1964,24 +1965,30 @@ impl MultiBufferSnapshot {
 
             let excerpt = cursor.item().unwrap();
             if offset == cursor.end(&()) && excerpt.has_trailing_newline {
-                offset -= 1;
+                offset.0 -= 1;
                 Some("\n")
             } else {
                 let chunk = excerpt_chunks.as_mut().unwrap().next().unwrap();
-                offset -= chunk.len();
+                offset.0 -= chunk.len();
                 Some(chunk)
             }
         })
         .flat_map(|c| c.chars().rev())
     }
 
-    pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
+    pub fn chars_at<T: ToOffset<MultiBuffer>>(
+        &self,
+        position: T,
+    ) -> impl Iterator<Item = char> + '_ {
         let offset = position.to_offset(self);
         self.text_for_range(offset..self.len())
             .flat_map(|chunk| chunk.chars())
     }
 
-    pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = &str> + '_ {
+    pub fn text_for_range<T: ToOffset<MultiBuffer>>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = &str> + '_ {
         self.chunks(range, false).map(|chunk| chunk.text)
     }
 
@@ -1992,7 +1999,7 @@ impl MultiBufferSnapshot {
 
     pub fn contains_str_at<T>(&self, position: T, needle: &str) -> bool
     where
-        T: ToOffset,
+        T: ToOffset<MultiBuffer>,
     {
         let position = position.to_offset(self);
         position == self.clip_offset(position, Bias::Left)
@@ -2004,7 +2011,10 @@ impl MultiBufferSnapshot {
                 .eq(needle.bytes())
     }
 
-    pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
+    pub fn surrounding_word<T: ToOffset<MultiBuffer>>(
+        &self,
+        start: T,
+    ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
         let mut next_chars = self.chars_at(start).peekable();
@@ -2047,8 +2057,8 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.excerpts.summary().text.len
+    pub fn len(&self) -> Offset<MultiBuffer> {
+        Offset::new(self.excerpts.summary().text.len)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -2059,7 +2069,7 @@ impl MultiBufferSnapshot {
         self.excerpts.summary().max_buffer_row
     }
 
-    pub fn clip_offset(&self, offset: Offset<offset::Buffer>, bias: Bias) -> usize {
+    pub fn clip_offset(&self, offset: Offset<Buffer>, bias: Bias) -> usize {
         if let Some((_, _, buffer)) = self.as_singleton() {
             return buffer.clip_offset(offset, bias);
         }
@@ -2137,7 +2147,7 @@ impl MultiBufferSnapshot {
         *cursor.start() + overshoot
     }
 
-    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> MultiBufferBytes {
+    pub fn bytes_in_range<T: ToOffset<MultiBuffer>>(&self, range: Range<T>) -> MultiBufferBytes {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpts = self.excerpts.cursor::<usize>();
         excerpts.seek(&range.start, Bias::Right, &());
@@ -2159,7 +2169,7 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn reversed_bytes_in_range<T: ToOffset>(
+    pub fn reversed_bytes_in_range<T: ToOffset<MultiBuffer>>(
         &self,
         range: Range<T>,
     ) -> ReversedMultiBufferBytes {
@@ -2195,7 +2205,11 @@ impl MultiBufferSnapshot {
         result
     }
 
-    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> MultiBufferChunks {
+    pub fn chunks<T: ToOffset<MultiBuffer>>(
+        &self,
+        range: Range<T>,
+        language_aware: bool,
+    ) -> MultiBufferChunks {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut chunks = MultiBufferChunks {
             range: range.clone(),
@@ -2361,7 +2375,7 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn point_to_buffer_offset<T: ToOffset>(
+    pub fn point_to_buffer_offset<T: ToOffset<MultiBuffer>>(
         &self,
         point: T,
     ) -> Option<(&BufferSnapshot, usize)> {
@@ -2502,11 +2516,11 @@ impl MultiBufferSnapshot {
     pub fn text_summary_for_range<D, O>(&self, range: Range<O>) -> D
     where
         D: TextDimension,
-        O: ToOffset,
+        O: ToOffset<MultiBuffer>,
     {
         let mut summary = D::default();
         let mut range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut cursor = self.excerpts.cursor::<usize>();
+        let mut cursor = self.excerpts.cursor::<Offset<MultiBuffer>>();
         cursor.seek(&range.start, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
             let mut end_before_newline = cursor.end(&());
@@ -2747,15 +2761,15 @@ impl MultiBufferSnapshot {
         result
     }
 
-    pub fn anchor_before<T: ToOffset<offset::Buffer>>(&self, position: T) -> Anchor {
+    pub fn anchor_before<T: ToOffset<Buffer>>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Left)
     }
 
-    pub fn anchor_after<T: ToOffset<offset::Buffer>>(&self, position: T) -> Anchor {
+    pub fn anchor_after<T: ToOffset<Buffer>>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Right)
     }
 
-    pub fn anchor_at<T: ToOffset<offset::Buffer>>(&self, position: T, mut bias: Bias) -> Anchor {
+    pub fn anchor_at<T: ToOffset<Buffer>>(&self, position: T, mut bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
         if let Some((excerpt_id, buffer_id, buffer)) = self.as_singleton() {
             return Anchor {
@@ -2834,13 +2848,13 @@ impl MultiBufferSnapshot {
             .map(|excerpt| (excerpt.id, &excerpt.buffer, excerpt.range.clone()))
     }
 
-    fn excerpts_for_range<T: ToOffset>(
+    fn excerpts_for_range<T: ToOffset<MultiBuffer>>(
         &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (&Excerpt, usize)> + '_ {
+    ) -> impl Iterator<Item = (&Excerpt, Offset<MultiBuffer>)> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        let mut cursor = self.excerpts.cursor::<usize>();
+        let mut cursor = self.excerpts.cursor::<Offset<MultiBuffer>>();
         cursor.seek(&range.start, Bias::Right, &());
         cursor.prev(&());
 
@@ -2860,7 +2874,7 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = ExcerptBoundary> + '_
     where
         R: RangeBounds<T>,
-        T: ToOffset,
+        T: ToOffset<MultiBuffer>,
     {
         let start_offset;
         let start = match range.start_bound() {
@@ -2930,7 +2944,7 @@ impl MultiBufferSnapshot {
     /// excerpt
     ///
     /// Can optionally pass a range_filter to filter the ranges of brackets to consider
-    pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
+    pub fn innermost_enclosing_bracket_ranges<T: ToOffset<MultiBuffer>>(
         &self,
         range: Range<T>,
         range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
@@ -2962,7 +2976,7 @@ impl MultiBufferSnapshot {
 
     /// Returns enclosing bracket ranges containing the given range or returns None if the range is
     /// not contained in a single excerpt
-    pub fn enclosing_bracket_ranges<T: ToOffset>(
+    pub fn enclosing_bracket_ranges<T: ToOffset<MultiBuffer>>(
         &self,
         range: Range<T>,
     ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + '_> {
@@ -2988,7 +3002,7 @@ impl MultiBufferSnapshot {
 
     /// Returns bracket range pairs overlapping the given `range` or returns None if the `range` is
     /// not contained in a single excerpt
-    pub fn bracket_ranges<T: ToOffset>(
+    pub fn bracket_ranges<T: ToOffset<MultiBuffer>>(
         &self,
         range: Range<T>,
     ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + '_> {
@@ -3013,7 +3027,7 @@ impl MultiBufferSnapshot {
         )
     }
 
-    pub fn redacted_ranges<'a, T: ToOffset>(
+    pub fn redacted_ranges<'a, T: ToOffset<MultiBuffer>>(
         &'a self,
         range: Range<T>,
         redaction_enabled: impl Fn(Option<&Arc<dyn File>>) -> bool + 'a,
@@ -3056,17 +3070,17 @@ impl MultiBufferSnapshot {
         self.trailing_excerpt_update_count
     }
 
-    pub fn file_at<T: ToOffset>(&self, point: T) -> Option<&Arc<dyn File>> {
+    pub fn file_at<T: ToOffset<MultiBuffer>>(&self, point: T) -> Option<&Arc<dyn File>> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, _)| buffer.file())
     }
 
-    pub fn language_at<T: ToOffset>(&self, point: T) -> Option<&Arc<Language>> {
+    pub fn language_at<T: ToOffset<MultiBuffer>>(&self, point: T) -> Option<&Arc<Language>> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
-    pub fn settings_at<'a, T: ToOffset>(
+    pub fn settings_at<'a, T: ToOffset<MultiBuffer>>(
         &'a self,
         point: T,
         cx: &'a AppContext,
@@ -3080,12 +3094,12 @@ impl MultiBufferSnapshot {
         language_settings(language, file, cx)
     }
 
-    pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {
+    pub fn language_scope_at<T: ToOffset<MultiBuffer>>(&self, point: T) -> Option<LanguageScope> {
         self.point_to_buffer_offset(point)
             .and_then(|(buffer, offset)| buffer.language_scope_at(offset))
     }
 
-    pub fn language_indent_size_at<T: ToOffset>(
+    pub fn language_indent_size_at<T: ToOffset<MultiBuffer>>(
         &self,
         position: T,
         cx: &AppContext,
@@ -3126,7 +3140,7 @@ impl MultiBufferSnapshot {
         reversed: bool,
     ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
     where
-        T: 'a + ToOffset,
+        T: 'a + ToOffset<MultiBuffer>,
         O: 'a + text::FromAnchor + Ord,
     {
         self.as_singleton()
@@ -3290,7 +3304,10 @@ impl MultiBufferSnapshot {
         .flatten()
     }
 
-    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
+    pub fn range_for_syntax_ancestor<T: ToOffset<MultiBuffer>>(
+        &self,
+        range: Range<T>,
+    ) -> Option<Range<usize>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let excerpt = self.excerpt_containing(range.clone())?;
 
@@ -3322,7 +3339,7 @@ impl MultiBufferSnapshot {
         ))
     }
 
-    pub fn symbols_containing<T: ToOffset<offset::Buffer>>(
+    pub fn symbols_containing<T: ToOffset<Buffer>>(
         &self,
         offset: T,
         theme: Option<&SyntaxTheme>,
@@ -3389,7 +3406,7 @@ impl MultiBufferSnapshot {
     }
 
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
-    pub fn excerpt_containing<T: ToOffset<offset::MultiBuffer>>(
+    pub fn excerpt_containing<T: ToOffset<MultiBuffer>>(
         &self,
         range: Range<T>,
     ) -> Option<MultiBufferExcerpt> {
@@ -3947,15 +3964,15 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for TextSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for usize {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Offset<MultiBuffer> {
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self += summary.text.len;
+        *self.0 += summary.text.len;
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for usize {
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for Offset<MultiBuffer> {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
-        Ord::cmp(self, &cursor_location.text.len)
+        Ord::cmp(&self.0, &cursor_location.text.len)
     }
 }
 
@@ -4212,33 +4229,30 @@ impl<'a> Iterator for ExcerptChunks<'a> {
     }
 }
 
-impl ToOffset<offset::Buffer> for Point {
-    type Context = MultiBufferSnapshot;
-    fn to_offset(&self, snapshot: &Self::Context) -> Offset<offset::Buffer> {
+impl ToOffset<MultiBuffer> for Point {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> Offset<MultiBuffer> {
         let offset = snapshot.point_to_offset(*self);
         Offset::new(offset)
     }
 }
 
-impl ToOffset<offset::Buffer> for usize {
-    type Context = MultiBufferSnapshot;
-    fn to_offset(&self, snapshot: &Self::Context) -> Offset<offset::Buffer> {
-        assert!(*self <= snapshot.len(), "offset is out of range");
-        Offset::new(*self)
-    }
-}
+// impl ToOffset<MultiBuffer> for usize {
+//     type Context = MultiBufferSnapshot;
+//     fn to_offset(&self, snapshot: &Self::Context) -> Offset<Buffer> {
+//         assert!(*self <= snapshot.len(), "offset is out of range");
+//         Offset::new(*self)
+//     }
+// }
 
-impl ToOffset<offset::Buffer> for OffsetUtf16 {
-    type Context = MultiBufferSnapshot;
-    fn to_offset(&self, snapshot: &Self::Context) -> Offset<offset::Buffer> {
+impl ToOffset<MultiBuffer> for OffsetUtf16 {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> Offset<MultiBuffer> {
         let offset = snapshot.offset_utf16_to_offset(*self);
         Offset::new(offset)
     }
 }
 
-impl ToOffset<offset::Buffer> for PointUtf16 {
-    type Context = MultiBufferSnapshot;
-    fn to_offset(&self, snapshot: &Self::Context) -> Offset<offset::Buffer> {
+impl ToOffset<MultiBuffer> for PointUtf16 {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> Offset<MultiBuffer> {
         let offset = snapshot.point_utf16_to_offset(*self);
         Offset::new(offset)
     }
@@ -4256,11 +4270,11 @@ impl ToOffsetUtf16 for usize {
     }
 }
 
-impl ToPoint for usize {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
-        snapshot.offset_to_point(*self)
-    }
-}
+// impl ToPoint for usize {
+//     fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+//         snapshot.offset_to_point(*self)
+//     }
+// }
 
 impl ToPoint for Point {
     fn to_point<'a>(&self, _: &MultiBufferSnapshot) -> Point {
