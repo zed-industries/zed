@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS "embeddings" (
-    "provider" VARCHAR(64),
-    "digest" BYTEA(32),
+    "provider" TEXT,
+    "digest" BYTEA,
     "dimensions" FLOAT4[1536],
     "retrieved_at" TIMESTAMP NOT NULL DEFAULT now(),
     PRIMARY KEY ("digest", "provider")
