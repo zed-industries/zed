@@ -528,6 +528,35 @@ where
             },
         }
     }
+    /// Returns a new `Size` with the minimum width and height from `self` and `other`.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Size` to compare with `self`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Size;
+    /// let size1 = Size { width: 30, height: 40 };
+    /// let size2 = Size { width: 50, height: 20 };
+    /// let min_size = size1.min(&size2);
+    /// assert_eq!(min_size, Size { width: 30, height: 20 });
+    /// ```
+    pub fn min(&self, other: &Self) -> Self {
+        Size {
+            width: if self.width >= other.width {
+                other.width.clone()
+            } else {
+                self.width.clone()
+            },
+            height: if self.height >= other.height {
+                other.height.clone()
+            } else {
+                self.height.clone()
+            },
+        }
+    }
 }
 
 impl<T> Sub for Size<T>
