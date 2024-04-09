@@ -7452,15 +7452,12 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
+                                id_base: "local_tasks_for_workspace",
                             },
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(
-                                    format!("local_tasks_for_workspace_{remote_worktree_id}"),
-                                    TrackedFile::new(tasks_file_rx, cx),
-                                    cx,
-                                )
+                                StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
                             },
                             cx,
                         );
@@ -7477,14 +7474,12 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
+                                id_base: "local_vscode_tasks_for_workspace",
                             },
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
                                 StaticSource::new(
-                                    format!(
-                                        "local_vscode_tasks_for_workspace_{remote_worktree_id}"
-                                    ),
                                     TrackedFile::new_convertible::<task::VsCodeTaskFile>(
                                         tasks_file_rx,
                                         cx,

@@ -1,18 +1,16 @@
 //! A source of tasks, based on a static configuration, deserialized from the tasks config file, and related infrastructure for tracking changes to the file.
 
-use std::{borrow::Cow, sync::Arc};
-
 use futures::StreamExt;
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::{from_template, Task, TaskId, TaskSource, TaskTemplates};
+use crate::{TaskSource, TaskTemplates};
 use futures::channel::mpsc::UnboundedReceiver;
 
 /// The source of tasks defined in a tasks config file.
 pub struct StaticSource {
-    tasks: Vec<Arc<dyn Task>>,
+    tasks: TaskTemplates,
     _templates: Model<TrackedFile<TaskTemplates>>,
     _subscription: Subscription,
 }
@@ -103,36 +101,21 @@ impl<T: PartialEq + 'static> TrackedFile<T> {
 impl StaticSource {
     /// Initializes the static source, reacting on tasks config changes.
     pub fn new(
-        id_base: impl Into<Cow<'static, str>>,
         templates: Model<TrackedFile<TaskTemplates>>,
         cx: &mut AppContext,
     ) -> Model<Box<dyn TaskSource>> {
         cx.new_model(|cx| {
-            let id_base = id_base.into();
             let _subscription = cx.observe(
                 &templates,
                 move |source: &mut Box<(dyn TaskSource + 'static)>, new_templates, cx| {
                     if let Some(static_source) = source.as_any().downcast_mut::<Self>() {
-                        static_source.tasks = new_templates
-                            .read(cx)
-                            .get()
-                            .0
-                            .clone()
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, template)| {
-                                from_template(
-                                    TaskId(format!("static_{id_base}_{i}_{}", template.label)),
-                                    template,
-                                )
-                            })
-                            .collect();
+                        static_source.tasks = new_templates.read(cx).get().clone();
                         cx.notify();
                     }
                 },
             );
             Box::new(Self {
-                tasks: Vec::new(),
+                tasks: TaskTemplates::default(),
                 _templates: templates,
                 _subscription,
             })
@@ -141,14 +124,8 @@ impl StaticSource {
 }
 
 impl TaskSource for StaticSource {
-    fn tasks_to_schedule(
-        &mut self,
-        _: &mut ModelContext<Box<dyn TaskSource>>,
-    ) -> Vec<Arc<dyn Task>> {
-        self.tasks
-            .iter()
-            .map(|task| task.clone() as Arc<dyn Task>)
-            .collect()
+    fn tasks_to_schedule(&mut self, _: &mut ModelContext<Box<dyn TaskSource>>) -> TaskTemplates {
+        self.tasks.clone()
     }
 
     fn as_any(&mut self) -> &mut dyn std::any::Any {

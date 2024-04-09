@@ -5,8 +5,8 @@ use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
 use language::{Language, Point};
 use modal::{Spawn, TasksModal};
-use project::{Location, WorktreeId};
-use task::{ResolvedTask, Task, TaskContext, TaskVariables, VariableName};
+use project::{Location, TaskSourceKind, WorktreeId};
+use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables, VariableName};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -29,10 +29,17 @@ pub fn init(cx: &mut AppContext) {
                         })
                     {
                         if action.reevaluate_context {
-                            let original_task = last_scheduled_task.original_task();
+                            let original_task = last_scheduled_task.original_task;
                             let cwd = task_cwd(workspace, cx).log_err().flatten();
                             let task_context = task_context(workspace, cwd, cx);
-                            schedule_task(workspace, &original_task, task_context, false, cx)
+                            schedule_task(
+                                workspace,
+                                todo!("TODO kb"),
+                                &original_task,
+                                task_context,
+                                false,
+                                cx,
+                            )
                         } else {
                             schedule_resolved_task(workspace, last_scheduled_task, false, cx);
                         }
@@ -68,10 +75,18 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
                         inventory.list_tasks(language, worktree, false, cx)
                     })
                 });
-                let (_, target_task) = tasks.into_iter().find(|(_, task)| task.name() == name)?;
+                let (task_source_kind, target_task) =
+                    tasks.into_iter().find(|(_, task)| task.label == name)?;
                 let cwd = task_cwd(workspace, cx).log_err().flatten();
                 let task_context = task_context(workspace, cwd, cx);
-                schedule_task(workspace, &target_task, task_context, false, cx);
+                schedule_task(
+                    workspace,
+                    &task_source_kind,
+                    &target_task,
+                    task_context,
+                    false,
+                    cx,
+                );
                 Some(())
             })
             .ok()
@@ -215,30 +230,31 @@ fn task_context(
 
 fn schedule_task(
     workspace: &Workspace,
-    task_to_resolve: &Arc<dyn Task>,
+    task_source_kind: &TaskSourceKind,
+    task_to_resolve: &TaskTemplate,
     task_cx: TaskContext,
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
-    if let Some(spawn_in_terminal) = task_to_resolve.resolve_task(task_cx) {
+    if let Some(spawn_in_terminal) =
+        task_to_resolve.resolve_task(task_source_kind.to_id_base(), task_cx)
+    {
         schedule_resolved_task(workspace, spawn_in_terminal, omit_history, cx);
     }
 }
 
 fn schedule_resolved_task(
     workspace: &Workspace,
-    resolved_task: ResolvedTask,
+    mut resolved_task: ResolvedTask,
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
-    if let ResolvedTask::SpawnInTerminal(spawn_in_terminal, task) = resolved_task {
+    if let Some(spawn_in_terminal) = resolved_task.resolved.take() {
         if !omit_history {
+            resolved_task.resolved = Some(spawn_in_terminal.clone());
             workspace.project().update(cx, |project, cx| {
                 project.task_inventory().update(cx, |inventory, _| {
-                    inventory.task_scheduled(ResolvedTask::SpawnInTerminal(
-                        spawn_in_terminal.clone(),
-                        task,
-                    ));
+                    inventory.task_scheduled(resolved_task);
                 })
             });
         }

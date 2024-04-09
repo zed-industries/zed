@@ -83,17 +83,15 @@ impl TasksModalDelegate {
             return None;
         }
 
-        self.inventory
-            .update(cx, |inventory, _| inventory.source::<OneshotSource>())?
+        let (source, source_kind) = self
+            .inventory
+            .update(cx, |inventory, _| inventory.source::<OneshotSource>())?;
+        source
             .update(cx, |oneshot_source, _| {
-                Some(
-                    oneshot_source
-                        .as_any()
-                        .downcast_mut::<OneshotSource>()?
-                        .spawn(self.prompt.clone()),
-                )
+                let oneshot_source = oneshot_source.as_any().downcast_mut::<OneshotSource>()?;
+                Some(oneshot_source.spawn(self.prompt.clone()))
             })
-            .and_then(|task| task.resolve_task(self.task_context.clone()))
+            .and_then(|task| task.resolve_task(source_kind.to_id_base(), self.task_context.clone()))
     }
 
     fn delete_oneshot(&mut self, ix: usize, cx: &mut AppContext) {
@@ -108,12 +106,10 @@ impl TasksModalDelegate {
         // the original list without a removed entry.
         candidates.remove(ix);
         self.inventory.update(cx, |inventory, cx| {
-            let oneshot_source = inventory.source::<OneshotSource>()?;
-            let task_id = task.id();
-
-            oneshot_source.update(cx, |this, _| {
-                let oneshot_source = this.as_any().downcast_mut::<OneshotSource>()?;
-                oneshot_source.remove(task_id);
+            let (oneshot_source, _) = inventory.source::<OneshotSource>()?;
+            oneshot_source.update(cx, |task_source, _| {
+                let oneshot_source = task_source.as_any().downcast_mut::<OneshotSource>()?;
+                oneshot_source.remove(&task.original_task);
                 Some(())
             });
             Some(())
@@ -211,9 +207,13 @@ impl PickerDelegate for TasksModalDelegate {
                             })
                             .into_iter()
                             .filter_map(|(kind, task)| {
+                                let id_base = kind.to_id_base();
                                 Some((
                                     kind,
-                                    task.resolve_task(picker.delegate.task_context.clone())?,
+                                    task.resolve_task(
+                                        id_base,
+                                        picker.delegate.task_context.clone(),
+                                    )?,
                                 ))
                             })
                             .collect()
@@ -224,8 +224,8 @@ impl PickerDelegate for TasksModalDelegate {
                         .enumerate()
                         .map(|(index, (_, candidate))| StringMatchCandidate {
                             id: index,
-                            char_bag: candidate.name().chars().collect(),
-                            string: candidate.name().into(),
+                            char_bag: candidate.resolved_label.chars().collect(),
+                            string: candidate.resolved_label.clone(),
                         })
                         .collect::<Vec<_>>()
                 })
@@ -352,11 +352,11 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        if let ResolvedTask::SpawnInTerminal(spawn_prompt, _) = task {
-            if !spawn_prompt.args.is_empty() {
-                let mut command = spawn_prompt.command.clone();
+        if let Some(spawn_in_terminal) = &task.resolved {
+            if !spawn_in_terminal.args.is_empty() {
+                let mut command = spawn_in_terminal.command.clone();
                 command.push(' ');
-                command.extend(intersperse(spawn_prompt.args.clone(), " ".to_string()));
+                command.extend(intersperse(spawn_in_terminal.args.clone(), " ".to_string()));
                 return Some(command);
             }
         }
