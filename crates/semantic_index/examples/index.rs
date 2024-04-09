@@ -86,7 +86,7 @@ fn main() {
             let subscription = cx.update(|cx| {
                 cx.subscribe(&project_index, move |_, event, _| {
                     if let Some(tx) = tx.take() {
-                        _ = tx.send(event.clone());
+                        _ = tx.send(*event);
                     }
                 })
             });
@@ -94,7 +94,7 @@ fn main() {
             let index_start = std::time::Instant::now();
             rx.await.expect("no event emitted");
             drop(subscription);
-            dbg!(index_start.elapsed());
+            println!("Index time: {:?}", index_start.elapsed());
 
             let results = cx
                 .update(|cx| {

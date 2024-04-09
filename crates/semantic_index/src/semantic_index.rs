@@ -411,7 +411,7 @@ impl WorktreeIndex {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
         let db_connection = self.db_connection.clone();
-        let db = self.db.clone();
+        let db = self.db;
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
                 .read_txn()
@@ -640,7 +640,7 @@ impl WorktreeIndex {
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
-        let db = self.db.clone();
+        let db = self.db;
         cx.background_executor().spawn(async move {
             while let Some(deletion_range) = deleted_entry_ranges.next().await {
                 let mut txn = db_connection.write_txn()?;
@@ -676,7 +676,7 @@ impl WorktreeIndex {
         let (chunks_tx, chunks_rx) = channel::bounded(1024);
 
         let db_connection = self.db_connection.clone();
-        let db = self.db.clone();
+        let db = self.db;
         let scan_chunks = cx.background_executor().spawn({
             async move {
                 let txn = db_connection
@@ -703,7 +703,6 @@ impl WorktreeIndex {
             let mut query_embeddings = embedding_provider
                 .embed(&[TextToEmbed::new(&query)])
                 .await?;
-            dbg!(embedding_query_start.elapsed());
             let query_embedding = query_embeddings
                 .pop()
                 .ok_or_else(|| anyhow!("no embedding for query"))?;
@@ -748,7 +747,17 @@ impl WorktreeIndex {
             search_results
                 .sort_unstable_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
             search_results.truncate(limit);
-            dbg!(search_start.elapsed());
+            #[cfg(debug_assertions)]
+            {
+                let search_elapsed = search_start.elapsed();
+                log::debug!(
+                    "searched {} entries in {:?}",
+                    search_results.len(),
+                    search_elapsed
+                );
+                let embedding_query_elapsed = embedding_query_start.elapsed();
+                log::debug!("embedding query took {:?}", embedding_query_elapsed);
+            }
 
             Ok(search_results)
         })
