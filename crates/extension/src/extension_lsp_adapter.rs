@@ -85,8 +85,12 @@ impl LspAdapter for ExtensionLspAdapter {
                     use std::fs::{self, Permissions};
                     use std::os::unix::fs::PermissionsExt;
 
-                    fs::set_permissions(&path, Permissions::from_mode(0o755))
-                        .context("failed to set file permissions")?;
+                    let metadata = fs::metadata(&path).context("failed to get file metadata")?;
+                    let permissions = metadata.permissions();
+                    if permissions.mode() & 0o111 == 0 {
+                        fs::set_permissions(&path, Permissions::from_mode(0o755))
+                            .context("failed to set file permissions")?;
+                    }
                 }
             }
 
