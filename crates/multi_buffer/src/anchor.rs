@@ -1,3 +1,5 @@
+use crate::offset::{self, Offset};
+
 use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToOffsetUtf16, ToPoint};
 use language::{OffsetUtf16, Point, TextDimension};
 use std::{
@@ -97,9 +99,11 @@ impl Anchor {
     }
 }
 
-impl ToOffset for Anchor {
-    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize {
-        self.summary(snapshot)
+impl ToOffset<offset::Buffer> for Anchor {
+    type Context = MultiBufferSnapshot;
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> Offset<offset::Buffer> {
+        let offset = self.summary(snapshot);
+        Offset::new(offset)
     }
 }
 
@@ -137,6 +141,3 @@ impl AnchorRangeExt for Range<Anchor> {
         self.start.to_point(content)..self.end.to_point(content)
     }
 }
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Ord, PartialOrd)]
-pub struct Offset(pub usize);
