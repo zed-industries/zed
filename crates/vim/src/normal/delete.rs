@@ -84,13 +84,15 @@ pub fn delete_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
                                 selection.start = (start - '\n'.len_utf8()).to_display_point(map);
                             }
                         };
+                    let range = selection.start.to_offset(map, Bias::Left)
+                        ..selection.end.to_offset(map, Bias::Right);
                     let contains_only_newlines = map
-                        .chars_at(selection.start)
-                        .take_while(|(_, p)| p < &selection.end)
+                        .buffer_chars_at(range.start)
+                        .take_while(|(_, p)| p < &range.end)
                         .all(|(char, _)| char == '\n')
                         && !offset_range.is_empty();
                     let end_at_newline = map
-                        .chars_at(selection.end)
+                        .buffer_chars_at(range.end)
                         .next()
                         .map(|(c, _)| c == '\n')
                         .unwrap_or(false);

@@ -54,3 +54,16 @@ To run your extension in Zed as you're developing it:
 - Open the extensions view using the `zed: extensions` action in the command palette.
 - Click the `Install Dev Extension` button in the top right
 - Choose the path to your extension directory.
+
+## Compatible Zed versions
+
+Extensions created using newer versions of the Zed extension API won't be compatible with older versions of Zed.
+
+Here is the compatibility of the `zed_extension_api` with versions of Zed:
+
+| Zed version | `zed_extension_api` version |
+| ----------- | --------------------------- |
+| `0.131.x`   | `0.0.1` - `0.0.6`           |
+| `0.130.x`   | `0.0.1` - `0.0.5`           |
+| `0.129.x`   | `0.0.1` - `0.0.4`           |
+| `0.128.x`   | `0.0.1`                     |

@@ -2,7 +2,7 @@ use anyhow;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 use workspace::dock::DockPosition;
 
 #[derive(Deserialize, Debug)]
@@ -53,48 +53,52 @@ pub struct MessageEditorSettings {
 
 impl Settings for CollaborationPanelSettings {
     const KEY: Option<&'static str> = Some("collaboration_panel");
+
     type FileContent = PanelSettingsContent;
+
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
 }
 
 impl Settings for ChatPanelSettings {
     const KEY: Option<&'static str> = Some("chat_panel");
+
     type FileContent = PanelSettingsContent;
+
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
 }
 
 impl Settings for NotificationPanelSettings {
     const KEY: Option<&'static str> = Some("notification_panel");
+
     type FileContent = PanelSettingsContent;
+
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
 }
 
 impl Settings for MessageEditorSettings {
     const KEY: Option<&'static str> = Some("message_editor");
+
     type FileContent = MessageEditorSettings;
+
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
 }

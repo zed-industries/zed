@@ -226,6 +226,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "any_vec"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e78f17bacc1bc7b91fef7b1885c10772eb2b9e4e989356f6f0f6a972240f97cd"
+
+[[package]]
 name = "anyhow"
 version = "1.0.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1428,7 +1434,7 @@ dependencies = [
 [[package]]
 name = "blade-graphics"
 version = "0.3.0"
-source = "git+https://github.com/kvark/blade?rev=61cbd6b2c224791d52b150fe535cee665cc91bb2#61cbd6b2c224791d52b150fe535cee665cc91bb2"
+source = "git+https://github.com/zed-industries/blade?rev=85981c0f4890a5fcd08da2a53cc4a0459247af44#85981c0f4890a5fcd08da2a53cc4a0459247af44"
 dependencies = [
  "ash",
  "ash-window",
@@ -1458,7 +1464,7 @@ dependencies = [
 [[package]]
 name = "blade-macros"
 version = "0.2.1"
-source = "git+https://github.com/kvark/blade?rev=61cbd6b2c224791d52b150fe535cee665cc91bb2#61cbd6b2c224791d52b150fe535cee665cc91bb2"
+source = "git+https://github.com/zed-industries/blade?rev=85981c0f4890a5fcd08da2a53cc4a0459247af44#85981c0f4890a5fcd08da2a53cc4a0459247af44"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5332,7 +5338,6 @@ dependencies = [
  "tree-sitter-c",
  "tree-sitter-cpp",
  "tree-sitter-css",
- "tree-sitter-dart",
  "tree-sitter-elixir",
  "tree-sitter-elm",
  "tree-sitter-embedded-template",
@@ -5342,7 +5347,6 @@ dependencies = [
  "tree-sitter-gowork",
  "tree-sitter-hcl",
  "tree-sitter-heex",
- "tree-sitter-html",
  "tree-sitter-jsdoc",
  "tree-sitter-json 0.20.0",
  "tree-sitter-lua",
@@ -5671,10 +5675,13 @@ dependencies = [
 name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-recursion 1.0.5",
  "editor",
  "gpui",
  "language",
+ "linkify",
+ "log",
  "pretty_assertions",
  "pulldown-cmark",
  "theme",
@@ -8296,6 +8303,7 @@ dependencies = [
 name = "search"
 version = "0.1.0"
 dependencies = [
+ "any_vec",
  "anyhow",
  "bitflags 2.4.2",
  "client",
@@ -9490,16 +9498,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
+ "file_icons",
  "fuzzy",
  "gpui",
  "itertools 0.11.0",
  "language",
- "menu",
  "picker",
  "project",
+ "schemars",
  "serde",
  "serde_json",
+ "settings",
  "task",
+ "terminal",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
@@ -10206,15 +10217,6 @@ dependencies = [
 name = "tree-sitter-css"
 version = "0.19.0"
 source = "git+https://github.com/tree-sitter/tree-sitter-css?rev=769203d0f9abe1a9a691ac2b9fe4bb4397a73c51#769203d0f9abe1a9a691ac2b9fe4bb4397a73c51"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-dart"
-version = "0.0.1"
-source = "git+https://github.com/agent3bood/tree-sitter-dart?rev=48934e3bf757a9b78f17bdfaa3e2b4284656fdc7#48934e3bf757a9b78f17bdfaa3e2b4284656fdc7"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -12112,6 +12114,7 @@ dependencies = [
 name = "workspace"
 version = "0.1.0"
 dependencies = [
+ "any_vec",
  "anyhow",
  "async-recursion 1.0.5",
  "bincode",
@@ -12371,7 +12374,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.130.0"
+version = "0.131.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -12484,6 +12487,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_dart"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.6",
+]
+
+[[package]]
+name = "zed_emmet"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.4",
+]
+
+[[package]]
 name = "zed_erlang"
 version = "0.0.1"
 dependencies = [
@@ -12502,13 +12519,6 @@ dependencies = [
 [[package]]
 name = "zed_extension_api"
 version = "0.0.5"
-dependencies = [
- "wit-bindgen",
-]
-
-[[package]]
-name = "zed_extension_api"
-version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5f4ae4e302a80591635ef9a236b35fde6fcc26cfd060e66fde4ba9f9fd394a1"
 dependencies = [
@@ -12516,14 +12526,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_extension_api"
+version = "0.0.6"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "zed_gleam"
 version = "0.0.2"
 dependencies = [
- "zed_extension_api 0.0.4",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]
 name = "zed_haskell"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.6",
+]
+
+[[package]]
+name = "zed_html"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4",
@@ -12554,14 +12580,14 @@ dependencies = [
 name = "zed_svelte"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.0.4",
+ "zed_extension_api 0.0.6",
 ]
 
 [[package]]
 name = "zed_toml"
 version = "0.0.2"
 dependencies = [
- "zed_extension_api 0.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.0.5",
 ]
 
 [[package]]
@@ -12575,7 +12601,7 @@ dependencies = [
 name = "zed_zig"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.0.5",
 ]
 
 [[package]]

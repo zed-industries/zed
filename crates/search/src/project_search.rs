@@ -1,7 +1,8 @@
 use crate::{
-    mode::SearchMode, ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery,
-    PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleReplace, ToggleWholeWord,
+    mode::SearchMode, ActivateRegexMode, ActivateTextMode, CycleMode, FocusSearch,
+    NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
+    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleReplace,
+    ToggleWholeWord,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -55,9 +56,14 @@ struct ActiveSettings(HashMap<WeakModel<Project>, ProjectSearchSettings>);
 
 impl Global for ActiveSettings {}
 
+const SEARCH_CONTEXT: u32 = 2;
+
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+        register_workspace_action(workspace, move |search_bar, _: &FocusSearch, cx| {
+            search_bar.focus_search(cx);
+        });
         register_workspace_action(workspace, move |search_bar, _: &ToggleFilters, cx| {
             search_bar.toggle_filters(cx);
         });
@@ -235,8 +241,12 @@ impl ProjectSearch {
                             .update(&mut cx, |this, cx| {
                                 this.no_results = Some(false);
                                 this.excerpts.update(cx, |excerpts, cx| {
-                                    excerpts
-                                        .stream_excerpts_with_context_lines(buffer, ranges, 1, cx)
+                                    excerpts.stream_excerpts_with_context_lines(
+                                        buffer,
+                                        ranges,
+                                        SEARCH_CONTEXT,
+                                        cx,
+                                    )
                                 })
                             })
                             .ok()?;
@@ -585,43 +595,54 @@ impl ProjectSearchView {
         cx.notify();
     }
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {
-        let model = self.model.read(cx);
-        if let Some(query) = model.active_query.as_ref() {
-            if model.match_ranges.is_empty() {
-                return;
-            }
-            if let Some(active_index) = self.active_match_index {
-                let query = query.clone().with_replacement(self.replacement(cx));
-                self.results_editor.replace(
-                    &(Box::new(model.match_ranges[active_index].clone()) as _),
-                    &query,
-                    cx,
-                );
-                self.select_match(Direction::Next, cx)
-            }
+        if self.model.read(cx).match_ranges.is_empty() {
+            return;
+        }
+        let Some(active_index) = self.active_match_index else {
+            return;
+        };
+
+        let query = self.model.read(cx).active_query.clone();
+        if let Some(query) = query {
+            let query = query.with_replacement(self.replacement(cx));
+
+            // TODO: Do we need the clone here?
+            let mat = self.model.read(cx).match_ranges[active_index].clone();
+            self.results_editor.update(cx, |editor, cx| {
+                editor.replace(&mat, &query, cx);
+            });
+            self.select_match(Direction::Next, cx)
         }
     }
     pub fn replacement(&self, cx: &AppContext) -> String {
         self.replacement_editor.read(cx).text(cx)
     }
     fn replace_all(&mut self, _: &ReplaceAll, cx: &mut ViewContext<Self>) {
-        let model = self.model.read(cx);
-        if let Some(query) = model.active_query.as_ref() {
-            if model.match_ranges.is_empty() {
-                return;
-            }
-            if self.active_match_index.is_some() {
-                let query = query.clone().with_replacement(self.replacement(cx));
-                let matches = model
-                    .match_ranges
-                    .iter()
-                    .map(|item| Box::new(item.clone()) as _)
-                    .collect::<Vec<_>>();
-                for item in matches {
-                    self.results_editor.replace(&item, &query, cx);
-                }
-            }
+        if self.active_match_index.is_none() {
+            return;
         }
+
+        let Some(query) = self.model.read(cx).active_query.as_ref() else {
+            return;
+        };
+        let query = query.clone().with_replacement(self.replacement(cx));
+
+        let match_ranges = self
+            .model
+            .update(cx, |model, _| mem::take(&mut model.match_ranges));
+        if match_ranges.is_empty() {
+            return;
+        }
+
+        self.results_editor.update(cx, |editor, cx| {
+            for item in &match_ranges {
+                editor.replace(item, &query, cx);
+            }
+        });
+
+        self.model.update(cx, |model, _cx| {
+            model.match_ranges = match_ranges;
+        });
     }
 
     fn new(
@@ -780,7 +801,7 @@ impl ProjectSearchView {
     // If no search exists in the workspace, create a new one.
     fn deploy_search(
         workspace: &mut Workspace,
-        _: &workspace::DeploySearch,
+        action: &workspace::DeploySearch,
         cx: &mut ViewContext<Workspace>,
     ) {
         let existing = workspace
@@ -789,7 +810,7 @@ impl ProjectSearchView {
             .items()
             .find_map(|item| item.downcast::<ProjectSearchView>());
 
-        Self::existing_or_new_search(workspace, existing, cx)
+        Self::existing_or_new_search(workspace, existing, action, cx);
     }
 
     fn search_in_new(workspace: &mut Workspace, _: &SearchInNew, cx: &mut ViewContext<Workspace>) {
@@ -829,12 +850,13 @@ impl ProjectSearchView {
         _: &workspace::NewSearch,
         cx: &mut ViewContext<Workspace>,
     ) {
-        Self::existing_or_new_search(workspace, None, cx)
+        Self::existing_or_new_search(workspace, None, &DeploySearch::find(), cx)
     }
 
     fn existing_or_new_search(
         workspace: &mut Workspace,
         existing: Option<View<ProjectSearchView>>,
+        action: &workspace::DeploySearch,
         cx: &mut ViewContext<Workspace>,
     ) {
         let query = workspace.active_item(cx).and_then(|item| {
@@ -870,6 +892,7 @@ impl ProjectSearchView {
         };
 
         search.update(cx, |search, cx| {
+            search.replace_enabled = action.replace_enabled;
             if let Some(query) = query {
                 search.set_query(&query, cx);
             }
@@ -1060,7 +1083,7 @@ impl ProjectSearchView {
                     editor.scroll(Point::default(), Some(Axis::Vertical), cx);
                 }
                 editor.highlight_background::<Self>(
-                    match_ranges,
+                    &match_ranges,
                     |theme| theme.search_match_background,
                     cx,
                 );
@@ -1153,6 +1176,14 @@ impl ProjectSearchBar {
 
     fn tab_previous(&mut self, _: &editor::actions::TabPrev, cx: &mut ViewContext<Self>) {
         self.cycle_field(Direction::Prev, cx);
+    }
+
+    fn focus_search(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                search_view.query_editor.focus_handle(cx).focus(cx);
+            });
+        }
     }
 
     fn cycle_field(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
@@ -1994,7 +2025,7 @@ pub mod tests {
                         .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
                 });
 
-                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch, cx)
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch::find(), cx)
             })
             .unwrap();
 
@@ -2143,7 +2174,7 @@ pub mod tests {
 
         workspace
             .update(cx, |workspace, cx| {
-                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch, cx)
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch::find(), cx)
             })
             .unwrap();
         window.update(cx, |_, cx| {
@@ -3242,7 +3273,7 @@ pub mod tests {
             .unwrap();
 
         // Deploy a new search
-        cx.dispatch_action(window.into(), DeploySearch);
+        cx.dispatch_action(window.into(), DeploySearch::find());
 
         // Both panes should now have a project search in them
         window
@@ -3267,7 +3298,7 @@ pub mod tests {
             .unwrap();
 
         // Deploy a new search
-        cx.dispatch_action(window.into(), DeploySearch);
+        cx.dispatch_action(window.into(), DeploySearch::find());
 
         // The project search view should now be focused in the second pane
         // And the number of items should be unchanged.

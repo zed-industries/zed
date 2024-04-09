@@ -345,7 +345,7 @@ impl EditorTestContext {
                 .background_highlights
                 .get(&TypeId::of::<Tag>())
                 .map(|h| h.1.clone())
-                .unwrap_or_default()
+                .unwrap_or_else(|| Arc::from([]))
                 .into_iter()
                 .map(|range| range.to_offset(&snapshot.buffer_snapshot))
                 .collect()

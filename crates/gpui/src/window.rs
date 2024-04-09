@@ -476,6 +476,12 @@ impl Window {
                 } else if needs_present {
                     handle.update(&mut cx, |_, cx| cx.present()).log_err();
                 }
+
+                handle
+                    .update(&mut cx, |_, cx| {
+                        cx.complete_frame();
+                    })
+                    .log_err();
             }
         }));
         platform_window.on_resize(Box::new({
@@ -1002,6 +1008,10 @@ impl<'a> WindowContext<'a> {
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.window.modifiers
+    }
+
+    fn complete_frame(&self) {
+        self.window.platform_window.completed_frame();
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
@@ -2853,11 +2863,16 @@ impl From<(&'static str, u64)> for ElementId {
 /// Passed as an argument [`ElementContext::paint_quad`].
 #[derive(Clone)]
 pub struct PaintQuad {
-    bounds: Bounds<Pixels>,
-    corner_radii: Corners<Pixels>,
-    background: Hsla,
-    border_widths: Edges<Pixels>,
-    border_color: Hsla,
+    /// The bounds of the quad within the window.
+    pub bounds: Bounds<Pixels>,
+    /// The radii of the quad's corners.
+    pub corner_radii: Corners<Pixels>,
+    /// The background color of the quad.
+    pub background: Hsla,
+    /// The widths of the quad's borders.
+    pub border_widths: Edges<Pixels>,
+    /// The color of the quad's borders.
+    pub border_color: Hsla,
 }
 
 impl PaintQuad {

@@ -2686,6 +2686,65 @@ fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_join_lines_with_git_diff_base(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        Line 0
+        Line 1
+        Line 2
+        Line 3
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        ˇLine 0
+        Line 1
+        Line 2
+        Line 3
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+
+    // Join lines
+    cx.update_editor(|editor, cx| {
+        editor.join_lines(&JoinLines, cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_editor_state(
+        &r#"
+        Line 0ˇ Line 1
+        Line 2
+        Line 3
+        "#
+        .unindent(),
+    );
+    // Join again
+    cx.update_editor(|editor, cx| {
+        editor.join_lines(&JoinLines, cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_editor_state(
+        &r#"
+        Line 0 Line 1ˇ Line 2
+        Line 3
+        "#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 async fn test_manipulate_lines_with_single_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -3317,7 +3376,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 position: snapshot.anchor_after(Point::new(2, 0)),
                 disposition: BlockDisposition::Below,
                 height: 1,
-                render: Arc::new(|_| div().into_any()),
+                render: Box::new(|_| div().into_any()),
             }],
             Some(Autoscroll::fit()),
             cx,
@@ -7263,7 +7322,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             |range: Range<Point>| buffer.anchor_after(range.start)..buffer.anchor_after(range.end);
 
         editor.highlight_background::<Type1>(
-            vec![
+            &[
                 anchor_range(Point::new(2, 1)..Point::new(2, 3)),
                 anchor_range(Point::new(4, 2)..Point::new(4, 4)),
                 anchor_range(Point::new(6, 3)..Point::new(6, 5)),
@@ -7273,7 +7332,7 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
             cx,
         );
         editor.highlight_background::<Type2>(
-            vec![
+            &[
                 anchor_range(Point::new(3, 2)..Point::new(3, 5)),
                 anchor_range(Point::new(5, 3)..Point::new(5, 6)),
                 anchor_range(Point::new(7, 4)..Point::new(7, 7)),

@@ -3,10 +3,11 @@ mod registrar;
 use crate::{
     mode::{next_mode, SearchMode},
     search_bar::render_nav_button,
-    ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery,
-    ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
+    ActivateRegexMode, ActivateTextMode, CycleMode, FocusSearch, NextHistoryQuery,
+    PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches,
+    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
+use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     actions::{Tab, TabPrev},
@@ -25,7 +26,7 @@ use project::{
 };
 use serde::Deserialize;
 use settings::Settings;
-use std::{any::Any, sync::Arc};
+use std::sync::Arc;
 use theme::ThemeSettings;
 
 use ui::{h_flex, prelude::*, IconButton, IconName, ToggleButton, Tooltip};
@@ -43,14 +44,30 @@ const MIN_INPUT_WIDTH_REMS: f32 = 15.;
 const MAX_INPUT_WIDTH_REMS: f32 = 30.;
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
+const fn true_value() -> bool {
+    true
+}
+
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
+    #[serde(default = "true_value")]
     pub focus: bool,
+    #[serde(default)]
+    pub replace_enabled: bool,
 }
 
 impl_actions!(buffer_search, [Deploy]);
 
 actions!(buffer_search, [Dismiss, FocusEditor]);
+
+impl Deploy {
+    pub fn find() -> Self {
+        Self {
+            focus: true,
+            replace_enabled: false,
+        }
+    }
+}
 
 pub enum Event {
     UpdateLocation,
@@ -70,8 +87,7 @@ pub struct BufferSearchBar {
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
     active_search: Option<Arc<SearchQuery>>,
-    searchable_items_with_matches:
-        HashMap<Box<dyn WeakSearchableItemHandle>, Vec<Box<dyn Any + Send>>>,
+    searchable_items_with_matches: HashMap<Box<dyn WeakSearchableItemHandle>, AnyVec<dyn Send>>,
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
@@ -191,7 +207,7 @@ impl Render for BufferSearchBar {
                 let matches_count = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
-                    .map(Vec::len)
+                    .map(AnyVec::len)
                     .unwrap_or(0);
                 if let Some(match_ix) = self.active_match_index {
                     Some(format!("{}/{}", match_ix + 1, matches_count))
@@ -470,6 +486,9 @@ impl ToolbarItemView for BufferSearchBar {
 
 impl BufferSearchBar {
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
+        registrar.register_handler(ForDeployed(|this, _: &FocusSearch, cx| {
+            this.query_editor.focus_handle(cx).focus(cx);
+        }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleCaseSensitive, cx| {
             if this.supported_options().case {
                 this.toggle_case_sensitive(action, cx);
@@ -583,9 +602,17 @@ impl BufferSearchBar {
     pub fn deploy(&mut self, deploy: &Deploy, cx: &mut ViewContext<Self>) -> bool {
         if self.show(cx) {
             self.search_suggested(cx);
+            self.replace_enabled = deploy.replace_enabled;
             if deploy.focus {
-                self.select_query(cx);
-                let handle = self.query_editor.focus_handle(cx);
+                let mut handle = self.query_editor.focus_handle(cx).clone();
+                let mut select_query = true;
+                if deploy.replace_enabled && handle.is_focused(cx) {
+                    handle = self.replacement_editor.focus_handle(cx).clone();
+                    select_query = false;
+                };
+                if select_query {
+                    self.select_query(cx);
+                }
                 cx.focus(&handle);
             }
             return true;
@@ -963,7 +990,7 @@ impl BufferSearchBar {
         done_rx
     }
 
-    fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
         let new_index = self
             .active_searchable_item
             .as_ref()
@@ -1067,7 +1094,7 @@ impl BufferSearchBar {
                                 .as_ref()
                                 .clone()
                                 .with_replacement(self.replacement(cx));
-                            searchable_item.replace(&matches[active_index], &query, cx);
+                            searchable_item.replace(matches.at(active_index), &query, cx);
                             self.select_next_match(&SelectNextMatch, cx);
                         }
                         should_propagate = false;
@@ -1099,6 +1126,11 @@ impl BufferSearchBar {
                 }
             }
         }
+    }
+
+    pub fn match_exists(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.update_match_index(cx);
+        self.active_match_index.is_some()
     }
 }
 
