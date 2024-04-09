@@ -4681,7 +4681,7 @@ dependencies = [
 [[package]]
 name = "heed"
 version = "0.20.0-alpha.9"
-source = "git+https://github.com/meilisearch/heed#036ac23f73a021894974b9adc815bc95b3e0482a"
+source = "git+https://github.com/meilisearch/heed?rev=036ac23f73a021894974b9adc815bc95b3e0482a#036ac23f73a021894974b9adc815bc95b3e0482a"
 dependencies = [
  "bitflags 2.4.2",
  "byteorder",
@@ -4699,12 +4699,12 @@ dependencies = [
 [[package]]
 name = "heed-traits"
 version = "0.20.0-alpha.9"
-source = "git+https://github.com/meilisearch/heed#036ac23f73a021894974b9adc815bc95b3e0482a"
+source = "git+https://github.com/meilisearch/heed?rev=036ac23f73a021894974b9adc815bc95b3e0482a#036ac23f73a021894974b9adc815bc95b3e0482a"
 
 [[package]]
 name = "heed-types"
 version = "0.20.0-alpha.9"
-source = "git+https://github.com/meilisearch/heed#036ac23f73a021894974b9adc815bc95b3e0482a"
+source = "git+https://github.com/meilisearch/heed?rev=036ac23f73a021894974b9adc815bc95b3e0482a#036ac23f73a021894974b9adc815bc95b3e0482a"
 dependencies = [
  "bincode",
  "byteorder",
@@ -5722,7 +5722,7 @@ dependencies = [
 [[package]]
 name = "lmdb-master-sys"
 version = "0.1.0"
-source = "git+https://github.com/meilisearch/heed#036ac23f73a021894974b9adc815bc95b3e0482a"
+source = "git+https://github.com/meilisearch/heed?rev=036ac23f73a021894974b9adc815bc95b3e0482a#036ac23f73a021894974b9adc815bc95b3e0482a"
 dependencies = [
  "cc",
  "doxygen-rs",
