@@ -10,7 +10,6 @@ path = "src/semantic_index.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
