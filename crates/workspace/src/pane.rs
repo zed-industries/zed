@@ -17,7 +17,7 @@ use gpui::{
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
 use serde::Deserialize;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{
     any::Any,
     cmp, fmt, mem,
@@ -260,6 +260,7 @@ impl Pane {
             cx.on_focus(&focus_handle, Pane::focus_in),
             cx.on_focus_in(&focus_handle, Pane::focus_in),
             cx.on_focus_out(&focus_handle, Pane::focus_out),
+            cx.observe_global::<SettingsStore>(Pane::on_enable_preview_tabs_setting_changed),
         ];
 
         let handle = cx.view().downgrade();
@@ -540,6 +541,12 @@ impl Pane {
     pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &AppContext) {
         if ItemSettings::get_global(cx).enable_preview_tabs {
             self.preview_item_id = item_id;
+        }
+    }
+
+    fn on_enable_preview_tabs_setting_changed(&mut self, cx: &mut ViewContext<Self>) {
+        if !ItemSettings::get_global(cx).enable_preview_tabs {
+            self.preview_item_id = None;
         }
     }
 
