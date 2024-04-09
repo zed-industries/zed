@@ -14,6 +14,7 @@ use client::{ChannelId, Client, Contact, ProjectId, User, UserStore};
 use contact_finder::ContactFinder;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
+use feature_flags::{self, FeatureFlagAppExt};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement,
@@ -611,8 +612,10 @@ impl CollabPanel {
                     self.entries.push(ListEntry::HostedProject { id, name });
                 }
 
-                for remote_project in remote_projects {
-                    self.entries.push(ListEntry::RemoteProject(remote_project));
+                if cx.has_flag::<feature_flags::Remoting>() {
+                    for remote_project in remote_projects {
+                        self.entries.push(ListEntry::RemoteProject(remote_project));
+                    }
                 }
             }
         }
@@ -1336,13 +1339,15 @@ impl CollabPanel {
                                 this.manage_members(channel_id, cx)
                             }),
                         )
-                        .entry(
-                            "Manage Dev Servers",
-                            None,
-                            cx.handler_for(&this, move |this, cx| {
-                                this.manage_dev_servers(channel_id, cx)
-                            }),
-                        )
+                        .when(cx.has_flag::<feature_flags::Remoting>(), |context_menu| {
+                            context_menu.entry(
+                                "Manage Remote Projects",
+                                None,
+                                cx.handler_for(&this, move |this, cx| {
+                                    this.manage_dev_servers(channel_id, cx)
+                                }),
+                            )
+                        })
                 } else {
                     context_menu = context_menu.entry(
                         "Move this channel",
