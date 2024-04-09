@@ -368,9 +368,9 @@ impl ContextProvider for RustContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "cargo check --workspace".into(),
+                label: "cargo check --workspace --all-targets".into(),
                 command: "cargo".into(),
-                args: vec!["check".into(), "--workspace".into()],
+                args: vec!["check".into(), "--workspace".into(), "--all-targets".into()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -407,6 +407,12 @@ impl ContextProvider for RustContextProvider {
                 label: "cargo run".into(),
                 command: "cargo".into(),
                 args: vec!["run".into()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "cargo clean".into(),
+                command: "cargo".into(),
+                args: vec!["clean".into()],
                 ..TaskTemplate::default()
             },
         ]))
