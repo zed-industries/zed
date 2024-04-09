@@ -347,7 +347,7 @@ pub enum LanguageServerState {
     },
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: String,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
@@ -3924,19 +3924,6 @@ impl Project {
                         },
                         cx,
                     );
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id,
-                            message: proto::update_language_server::Variant::WorkStart(
-                                proto::LspWorkStart {
-                                    token,
-                                    message: report.message,
-                                    percentage: report.percentage,
-                                },
-                            ),
-                        },
-                    )
-                    .ok();
                 }
             }
             lsp::WorkDoneProgress::Report(report) => {
@@ -3984,15 +3971,6 @@ impl Project {
                     .ok();
                 } else {
                     self.on_lsp_work_end(language_server_id, token.clone(), cx);
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id,
-                            message: proto::update_language_server::Variant::WorkEnd(
-                                proto::LspWorkEnd { token },
-                            ),
-                        },
-                    )
-                    .ok();
                 }
             }
         }
@@ -4006,8 +3984,20 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            status.pending_work.insert(token, progress);
+            status.pending_work.insert(token.clone(), progress.clone());
             cx.notify();
+        }
+
+        if self.is_local() {
+            self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
+                    token,
+                    message: progress.message,
+                    percentage: progress.percentage.map(|p| p as u32),
+                }),
+            })
+            .ok();
         }
     }
 
@@ -4048,6 +4038,16 @@ impl Project {
             cx.emit(Event::RefreshInlayHints);
             status.pending_work.remove(&token);
             cx.notify();
+        }
+
+        if self.is_local() {
+            self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
+                    token,
+                }),
+            })
+            .ok();
         }
     }
 
@@ -6721,7 +6721,7 @@ impl Project {
                     let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
 
                     let id = lsp_request.id();
-                    if status.is_some() {
+                    let _cleanup = if status.is_some() {
                         cx.update(|cx| {
                             this.update(cx, |this, cx| {
                                 this.on_lsp_work_start(
@@ -6737,22 +6737,35 @@ impl Project {
                             })
                         })
                         .log_err();
-                    }
+
+                        Some(defer(|| {
+                            cx.update(|cx| {
+                                this.update(cx, |this, cx| {
+                                    this.on_lsp_work_end(
+                                        language_server.server_id(),
+                                        id.to_string(),
+                                        cx,
+                                    );
+                                })
+                            })
+                            .log_err();
+                        }))
+                    } else {
+                        None
+                    };
 
                     let result = lsp_request.await;
-                    let response = match result {
-                        Ok(response) => response,
 
-                        Err(err) => {
-                            log::warn!(
-                                "Generic lsp request to {} failed: {}",
-                                language_server.name(),
-                                err
-                            );
-                            return Err(err);
-                        }
-                    };
-                    let result = request
+                    let response = result.map_err(|err| {
+                        log::warn!(
+                            "Generic lsp request to {} failed: {}",
+                            language_server.name(),
+                            err
+                        );
+                        err
+                    })?;
+
+                    request
                         .response_from_lsp(
                             response,
                             this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
@@ -6760,22 +6773,7 @@ impl Project {
                             language_server.server_id(),
                             cx.clone(),
                         )
-                        .await;
-
-                    if status.is_some() {
-                        cx.update(|cx| {
-                            this.update(cx, |this, cx| {
-                                this.on_lsp_work_end(
-                                    language_server.server_id(),
-                                    id.to_string(),
-                                    cx,
-                                );
-                            })
-                        })
-                        .log_err();
-                    }
-
-                    result
+                        .await
                 });
             }
         } else if let Some(project_id) = self.remote_id() {

@@ -5,11 +5,12 @@ use crate::{
         TestClient, TestServer,
     },
 };
+use anyhow::{anyhow, Result};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
-use futures::StreamExt as _;
+use futures::{channel::mpsc, StreamExt as _};
 use gpui::{
     px, size, AppContext, BackgroundExecutor, BorrowAppContext, Model, Modifiers, MouseButton,
     MouseDownEvent, TestAppContext,
@@ -21,6 +22,7 @@ use language::{
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
+use parking_lot::Mutex;
 use project::{
     search::SearchQuery, DiagnosticSummary, FormatTrigger, HoverBlockKind, Project, ProjectPath,
     SearchResult,
@@ -4662,6 +4664,7 @@ async fn test_references(
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
         "Rust",
         FakeLspAdapter {
+            name: "my-fake-lsp-adapter",
             capabilities: lsp::ServerCapabilities {
                 references_provider: Some(lsp::OneOf::Left(true)),
                 ..Default::default()
@@ -4698,12 +4701,40 @@ async fn test_references(
 
     // Request references to a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::References, _, _>(|params, _| async move {
+    let (lsp_response_tx, rx) = mpsc::unbounded::<Result<Option<Vec<lsp::Location>>>>();
+    fake_language_server.handle_request::<lsp::request::References, _, _>({
+        let rx = Arc::new(Mutex::new(Some(rx)));
+        move |params, _| {
+            assert_eq!(
+                params.text_document_position.text_document.uri.as_str(),
+                "file:///root/dir-1/one.rs"
+            );
+            let rx = rx.clone();
+            async move {
+                let mut response_rx = rx.lock().take().unwrap();
+                let result = response_rx.next().await.unwrap();
+                *rx.lock() = Some(response_rx);
+                result
+            }
+        }
+    });
+
+    let references = project_b.update(cx_b, |p, cx| p.references(&buffer_b, 7, cx));
+
+    // User is informed that a request is pending.
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, _| {
+        let status = project.language_server_statuses().next().cloned().unwrap();
+        assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(
-            params.text_document_position.text_document.uri.as_str(),
-            "file:///root/dir-1/one.rs"
+            status.pending_work.values().next().unwrap().message,
+            Some("Finding references...".into())
         );
-        Ok(Some(vec![
+    });
+
+    // Cause the language server to respond.
+    lsp_response_tx
+        .unbounded_send(Ok(Some(vec![
             lsp::Location {
                 uri: lsp::Url::from_file_path("/root/dir-1/two.rs").unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 24), lsp::Position::new(0, 27)),
@@ -4716,16 +4747,18 @@ async fn test_references(
                 uri: lsp::Url::from_file_path("/root/dir-2/three.rs").unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 37), lsp::Position::new(0, 40)),
             },
-        ]))
-    });
-
-    let references = project_b
-        .update(cx_b, |p, cx| p.references(&buffer_b, 7, cx))
-        .await
+        ])))
         .unwrap();
-    cx_b.read(|cx| {
+
+    let references = references.await.unwrap();
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, cx| {
+        // User is informed that a request is no longer pending.
+        let status = project.language_server_statuses().next().unwrap();
+        assert!(status.pending_work.is_empty());
+
         assert_eq!(references.len(), 3);
-        assert_eq!(project_b.read(cx).worktrees().count(), 2);
+        assert_eq!(project.worktrees().count(), 2);
 
         let two_buffer = references[0].buffer.read(cx);
         let three_buffer = references[2].buffer.read(cx);
@@ -4742,6 +4775,32 @@ async fn test_references(
         assert_eq!(references[0].range.to_offset(two_buffer), 24..27);
         assert_eq!(references[1].range.to_offset(two_buffer), 35..38);
         assert_eq!(references[2].range.to_offset(three_buffer), 37..40);
+    });
+
+    let references = project_b.update(cx_b, |p, cx| p.references(&buffer_b, 7, cx));
+
+    // User is informed that a request is pending.
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, _| {
+        let status = project.language_server_statuses().next().cloned().unwrap();
+        assert_eq!(status.name, "my-fake-lsp-adapter");
+        assert_eq!(
+            status.pending_work.values().next().unwrap().message,
+            Some("Finding references...".into())
+        );
+    });
+
+    // Cause the LSP request to fail.
+    lsp_response_tx
+        .unbounded_send(Err(anyhow!("can't find references")))
+        .unwrap();
+    references.await.unwrap_err();
+
+    // User is informed that the request is no longer pending.
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, _| {
+        let status = project.language_server_statuses().next().unwrap();
+        assert!(status.pending_work.is_empty());
     });
 }
 
