@@ -1,6 +1,6 @@
 use super::*;
-use time::OffsetDateTime;
 use time::Duration;
+use time::OffsetDateTime;
 
 impl Database {
     pub async fn get_embeddings(
@@ -34,7 +34,8 @@ impl Database {
         self.weak_transaction(|tx| async move {
             embedding::Entity::insert_many(embeddings.iter().map(|(digest, dimensions)| {
                 let now_offset_datetime = OffsetDateTime::now_utc();
-                let retrieved_at = PrimitiveDateTime::new(now_offset_datetime.date(), now_offset_datetime.time());
+                let retrieved_at =
+                    PrimitiveDateTime::new(now_offset_datetime.date(), now_offset_datetime.time());
 
                 embedding::ActiveModel {
                     provider: ActiveValue::set(provider.to_string()),
@@ -57,9 +58,13 @@ impl Database {
 
     pub async fn purge_old_embeddings(&self) -> Result<()> {
         self.weak_transaction(|tx| async move {
-            embedding::Entity::delete_many().filter(embedding::Column::RetrievedAt.lte(
-                OffsetDateTime::now_utc() - Duration::days(7)
-            )).exec(&*tx).await?;
+            embedding::Entity::delete_many()
+                .filter(
+                    embedding::Column::RetrievedAt
+                        .lte(OffsetDateTime::now_utc() - Duration::days(7)),
+                )
+                .exec(&*tx)
+                .await?;
 
             Ok(())
         })
