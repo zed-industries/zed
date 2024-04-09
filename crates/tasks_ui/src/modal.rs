@@ -364,16 +364,14 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        if let Some(spawn_in_terminal) = &task.resolved {
+        task.resolved.as_ref().map(|spawn_in_terminal| {
+            let mut command = spawn_in_terminal.command.clone();
             if !spawn_in_terminal.args.is_empty() {
-                let mut command = spawn_in_terminal.command.clone();
                 command.push(' ');
                 command.extend(intersperse(spawn_in_terminal.args.clone(), " ".to_string()));
-                return Some(command);
             }
-        }
-
-        None
+            command
+        })
     }
 
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {

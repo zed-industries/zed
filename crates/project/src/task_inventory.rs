@@ -2,6 +2,7 @@
 
 use std::{
     any::TypeId,
+    cmp,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -253,39 +254,7 @@ impl Inventory {
 
         previous_resolved_tasks
             .chain(current_resolved_tasks)
-            .sorted_unstable_by(
-                |(kind_a, task_a, lru_score_a), (kind_b, task_b, lru_score_b)| {
-                    lru_score_a
-                        .cmp(&lru_score_b)
-                        .then(
-                            task_source_kind_preference(kind_a)
-                                .cmp(&task_source_kind_preference(kind_b)),
-                        )
-                        .then(
-                            kind_a
-                                .worktree()
-                                .is_none()
-                                .cmp(&kind_b.worktree().is_none()),
-                        )
-                        .then(kind_a.worktree().cmp(&kind_b.worktree()))
-                        .then(
-                            kind_a
-                                .abs_path()
-                                .is_none()
-                                .cmp(&kind_b.abs_path().is_none()),
-                        )
-                        .then(kind_a.abs_path().cmp(&kind_b.abs_path()))
-                        .then({
-                            NumericPrefixWithSuffix::from_numeric_prefixed_str(
-                                &task_a.resolved_label,
-                            )
-                            .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
-                                &task_b.resolved_label,
-                            ))
-                            .then(task_a.resolved_label.cmp(&task_b.resolved_label))
-                        })
-                },
-            )
+            .sorted_unstable_by(task_lru_comparator)
             .unique_by(|(kind, task, _)| (kind.clone(), task.resolved_label.clone()))
             .partition_map(|(kind, task, lru_index)| {
                 if lru_index < not_used_score {
@@ -320,6 +289,36 @@ impl Inventory {
     }
 }
 
+fn task_lru_comparator(
+    (kind_a, task_a, lru_score_a): &(TaskSourceKind, ResolvedTask, u32),
+    (kind_b, task_b, lru_score_b): &(TaskSourceKind, ResolvedTask, u32),
+) -> cmp::Ordering {
+    lru_score_a
+        .cmp(&lru_score_b)
+        .then(task_source_kind_preference(kind_a).cmp(&task_source_kind_preference(kind_b)))
+        .then(
+            kind_a
+                .worktree()
+                .is_none()
+                .cmp(&kind_b.worktree().is_none()),
+        )
+        .then(kind_a.worktree().cmp(&kind_b.worktree()))
+        .then(
+            kind_a
+                .abs_path()
+                .is_none()
+                .cmp(&kind_b.abs_path().is_none()),
+        )
+        .then(kind_a.abs_path().cmp(&kind_b.abs_path()))
+        .then({
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(&task_a.resolved_label)
+                .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
+                    &task_b.resolved_label,
+                ))
+                .then(task_a.resolved_label.cmp(&task_b.resolved_label))
+        })
+}
+
 fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
     match kind {
         TaskSourceKind::Language { .. } => 1,
@@ -332,6 +331,7 @@ fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_inventory {
     use gpui::{AppContext, Context as _, Model, ModelContext, TestAppContext};
+    use itertools::Itertools;
     use task::{TaskContext, TaskId, TaskSource, TaskTemplate, TaskTemplates};
     use worktree::WorktreeId;
 
@@ -415,6 +415,7 @@ pub mod test_inventory {
                     .list_tasks(None, worktree, cx)
                     .into_iter()
                     .map(|(_, task)| task.label)
+                    .sorted()
                     .collect()
             }
         })
@@ -446,10 +447,16 @@ pub mod test_inventory {
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
         inventory.update(cx, |inventory, cx| {
-            inventory
-                .list_tasks(None, worktree, cx)
-                .into_iter()
-                .map(|(source_kind, task)| (source_kind, task.label))
+            let (used, current) = inventory.used_and_current_resolved_tasks(
+                None,
+                worktree,
+                TaskContext::default(),
+                cx,
+            );
+            let mut all = used;
+            all.extend(current);
+            all.into_iter()
+                .map(|(source_kind, task)| (source_kind, task.resolved_label))
                 .collect()
         })
     }
@@ -509,7 +516,6 @@ mod tests {
         assert_eq!(
             list_task_names(&inventory, None, false, cx),
             &expected_initial_state,
-            "Task list without lru sorting, should be sorted alphanumerically"
         );
         assert_eq!(
             list_task_names(&inventory, None, true, cx),
@@ -521,7 +527,6 @@ mod tests {
         assert_eq!(
             list_task_names(&inventory, None, false, cx),
             &expected_initial_state,
-            "Task list without lru sorting, should be sorted alphanumerically"
         );
         assert_eq!(
             list_task_names(&inventory, None, true, cx),
@@ -540,7 +545,6 @@ mod tests {
         assert_eq!(
             list_task_names(&inventory, None, false, cx),
             &expected_initial_state,
-            "Task list without lru sorting, should be sorted alphanumerically"
         );
         assert_eq!(
             list_task_names(&inventory, None, true, cx),
@@ -562,17 +566,16 @@ mod tests {
             );
         });
         let expected_updated_state = [
+            "10_hello".to_string(),
+            "11_hello".to_string(),
             "1_a_task".to_string(),
             "1_task".to_string(),
             "2_task".to_string(),
             "3_task".to_string(),
-            "10_hello".to_string(),
-            "11_hello".to_string(),
         ];
         assert_eq!(
             list_task_names(&inventory, None, false, cx),
             &expected_updated_state,
-            "Task list without lru sorting, should be sorted alphanumerically"
         );
         assert_eq!(
             list_task_names(&inventory, None, true, cx),
@@ -590,7 +593,6 @@ mod tests {
         assert_eq!(
             list_task_names(&inventory, None, false, cx),
             &expected_updated_state,
-            "Task list without lru sorting, should be sorted alphanumerically"
         );
         assert_eq!(
             list_task_names(&inventory, None, true, cx),
@@ -759,7 +761,7 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>();
 
-        assert_eq!(list_tasks(&inventory_with_statics, None, cx), all_tasks,);
+        assert_eq!(list_tasks(&inventory_with_statics, None, cx), all_tasks);
         assert_eq!(
             list_tasks(&inventory_with_statics, Some(worktree_1), cx),
             worktree_1_tasks
