@@ -5,7 +5,7 @@ use collections::HashMap;
 use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use util::ResultExt;
+use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{ResolvedTask, SpawnInTerminal, TaskContext, TaskId, ZED_VARIABLE_NAME_PREFIX};
 
@@ -75,6 +75,7 @@ impl TaskTemplate {
             task_variables,
         } = cx;
         let task_variables = task_variables.into_env_variables();
+        let truncated_variables = truncate_variables(&task_variables);
         let cwd = match self.cwd.as_deref() {
             Some(cwd) => Some(substitute_all_template_variables_in_str(
                 cwd,
@@ -84,7 +85,9 @@ impl TaskTemplate {
         }
         .map(PathBuf::from)
         .or(cwd);
-        let label = substitute_all_template_variables_in_str(&self.label, &task_variables)?;
+        let shortened_label =
+            substitute_all_template_variables_in_str(&self.label, &truncated_variables)?;
+        let full_label = substitute_all_template_variables_in_str(&self.label, &task_variables)?;
         let command = substitute_all_template_variables_in_str(&self.command, &task_variables)?;
         let args = substitute_all_template_variables_in_vec(self.args.clone(), &task_variables)?;
         let task_hash = to_hex_hash(self)
@@ -99,11 +102,11 @@ impl TaskTemplate {
         Some(ResolvedTask {
             id: id.clone(),
             original_task: self.clone(),
-            resolved_label: label.clone(),
+            resolved_label: full_label,
             resolved: Some(SpawnInTerminal {
                 id,
                 cwd,
-                label,
+                label: shortened_label,
                 command,
                 args,
                 env,
@@ -113,6 +116,13 @@ impl TaskTemplate {
             }),
         })
     }
+}
+
+fn truncate_variables(task_variables: &HashMap<String, String>) -> HashMap<String, String> {
+    task_variables
+        .iter()
+        .map(|(key, value)| (key.clone(), truncate_and_remove_front(value, 15)))
+        .collect()
 }
 
 fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
@@ -134,20 +144,17 @@ fn substitute_all_template_variables_in_str(
 }
 
 fn substitute_all_template_variables_in_vec(
-    mut keys: Vec<String>,
+    mut template_strs: Vec<String>,
     task_variables: &HashMap<String, String>,
 ) -> Option<Vec<String>> {
-    for key in &mut keys {
-        match task_variables.get(key) {
-            Some(variable_expansion) => *key = variable_expansion.clone(),
-            None => {
-                if key.starts_with(ZED_VARIABLE_NAME_PREFIX) {
-                    return None;
-                }
-            }
+    for template_str in &mut template_strs {
+        let substituted_string = subst::substitute(&template_str, task_variables).ok()?;
+        if substituted_string.contains(ZED_VARIABLE_NAME_PREFIX) {
+            return None;
         }
+        *template_str = substituted_string
     }
-    Some(keys)
+    Some(template_strs)
 }
 
 fn substitute_all_template_variables_in_map(
