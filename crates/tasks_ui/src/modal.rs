@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
-use task::{oneshot_source::OneshotSource, ResolvedTask, TaskContext};
+use task::{ResolvedTask, TaskContext, TaskTemplate};
 use ui::{
     div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon, IconButton,
     IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
@@ -80,29 +80,25 @@ impl TasksModalDelegate {
         }
     }
 
-    fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<(TaskSourceKind, ResolvedTask)> {
+    fn spawn_oneshot(&mut self) -> Option<(TaskSourceKind, ResolvedTask)> {
         if self.prompt.trim().is_empty() {
             return None;
         }
 
-        let (source, source_kind) = self
-            .inventory
-            .update(cx, |inventory, _| inventory.source::<OneshotSource>())?;
-        source
-            .update(cx, |oneshot_source, _| {
-                let oneshot_source = oneshot_source.as_any().downcast_mut::<OneshotSource>()?;
-                Some(oneshot_source.spawn(self.prompt.clone()))
-            })
-            .and_then(|task| {
-                let id_base = source_kind.to_id_base();
-                Some((
-                    source_kind,
-                    task.resolve_task(id_base, self.task_context.clone())?,
-                ))
-            })
+        let source_kind = TaskSourceKind::UserInput;
+        let id_base = source_kind.to_id_base();
+        let new_oneshot = TaskTemplate {
+            label: self.prompt.clone(),
+            command: self.prompt.clone(),
+            ..TaskTemplate::default()
+        };
+        Some((
+            source_kind,
+            new_oneshot.resolve_task(id_base, self.task_context.clone())?,
+        ))
     }
 
-    fn delete_oneshot(&mut self, ix: usize, cx: &mut AppContext) {
+    fn delete_previously_used(&mut self, ix: usize, cx: &mut AppContext) {
         let Some(candidates) = self.candidates.as_mut() else {
             return;
         };
@@ -113,14 +109,8 @@ impl TasksModalDelegate {
         // it doesn't make sense to requery the inventory for new candidates, as that's potentially costly and more often than not it should just return back
         // the original list without a removed entry.
         candidates.remove(ix);
-        self.inventory.update(cx, |inventory, cx| {
-            let (oneshot_source, _) = inventory.source::<OneshotSource>()?;
-            oneshot_source.update(cx, |task_source, _| {
-                let oneshot_source = task_source.as_any().downcast_mut::<OneshotSource>()?;
-                oneshot_source.remove(&task.original_task);
-                Some(())
-            });
-            Some(())
+        self.inventory.update(cx, |inventory, _| {
+            inventory.delete_previously_used(&task.id);
         });
     }
 }
@@ -308,16 +298,13 @@ impl PickerDelegate for TasksModalDelegate {
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
-        let (source_kind, _) = &candidates[hit.candidate_id];
+        let (source_kind, _) = &candidates.get(hit.candidate_id)?;
 
         let highlighted_location = HighlightedText {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
             char_count: hit.string.chars().count(),
         };
-        let base_item = ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
-            .inset(true)
-            .spacing(ListItemSpacing::Sparse);
         let icon = match source_kind {
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
             TaskSourceKind::AbsPath { .. } => Some(Icon::new(IconName::Settings)),
@@ -327,9 +314,13 @@ impl PickerDelegate for TasksModalDelegate {
                 .map(|icon_path| Icon::from_path(icon_path)),
         };
         Some(
-            base_item
+            ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
                 .map(|item| {
-                    let item = if matches!(source_kind, TaskSourceKind::UserInput) {
+                    let item = if matches!(source_kind, TaskSourceKind::UserInput)
+                        || Some(ix) <= self.last_used_candidate_index
+                    {
                         let task_index = hit.candidate_id;
                         let delete_button = div().child(
                             IconButton::new("delete", IconName::Close)
@@ -337,14 +328,21 @@ impl PickerDelegate for TasksModalDelegate {
                                 .icon_color(Color::Muted)
                                 .size(ButtonSize::None)
                                 .icon_size(IconSize::XSmall)
-                                .on_click(cx.listener(move |this, _event, cx| {
+                                .on_click(cx.listener(move |picker, _event, cx| {
                                     cx.stop_propagation();
                                     cx.prevent_default();
 
-                                    this.delegate.delete_oneshot(task_index, cx);
-                                    this.refresh(cx);
+                                    picker.delegate.delete_previously_used(task_index, cx);
+                                    picker.delegate.last_used_candidate_index = picker
+                                        .delegate
+                                        .last_used_candidate_index
+                                        .unwrap_or(0)
+                                        .checked_sub(1);
+                                    picker.refresh(cx);
                                 }))
-                                .tooltip(|cx| Tooltip::text("Delete an one-shot task", cx)),
+                                .tooltip(|cx| {
+                                    Tooltip::text("Delete previously scheduled task", cx)
+                                }),
                         );
                         item.end_hover_slot(delete_button)
                     } else {
@@ -379,7 +377,7 @@ impl PickerDelegate for TasksModalDelegate {
     }
 
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
-        let Some((task_source_kind, task)) = self.spawn_oneshot(cx) else {
+        let Some((task_source_kind, task)) = self.spawn_oneshot() else {
             return;
         };
         self.workspace
@@ -436,12 +434,6 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        project.update(cx, |project, cx| {
-            project.task_inventory().update(cx, |inventory, cx| {
-                inventory.add_source(TaskSourceKind::UserInput, |cx| OneshotSource::new(cx), cx)
-            })
-        });
-
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);

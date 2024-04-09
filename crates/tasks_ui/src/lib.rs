@@ -317,9 +317,9 @@ mod tests {
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
     use language::{Language, LanguageConfig, SymbolContextProvider};
-    use project::{FakeFs, Project, TaskSourceKind};
+    use project::{FakeFs, Project};
     use serde_json::json;
-    use task::{oneshot_source::OneshotSource, TaskContext, TaskVariables, VariableName};
+    use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
     use workspace::{AppState, Workspace};
 
@@ -387,11 +387,6 @@ mod tests {
             .with_context_provider(Some(Arc::new(SymbolContextProvider))),
         );
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        project.update(cx, |project, cx| {
-            project.task_inventory().update(cx, |inventory, cx| {
-                inventory.add_source(TaskSourceKind::UserInput, |cx| OneshotSource::new(cx), cx)
-            })
-        });
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees().next().unwrap().read(cx).id()
         });

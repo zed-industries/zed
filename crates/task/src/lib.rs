@@ -1,7 +1,6 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
 #![deny(missing_docs)]
 
-pub mod oneshot_source;
 pub mod static_source;
 mod task_template;
 mod vscode_format;

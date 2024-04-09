@@ -29,10 +29,7 @@ use settings::{
     SettingsStore, DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use task::{
-    oneshot_source::OneshotSource,
-    static_source::{StaticSource, TrackedFile},
-};
+use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 
@@ -162,11 +159,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             project.update(cx, |project, cx| {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
-                    inventory.add_source(
-                        TaskSourceKind::UserInput,
-                        |cx| OneshotSource::new(cx),
-                        cx,
-                    );
                     inventory.add_source(
                         TaskSourceKind::AbsPath {
                             id_base: "global_tasks",

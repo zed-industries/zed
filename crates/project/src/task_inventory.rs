@@ -10,7 +10,7 @@ use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use itertools::{Either, Itertools};
 use language::Language;
-use task::{ResolvedTask, TaskContext, TaskSource, TaskTemplate};
+use task::{ResolvedTask, TaskContext, TaskId, TaskSource, TaskTemplate};
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
@@ -252,7 +252,7 @@ impl Inventory {
             .map(|(_, (kind, task, lru_score))| (kind.clone(), task.clone(), lru_score));
 
         previous_resolved_tasks
-            .chain(current_resolved_tasks.into_iter())
+            .chain(current_resolved_tasks)
             .sorted_unstable_by(
                 |(kind_a, task_a, lru_score_a), (kind_b, task_b, lru_score_b)| {
                     lru_score_a
@@ -312,6 +312,11 @@ impl Inventory {
         if self.last_scheduled_tasks.len() > 5_000 {
             self.last_scheduled_tasks.pop_front();
         }
+    }
+
+    /// TODO kb docs
+    pub fn delete_previously_used(&mut self, id: &TaskId) {
+        self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
 }
 
@@ -402,7 +407,7 @@ pub mod test_inventory {
                     cx,
                 );
                 used.into_iter()
-                    .chain(current.into_iter())
+                    .chain(current)
                     .map(|(_, task)| task.original_task.label)
                     .collect()
             } else {
