@@ -882,6 +882,7 @@ impl<'a> WindowContext<'a> {
             .retain(&(), |callback| callback(self));
     }
 
+    /// Call the subscribers when the window is going to close
     pub fn window_closing(&mut self) {
         self.window
             .closing_observers
