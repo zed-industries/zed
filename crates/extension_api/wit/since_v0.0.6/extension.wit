@@ -91,26 +91,37 @@ world extension {
     /// Returns the workspace configuration options to pass to the language server.
     export language-server-workspace-configuration: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 
+    /// A label containing some code.
     record code-label {
         /// The source code to parse with Tree-sitter.
         code: string,
+        /// The spans to display in the label.
         spans: list<code-label-span>,
+        /// The range of the code to include when filtering.
         filter-range: range,
     }
 
+    /// A span within a code label.
     variant code-label-span {
         /// A range into the parsed code.
         code-range(range),
+        /// A span containing a code literal.
         literal(code-label-span-literal),
     }
 
+    /// A span containing a code literal.
     record code-label-span-literal {
+        /// The literal text.
         text: string,
+        /// The name of the highlight to use for this literal.
         highlight-name: option<string>,
     }
 
+    /// A (half-open) range (`[start, end)`).
     record range {
+        /// The start of the range (inclusive).
         start: u32,
+        /// The end of the range (exclusive).
         end: u32,
     }
 
