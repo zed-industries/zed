@@ -767,10 +767,11 @@ struct ChunkFiles {
 }
 
 struct ChunkedFile {
-    worktree_root: Arc<Path>,
-    entry: Entry,
-    text: String,
-    chunks: Vec<Chunk>,
+    #[allow(dead_code)]
+    pub worktree_root: Arc<Path>,
+    pub entry: Entry,
+    pub text: String,
+    pub chunks: Vec<Chunk>,
 }
 
 struct EmbedFiles {
