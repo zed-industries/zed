@@ -81,7 +81,7 @@ use ui::{
 };
 use util::ResultExt;
 use uuid::Uuid;
-pub use workspace_settings::{AutosaveSetting, WorkspaceSettings};
+pub use workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings};
 
 use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
@@ -260,6 +260,7 @@ impl Column for WorkspaceId {
 pub fn init_settings(cx: &mut AppContext) {
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
+    TabBarSettings::register(cx);
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
@@ -2286,7 +2287,7 @@ impl Workspace {
         }
     }
 
-    fn find_pane_in_direction(
+    pub fn find_pane_in_direction(
         &mut self,
         direction: SplitDirection,
         cx: &WindowContext,
@@ -2334,11 +2335,13 @@ impl Workspace {
     }
 
     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
+        // This is explicitly hoisted out of the following check for pane identity as
+        // terminal panel panes are not registered as a center panes.
+        self.status_bar.update(cx, |status_bar, cx| {
+            status_bar.set_active_pane(&pane, cx);
+        });
         if self.active_pane != pane {
             self.active_pane = pane.clone();
-            self.status_bar.update(cx, |status_bar, cx| {
-                status_bar.set_active_pane(&self.active_pane, cx);
-            });
             self.active_item_path_changed(cx);
             self.last_active_center_pane = Some(pane.downgrade());
         }

@@ -36,7 +36,7 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  "ui_font_family": "Zed Sans",
+  "ui_font_family": ".SystemUIFont",
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
@@ -284,6 +284,11 @@
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
   "autosave": "off",
+  // Settings related to the editor's tab bar.
+  "tab_bar": {
+    // Whether or not to show the navigation history buttons.
+    "show_nav_history_buttons": true
+  },
   // Settings related to the editor's tabs
   "tabs": {
     // Whether to show opened editors as preview editors.
@@ -554,52 +559,16 @@
     "C": {
       "format_on_save": "off"
     },
-    "Plain Text": {
-      "soft_wrap": "preferred_line_length"
-    },
-    "Elixir": {
-      "tab_size": 2
-    },
     "Gleam": {
       "tab_size": 2
     },
     "Go": {
-      "tab_size": 4,
-      "hard_tabs": true,
       "code_actions_on_format": {
         "source.organizeImports": true
       }
     },
     "Make": {
       "hard_tabs": true
-    },
-    "Markdown": {
-      "tab_size": 2,
-      "soft_wrap": "preferred_line_length"
-    },
-    "JavaScript": {
-      "tab_size": 2
-    },
-    "Terraform": {
-      "tab_size": 2
-    },
-    "TypeScript": {
-      "tab_size": 2
-    },
-    "TSX": {
-      "tab_size": 2
-    },
-    "YAML": {
-      "tab_size": 2
-    },
-    "JSON": {
-      "tab_size": 2
-    },
-    "OCaml": {
-      "tab_size": 2
-    },
-    "OCaml Interface": {
-      "tab_size": 2
     },
     "Prisma": {
       "tab_size": 2
@@ -655,5 +624,10 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
+  },
+  // Task-related settings.
+  "task": {
+    // Whether to show task status indicator in the status bar. Default: true
+    "show_status_indicator": true
   }
 }

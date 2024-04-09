@@ -38,6 +38,7 @@ use schemars::{
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use smol::future::FutureExt as _;
+use std::num::NonZeroU32;
 use std::{
     any::Any,
     cell::RefCell,
@@ -73,6 +74,8 @@ pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::LineEnding;
 pub use tree_sitter::{Parser, Tree};
 
+use crate::language_settings::SoftWrap;
+
 /// Initializes the `language` crate.
 ///
 /// This should be called before making use of items from the create.
@@ -99,6 +102,7 @@ lazy_static! {
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
+            soft_wrap: Some(SoftWrap::PreferredLineLength),
             ..Default::default()
         },
         None,
@@ -576,6 +580,17 @@ pub struct LanguageConfig {
     /// The names of any Prettier plugins that should be used for this language.
     #[serde(default)]
     pub prettier_plugins: Vec<Arc<str>>,
+
+    /// Whether to indent lines using tab characters, as opposed to multiple
+    /// spaces.
+    #[serde(default)]
+    pub hard_tabs: Option<bool>,
+    /// How many columns a tab should occupy.
+    #[serde(default)]
+    pub tab_size: Option<NonZeroU32>,
+    /// How to soft-wrap long lines of text.
+    #[serde(default)]
+    pub soft_wrap: Option<SoftWrap>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -660,6 +675,9 @@ impl Default for LanguageConfig {
             prettier_parser_name: None,
             prettier_plugins: Default::default(),
             collapsed_placeholder: Default::default(),
+            hard_tabs: Default::default(),
+            tab_size: Default::default(),
+            soft_wrap: Default::default(),
         }
     }
 }

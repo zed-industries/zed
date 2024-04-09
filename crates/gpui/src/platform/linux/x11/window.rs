@@ -5,10 +5,12 @@ use crate::{
     platform::blade::BladeRenderer, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
     Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams,
+    X11Client, X11ClientState,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
+use util::ResultExt;
 use x11rb::{
     connection::Connection,
     protocol::xproto::{self, ConnectionExt as _, CreateWindowAux},
@@ -17,8 +19,9 @@ use x11rb::{
 };
 
 use std::{
-    cell::RefCell,
+    cell::{Ref, RefCell, RefMut},
     ffi::c_void,
+    iter::Zip,
     mem,
     num::NonZeroU32,
     ptr::NonNull,
@@ -28,19 +31,6 @@ use std::{
 
 use super::X11Display;
 
-#[derive(Default)]
-struct Callbacks {
-    request_frame: Option<Box<dyn FnMut()>>,
-    input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
-    active_status_change: Option<Box<dyn FnMut(bool)>>,
-    resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    fullscreen: Option<Box<dyn FnMut(bool)>>,
-    moved: Option<Box<dyn FnMut()>>,
-    should_close: Option<Box<dyn FnMut() -> bool>>,
-    close: Option<Box<dyn FnOnce()>>,
-    appearance_changed: Option<Box<dyn FnMut()>>,
-}
-
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
         WM_PROTOCOLS,
@@ -48,23 +38,6 @@ x11rb::atom_manager! {
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
-    }
-}
-
-struct LinuxWindowInner {
-    bounds: Bounds<i32>,
-    scale_factor: f32,
-    renderer: BladeRenderer,
-    input_handler: Option<PlatformInputHandler>,
-}
-
-impl LinuxWindowInner {
-    fn content_size(&self) -> Size<Pixels> {
-        let size = self.renderer.viewport_size();
-        Size {
-            width: size.width.into(),
-            height: size.height.into(),
-        }
     }
 }
 
@@ -88,17 +61,37 @@ struct RawWindow {
     visual_id: u32,
 }
 
+#[derive(Default)]
+pub struct Callbacks {
+    request_frame: Option<Box<dyn FnMut()>>,
+    input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
+    active_status_change: Option<Box<dyn FnMut(bool)>>,
+    resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
+    fullscreen: Option<Box<dyn FnMut(bool)>>,
+    moved: Option<Box<dyn FnMut()>>,
+    should_close: Option<Box<dyn FnMut() -> bool>>,
+    close: Option<Box<dyn FnOnce()>>,
+    appearance_changed: Option<Box<dyn FnMut()>>,
+}
+
 pub(crate) struct X11WindowState {
-    xcb_connection: Rc<XCBConnection>,
-    display: Rc<dyn PlatformDisplay>,
     raw: RawWindow,
-    x_window: xproto::Window,
-    callbacks: RefCell<Callbacks>,
-    inner: RefCell<LinuxWindowInner>,
+
+    bounds: Bounds<i32>,
+    scale_factor: f32,
+    renderer: BladeRenderer,
+    display: Rc<dyn PlatformDisplay>,
+
+    input_handler: Option<PlatformInputHandler>,
 }
 
 #[derive(Clone)]
-pub(crate) struct X11Window(pub(crate) Rc<X11WindowState>);
+pub(crate) struct X11Window {
+    pub(crate) state: Rc<RefCell<X11WindowState>>,
+    pub(crate) callbacks: Rc<RefCell<Callbacks>>,
+    xcb_connection: Rc<XCBConnection>,
+    x_window: xproto::Window,
+}
 
 // todo(linux): Remove other RawWindowHandle implementation
 unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
@@ -121,7 +114,7 @@ unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
 impl rwh::HasWindowHandle for X11Window {
     fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
         Ok(unsafe {
-            let non_zero = NonZeroU32::new(self.0.raw.window_id).unwrap();
+            let non_zero = NonZeroU32::new(self.state.borrow().raw.window_id).unwrap();
             let handle = rwh::XcbWindowHandle::new(non_zero);
             rwh::WindowHandle::borrow_raw(handle.into())
         })
@@ -130,8 +123,9 @@ impl rwh::HasWindowHandle for X11Window {
 impl rwh::HasDisplayHandle for X11Window {
     fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
         Ok(unsafe {
-            let non_zero = NonNull::new(self.0.raw.connection).unwrap();
-            let handle = rwh::XcbDisplayHandle::new(Some(non_zero), self.0.raw.screen_id as i32);
+            let this = self.state.borrow();
+            let non_zero = NonNull::new(this.raw.connection).unwrap();
+            let handle = rwh::XcbDisplayHandle::new(Some(non_zero), this.raw.screen_id as i32);
             rwh::DisplayHandle::borrow_raw(handle.into())
         })
     }
@@ -239,22 +233,52 @@ impl X11WindowState {
         let gpu_extent = query_render_extent(xcb_connection, x_window);
 
         Self {
-            xcb_connection: xcb_connection.clone(),
             display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
             raw,
+            bounds: params.bounds.map(|v| v.0),
+            scale_factor: 1.0,
+            renderer: BladeRenderer::new(gpu, gpu_extent),
+
+            input_handler: None,
+        }
+    }
+
+    fn content_size(&self) -> Size<Pixels> {
+        let size = self.renderer.viewport_size();
+        Size {
+            width: size.width.into(),
+            height: size.height.into(),
+        }
+    }
+}
+
+impl X11Window {
+    pub fn new(
+        params: WindowParams,
+        xcb_connection: &Rc<XCBConnection>,
+        x_main_screen_index: usize,
+        x_window: xproto::Window,
+        atoms: &XcbAtoms,
+    ) -> Self {
+        X11Window {
+            state: Rc::new(RefCell::new(X11WindowState::new(
+                params,
+                xcb_connection,
+                x_main_screen_index,
+                x_window,
+                atoms,
+            ))),
+            callbacks: Rc::new(RefCell::new(Callbacks::default())),
+            xcb_connection: xcb_connection.clone(),
             x_window,
-            callbacks: RefCell::new(Callbacks::default()),
-            inner: RefCell::new(LinuxWindowInner {
-                bounds: params.bounds.map(|v| v.0),
-                scale_factor: 1.0,
-                renderer: BladeRenderer::new(gpu, gpu_extent),
-                input_handler: None,
-            }),
         }
     }
 
     pub fn destroy(&self) {
-        self.inner.borrow_mut().renderer.destroy();
+        let mut state = self.state.borrow_mut();
+        state.renderer.destroy();
+        drop(state);
+
         self.xcb_connection.unmap_window(self.x_window).unwrap();
         self.xcb_connection.destroy_window(self.x_window).unwrap();
         if let Some(fun) = self.callbacks.borrow_mut().close.take() {
@@ -270,21 +294,40 @@ impl X11WindowState {
         }
     }
 
+    pub fn handle_input(&self, input: PlatformInput) {
+        if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
+            if !fun(input.clone()).propagate {
+                return;
+            }
+        }
+        if let PlatformInput::KeyDown(event) = input {
+            let mut state = self.state.borrow_mut();
+            if let Some(mut input_handler) = state.input_handler.take() {
+                if let Some(ime_key) = &event.keystroke.ime_key {
+                    drop(state);
+                    input_handler.replace_text_in_range(None, ime_key);
+                    state = self.state.borrow_mut();
+                }
+                state.input_handler = Some(input_handler);
+            }
+        }
+    }
+
     pub fn configure(&self, bounds: Bounds<i32>) {
         let mut resize_args = None;
         let do_move;
         {
-            let mut inner = self.inner.borrow_mut();
-            let old_bounds = mem::replace(&mut inner.bounds, bounds);
+            let mut state = self.state.borrow_mut();
+            let old_bounds = mem::replace(&mut state.bounds, bounds);
             do_move = old_bounds.origin != bounds.origin;
             // todo(linux): use normal GPUI types here, refactor out the double
             // viewport check and extra casts ( )
             let gpu_size = query_render_extent(&self.xcb_connection, self.x_window);
-            if inner.renderer.viewport_size() != gpu_size {
-                inner
+            if state.renderer.viewport_size() != gpu_size {
+                state
                     .renderer
                     .update_drawable_size(size(gpu_size.width as f64, gpu_size.height as f64));
-                resize_args = Some((inner.content_size(), inner.scale_factor));
+                resize_args = Some((state.content_size(), state.scale_factor));
             }
         }
 
@@ -301,22 +344,6 @@ impl X11WindowState {
         }
     }
 
-    pub fn handle_input(&self, input: PlatformInput) {
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
-            if !fun(input.clone()).propagate {
-                return;
-            }
-        }
-        if let PlatformInput::KeyDown(event) = input {
-            let mut inner = self.inner.borrow_mut();
-            if let Some(ref mut input_handler) = inner.input_handler {
-                if let Some(ime_key) = &event.keystroke.ime_key {
-                    input_handler.replace_text_in_range(None, ime_key);
-                }
-            }
-        }
-    }
-
     pub fn set_focused(&self, focus: bool) {
         if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
             fun(focus);
@@ -326,7 +353,7 @@ impl X11WindowState {
 
 impl PlatformWindow for X11Window {
     fn bounds(&self) -> Bounds<DevicePixels> {
-        self.0.inner.borrow_mut().bounds.map(|v| v.into())
+        self.state.borrow_mut().bounds.map(|v| v.into())
     }
 
     // todo(linux)
@@ -340,11 +367,11 @@ impl PlatformWindow for X11Window {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.0.inner.borrow_mut().content_size()
+        self.state.borrow_mut().content_size()
     }
 
     fn scale_factor(&self) -> f32 {
-        self.0.inner.borrow_mut().scale_factor
+        self.state.borrow_mut().scale_factor
     }
 
     // todo(linux)
@@ -353,14 +380,13 @@ impl PlatformWindow for X11Window {
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
-        Rc::clone(&self.0.display)
+        self.state.borrow().display.clone()
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
         let reply = self
-            .0
             .xcb_connection
-            .query_pointer(self.0.x_window)
+            .query_pointer(self.x_window)
             .unwrap()
             .reply()
             .unwrap();
@@ -377,11 +403,11 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.0.inner.borrow_mut().input_handler = Some(input_handler);
+        self.state.borrow_mut().input_handler = Some(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.0.inner.borrow_mut().input_handler.take()
+        self.state.borrow_mut().input_handler.take()
     }
 
     fn prompt(
@@ -396,10 +422,9 @@ impl PlatformWindow for X11Window {
 
     fn activate(&self) {
         let win_aux = xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE);
-        self.0
-            .xcb_connection
-            .configure_window(self.0.x_window, &win_aux)
-            .unwrap();
+        self.xcb_connection
+            .configure_window(self.x_window, &win_aux)
+            .log_err();
     }
 
     // todo(linux)
@@ -408,11 +433,10 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_title(&mut self, title: &str) {
-        self.0
-            .xcb_connection
+        self.xcb_connection
             .change_property8(
                 xproto::PropMode::REPLACE,
-                self.0.x_window,
+                self.x_window,
                 xproto::AtomEnum::WM_NAME,
                 xproto::AtomEnum::STRING,
                 title.as_bytes(),
@@ -458,39 +482,39 @@ impl PlatformWindow for X11Window {
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.borrow_mut().request_frame = Some(callback);
+        self.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>) {
-        self.0.callbacks.borrow_mut().input = Some(callback);
+        self.callbacks.borrow_mut().input = Some(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.callbacks.borrow_mut().active_status_change = Some(callback);
+        self.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.0.callbacks.borrow_mut().resize = Some(callback);
+        self.callbacks.borrow_mut().resize = Some(callback);
     }
 
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.callbacks.borrow_mut().fullscreen = Some(callback);
+        self.callbacks.borrow_mut().fullscreen = Some(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.borrow_mut().moved = Some(callback);
+        self.callbacks.borrow_mut().moved = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.callbacks.borrow_mut().should_close = Some(callback);
+        self.callbacks.borrow_mut().should_close = Some(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
-        self.0.callbacks.borrow_mut().close = Some(callback);
+        self.callbacks.borrow_mut().close = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
+        self.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
     // todo(linux)
@@ -499,12 +523,12 @@ impl PlatformWindow for X11Window {
     }
 
     fn draw(&self, scene: &Scene) {
-        let mut inner = self.0.inner.borrow_mut();
+        let mut inner = self.state.borrow_mut();
         inner.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn PlatformAtlas> {
-        let inner = self.0.inner.borrow_mut();
+        let inner = self.state.borrow();
         inner.renderer.sprite_atlas().clone()
     }
 }

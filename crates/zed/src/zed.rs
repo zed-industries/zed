@@ -127,6 +127,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
+        let tasks_indicator = tasks_ui::TaskStatusIndicator::new(workspace.weak_handle(), cx);
         let active_buffer_language =
             cx.new_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let vim_mode_indicator = cx.new_view(|cx| vim::ModeIndicator::new(cx));
@@ -136,6 +137,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(copilot, cx);
+            status_bar.add_right_item(tasks_indicator, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);
@@ -605,6 +607,7 @@ pub fn handle_keymap_file_changes(
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
+
         if new_base_keymap != old_base_keymap || new_vim_enabled != old_vim_enabled {
             old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
@@ -3060,6 +3063,7 @@ mod tests {
             let mut app_state = AppState::test(cx);
 
             let state = Arc::get_mut(&mut app_state).unwrap();
+            env_logger::try_init().ok();
 
             state.build_window_options = build_window_options;
             theme::init(theme::LoadThemes::JustBase, cx);
@@ -3077,6 +3081,7 @@ mod tests {
             project_panel::init((), cx);
             terminal_view::init(cx);
             assistant::init(app_state.client.clone(), cx);
+            tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state
         })

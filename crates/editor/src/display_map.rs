@@ -433,7 +433,10 @@ impl DisplaySnapshot {
         } else if range.start.row == self.max_buffer_row()
             || (range.end.column > 0 && range.end.row == self.max_buffer_row())
         {
-            Point::new(range.start.row - 1, self.line_len(range.start.row - 1))
+            Point::new(
+                range.start.row - 1,
+                self.buffer_snapshot.line_len(range.start.row - 1),
+            )
         } else {
             self.prev_line_boundary(range.start).0
         };

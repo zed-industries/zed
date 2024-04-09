@@ -23,7 +23,7 @@ pub use unclipped::Unclipped;
 const CHUNK_BASE: usize = 6;
 
 #[cfg(not(test))]
-const CHUNK_BASE: usize = 16;
+const CHUNK_BASE: usize = 64;
 
 /// Type alias to [`HashMatrix`], an implementation of a homomorphic hash function. Two [`Rope`] instances
 /// containing the same text will produce the same fingerprint. This hash function is special in that

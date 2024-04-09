@@ -1,34 +1,10 @@
 package zed:extension;
 
 world extension {
+    use github.{github-release, github-release-options};
+    use platform.{os, architecture};
+
     export init-extension: func();
-
-    record github-release {
-        version: string,
-        assets: list<github-release-asset>,
-    }
-
-    record github-release-asset {
-        name: string,
-        download-url: string,
-    }
-
-    record github-release-options {
-        require-assets: bool,
-        pre-release: bool,
-    }
-
-    enum os {
-        mac,
-        linux,
-        windows,
-    }
-
-    enum architecture {
-        aarch64,
-        x86,
-        x8664,
-    }
 
     enum downloaded-file-type {
         gzip,

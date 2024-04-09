@@ -1,11 +1,12 @@
 #[path = "../wit/since_v0.0.6/settings.rs"]
-pub mod types;
+mod types;
 
 use crate::{wit, Result, SettingsLocation, Worktree};
 use serde_json;
 pub use types::*;
 
 impl LanguageSettings {
+    /// Returns the [`LanguageSettings`] for the given language.
     pub fn for_worktree(language: Option<&str>, worktree: &Worktree) -> Result<Self> {
         let location = SettingsLocation {
             worktree_id: worktree.id(),
@@ -18,6 +19,7 @@ impl LanguageSettings {
 }
 
 impl LspSettings {
+    /// Returns the [`LspSettings`] for the given language server.
     pub fn for_worktree(language_server_name: &str, worktree: &Worktree) -> Result<Self> {
         let location = SettingsLocation {
             worktree_id: worktree.id(),
