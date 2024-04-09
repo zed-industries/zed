@@ -699,7 +699,9 @@ impl WorktreeIndex {
         let embedding_provider = self.embedding_provider.clone();
         let worktree = self.worktree.clone();
         cx.spawn(|cx| async move {
+            #[cfg(debug_assertions)]
             let embedding_query_start = std::time::Instant::now();
+
             let mut query_embeddings = embedding_provider
                 .embed(&[TextToEmbed::new(&query)])
                 .await?;
@@ -711,7 +713,9 @@ impl WorktreeIndex {
                 workers.push(Vec::<SearchResult>::new());
             }
 
+            #[cfg(debug_assertions)]
             let search_start = std::time::Instant::now();
+
             cx.background_executor()
                 .scoped(|cx| {
                     for worker_results in workers.iter_mut() {
