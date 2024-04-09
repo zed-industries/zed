@@ -159,12 +159,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         });
         let all_tasks = project
             .update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, cx| {
-                    inventory.list_tasks(None, None, false, cx)
-                })
+                project
+                    .task_inventory()
+                    .update(cx, |inventory, cx| inventory.list_tasks(None, None, cx))
             })
             .into_iter()
-            .map(|(source_kind, task, _)| (source_kind, task.label))
+            .map(|(source_kind, task)| (source_kind, task.label))
             .collect::<Vec<_>>();
         assert_eq!(
             all_tasks,

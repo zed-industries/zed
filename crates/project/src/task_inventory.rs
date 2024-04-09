@@ -8,9 +8,10 @@ use std::{
 
 use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
+use itertools::Itertools;
 use language::Language;
-use task::{ResolvedTask, TaskSource, TaskTemplate};
-use util::post_inc;
+use task::{ResolvedTask, TaskContext, TaskSource, TaskTemplate};
+use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
 /// Inventory tracks available tasks for a given project.
@@ -157,9 +158,8 @@ impl Inventory {
         &self,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
-        lru: bool,
         cx: &mut AppContext,
-    ) -> Vec<(TaskSourceKind, TaskTemplate, u32)> {
+    ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name(),
         });
@@ -169,23 +169,6 @@ impl Inventory {
             .flat_map(|tasks| tasks.0.into_iter())
             .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
 
-        let mut lru_score = 0_u32;
-        let tasks_by_usage = if lru {
-            self.last_scheduled_tasks.iter().rev().fold(
-                HashMap::default(),
-                |mut tasks, (task_source_kind, resolved_task)| {
-                    tasks
-                        .entry(task_source_kind)
-                        .or_insert_with(|| HashMap::default())
-                        .entry(&resolved_task.id)
-                        .or_insert_with(|| (resolved_task, post_inc(&mut lru_score)));
-                    tasks
-                },
-            )
-        } else {
-            HashMap::default()
-        };
-        let not_used_score = post_inc(&mut lru_score);
         self.sources
             .iter()
             .filter(|source| {
@@ -201,22 +184,107 @@ impl Inventory {
                     .map(|task| (&source.kind, task))
             })
             .chain(language_tasks)
-            .map(|(task_source_kind, task)| {
-                let lru_score = if lru {
-                    tasks_by_usage
-                        .get(task_source_kind)
-                        .and_then(|tasks| {
-                            tasks
-                                .values()
-                                .find(|(resolved_task, _)| resolved_task.original_task == task)
-                                .map(|(_, lru_score)| *lru_score)
-                        })
-                        .unwrap_or(not_used_score)
-                } else {
-                    not_used_score
-                };
-                (task_source_kind.clone(), task, lru_score)
+            .map(|(task_source_kind, task)| (task_source_kind.clone(), task))
+            .collect()
+    }
+
+    /// TODO kb docs
+    pub fn list_resolved_tasks(
+        &self,
+        language: Option<Arc<Language>>,
+        worktree: Option<WorktreeId>,
+        task_context: TaskContext,
+        cx: &mut AppContext,
+    ) -> Vec<(TaskSourceKind, ResolvedTask)> {
+        let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
+            name: language.name(),
+        });
+        let language_tasks = language
+            .and_then(|language| language.context_provider()?.associated_tasks())
+            .into_iter()
+            .flat_map(|tasks| tasks.0.into_iter())
+            .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
+
+        let mut lru_score = 0_u32;
+        let mut task_usage = self.last_scheduled_tasks.iter().rev().fold(
+            HashMap::default(),
+            |mut tasks, (task_source_kind, resolved_task)| {
+                tasks
+                    .entry(&resolved_task.id)
+                    .or_insert_with(|| (task_source_kind, resolved_task, post_inc(&mut lru_score)));
+                tasks
+            },
+        );
+        let not_used_score = post_inc(&mut lru_score);
+        let current_resolved_tasks = self
+            .sources
+            .iter()
+            .filter(|source| {
+                let source_worktree = source.kind.worktree();
+                worktree.is_none() || source_worktree.is_none() || source_worktree == worktree
             })
+            .flat_map(|source| {
+                source
+                    .source
+                    .update(cx, |source, cx| source.tasks_to_schedule(cx))
+                    .0
+                    .into_iter()
+                    .map(|task| (&source.kind, task))
+            })
+            .chain(language_tasks)
+            .filter_map(|(kind, task)| {
+                let id_base = kind.to_id_base();
+                Some((kind, task.resolve_task(id_base, task_context.clone())?))
+            })
+            .unique_by(|(_, task)| task.id.clone())
+            .map(|(kind, task)| {
+                let lru_score = task_usage
+                    .remove(&task.id)
+                    .map(|(_, _, lru_score)| lru_score)
+                    .unwrap_or(not_used_score);
+                (kind.clone(), task, lru_score)
+            })
+            .collect::<Vec<_>>();
+        let previously_resolved_tasks = task_usage
+            .into_iter()
+            .map(|(_, (kind, task, lru_score))| (kind.clone(), task.clone(), lru_score));
+
+        previously_resolved_tasks
+            .chain(current_resolved_tasks.into_iter())
+            .sorted_unstable_by(
+                |(kind_a, task_a, lru_score_a), (kind_b, task_b, lru_score_b)| {
+                    lru_score_a
+                        .cmp(&lru_score_b)
+                        .then(
+                            task_source_kind_preference(kind_a)
+                                .cmp(&task_source_kind_preference(kind_b)),
+                        )
+                        .then(
+                            kind_a
+                                .worktree()
+                                .is_none()
+                                .cmp(&kind_b.worktree().is_none()),
+                        )
+                        .then(kind_a.worktree().cmp(&kind_b.worktree()))
+                        .then(
+                            kind_a
+                                .abs_path()
+                                .is_none()
+                                .cmp(&kind_b.abs_path().is_none()),
+                        )
+                        .then(kind_a.abs_path().cmp(&kind_b.abs_path()))
+                        .then({
+                            NumericPrefixWithSuffix::from_numeric_prefixed_str(
+                                &task_a.resolved_label,
+                            )
+                            .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
+                                &task_b.resolved_label,
+                            ))
+                            .then(task_a.resolved_label.cmp(&task_b.resolved_label))
+                        })
+                },
+            )
+            .map(|(kind, task, _)| (kind, task))
             .collect()
     }
 
@@ -236,6 +304,15 @@ impl Inventory {
         if self.last_scheduled_tasks.len() > 5_000 {
             self.last_scheduled_tasks.pop_front();
         }
+    }
+}
+
+fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
+    match kind {
+        TaskSourceKind::Language { .. } => 1,
+        TaskSourceKind::UserInput => 2,
+        TaskSourceKind::Worktree { .. } => 3,
+        TaskSourceKind::AbsPath { .. } => 4,
     }
 }
 
@@ -304,15 +381,24 @@ pub mod test_inventory {
     pub fn list_task_names(
         inventory: &Model<Inventory>,
         worktree: Option<WorktreeId>,
+        // TODO kb split into different tests
         lru: bool,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
         inventory.update(cx, |inventory, cx| {
-            inventory
-                .list_tasks(None, worktree, lru, cx)
-                .into_iter()
-                .map(|(_, task, _)| task.label)
-                .collect()
+            if lru {
+                inventory
+                    .list_resolved_tasks(None, worktree, TaskContext::default(), cx)
+                    .into_iter()
+                    .map(|(_, task)| task.original_task.label)
+                    .collect()
+            } else {
+                inventory
+                    .list_tasks(None, worktree, cx)
+                    .into_iter()
+                    .map(|(_, task)| task.label)
+                    .collect()
+            }
         })
     }
 
@@ -322,10 +408,10 @@ pub mod test_inventory {
         cx: &mut TestAppContext,
     ) {
         inventory.update(cx, |inventory, cx| {
-            let (task_source_kind, task, _) = inventory
-                .list_tasks(None, None, false, cx)
+            let (task_source_kind, task) = inventory
+                .list_tasks(None, None, cx)
                 .into_iter()
-                .find(|(_, task, _)| task.label == task_name)
+                .find(|(_, task)| task.label == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
             let id_base = task_source_kind.to_id_base();
             inventory.task_scheduled(
@@ -339,14 +425,13 @@ pub mod test_inventory {
     pub fn list_tasks(
         inventory: &Model<Inventory>,
         worktree: Option<WorktreeId>,
-        lru: bool,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
         inventory.update(cx, |inventory, cx| {
             inventory
-                .list_tasks(None, worktree, lru, cx)
+                .list_tasks(None, worktree, cx)
                 .into_iter()
-                .map(|(source_kind, task, _)| (source_kind, task.label))
+                .map(|(source_kind, task)| (source_kind, task.label))
                 .collect()
         })
     }
@@ -656,12 +741,9 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>();
 
+        assert_eq!(list_tasks(&inventory_with_statics, None, cx), all_tasks,);
         assert_eq!(
-            list_tasks(&inventory_with_statics, None, false, cx),
-            all_tasks,
-        );
-        assert_eq!(
-            list_tasks(&inventory_with_statics, Some(worktree_1), false, cx),
+            list_tasks(&inventory_with_statics, Some(worktree_1), cx),
             worktree_1_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())
@@ -669,7 +751,7 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         assert_eq!(
-            list_tasks(&inventory_with_statics, Some(worktree_2), false, cx),
+            list_tasks(&inventory_with_statics, Some(worktree_2), cx),
             worktree_2_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())

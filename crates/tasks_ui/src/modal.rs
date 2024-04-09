@@ -7,7 +7,6 @@ use gpui::{
     InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
     ViewContext, VisualContext, WeakView,
 };
-use itertools::Itertools;
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
 use task::{oneshot_source::OneshotSource, ResolvedTask, TaskContext};
@@ -16,7 +15,7 @@ use ui::{
     IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
     Tooltip, WindowContext,
 };
-use util::{NumericPrefixWithSuffix, ResultExt};
+use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
 use serde::Deserialize;
@@ -206,71 +205,26 @@ impl PickerDelegate for TasksModalDelegate {
                         else {
                             return Vec::new();
                         };
-                        picker
-                            .delegate
-                            .inventory
-                            .update(cx, |inventory, cx| {
-                                inventory.list_tasks(language, worktree, true, cx)
-                            })
-                            .into_iter()
-                            .filter_map(|(kind, task, lru_score)| {
-                                let id_base = kind.to_id_base();
-                                Some((
-                                    kind,
-                                    task.resolve_task(
-                                        id_base,
-                                        picker.delegate.task_context.clone(),
-                                    )?,
-                                    lru_score,
-                                ))
-                            })
-                            .unique_by(|(_, task, _)| task.id.clone())
-                            .sorted_unstable_by(
-                                |(kind_a, task_a, lru_score_a), (kind_b, task_b, lru_score_b)| {
-                                    lru_score_a
-                                        .cmp(&lru_score_b)
-                                        .then(
-                                            task_source_kind_preference(kind_a)
-                                                .cmp(&task_source_kind_preference(kind_b)),
-                                        )
-                                        .then(
-                                            kind_a
-                                                .worktree()
-                                                .is_none()
-                                                .cmp(&kind_b.worktree().is_none()),
-                                        )
-                                        .then(kind_a.worktree().cmp(&kind_b.worktree()))
-                                        .then(
-                                            kind_a
-                                                .abs_path()
-                                                .is_none()
-                                                .cmp(&kind_b.abs_path().is_none()),
-                                        )
-                                        .then(kind_a.abs_path().cmp(&kind_b.abs_path()))
-                                        .then({
-                                            NumericPrefixWithSuffix::from_numeric_prefixed_str(
-                                                &task_a.resolved_label,
-                                            )
-                                            .cmp(
-                                                &NumericPrefixWithSuffix::from_numeric_prefixed_str(
-                                                    &task_b.resolved_label,
-                                                ),
-                                            )
-                                            .then(task_a.resolved_label.cmp(&task_b.resolved_label))
-                                        })
-                                },
+                        picker.delegate.inventory.update(cx, |inventory, cx| {
+                            inventory.list_resolved_tasks(
+                                language,
+                                worktree,
+                                picker.delegate.task_context.clone(),
+                                cx,
                             )
-                            .map(|(kind, task, _)| (kind, task))
-                            .collect()
+                        })
                     });
-
                     candidates
                         .iter()
                         .enumerate()
                         .map(|(index, (_, candidate))| StringMatchCandidate {
                             id: index,
                             char_bag: candidate.resolved_label.chars().collect(),
-                            string: candidate.resolved_label.clone(),
+                            string: candidate
+                                .resolved
+                                .as_ref()
+                                .map(|resolved| resolved.label.clone())
+                                .unwrap_or_else(|| candidate.resolved_label.clone()),
                         })
                         .collect::<Vec<_>>()
                 })
@@ -419,15 +373,6 @@ impl PickerDelegate for TasksModalDelegate {
             })
             .ok();
         cx.emit(DismissEvent);
-    }
-}
-
-fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
-    match kind {
-        TaskSourceKind::Language { .. } => 1,
-        TaskSourceKind::UserInput => 2,
-        TaskSourceKind::Worktree { .. } => 3,
-        TaskSourceKind::AbsPath { .. } => 4,
     }
 }
 

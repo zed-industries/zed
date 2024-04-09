@@ -78,11 +78,11 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
                 let (worktree, language) = active_item_selection_properties(workspace, cx);
                 let tasks = workspace.project().update(cx, |project, cx| {
                     project.task_inventory().update(cx, |inventory, cx| {
-                        inventory.list_tasks(language, worktree, false, cx)
+                        inventory.list_tasks(language, worktree, cx)
                     })
                 });
-                let (task_source_kind, target_task, _) =
-                    tasks.into_iter().find(|(_, task, _)| task.label == name)?;
+                let (task_source_kind, target_task) =
+                    tasks.into_iter().find(|(_, task)| task.label == name)?;
                 let cwd = task_cwd(workspace, cx).log_err().flatten();
                 let task_context = task_context(workspace, cwd, cx);
                 schedule_task(
