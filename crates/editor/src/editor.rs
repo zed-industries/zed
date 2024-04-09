@@ -1103,7 +1103,24 @@ impl CompletionsMenu {
                 .as_ref()
                 .and_then(|query| mat.string.find(query))
                 .unwrap_or(usize::MAX);
-            (equals, matching_index, sort_text, score, sort_key)
+            let matching_case_count = Reverse(match matching_index {
+                usize::MAX => 0,
+                _ => completion
+                    .new_text
+                    .chars()
+                    .skip(matching_index)
+                    .zip(query.unwrap().chars())
+                    .position(|(mat_char, query_char)| mat_char != query_char)
+                    .unwrap_or(query.unwrap().len()),
+            });
+            (
+                equals,
+                matching_index,
+                matching_case_count,
+                sort_text,
+                score,
+                sort_key,
+            )
         });
 
         for mat in &mut matches {
