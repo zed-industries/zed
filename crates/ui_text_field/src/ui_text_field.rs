@@ -102,7 +102,7 @@ impl Render for TextField {
         let style = TextFieldStyle {
             text_color: theme_color.text,
             background_color: theme_color.ghost_element_background,
-            border_color: theme_color.border_focused,
+            border_color: theme_color.border,
         };
 
         // if self.disabled {
@@ -122,7 +122,7 @@ impl Render for TextField {
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
-            line_height: relative(1.),
+            line_height: relative(1.2),
             color: style.text_color,
             ..Default::default()
         };
@@ -141,10 +141,11 @@ impl Render for TextField {
             .child(
                 v_flex()
                     .w_full()
-                    .p_2()
+                    .px_2()
+                    .py_1()
                     .bg(style.background_color)
                     .text_color(style.text_color)
-                    .rounded_md()
+                    .rounded_lg()
                     .border()
                     .border_color(style.border_color)
                     .w_48()
