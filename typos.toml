@@ -17,7 +17,7 @@ extend-exclude = [
     "crates/editor/src/editor_tests.rs",
     # Clojure uses .edn filename extension, which is not a misspelling of "end"
     "extensions/clojure/languages/clojure/config.toml",
-    # Windows likes it's abbreviations
+    # Windows likes its abbreviations
     "crates/gpui/src/platform/windows/",
 ]
 

@@ -163,6 +163,7 @@ messages!(
     (DeclineCall, Foreground),
     (DeleteChannel, Foreground),
     (DeleteNotification, Foreground),
+    (UpdateNotification, Foreground),
     (DeleteProjectEntry, Foreground),
     (EndStream, Foreground),
     (Error, Foreground),
@@ -298,6 +299,8 @@ messages!(
     (SetRoomParticipantRole, Foreground),
     (BlameBuffer, Foreground),
     (BlameBufferResponse, Foreground),
+    (MultiLspQuery, Background),
+    (MultiLspQueryResponse, Background),
 );
 
 request_messages!(
@@ -389,6 +392,7 @@ request_messages!(
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
+    (MultiLspQuery, MultiLspQueryResponse),
 );
 
 entity_messages!(
@@ -417,6 +421,7 @@ entity_messages!(
     InlayHints,
     JoinProject,
     LeaveProject,
+    MultiLspQuery,
     OnTypeFormatting,
     OpenBufferById,
     OpenBufferByPath,

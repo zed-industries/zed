@@ -9,10 +9,10 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.10.5"
+          python-version: "3.11"
           architecture: "x64"
           cache: "pip"
       - run: pip install -r script/update_top_ranking_issues/requirements.txt
-      - run: python script/update_top_ranking_issues/main.py 6952 --github-token ${{ secrets.GITHUB_TOKEN }} --prod --query-day-interval 7
+      - run: python script/update_top_ranking_issues/main.py --github-token ${{ secrets.GITHUB_TOKEN }} --issue-reference-number 6952 --query-day-interval 7

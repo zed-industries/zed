@@ -66,7 +66,14 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 }
 #[cfg(target_os = "linux")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
-    Rc::new(LinuxPlatform::new())
+    let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
+    let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
+
+    if use_wayland {
+        Rc::new(WaylandClient::new())
+    } else {
+        Rc::new(X11Client::new())
+    }
 }
 // todo("windows")
 #[cfg(target_os = "windows")]
@@ -207,6 +214,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: &Scene);
+    fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     #[cfg(target_os = "windows")]
