@@ -164,10 +164,12 @@ impl MarkdownPreviewView {
                                                         let task_marker =
                                                             if checked { "[x]" } else { "[ ]" };
 
-                                                        editor.edit(
-                                                            vec![(source_range, task_marker)],
-                                                            cx,
-                                                        );
+                                                        editor.transact(cx, |editor, cx| {
+                                                            editor.edit(
+                                                                vec![(source_range, task_marker)],
+                                                                cx,
+                                                            );
+                                                        });
                                                         cx.notify();
                                                     });
                                                 }
