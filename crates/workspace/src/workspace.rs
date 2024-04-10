@@ -739,7 +739,6 @@ impl Workspace {
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
             cx.observe_window_bounds(move |this, cx| {
-                println!("Observing bounds: {:#?}", this.bounds_save_task_queued);
                 if this.bounds_save_task_queued.is_some() {
                     return;
                 }
@@ -747,11 +746,10 @@ impl Workspace {
                     cx.background_executor()
                         .timer(Duration::from_millis(100))
                         .await;
-                    this.update(&mut cx, |this, cx| {
+                    this.update(&mut cx, |_, cx| {
                         if let Some(display) = cx.display() {
                             let window_bounds = cx.window_bounds();
                             let fullscreen = cx.is_fullscreen();
-                            println!("saving bounds: {:#?}", window_bounds);
 
                             if let Some(display_uuid) = display.uuid().log_err() {
                                 // Only update the window bounds when not full screen,
