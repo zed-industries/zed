@@ -1341,6 +1341,72 @@ impl EditorElement {
         (shaped_line_numbers, fold_statuses)
     }
 
+    fn layout_inline_blame(
+        &self,
+        rows: Range<u32>,
+        buffer_rows: impl Iterator<Item = Option<u32>>,
+        newest_selection_head: DisplayPoint,
+        cx: &mut ElementContext,
+    ) -> Option<Vec<Option<ShapedLine>>> {
+        let editor = self.editor.read(cx);
+        let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
+
+        let mut shaped_blame_lines = Vec::with_capacity(rows.len());
+
+        // TODO: this is duplicated
+        let buffer_rows = buffer_rows.collect::<Vec<_>>();
+        let Some(blame) = editor.blame.as_ref().cloned() else {
+            return None;
+        };
+        let blamed_rows = blame.update(cx, |blame, cx| {
+            blame
+                .blame_for_rows(buffer_rows.clone(), cx)
+                .collect::<Vec<_>>()
+        });
+
+        // TODO: This is all pretty dumb
+        for (ix, _) in buffer_rows.into_iter().enumerate() {
+            let display_row = rows.start + ix as u32;
+            if newest_selection_head.row() == display_row {
+                if let Some(Some(blame_entry)) = blamed_rows.get(ix) {
+                    let relative_timestamp = match blame_entry.author_offset_date_time() {
+                        Ok(timestamp) => time_format::format_localized_timestamp(
+                            timestamp,
+                            time::OffsetDateTime::now_utc(),
+                            cx.local_timezone(),
+                            time_format::TimestampFormat::Relative,
+                        ),
+                        Err(_) => "Error parsing date".to_string(),
+                    };
+
+                    let author = blame_entry.author.as_deref().unwrap_or_default();
+                    let summary = blame_entry.summary.as_deref().unwrap_or_default();
+                    let text = format!("{}, {} • {}", author, relative_timestamp, summary);
+
+                    let run = TextRun {
+                        len: text.len(),
+                        font: self.style.text.font(),
+                        color: cx.theme().status().hint,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    };
+                    let shaped_line = cx
+                        .text_system()
+                        .shape_line(text.clone().into(), font_size, &[run])
+                        .unwrap();
+
+                    shaped_blame_lines.push(Some(shaped_line));
+                    continue;
+                }
+            }
+
+            shaped_blame_lines.push(None);
+        }
+
+        Some(shaped_blame_lines)
+    }
+
     fn layout_lines(
         &self,
         rows: Range<u32>,
@@ -3212,13 +3278,17 @@ impl LineWithInvisibles {
         let line_y =
             line_height * (row as f32 - layout.position_map.scroll_pixel_position.y / line_height);
 
-        self.line
-            .paint(
-                content_origin + gpui::point(-layout.position_map.scroll_pixel_position.x, line_y),
-                line_height,
-                cx,
-            )
-            .log_err();
+        let line_origin =
+            content_origin + gpui::point(-layout.position_map.scroll_pixel_position.x, line_y);
+        self.line.paint(line_origin, line_height, cx).log_err();
+
+        if let Some(inline_blame_layouts) = layout.inline_blame_layouts.as_ref() {
+            if let Some(Some(blame_line)) = inline_blame_layouts.get(row as usize) {
+                let padding = layout.position_map.em_width * 6.;
+                let origin = gpui::point(line_origin.x + self.line.width + padding, line_origin.y);
+                blame_line.paint(origin, line_height, cx).log_err();
+            }
+        }
 
         self.draw_invisibles(
             &selection_ranges,
@@ -3497,6 +3567,18 @@ impl Element for EditorElement {
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
+                let mut inline_blame_layouts = None;
+                if let Some(newest_selection_head) = newest_selection_head {
+                    if (start_row..end_row).contains(&newest_selection_head.row()) {
+                        inline_blame_layouts = self.layout_inline_blame(
+                            start_row..end_row,
+                            buffer_rows.clone(),
+                            newest_selection_head,
+                            cx,
+                        );
+                    }
+                }
+
                 let blamed_display_rows = self.layout_blame_entries(
                     buffer_rows,
                     em_width,
@@ -3735,6 +3817,7 @@ impl Element for EditorElement {
                     line_numbers,
                     display_hunks,
                     blamed_display_rows,
+                    inline_blame_layouts,
                     folds,
                     blocks,
                     cursors,
@@ -3822,6 +3905,7 @@ pub struct EditorLayout {
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
     blamed_display_rows: Option<Vec<AnyElement>>,
+    inline_blame_layouts: Option<Vec<Option<ShapedLine>>>,
     folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
