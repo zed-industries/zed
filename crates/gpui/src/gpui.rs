@@ -169,7 +169,9 @@ pub trait Context {
     /// The returned [Reservation] allows you to obtain the [EntityId] for the future model.
     fn reserve_model<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
 
-    /// Insert a new model in the app context based on a [Reservation] previously obtained from [reserve_model].
+    /// Insert a new model in the app context based on a [Reservation] previously obtained from [`reserve_model`].
+    ///
+    /// [`reserve_model`]: Self::reserve_model
     fn insert_model<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
