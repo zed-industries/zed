@@ -300,7 +300,6 @@ pub struct Window {
     bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     appearance_observers: SubscriberSet<(), AnyObserver>,
-    closing_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
     pub(crate) dirty: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
@@ -437,12 +436,7 @@ impl Window {
         platform_window.on_close(Box::new({
             let mut cx = cx.to_async();
             move || {
-                handle
-                    .update(&mut cx, |_, cx| {
-                        cx.window_closing();
-                        cx.remove_window()
-                    })
-                    .log_err();
+                let _ = handle.update(&mut cx, |_, cx| cx.remove_window());
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -569,7 +563,6 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
-            closing_observers: SubscriberSet::new(),
             active,
             dirty,
             needs_present,
@@ -878,13 +871,6 @@ impl<'a> WindowContext<'a> {
 
         self.window
             .bounds_observers
-            .clone()
-            .retain(&(), |callback| callback(self));
-    }
-
-    fn window_closing(&mut self) {
-        self.window
-            .closing_observers
             .clone()
             .retain(&(), |callback| callback(self));
     }

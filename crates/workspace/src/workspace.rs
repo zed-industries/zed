@@ -4792,47 +4792,6 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<DevicePixels>> {
     Some(size((width as i32).into(), (height as i32).into()))
 }
 
-// pub fn spawn<Fut, R>(&mut self, f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut) -> Task<R>
-// where
-//     R: 'static,
-//     Fut: Future<Output = R> + 'static,
-
-// async fn save_bounds_task(this: &mut Workspace, cx: &mut ViewContext<'static, Workspace>) {
-//     cx.background_executor()
-//         .timer(Duration::from_millis(100))
-//         .await;
-//     this.update(|this, cx| {
-//         if let Some(display) = cx.display() {
-//             let window_bounds = cx.window_bounds();
-//             let fullscreen = cx.is_fullscreen();
-
-//             if let Some(display_uuid) = display.uuid().log_err() {
-//                 // Only update the window bounds when not full screen,
-//                 // so we can remember the last non-fullscreen bounds
-//                 // across restarts
-//                 if fullscreen {
-//                     cx.background_executor()
-//                         .spawn(DB.set_fullscreen(this, true))
-//                         .detach_and_log_err(cx);
-//                 } else if !cx.is_minimized() {
-//                     cx.background_executor()
-//                         .spawn(DB.set_fullscreen(this, false))
-//                         .detach_and_log_err(cx);
-//                     cx.background_executor()
-//                         .spawn(DB.set_window_bounds(
-//                             this,
-//                             SerializedWindowsBounds(window_bounds),
-//                             display_uuid,
-//                         ))
-//                         .detach_and_log_err(cx);
-//                 }
-//             }
-//         }
-//         this.bounds_save_task_queued = false;
-//     })
-//     .ok()
-// }
-
 struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
