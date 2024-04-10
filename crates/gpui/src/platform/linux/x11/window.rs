@@ -446,8 +446,7 @@ impl PlatformWindow for X11Window {
             )
             .unwrap();
 
-        self
-            .xcb_connection
+        self.xcb_connection
             .change_property8(
                 xproto::PropMode::REPLACE,
                 self.x_window,
