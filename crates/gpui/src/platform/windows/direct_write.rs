@@ -587,10 +587,7 @@ impl DirectWriteState {
             if params.is_emoji {
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
                 let enumerator = self.components.factory.TranslateColorGlyphRun2(
-                    D2D_POINT_2F {
-                        x: 0.0,
-                        y: 0.0,
-                    },
+                    D2D_POINT_2F { x: 0.0, y: 0.0 },
                     &glyph_run as _,
                     None,
                     DWRITE_GLYPH_IMAGE_FORMATS_COLR
