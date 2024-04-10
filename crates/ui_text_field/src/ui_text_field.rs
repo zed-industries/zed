@@ -37,7 +37,7 @@ pub struct TextField {
     placeholder: SharedString,
     /// Exposes the underlying View<[Editor]> to allow for customizing the editor beyond the provided API.
     ///
-    /// This likely will only be public in the short term, ideally the API will be expanded to conver necessary use cases.
+    /// This likely will only be public in the short term, ideally the API will be expanded to cover necessary use cases.
     pub editor: View<Editor>,
     /// An optional icon that is displayed at the start of the text field.
     ///
