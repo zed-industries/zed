@@ -4375,6 +4375,7 @@ dependencies = [
 name = "go_to_line"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "editor",
  "gpui",
  "indoc",
@@ -4382,7 +4383,10 @@ dependencies = [
  "menu",
  "project",
  "rope",
+ "schemars",
+ "serde",
  "serde_json",
+ "settings",
  "text",
  "theme",
  "tree-sitter-rust",
