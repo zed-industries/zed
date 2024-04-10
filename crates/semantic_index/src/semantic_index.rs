@@ -808,3 +808,143 @@ struct EmbeddedChunk {
 fn db_key_for_path(path: &Arc<Path>) -> String {
     path.to_string_lossy().replace('/', "\0")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use futures::channel::oneshot;
+    use futures::{future::BoxFuture, FutureExt};
+
+    use gpui::{Global, TestAppContext};
+    use language::language_settings::AllLanguageSettings;
+    use project::Project;
+    use settings::SettingsStore;
+    use std::{future, path::Path, sync::Arc};
+
+    fn init_test(cx: &mut TestAppContext) {
+        _ = cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            language::init(cx);
+            Project::init_settings(cx);
+            SettingsStore::update(cx, |store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
+            });
+        });
+    }
+
+    pub struct TestEmbeddingProvider;
+
+    impl EmbeddingProvider for TestEmbeddingProvider {
+        fn embed<'a>(
+            &'a self,
+            texts: &'a [TextToEmbed<'a>],
+        ) -> BoxFuture<'a, Result<Vec<Embedding>>> {
+            let embeddings = texts
+                .iter()
+                .map(|text| {
+                    let mut embedding = vec![0f32; 2];
+                    // if the text contains garbage, give it a 1 in the first dimension
+                    if text.text.contains("garbage in") {
+                        embedding[0] = 0.9;
+                    } else {
+                        embedding[0] = -0.9;
+                    }
+
+                    if text.text.contains("garbage out") {
+                        embedding[1] = 0.9;
+                    } else {
+                        embedding[1] = -0.9;
+                    }
+
+                    Embedding::new(embedding)
+                })
+                .collect();
+            future::ready(Ok(embeddings)).boxed()
+        }
+
+        fn batch_size(&self) -> usize {
+            16
+        }
+    }
+
+    #[gpui::test]
+    async fn test_search(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        init_test(cx);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut semantic_index = cx
+            .update(|cx| {
+                let semantic_index = SemanticIndex::new(
+                    Path::new(temp_dir.path()),
+                    Arc::new(TestEmbeddingProvider),
+                    cx,
+                );
+                semantic_index
+            })
+            .await
+            .unwrap();
+
+        // todo!(): use a fixture
+        let project_path = Path::new(".");
+
+        let project = cx
+            .spawn(|mut cx| async move { Project::example([project_path], &mut cx).await })
+            .await;
+
+        cx.update(|cx| {
+            let language_registry = project.read(cx).languages().clone();
+            let node_runtime = project.read(cx).node_runtime().unwrap().clone();
+            languages::init(language_registry, node_runtime, cx);
+        });
+
+        let project_index = cx.update(|cx| semantic_index.project_index(project.clone(), cx));
+
+        let (tx, rx) = oneshot::channel();
+        let mut tx = Some(tx);
+        let subscription = cx.update(|cx| {
+            cx.subscribe(&project_index, move |_, event, _| {
+                if let Some(tx) = tx.take() {
+                    _ = tx.send(*event);
+                }
+            })
+        });
+
+        rx.await.expect("no event emitted");
+        drop(subscription);
+
+        let results = cx
+            .update(|cx| {
+                let project_index = project_index.read(cx);
+                let query = "garbage in, garbage out";
+                project_index.search(query, 4, cx)
+            })
+            .await;
+
+        // Find result that is greater than 0.5
+        let search_result = results.iter().find(|result| result.score > 0.5).unwrap();
+
+        assert_eq!(
+            search_result.path.to_string_lossy(),
+            "src/semantic_index.rs"
+        );
+
+        let content = cx
+            .update(|cx| {
+                let worktree = search_result.worktree.read(cx);
+                let entry_abs_path = worktree.abs_path().join(search_result.path.clone());
+                let fs = project.read(cx).fs().clone();
+                cx.spawn(|_| async move { fs.load(&entry_abs_path).await.unwrap() })
+            })
+            .await;
+
+        let range = search_result.range.clone();
+        let content = content[range.clone()].to_owned();
+
+        assert!(content.contains("garbage in, garbage out"));
+    }
+}
