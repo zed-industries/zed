@@ -628,12 +628,9 @@ impl Pane {
 
             let new_item = build_item(cx);
 
-            let item_id = if allow_preview {
-                Some(new_item.item_id())
-            } else {
-                None
-            };
-            self.set_preview_item_id(item_id, cx);
+            if allow_preview {
+                self.set_preview_item_id(Some(new_item.item_id()), cx);
+            }
 
             self.add_item(new_item.clone(), true, focus_item, destination_index, cx);
 
@@ -1186,6 +1183,10 @@ impl Pane {
         self.nav_history.set_mode(NavigationMode::ClosingItem);
         item.deactivated(cx);
         self.nav_history.set_mode(mode);
+
+        if self.is_active_preview_item(item.item_id()) {
+            self.set_preview_item_id(None, cx);
+        }
 
         if let Some(path) = item.project_path(cx) {
             let abs_path = self
