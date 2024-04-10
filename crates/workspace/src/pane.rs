@@ -615,7 +615,7 @@ impl Pane {
                 // If we are opening a new item as preview and we have an existing preview tab, remove it.
                 if let Some(item_idx) = self.preview_item_idx() {
                     let prev_active_item_index = self.active_item_index;
-                    self.remove_item(item_idx, false, cx);
+                    self.remove_item(item_idx, false, false, cx);
                     self.active_item_index = prev_active_item_index;
 
                     // If the item is being opened as preview and we have an existing preview tab,
@@ -1123,7 +1123,7 @@ impl Pane {
                         .iter()
                         .position(|i| i.item_id() == item.item_id())
                     {
-                        pane.remove_item(item_ix, false, cx);
+                        pane.remove_item(item_ix, false, true, cx);
                     }
                 })
                 .ok();
@@ -1138,6 +1138,7 @@ impl Pane {
         &mut self,
         item_index: usize,
         activate_pane: bool,
+        close_pane_if_empty: bool,
         cx: &mut ViewContext<Self>,
     ) {
         self.activation_history
@@ -1171,8 +1172,10 @@ impl Pane {
         });
         if self.items.is_empty() {
             item.deactivated(cx);
-            self.update_toolbar(cx);
-            cx.emit(Event::Remove);
+            if close_pane_if_empty {
+                self.update_toolbar(cx);
+                cx.emit(Event::Remove);
+            }
         }
 
         if item_index < self.active_item_index {
@@ -1210,7 +1213,7 @@ impl Pane {
                 .remove(&item.item_id());
         }
 
-        if self.items.is_empty() && self.zoomed {
+        if self.items.is_empty() && close_pane_if_empty && self.zoomed {
             cx.emit(Event::ZoomOut);
         }
 
@@ -1375,7 +1378,7 @@ impl Pane {
             }
         })?;
 
-        self.remove_item(item_index_to_delete, false, cx);
+        self.remove_item(item_index_to_delete, false, true, cx);
         self.nav_history.remove_item(item_id);
 
         Some(())

@@ -2522,7 +2522,7 @@ impl Workspace {
         if source != destination {
             // Close item from previous pane
             source.update(cx, |source, cx| {
-                source.remove_item(item_ix, false, cx);
+                source.remove_item(item_ix, false, true, cx);
             });
         }
 
