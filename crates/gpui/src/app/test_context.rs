@@ -42,6 +42,20 @@ impl Context for TestAppContext {
         app.new_model(build_model)
     }
 
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+        let mut app = self.app.borrow_mut();
+        app.reserve_model()
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: crate::Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        let mut app = self.app.borrow_mut();
+        app.insert_model(reservation, build_model)
+    }
+
     fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
@@ -801,6 +815,18 @@ impl Context for VisualTestContext {
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>> {
         self.cx.new_model(build_model)
+    }
+
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+        self.cx.reserve_model()
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: crate::Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        self.cx.insert_model(reservation, build_model)
     }
 
     fn update_model<T, R>(

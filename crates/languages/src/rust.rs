@@ -465,7 +465,6 @@ mod tests {
     use gpui::{BorrowAppContext, Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
-    use text::BufferId;
     use theme::SyntaxTheme;
 
     #[gpui::test]
@@ -682,8 +681,7 @@ mod tests {
         let language = crate::language("rust", tree_sitter_rust::language());
 
         cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
-                .with_language(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
             // indent between braces
             buffer.set_text("fn a() {}", cx);
