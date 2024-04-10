@@ -341,6 +341,7 @@ tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", r
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
 unindent = "0.1.7"
 unicase = "2.6"
+unicode-segmentation = "1.10"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmparser = "0.201"

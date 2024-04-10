@@ -1,9 +1,12 @@
 use std::ops::Range;
 
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 use rand::prelude::*;
 use rand::rngs::StdRng;
-use rope::Rope;
+use rope::{Point, Rope};
+use sum_tree::Bias;
 use util::RandomCharIter;
 
 fn generate_random_text(mut rng: StdRng, text_len: usize) -> String {
@@ -42,6 +45,16 @@ fn generate_random_rope_ranges(mut rng: StdRng, rope: &Rope) -> Vec<Range<usize>
     }
 
     ranges
+}
+
+fn generate_random_rope_points(mut rng: StdRng, rope: &Rope) -> Vec<Point> {
+    let num_points = rope.len() / 10;
+
+    let mut points = Vec::new();
+    for _ in 0..num_points {
+        points.push(rope.offset_to_point(rng.gen_range(0..rope.len())));
+    }
+    points
 }
 
 fn rope_benchmarks(c: &mut Criterion) {
@@ -135,6 +148,26 @@ fn rope_benchmarks(c: &mut Criterion) {
                 let chars = rope.chars().count();
                 assert!(chars > 0);
             });
+        });
+    }
+    group.finish();
+
+    let mut group = c.benchmark_group("clip_point");
+    for size in sizes.iter() {
+        group.throughput(Throughput::Bytes(*size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let rope = generate_random_rope(rng.clone(), *size);
+
+            b.iter_batched(
+                || generate_random_rope_points(rng.clone(), &rope),
+                |offsets| {
+                    for offset in offsets.iter() {
+                        black_box(rope.clip_point(*offset, Bias::Left));
+                        black_box(rope.clip_point(*offset, Bias::Right));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
         });
     }
     group.finish();
