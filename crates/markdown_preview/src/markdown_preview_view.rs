@@ -144,12 +144,36 @@ impl MarkdownPreviewView {
             let list_state =
                 ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
                     if let Some(view) = view.upgrade() {
-                        view.update(cx, |view, cx| {
-                            let Some(contents) = &view.contents else {
+                        view.update(cx, |this, cx| {
+                            let Some(contents) = &this.contents else {
                                 return div().into_any();
                             };
+
                             let mut render_cx =
-                                RenderContext::new(Some(view.workspace.clone()), cx);
+                                RenderContext::new(Some(this.workspace.clone()), cx)
+                                    .with_checkbox_clicked_callback({
+                                        let view = view.clone();
+                                        move |checked, source_range, cx| {
+                                            view.update(cx, |view, cx| {
+                                                if let Some(editor) = view
+                                                    .active_editor
+                                                    .as_ref()
+                                                    .map(|s| s.editor.clone())
+                                                {
+                                                    editor.update(cx, |editor, cx| {
+                                                        let task_marker =
+                                                            if checked { "[x]" } else { "[ ]" };
+
+                                                        editor.edit(
+                                                            vec![(source_range, task_marker)],
+                                                            cx,
+                                                        );
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            })
+                                        }
+                                    });
                             let block = contents.children.get(ix).unwrap();
                             let rendered_block = render_markdown_block(block, &mut render_cx);
 
@@ -167,15 +191,15 @@ impl MarkdownPreviewView {
                                         }
                                     }
                                 }))
-                                .map(move |this| {
+                                .map(move |container| {
                                     let indicator = div()
                                         .h_full()
                                         .w(px(4.0))
-                                        .when(ix == view.selected_block, |this| {
+                                        .when(ix == this.selected_block, |this| {
                                             this.bg(cx.theme().colors().border)
                                         })
                                         .group_hover("markdown-block", |s| {
-                                            if ix != view.selected_block {
+                                            if ix != this.selected_block {
                                                 s.bg(cx.theme().colors().border_variant)
                                             } else {
                                                 s
@@ -183,7 +207,7 @@ impl MarkdownPreviewView {
                                         })
                                         .rounded_sm();
 
-                                    this.child(
+                                    container.child(
                                         div()
                                             .relative()
                                             .child(div().pl_4().child(rendered_block))
@@ -262,6 +286,7 @@ impl MarkdownPreviewView {
         let subscription = cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
             match event {
                 EditorEvent::Edited => {
+                    dbg!("edited");
                     this.on_editor_edited(cx);
                 }
                 EditorEvent::SelectionsChanged { .. } => {

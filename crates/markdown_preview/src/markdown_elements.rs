@@ -58,7 +58,7 @@ pub struct ParsedMarkdownListItem {
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownListItemType {
     Ordered(u64),
-    Task(bool),
+    Task(bool, Range<usize>),
     Unordered,
 }
 

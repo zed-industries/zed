@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 use theme::{ActiveTheme, SyntaxTheme};
-use ui::{h_flex, v_flex, Checkbox, LinkPreview, Selection};
+use ui::{h_flex, v_flex, Checkbox, FluentBuilder, LinkPreview, Selection};
 use workspace::Workspace;
 
 pub struct RenderContext {
@@ -27,6 +27,7 @@ pub struct RenderContext {
     code_span_background_color: Hsla,
     syntax_theme: Arc<SyntaxTheme>,
     indent: usize,
+    checkbox_clicked_callback: Option<Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>>,
 }
 
 impl RenderContext {
@@ -44,7 +45,16 @@ impl RenderContext {
             text_muted_color: theme.colors().text_muted,
             code_block_background_color: theme.colors().surface_background,
             code_span_background_color: theme.colors().editor_document_highlight_read_background,
+            checkbox_clicked_callback: None,
         }
+    }
+
+    pub fn with_checkbox_clicked_callback(
+        mut self,
+        callback: impl Fn(bool, Range<usize>, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
+        self
     }
 
     fn next_id(&mut self, span: &Range<usize>) -> ElementId {
@@ -138,19 +148,38 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
     for item in &parsed.children {
         let padding = rems((item.depth - 1) as f32 * 0.25);
 
-        let bullet = match item.item_type {
+        let bullet = match &item.item_type {
             Ordered(order) => format!("{}.", order).into_any_element(),
             Unordered => "•".into_any_element(),
-            Task(checked) => div()
+            Task(checked, range) => div()
                 .mt(px(3.))
-                .child(Checkbox::new(
-                    "checkbox",
-                    if checked {
-                        Selection::Selected
-                    } else {
-                        Selection::Unselected
-                    },
-                ))
+                .child(
+                    Checkbox::new(
+                        "checkbox",
+                        if *checked {
+                            Selection::Selected
+                        } else {
+                            Selection::Unselected
+                        },
+                    )
+                    .when_some(
+                        cx.checkbox_clicked_callback.clone(),
+                        |this, callback| {
+                            this.on_click({
+                                let range = range.clone();
+                                move |selection, cx| {
+                                    let checked = match selection {
+                                        Selection::Selected => true,
+                                        Selection::Unselected => false,
+                                        _ => return,
+                                    };
+
+                                    callback(checked, range.clone(), cx);
+                                }
+                            })
+                        },
+                    ),
+                )
                 .into_any_element(),
         };
         let bullet = div().mr_2().child(bullet);
