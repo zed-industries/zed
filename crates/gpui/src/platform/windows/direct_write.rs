@@ -282,10 +282,16 @@ impl DirectWriteState {
     }
 
     fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
+        // TODO: Determine the proper system UI font.
+        let family_name = if target_font.family == ".SystemUIFont" {
+            "Zed Sans"
+        } else {
+            target_font.family.as_ref()
+        };
         unsafe {
             // try to find target font in custom font collection first
             self.get_font_id_from_font_collection(
-                &target_font.family,
+                family_name,
                 target_font.weight,
                 target_font.style,
                 &target_font.features,
@@ -293,7 +299,7 @@ impl DirectWriteState {
             )
             .or_else(|| {
                 self.get_font_id_from_font_collection(
-                    &target_font.family,
+                    family_name,
                     target_font.weight,
                     target_font.style,
                     &target_font.features,
