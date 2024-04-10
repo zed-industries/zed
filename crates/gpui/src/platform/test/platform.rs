@@ -129,7 +129,7 @@ impl Platform for TestPlatform {
         return Arc::new(crate::platform::cosmic_text::CosmicTextSystem::new());
 
         #[cfg(target_os = "windows")]
-        return Arc::new(crate::platform::windows::DirectWriteTextSystem::new());
+        return Arc::new(crate::platform::windows::DirectWriteTextSystem::new().unwrap());
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
