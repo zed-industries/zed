@@ -4501,7 +4501,6 @@ dependencies = [
  "thiserror",
  "time",
  "tiny-skia",
- "unicode-segmentation",
  "usvg",
  "util",
  "uuid",
