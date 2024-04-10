@@ -6,6 +6,7 @@ use crate::{state::Mode, Vim};
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
     pub(crate) mode: Option<Mode>,
+    pub(crate) operators: String,
     _subscription: Subscription,
 }
 
@@ -15,6 +16,7 @@ impl ModeIndicator {
         let _subscription = cx.observe_global::<Vim>(|this, cx| this.update_mode(cx));
         let mut this = Self {
             mode: None,
+            operators: "".to_string(),
             _subscription,
         };
         this.update_mode(cx);
@@ -29,6 +31,7 @@ impl ModeIndicator {
 
         if vim.enabled {
             self.mode = Some(vim.state().mode);
+            self.operators = vim.state().current_operators_description();
         } else {
             self.mode = None;
         }
@@ -41,7 +44,7 @@ impl Render for ModeIndicator {
             return div().into_any();
         };
 
-        Label::new(format!("-- {} --", mode))
+        Label::new(format!("{} -- {} --", self.operators, mode))
             .size(LabelSize::Small)
             .into_any_element()
     }

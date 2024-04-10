@@ -193,6 +193,14 @@ impl EditorState {
         self.operator_stack.last().cloned()
     }
 
+    pub fn current_operators_description(&self) -> String {
+        self.operator_stack
+            .iter()
+            .map(|item| item.id())
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
     pub fn keymap_context_layer(&self) -> KeyContext {
         let mut context = KeyContext::default();
         context.set(
