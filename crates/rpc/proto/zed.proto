@@ -213,9 +213,10 @@ message Envelope {
         UpdateNotification update_notification = 174;
 
         MultiLspQuery multi_lsp_query = 175;
-        MultiLspQueryResponse multi_lsp_query_response = 176; // current max
+        MultiLspQueryResponse multi_lsp_query_response = 176;
 
         CreateRemoteProject create_remote_project = 177;
+        CreateRemoteProjectResponse create_remote_project_response = 188; // current max
         CreateDevServer create_dev_server = 178;
         CreateDevServerResponse create_dev_server_response = 179;
         ShutdownDevServer shutdown_dev_server = 180;
@@ -455,6 +456,9 @@ message CreateRemoteProject {
     string name = 2;
     uint64 dev_server_id = 3;
     string path = 4;
+}
+message CreateRemoteProjectResponse {
+    RemoteProject remote_project = 1;
 }
 
 message CreateDevServer {

@@ -383,6 +383,10 @@ impl ChannelStore {
         self.dev_servers.get(&id)
     }
 
+    pub fn find_remote_project_by_id(&self, id: RemoteProjectId) -> Option<&RemoteProject> {
+        self.remote_projects.get(&id)
+    }
+
     pub fn remote_projects_for_id(&self, channel_id: ChannelId) -> Vec<RemoteProject> {
         let mut remote_projects: Vec<RemoteProject> = self
             .channel_states
@@ -905,7 +909,7 @@ impl ChannelStore {
         name: String,
         path: String,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<proto::CreateRemoteProjectResponse>> {
         let client = self.client.clone();
         cx.background_executor().spawn(async move {
             client
@@ -915,8 +919,7 @@ impl ChannelStore {
                     name,
                     path,
                 })
-                .await?;
-            Ok(())
+                .await
         })
     }
 

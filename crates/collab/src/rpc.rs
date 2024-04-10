@@ -2244,7 +2244,9 @@ async fn create_remote_project(
         )?;
     }
 
-    response.send(proto::Ack {})?;
+    response.send(proto::CreateRemoteProjectResponse {
+        remote_project: Some(remote_project.to_proto(None)),
+    })?;
     Ok(())
 }
 

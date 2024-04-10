@@ -282,10 +282,23 @@ impl CollabPanel {
                 .push(cx.observe(&this.user_store, |this, _, cx| {
                     this.update_entries(true, cx)
                 }));
-            this.subscriptions
-                .push(cx.observe(&this.channel_store, |this, _, cx| {
+            let mut has_opened = false;
+            this.subscriptions.push(cx.observe(
+                &this.channel_store,
+                move |this, channel_store, cx| {
+                    if !has_opened {
+                        if !channel_store
+                            .read(cx)
+                            .dev_servers_for_id(ChannelId(1))
+                            .is_empty()
+                        {
+                            this.manage_remote_projects(ChannelId(1), cx);
+                            has_opened = true;
+                        }
+                    }
                     this.update_entries(true, cx)
-                }));
+                },
+            ));
             this.subscriptions
                 .push(cx.observe(&active_call, |this, _, cx| this.update_entries(true, cx)));
             this.subscriptions.push(cx.subscribe(
@@ -1344,7 +1357,7 @@ impl CollabPanel {
                                 "Manage Remote Projects",
                                 None,
                                 cx.handler_for(&this, move |this, cx| {
-                                    this.manage_dev_servers(channel_id, cx)
+                                    this.manage_remote_projects(channel_id, cx)
                                 }),
                             )
                         })
@@ -1788,7 +1801,7 @@ impl CollabPanel {
         self.show_channel_modal(channel_id, channel_modal::Mode::ManageMembers, cx);
     }
 
-    fn manage_dev_servers(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
+    fn manage_remote_projects(&mut self, channel_id: ChannelId, cx: &mut ViewContext<Self>) {
         let channel_store = self.channel_store.clone();
         let Some(workspace) = self.workspace.upgrade() else {
             return;
