@@ -51,7 +51,10 @@ impl CursorPosition {
         }
         for selection in editor.selections.all::<Point>(cx) {
             if selection.end != selection.start {
-                self.selected_count.lines += (selection.end.row - selection.start.row + 1) as usize;
+                self.selected_count.lines += (selection.end.row - selection.start.row) as usize;
+                if selection.end.column != 0 {
+                    self.selected_count.lines += 1;
+                }
             }
         }
         self.position = last_selection.map(|s| s.head().to_point(&buffer));
