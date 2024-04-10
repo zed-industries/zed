@@ -1,26 +1,23 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
+use crate::{active_item_selection_properties, schedule_task};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
-    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
-    VisualContext, WeakView,
+    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, Global,
+    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
+    ViewContext, VisualContext, WeakView,
 };
-use picker::{
-    highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
-    Picker, PickerDelegate,
-};
-use project::{Inventory, ProjectPath, TaskSourceKind};
+use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
+use project::{Inventory, TaskSourceKind};
 use task::{oneshot_source::OneshotSource, Task, TaskContext};
 use ui::{
-    div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, IconButton,
+    div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon, IconButton,
     IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
     Tooltip, WindowContext,
 };
-use util::{paths::PathExt, ResultExt};
+use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-use crate::schedule_task;
 use serde::Deserialize;
 
 /// Spawn a task with name or open tasks modal
@@ -33,6 +30,11 @@ pub struct Spawn {
     pub task_name: Option<String>,
 }
 
+impl Spawn {
+    pub(crate) fn modal() -> Self {
+        Self { task_name: None }
+    }
+}
 /// Rerun last task
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct Rerun {
@@ -116,20 +118,6 @@ impl TasksModalDelegate {
             Some(())
         });
     }
-    fn active_item_path(
-        workspace: &WeakView<Workspace>,
-        cx: &mut ViewContext<'_, Picker<Self>>,
-    ) -> Option<(PathBuf, ProjectPath)> {
-        let workspace = workspace.upgrade()?.read(cx);
-        let project = workspace.project().read(cx);
-        let active_item = workspace.active_item(cx)?;
-        active_item.project_path(cx).and_then(|project_path| {
-            project
-                .worktree_for_id(project_path.worktree_id, cx)
-                .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path))
-                .zip(Some(project_path))
-        })
-    }
 }
 
 pub(crate) struct TasksModal {
@@ -161,16 +149,11 @@ impl TasksModal {
 }
 
 impl Render for TasksModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
+    fn render(&mut self, _: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
         v_flex()
             .key_context("TasksModal")
             .w(rems(34.))
             .child(self.picker.clone())
-            .on_mouse_down_out(cx.listener(|modal, _, cx| {
-                modal.picker.update(cx, |picker, cx| {
-                    picker.cancel(&Default::default(), cx);
-                })
-            }))
     }
 }
 
@@ -212,15 +195,10 @@ impl PickerDelegate for TasksModalDelegate {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
                     let candidates = picker.delegate.candidates.get_or_insert_with(|| {
-                        let (path, worktree) =
-                            match Self::active_item_path(&picker.delegate.workspace, cx) {
-                                Some((abs_path, project_path)) => {
-                                    (Some(abs_path), Some(project_path.worktree_id))
-                                }
-                                None => (None, None),
-                            };
+                        let (worktree, language) =
+                            active_item_selection_properties(&picker.delegate.workspace, cx);
                         picker.delegate.inventory.update(cx, |inventory, cx| {
-                            inventory.list_tasks(path.as_deref(), worktree, true, cx)
+                            inventory.list_tasks(language, worktree, true, cx)
                         })
                     });
 
@@ -283,7 +261,7 @@ impl PickerDelegate for TasksModalDelegate {
             .update(cx, |workspace, cx| {
                 schedule_task(
                     workspace,
-                    task.as_ref(),
+                    &task,
                     self.task_context.clone(),
                     omit_history_entry,
                     cx,
@@ -304,34 +282,31 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
-        let hit = &self.matches.get(ix)?;
-        let (source_kind, _) = &candidates.get(hit.candidate_id)?;
-        let details = match source_kind {
-            TaskSourceKind::UserInput => "user input".to_string(),
-            TaskSourceKind::Buffer => "language extension".to_string(),
-            TaskSourceKind::Worktree { abs_path, .. } | TaskSourceKind::AbsPath(abs_path) => {
-                abs_path.compact().to_string_lossy().to_string()
-            }
+        let hit = &self.matches[ix];
+        let (source_kind, _) = &candidates[hit.candidate_id];
+        let language_name = if let TaskSourceKind::Language { name } = source_kind {
+            Some(name)
+        } else {
+            None
         };
 
-        let highlighted_location = HighlightedMatchWithPaths {
-            match_label: HighlightedText {
-                text: hit.string.clone(),
-                highlight_positions: hit.positions.clone(),
-                char_count: hit.string.chars().count(),
-            },
-            paths: vec![HighlightedText {
-                char_count: details.chars().count(),
-                highlight_positions: Vec::new(),
-                text: details,
-            }],
+        let highlighted_location = HighlightedText {
+            text: hit.string.clone(),
+            highlight_positions: hit.positions.clone(),
+            char_count: hit.string.chars().count(),
         };
+        let language_icon = language_name
+            .and_then(|language| {
+                let language = language.to_lowercase();
+                file_icons::FileIcons::get(cx).get_type_icon(&language)
+            })
+            .map(|icon_path| Icon::from_path(icon_path));
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .map(|this| {
-                    if matches!(source_kind, TaskSourceKind::UserInput) {
+                    let this = if matches!(source_kind, TaskSourceKind::UserInput) {
                         let task_index = hit.candidate_id;
                         let delete_button = div().child(
                             IconButton::new("delete", IconName::Close)
@@ -349,6 +324,11 @@ impl PickerDelegate for TasksModalDelegate {
                                 .tooltip(|cx| Tooltip::text("Delete an one-shot task", cx)),
                         );
                         this.end_hover_slot(delete_button)
+                    } else {
+                        this
+                    };
+                    if let Some(icon) = language_icon {
+                        this.end_slot(icon)
                     } else {
                         this
                     }
@@ -381,7 +361,7 @@ impl PickerDelegate for TasksModalDelegate {
             .update(cx, |workspace, cx| {
                 schedule_task(
                     workspace,
-                    task.as_ref(),
+                    &task,
                     self.task_context.clone(),
                     omit_history_entry,
                     cx,

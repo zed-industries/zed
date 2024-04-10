@@ -1,16 +1,18 @@
-use crate::wasm_host::wit::ToWasmtimeResult;
-use crate::wasm_host::WasmState;
-use anyhow::{anyhow, Result};
+use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
+use ::settings::Settings;
+use anyhow::{anyhow, bail, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use futures::io::BufReader;
-use language::{LanguageServerBinaryStatus, LspAdapterDelegate};
+use futures::{io::BufReader, FutureExt as _};
+use language::{
+    language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
+};
+use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
-use std::path::Path;
 use std::{
     env,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 use util::maybe;
@@ -27,6 +29,12 @@ wasmtime::component::bindgen!({
     },
 });
 
+pub use self::zed::extension::*;
+
+mod settings {
+    include!("../../../../extension_api/wit/since_v0.0.6/settings.rs");
+}
+
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 
 pub fn linker() -> &'static Linker<WasmState> {
@@ -36,6 +44,22 @@ pub fn linker() -> &'static Linker<WasmState> {
 
 #[async_trait]
 impl HostWorktree for WasmState {
+    async fn id(
+        &mut self,
+        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+    ) -> wasmtime::Result<u64> {
+        let delegate = self.table.get(&delegate)?;
+        Ok(delegate.worktree_id())
+    }
+
+    async fn root_path(
+        &mut self,
+        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
+    ) -> wasmtime::Result<String> {
+        let delegate = self.table.get(&delegate)?;
+        Ok(delegate.worktree_root_path().to_string_lossy().to_string())
+    }
+
     async fn read_text_file(
         &mut self,
         delegate: Resource<Arc<dyn LspAdapterDelegate>>,
@@ -74,10 +98,8 @@ impl HostWorktree for WasmState {
     }
 }
 
-impl self::zed::extension::lsp::Host for WasmState {}
-
 #[async_trait]
-impl ExtensionImports for WasmState {
+impl nodejs::Host for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
         self.host
             .node_runtime
@@ -120,12 +142,18 @@ impl ExtensionImports for WasmState {
             .await
             .to_wasmtime_result()
     }
+}
 
+#[async_trait]
+impl lsp::Host for WasmState {}
+
+#[async_trait]
+impl github::Host for WasmState {
     async fn latest_github_release(
         &mut self,
         repo: String,
-        options: GithubReleaseOptions,
-    ) -> wasmtime::Result<Result<GithubRelease, String>> {
+        options: github::GithubReleaseOptions,
+    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
         maybe!(async {
             let release = util::github::latest_github_release(
                 &repo,
@@ -134,12 +162,12 @@ impl ExtensionImports for WasmState {
                 self.host.http_client.clone(),
             )
             .await?;
-            Ok(GithubRelease {
+            Ok(github::GithubRelease {
                 version: release.tag_name,
                 assets: release
                     .assets
                     .into_iter()
-                    .map(|asset| GithubReleaseAsset {
+                    .map(|asset| github::GithubReleaseAsset {
                         name: asset.name,
                         download_url: asset.browser_download_url,
                     })
@@ -149,22 +177,80 @@ impl ExtensionImports for WasmState {
         .await
         .to_wasmtime_result()
     }
+}
 
-    async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
+#[async_trait]
+impl platform::Host for WasmState {
+    async fn current_platform(&mut self) -> Result<(platform::Os, platform::Architecture)> {
         Ok((
             match env::consts::OS {
-                "macos" => Os::Mac,
-                "linux" => Os::Linux,
-                "windows" => Os::Windows,
+                "macos" => platform::Os::Mac,
+                "linux" => platform::Os::Linux,
+                "windows" => platform::Os::Windows,
                 _ => panic!("unsupported os"),
             },
             match env::consts::ARCH {
-                "aarch64" => Architecture::Aarch64,
-                "x86" => Architecture::X86,
-                "x86_64" => Architecture::X8664,
+                "aarch64" => platform::Architecture::Aarch64,
+                "x86" => platform::Architecture::X86,
+                "x86_64" => platform::Architecture::X8664,
                 _ => panic!("unsupported architecture"),
             },
         ))
+    }
+}
+
+#[async_trait]
+impl ExtensionImports for WasmState {
+    async fn get_settings(
+        &mut self,
+        location: Option<self::SettingsLocation>,
+        category: String,
+        key: Option<String>,
+    ) -> wasmtime::Result<Result<String, String>> {
+        self.on_main_thread(|cx| {
+            async move {
+                let location = location
+                    .as_ref()
+                    .map(|location| ::settings::SettingsLocation {
+                        worktree_id: location.worktree_id as usize,
+                        path: Path::new(&location.path),
+                    });
+
+                cx.update(|cx| match category.as_str() {
+                    "language" => {
+                        let settings =
+                            AllLanguageSettings::get(location, cx).language(key.as_deref());
+                        Ok(serde_json::to_string(&settings::LanguageSettings {
+                            tab_size: settings.tab_size,
+                        })?)
+                    }
+                    "lsp" => {
+                        let settings = key
+                            .and_then(|key| {
+                                ProjectSettings::get_global(cx)
+                                    .lsp
+                                    .get(&Arc::<str>::from(key))
+                            })
+                            .cloned()
+                            .unwrap_or_default();
+                        Ok(serde_json::to_string(&settings::LspSettings {
+                            binary: settings.binary.map(|binary| settings::BinarySettings {
+                                path: binary.path,
+                                arguments: binary.arguments,
+                            }),
+                            settings: settings.settings,
+                            initialization_options: settings.initialization_options,
+                        })?)
+                    }
+                    _ => {
+                        bail!("Unknown settings category: {}", category);
+                    }
+                })
+            }
+            .boxed_local()
+        })
+        .await?
+        .to_wasmtime_result()
     }
 
     async fn set_language_server_installation_status(

@@ -7,6 +7,7 @@ interface lsp {
         insert-text-format: option<insert-text-format>,
     }
 
+    /// The kind of an LSP completion.
     variant completion-kind {
         text,
         method,
@@ -36,17 +37,20 @@ interface lsp {
         other(s32),
     }
 
+    /// Defines how to interpret the insert text in a completion item.
     variant insert-text-format {
         plain-text,
         snippet,
         other(s32),
     }
 
+    /// An LSP symbol.
     record symbol {
         kind: symbol-kind,
         name: string,
     }
 
+    /// The kind of an LSP symbol.
     variant symbol-kind {
         file,
         module,

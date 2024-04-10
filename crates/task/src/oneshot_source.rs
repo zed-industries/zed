@@ -89,9 +89,8 @@ impl TaskSource for OneshotSource {
         self
     }
 
-    fn tasks_for_path(
+    fn tasks_to_schedule(
         &mut self,
-        _path: Option<&std::path::Path>,
         _cx: &mut gpui::ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks.clone()

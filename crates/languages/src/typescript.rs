@@ -3,7 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::AppContext;
+use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
@@ -245,12 +245,20 @@ impl EsLintLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
-    fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
-        let eslint_user_settings = ProjectSettings::get_global(cx)
-            .lsp
-            .get(Self::SERVER_NAME)
-            .and_then(|s| s.settings.clone())
-            .unwrap_or_default();
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        let workspace_root = delegate.worktree_root_path();
+
+        let eslint_user_settings = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(Self::SERVER_NAME)
+                .and_then(|s| s.settings.clone())
+                .unwrap_or_default()
+        })?;
 
         let mut code_action_on_save = json!({
             // We enable this, but without also configuring `code_actions_on_format`
@@ -283,7 +291,7 @@ impl LspAdapter for EsLintLspAdapter {
             .iter()
             .any(|file| workspace_root.join(file).is_file());
 
-        json!({
+        Ok(json!({
             "": {
                 "validate": "on",
                 "rulesCustomizations": [],
@@ -301,7 +309,7 @@ impl LspAdapter for EsLintLspAdapter {
                     "useFlatConfig": use_flat_config,
                 },
             }
-        })
+        }))
     }
 
     fn name(&self) -> LanguageServerName {

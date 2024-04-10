@@ -1,22 +1,20 @@
 mod since_v0_0_1;
 mod since_v0_0_4;
 mod since_v0_0_6;
+use since_v0_0_6 as latest;
 
-use std::ops::RangeInclusive;
-use std::sync::Arc;
-
+use super::{wasm_engine, WasmState};
 use anyhow::{Context, Result};
 use language::{LanguageServerName, LspAdapterDelegate};
 use semantic_version::SemanticVersion;
+use std::{ops::RangeInclusive, sync::Arc};
 use wasmtime::{
     component::{Component, Instance, Linker, Resource},
     Store,
 };
 
-use super::{wasm_engine, WasmState};
-
-use since_v0_0_6 as latest;
-
+#[cfg(test)]
+pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
     CodeLabel, CodeLabelSpan, Command, Range,
@@ -145,6 +143,25 @@ impl Extension {
                 )
                 .await
             }
+        }
+    }
+
+    pub async fn call_language_server_workspace_configuration(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+    ) -> Result<Result<Option<String>, String>> {
+        match self {
+            Extension::V006(ext) => {
+                ext.call_language_server_workspace_configuration(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
+            Extension::V004(_) | Extension::V001(_) => Ok(Ok(None)),
         }
     }
 

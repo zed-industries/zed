@@ -38,6 +38,7 @@ use schemars::{
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use smol::future::FutureExt as _;
+use std::num::NonZeroU32;
 use std::{
     any::Any,
     cell::RefCell,
@@ -55,9 +56,7 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
-pub use task_context::{
-    ContextProvider, ContextProviderWithTasks, LanguageSource, SymbolContextProvider,
-};
+pub use task_context::{ContextProvider, ContextProviderWithTasks, SymbolContextProvider};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, WasmStore};
 use util::http::HttpClient;
@@ -74,6 +73,8 @@ pub use outline::{Outline, OutlineItem};
 pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::LineEnding;
 pub use tree_sitter::{Parser, Tree};
+
+use crate::language_settings::SoftWrap;
 
 /// Initializes the `language` crate.
 ///
@@ -101,6 +102,7 @@ lazy_static! {
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
+            soft_wrap: Some(SoftWrap::PreferredLineLength),
             ..Default::default()
         },
         None,
@@ -197,10 +199,6 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
-        self.adapter.workspace_configuration(workspace_root, cx)
-    }
-
     pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         self.adapter.process_diagnostics(params)
     }
@@ -243,6 +241,8 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
+    fn worktree_id(&self) -> u64;
+    fn worktree_root_path(&self) -> &Path;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
 
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
@@ -445,8 +445,12 @@ pub trait LspAdapter: 'static + Send + Sync {
         Ok(None)
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, _cx: &mut AppContext) -> Value {
-        serde_json::json!({})
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        Ok(serde_json::json!({}))
     }
 
     /// Returns a list of code actions supported by a given LspAdapter
@@ -576,6 +580,17 @@ pub struct LanguageConfig {
     /// The names of any Prettier plugins that should be used for this language.
     #[serde(default)]
     pub prettier_plugins: Vec<Arc<str>>,
+
+    /// Whether to indent lines using tab characters, as opposed to multiple
+    /// spaces.
+    #[serde(default)]
+    pub hard_tabs: Option<bool>,
+    /// How many columns a tab should occupy.
+    #[serde(default)]
+    pub tab_size: Option<NonZeroU32>,
+    /// How to soft-wrap long lines of text.
+    #[serde(default)]
+    pub soft_wrap: Option<SoftWrap>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -660,6 +675,9 @@ impl Default for LanguageConfig {
             prettier_parser_name: None,
             prettier_plugins: Default::default(),
             collapsed_placeholder: Default::default(),
+            hard_tabs: Default::default(),
+            tab_size: Default::default(),
+            soft_wrap: Default::default(),
         }
     }
 }

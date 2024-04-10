@@ -114,7 +114,7 @@ impl zed::Extension for GleamExtension {
         completion: zed::lsp::Completion,
     ) -> Option<zed::CodeLabel> {
         let name = &completion.label;
-        let ty = completion.detail?;
+        let ty = strip_newlines_from_detail(&completion.detail?);
         let let_binding = "let a";
         let colon = ": ";
         let assignment = " = ";
@@ -146,3 +146,40 @@ impl zed::Extension for GleamExtension {
 }
 
 zed::register_extension!(GleamExtension);
+
+/// Removes newlines from the completion detail.
+///
+/// The Gleam LSP can return types containing newlines, which causes formatting
+/// issues within the Zed completions menu.
+fn strip_newlines_from_detail(detail: &str) -> String {
+    let without_newlines = detail
+        .replace("->\n  ", "-> ")
+        .replace("\n  ", "")
+        .replace(",\n", "");
+
+    let comma_delimited_parts = without_newlines.split(',');
+    comma_delimited_parts
+        .map(|part| part.trim())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::strip_newlines_from_detail;
+
+    #[test]
+    fn test_strip_newlines_from_detail() {
+        let detail = "fn(\n  Selector(a),\n  b,\n  fn(Dynamic, Dynamic, Dynamic, Dynamic, Dynamic, Dynamic, Dynamic) -> a,\n) -> Selector(a)";
+        let expected = "fn(Selector(a), b, fn(Dynamic, Dynamic, Dynamic, Dynamic, Dynamic, Dynamic, Dynamic) -> a) -> Selector(a)";
+        assert_eq!(strip_newlines_from_detail(detail), expected);
+
+        let detail = "fn(Selector(a), b, fn(Dynamic, Dynamic, Dynamic, Dynamic, Dynamic, Dynamic) -> a) ->\n  Selector(a)";
+        let expected = "fn(Selector(a), b, fn(Dynamic, Dynamic, Dynamic, Dynamic, Dynamic, Dynamic) -> a) -> Selector(a)";
+        assert_eq!(strip_newlines_from_detail(detail), expected);
+
+        let detail = "fn(\n  Method,\n  List(#(String, String)),\n  a,\n  Scheme,\n  String,\n  Option(Int),\n  String,\n  Option(String),\n) -> Request(a)";
+        let expected = "fn(Method, List(#(String, String)), a, Scheme, String, Option(Int), String, Option(String)) -> Request(a)";
+        assert_eq!(strip_newlines_from_detail(&detail), expected);
+    }
+}

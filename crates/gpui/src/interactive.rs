@@ -307,7 +307,6 @@ impl ScrollDelta {
 }
 
 /// A mouse exit event from the platform, generated when the mouse leaves the window.
-/// The position generated should be just outside of the window's bounds.
 #[derive(Clone, Debug, Default)]
 pub struct MouseExitEvent {
     /// The position of the mouse relative to the window.

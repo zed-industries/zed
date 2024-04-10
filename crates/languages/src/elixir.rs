@@ -8,13 +8,13 @@ use project::project_settings::ProjectSettings;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 use smol::fs::{self, File};
 use std::{
     any::Any,
     env::consts,
     ops::Deref,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
@@ -56,15 +56,8 @@ impl Settings for ElixirSettings {
 
     type FileContent = ElixirSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut gpui::AppContext,
-    ) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        Self::load_via_json_merge(default_value, user_values)
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
     }
 }
 
@@ -278,16 +271,22 @@ impl LspAdapter for ElixirLspAdapter {
         })
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
-        let settings = ProjectSettings::get_global(cx)
-            .lsp
-            .get("elixir-ls")
-            .and_then(|s| s.settings.clone())
-            .unwrap_or_default();
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        let settings = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get("elixir-ls")
+                .and_then(|s| s.settings.clone())
+                .unwrap_or_default()
+        })?;
 
-        serde_json::json!({
+        Ok(serde_json::json!({
             "elixirLS": settings
-        })
+        }))
     }
 }
 
