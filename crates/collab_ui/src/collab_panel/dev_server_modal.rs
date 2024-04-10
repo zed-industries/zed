@@ -1,11 +1,13 @@
-use channel::ChannelStore;
+use channel::{ChannelStore, DevServer, RemoteProject};
 use client::{ChannelId, DevServerId};
 use editor::Editor;
 use gpui::{
-    AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, View,
-    ViewContext,
+    AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, Task,
+    View, ViewContext,
 };
-use ui::{prelude::*, CheckboxWithLabel, Tooltip};
+use rpc::proto::{CreateDevServerResponse, DevServerStatus};
+use ui::{prelude::*, Indicator, Tooltip};
+use util::ResultExt;
 use workspace::{notifications::DetachAndPromptErr, ModalView};
 
 pub struct DevServerModal {
@@ -20,11 +22,89 @@ pub struct DevServerModal {
     access_token: Option<String>,
 }
 
-#[derive(PartialEq)]
-enum Mode {
-    CreateRemoteProject,
-    CreateDevServer,
+#[derive(Default)]
+struct CreateDevServer {
+    name: Option<String>,
+    creating: Option<Task<()>>,
+    dev_server: Option<CreateDevServerResponse>,
 }
+
+enum Mode {
+    Default,
+    CreateRemoteProject(DevServerId),
+    CreateDevServer(CreateDevServer),
+}
+
+/*
+ ┌────────────────────────────────────────────────────────┐
+ │  Manage Remote Projects                             X  │
+ │                                                        │
+ │  * dev-server-1 [online]                               │
+ │                                                        │
+ │      * zed : /Users/eg/code/zed/zed  [DELETE]          │
+ │      * [NEW PROJECT]                                   │
+ │                                                        │
+ │  * dev-server-2 [offline]                              │
+ │                                                        │
+ │      * treesitter: /Users/maxbrunsfeld/code/treesitter │
+ │      * docs: /Users/conrad/code/docs                   │
+ │      * [new project]                                   │
+ │                                                        │
+ │  * [REGISTER DEV SERVER]                               │
+ │                                                        │
+ └────────────────────────────────────────────────────────┘
+
+
+  ┌───────────────────────────────────────┐
+  │  Register Dev Server:               X │
+  │                                       │
+  │  Name: [_______]  [SUBMIT]            │
+  │                                       │
+  │                                       │
+  │                                       │
+  │                                       │
+  │                                       │
+  │                                       │
+  │                                       │
+  └───────────────────────────────────────┘
+
+  ┌───────────────────────────────────────┐
+  │  Register Dev Server:               X │
+  │                                       │
+  │  Name: [_zeus__]                      │
+  │                                       │
+  │  Log into your server and run:        │
+  │                                       │
+  │    zed --dev-server-token  XXXXXXXXX  │
+  │                                       │
+  │   -- waiting for connection... --     │
+  │                                       │
+  └───────────────────────────────────────┘
+
+  ┌───────────────────────────────────────┐
+  │  Register Dev Server:               X │
+  │                                       │
+  │  Name: [_zeus__]                      │
+  │                                       │
+  │  Log into your server and run:        │
+  │                                       │
+  │    zed --dev-server-token  XXXXXXXXX  │
+  │                                       │
+  │   Connected! :)          [CLOSE]      │
+  │                                       │
+  └───────────────────────────────────────┘
+
+┌───────────────────────────────────────┐
+│  Add project on `zeus`:             X │
+│                                       │
+│  Path: [_______]                      │
+│                                       │
+│  Name: [_______]                      │
+│                                       │
+│                               [SUBMIT]│
+└───────────────────────────────────────┘
+
+*/
 
 impl DevServerModal {
     pub fn new(
@@ -41,7 +121,7 @@ impl DevServerModal {
         });
 
         Self {
-            mode: Mode::CreateRemoteProject,
+            mode: Mode::Default,
             focus_handle: cx.focus_handle(),
             channel_store,
             channel_id,
@@ -86,7 +166,7 @@ impl DevServerModal {
         task.detach_and_prompt_err("Failed to create remote project", cx, |_, _| None);
     }
 
-    pub fn create_dev_server(&self, cx: &mut ViewContext<Self>) {
+    pub fn create_dev_server(&mut self, cx: &mut ViewContext<Self>) {
         let name = self
             .dev_server_name_editor
             .read(cx)
@@ -99,20 +179,44 @@ impl DevServerModal {
         }
 
         let dev_server = self.channel_store.update(cx, |store, cx| {
-            store.create_dev_server(self.channel_id, name, cx)
+            store.create_dev_server(self.channel_id, name.clone(), cx)
         });
 
-        cx.spawn(|this, mut cx| async move {
-            let dev_server = dev_server.await?;
-            let access_token = dev_server.access_token.clone();
-            if let Some(view) = this.upgrade() {
-                view.update(&mut cx, move |this, _| {
-                    this.access_token = Some(access_token)
-                })?;
+        let task = cx.spawn(|this, mut cx| async move {
+            match dev_server.await {
+                Ok(dev_server) => {
+                    this.update(&mut cx, |this, _| {
+                        this.mode = Mode::CreateDevServer(CreateDevServer {
+                            name: Some(dev_server.name.clone()),
+                            creating: None,
+                            dev_server: Some(dev_server),
+                        });
+                    })
+                    .log_err();
+                }
+                Err(e) => {
+                    cx.prompt(
+                        gpui::PromptLevel::Critical,
+                        "Failed to create server",
+                        Some(&format!("{:?}. Please try again.", e)),
+                        &["Ok"],
+                    )
+                    .await
+                    .log_err();
+                    this.update(&mut cx, |this, _| {
+                        this.mode = Mode::CreateDevServer(Default::default());
+                    })
+                    .log_err();
+                }
             }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        });
+
+        self.mode = Mode::CreateDevServer(CreateDevServer {
+            name: Some(name),
+            creating: Some(task),
+            dev_server: None,
+        });
+        cx.notify()
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -123,7 +227,139 @@ impl DevServerModal {
         self.create_remote_project(cx);
     }
 
-    fn render_create_remote_project(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_dev_server(
+        &mut self,
+        dev_server: &DevServer,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let channel_store = self.channel_store.read(cx);
+        let dev_server_id = dev_server.id;
+
+        v_flex()
+            .ml_5()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(Icon::new(IconName::Server))
+                    .child(dev_server.name.clone())
+                    .child(Indicator::dot().color(match dev_server.status {
+                        DevServerStatus::Online => Color::Created,
+                        DevServerStatus::Offline => Color::Deleted,
+                    })),
+            )
+            .children(
+                channel_store
+                    .remote_projects_for_id(dev_server.channel_id)
+                    .iter()
+                    .filter_map(|remote_project| {
+                        if remote_project.dev_server_id == dev_server.id {
+                            Some(self.render_remote_project(remote_project, cx))
+                        } else {
+                            None
+                        }
+                    }),
+            )
+            .child(div().ml_8().child(
+                Button::new(("add-project", dev_server_id.0), "Add Project").on_click(cx.listener(
+                    move |this, _, cx| {
+                        this.mode = Mode::CreateRemoteProject(dev_server_id);
+                        cx.notify();
+                    },
+                )),
+            ))
+    }
+
+    fn render_remote_project(
+        &mut self,
+        project: &RemoteProject,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        h_flex()
+            .ml_8()
+            .gap_2()
+            .child(Icon::new(IconName::FileTree))
+            .child(project.name.clone())
+            .child(project.path.clone())
+            .child("DELETE")
+    }
+
+    fn render_create_dev_server(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let Mode::CreateDevServer(CreateDevServer {
+            name,
+            creating: _,
+            dev_server,
+        }) = &self.mode
+        else {
+            unreachable!()
+        };
+
+        self.dev_server_name_editor
+            .update(cx, |editor, _| editor.set_read_only(name.is_some()));
+        v_flex()
+            .on_action(cx.listener(|this, _: &menu::Confirm, cx| this.create_dev_server(cx)))
+            .px_1()
+            .pt_0p5()
+            .gap_px()
+            .child(
+                v_flex()
+                    .py_0p5()
+                    .px_1()
+                    .child(div().px_1().py_0p5().child("Manage Remote Projects")),
+            )
+            .child(
+                h_flex()
+                    .py_0p5()
+                    .px_1()
+                    .child(div().px_1().py_0p5().child(Icon::new(IconName::ArrowLeft)))
+                    .child("Add Dev Server"),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child("Name")
+                    .child(self.dev_server_name_editor.clone())
+                    .when(name.is_none(), |div| {
+                        div.child(
+                            Button::new("create-dev-server", "Create").on_click(cx.listener(
+                                move |this, _, cx| {
+                                    this.create_dev_server(cx);
+                                },
+                            )),
+                        )
+                    })
+                    .when(name.is_some() && dev_server.is_none(), |div| {
+                        div.child(Button::new("create-dev-server", "Creating...").disabled(true))
+                    }),
+            )
+            .when_some(dev_server.clone(), |this, dev_server| {
+                let instructions = SharedString::from(format!(
+                    "zed --dev-server-token {}",
+                    dev_server.access_token
+                ));
+                this.child(
+                    v_flex()
+                        .ml_8()
+                        .gap_2()
+                        .child(Label::new(format!(
+                            "Please log into `{}` and run:",
+                            dev_server.name
+                        )))
+                        .child(instructions.clone())
+                        .child(
+                            IconButton::new("copy-access-token", IconName::Copy)
+                                .on_click(cx.listener(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new(
+                                        instructions.to_string(),
+                                    ))
+                                }))
+                                .icon_size(IconSize::Small)
+                                .tooltip(|cx| Tooltip::text("Copy access token", cx)),
+                        ),
+                )
+            })
+    }
+
+    fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let channel_store = self.channel_store.read(cx);
         let dev_servers = channel_store.dev_servers_for_id(self.channel_id);
 
@@ -135,39 +371,17 @@ impl DevServerModal {
                 v_flex()
                     .py_0p5()
                     .px_1()
-                    .child(div().px_1().py_0p5().child("Add Remote Project")),
+                    .child(div().px_1().py_0p5().child("Manage Remote Projects")),
             )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child("Name")
-                    .child(self.remote_project_name_editor.clone()),
+            .children(
+                dev_servers
+                    .iter()
+                    .map(|dev_server| self.render_dev_server(dev_server, cx)),
             )
-            .child("Dev Server")
-            .children(dev_servers.iter().map(|dev_server| {
-                let dev_server_id = dev_server.id;
-                CheckboxWithLabel::new(
-                    ("selected-dev-server", dev_server.id.0),
-                    Label::new(dev_server.name.clone()),
-                    if Some(dev_server.id) == self.selected_dev_server_id {
-                        Selection::Selected
-                    } else {
-                        Selection::Unselected
-                    },
-                    cx.listener(move |this, _, cx| {
-                        if this.selected_dev_server_id == Some(dev_server_id) {
-                            this.selected_dev_server_id = None;
-                        } else {
-                            this.selected_dev_server_id = Some(dev_server_id);
-                        }
-                        cx.notify();
-                    }),
-                )
-            }))
             .child(
                 Button::new("toggle-create-dev-server-button", "Create dev server").on_click(
                     cx.listener(|this, _, cx| {
-                        this.mode = Mode::CreateDevServer;
+                        this.mode = Mode::CreateDevServer(Default::default());
                         this.access_token = None;
                         this.dev_server_name_editor
                             .read(cx)
@@ -177,47 +391,10 @@ impl DevServerModal {
                     }),
                 ),
             )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child("Path")
-                    .child(self.remote_project_path_editor.clone()),
-            )
     }
 
-    fn render_create_dev_server(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_create_project(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
-            .px_1()
-            .pt_0p5()
-            .gap_px()
-            .child(
-                v_flex()
-                    .py_0p5()
-                    .px_1()
-                    .child(div().px_1().py_0p5().child("Add Dev Server")),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child("Name")
-                    .child(self.dev_server_name_editor.clone()),
-            )
-            .when_some(self.access_token.clone(), |this, access_token| {
-                this.child(
-                    div()
-                        .child("Server created!")
-                        .child("Access token: ")
-                        .child(access_token.clone())
-                        .child(
-                            IconButton::new("copy-access-token", IconName::Copy)
-                                .on_click(cx.listener(move |_, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new(access_token.clone()))
-                                }))
-                                .icon_size(IconSize::Small)
-                                .tooltip(|cx| Tooltip::text("Copy access token", cx)),
-                        ),
-                )
-            })
     }
 }
 impl ModalView for DevServerModal {}
@@ -232,45 +409,18 @@ impl EventEmitter<DismissEvent> for DevServerModal {}
 
 impl Render for DevServerModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let modal_content = match self.mode {
-            Mode::CreateRemoteProject => self.render_create_remote_project(cx).into_any_element(),
-            Mode::CreateDevServer => self.render_create_dev_server(cx).into_any_element(),
-        };
-
         div()
             .track_focus(&self.focus_handle)
             .elevation_2(cx)
             .key_context("DevServerModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
-            .w_96()
-            .child(modal_content)
-            .child(
-                div()
-                    .flex()
-                    .w_full()
-                    .flex_row_reverse()
-                    .child(Button::new("create-button", "Create").on_click(cx.listener(
-                        |this, _event, cx| match this.mode {
-                            Mode::CreateRemoteProject => this.create_remote_project(cx),
-                            Mode::CreateDevServer => this.create_dev_server(cx),
-                        },
-                    )))
-                    .when(self.mode == Mode::CreateDevServer, |this| {
-                        this.child(Button::new("cancel-button", "Cancel").on_click(cx.listener(
-                            |this, _, cx| {
-                                this.access_token = None;
-                                this.dev_server_name_editor
-                                    .update(cx, |editor, cx| editor.set_text("", cx));
-                                this.mode = Mode::CreateRemoteProject;
-                                this.remote_project_name_editor
-                                    .read(cx)
-                                    .focus_handle(cx)
-                                    .focus(cx);
-                                cx.notify();
-                            },
-                        )))
-                    }),
-            )
+            .w(rems(44.))
+            .h(rems(40.))
+            .child(match &self.mode {
+                Mode::Default => self.render_default(cx).into_any_element(),
+                Mode::CreateRemoteProject(_) => self.render_create_project(cx).into_any_element(),
+                Mode::CreateDevServer(_) => self.render_create_dev_server(cx).into_any_element(),
+            })
     }
 }

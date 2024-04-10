@@ -60,6 +60,7 @@ pub struct RemoteProject {
     pub project_id: Option<ProjectId>,
     pub channel_id: ChannelId,
     pub name: SharedString,
+    pub path: SharedString,
     pub dev_server_id: DevServerId,
 }
 
@@ -70,6 +71,7 @@ impl From<proto::RemoteProject> for RemoteProject {
             project_id: project.project_id.map(|id| ProjectId(id)),
             channel_id: ChannelId(project.channel_id),
             name: project.name.into(),
+            path: project.path.into(),
             dev_server_id: DevServerId(project.dev_server_id),
         }
     }

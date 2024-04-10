@@ -1,10 +1,11 @@
 use crate::{
     AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext, Context,
-    DismissEvent, FocusableView, ForegroundExecutor, Global, Model, ModelContext, Render, Result,
-    Task, View, ViewContext, VisualContext, WindowContext, WindowHandle,
+    DismissEvent, FocusableView, ForegroundExecutor, Global, Model, ModelContext, PromptLevel,
+    Render, Result, Task, View, ViewContext, VisualContext, WindowContext, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
+use futures::channel::oneshot;
 use std::{future::Future, rc::Weak};
 
 /// An async-friendly version of [AppContext] with a static lifetime so it can be held across `await` points in async code.
@@ -262,6 +263,21 @@ impl AsyncWindowContext {
         R: 'static,
     {
         self.foreground_executor.spawn(f(self.clone()))
+    }
+
+    /// Present a platform dialog.
+    /// The provided message will be presented, along with buttons for each answer.
+    /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
+    pub fn prompt(
+        &mut self,
+        level: PromptLevel,
+        message: &str,
+        detail: Option<&str>,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        self.window
+            .update(self, |_, cx| cx.prompt(level, message, detail, answers))
+            .unwrap_or_else(|_| oneshot::channel().1)
     }
 }
 

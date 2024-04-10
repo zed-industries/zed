@@ -1,5 +1,6 @@
 use crate::{Toast, Workspace};
 use collections::HashMap;
+use futures::Future;
 use gpui::{
     svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, Entity, EntityId,
     EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
