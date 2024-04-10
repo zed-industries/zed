@@ -230,9 +230,8 @@ async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
 bitflags = "2.4.2"
-# todo(linux): Remove these once https://github.com/kvark/blade/pull/107 is merged and we've upgraded our renderer
-blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "85981c0f4890a5fcd08da2a53cc4a0459247af44" }
-blade-macros = { git = "https://github.com/zed-industries/blade", rev = "85981c0f4890a5fcd08da2a53cc4a0459247af44" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "810ec594358aafea29a4a3d8ab601d25292b2ce4" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "810ec594358aafea29a4a3d8ab601d25292b2ce4" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 cap-std = "3.0"
 chrono = { version = "0.4", features = ["serde"] }

@@ -17,7 +17,6 @@ use std::ffi::c_void;
 use blade_graphics as gpu;
 use std::{mem, sync::Arc};
 
-const SURFACE_FRAME_COUNT: u32 = 3;
 const MAX_FRAME_TIME_MS: u32 = 1000;
 
 pub type Context = ();
@@ -209,6 +208,7 @@ impl BladePipelines {
                 name: "quads",
                 data_layouts: &[&ShaderQuadsData::layout()],
                 vertex: shader.at("vs_quad"),
+                vertex_fetches: &[],
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
@@ -225,6 +225,7 @@ impl BladePipelines {
                 name: "shadows",
                 data_layouts: &[&ShaderShadowsData::layout()],
                 vertex: shader.at("vs_shadow"),
+                vertex_fetches: &[],
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
@@ -241,6 +242,7 @@ impl BladePipelines {
                 name: "path_rasterization",
                 data_layouts: &[&ShaderPathRasterizationData::layout()],
                 vertex: shader.at("vs_path_rasterization"),
+                vertex_fetches: &[],
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleList,
                     ..Default::default()
@@ -257,6 +259,7 @@ impl BladePipelines {
                 name: "paths",
                 data_layouts: &[&ShaderPathsData::layout()],
                 vertex: shader.at("vs_path"),
+                vertex_fetches: &[],
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
@@ -273,6 +276,7 @@ impl BladePipelines {
                 name: "underlines",
                 data_layouts: &[&ShaderUnderlinesData::layout()],
                 vertex: shader.at("vs_underline"),
+                vertex_fetches: &[],
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
@@ -289,6 +293,7 @@ impl BladePipelines {
                 name: "mono-sprites",
                 data_layouts: &[&ShaderMonoSpritesData::layout()],
                 vertex: shader.at("vs_mono_sprite"),
+                vertex_fetches: &[],
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
@@ -305,6 +310,7 @@ impl BladePipelines {
                 name: "poly-sprites",
                 data_layouts: &[&ShaderPolySpritesData::layout()],
                 vertex: shader.at("vs_poly_sprite"),
+                vertex_fetches: &[],
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
@@ -321,6 +327,7 @@ impl BladePipelines {
                 name: "surfaces",
                 data_layouts: &[&ShaderSurfacesData::layout()],
                 vertex: shader.at("vs_surface"),
+                vertex_fetches: &[],
                 primitive: gpu::PrimitiveState {
                     topology: gpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
@@ -356,7 +363,7 @@ impl BladeRenderer {
         gpu::SurfaceConfig {
             size,
             usage: gpu::TextureUsage::TARGET,
-            frame_count: SURFACE_FRAME_COUNT,
+            display_sync: gpu::DisplaySync::Recent,
             //Note: this matches the original logic of the Metal backend,
             // but ultimaterly we need to switch to `Linear`.
             color_space: gpu::ColorSpace::Srgb,
