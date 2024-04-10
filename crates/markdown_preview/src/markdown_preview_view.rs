@@ -288,7 +288,6 @@ impl MarkdownPreviewView {
         let subscription = cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
             match event {
                 EditorEvent::Edited => {
-                    dbg!("edited");
                     this.on_editor_edited(cx);
                 }
                 EditorEvent::SelectionsChanged { .. } => {

@@ -16,6 +16,8 @@ use theme::{ActiveTheme, SyntaxTheme};
 use ui::{h_flex, v_flex, Checkbox, FluentBuilder, LinkPreview, Selection};
 use workspace::Workspace;
 
+type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>;
+
 pub struct RenderContext {
     workspace: Option<WeakView<Workspace>>,
     next_id: usize,
@@ -27,7 +29,7 @@ pub struct RenderContext {
     code_span_background_color: Hsla,
     syntax_theme: Arc<SyntaxTheme>,
     indent: usize,
-    checkbox_clicked_callback: Option<Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>>,
+    checkbox_clicked_callback: Option<CheckboxClickedCallback>,
 }
 
 impl RenderContext {
