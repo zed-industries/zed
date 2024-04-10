@@ -176,7 +176,9 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
                                         _ => return,
                                     };
 
-                                    callback(checked, range.clone(), cx);
+                                    if cx.modifiers().secondary() {
+                                        callback(checked, range.clone(), cx);
+                                    }
                                 }
                             })
                         },
