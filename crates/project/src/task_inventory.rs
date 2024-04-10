@@ -242,7 +242,7 @@ impl Inventory {
             .chain(language_tasks)
             .filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
-                Some((kind, task.resolve_task(id_base, task_context.clone())?))
+                Some((kind, task.resolve_task(&id_base, task_context.clone())?))
             })
             .map(|(kind, task)| {
                 let lru_score = task_usage
@@ -385,6 +385,7 @@ mod test_inventory {
                     .into_iter()
                     .map(|task| TaskTemplate {
                         label: task.name,
+                        command: "test command".to_string(),
                         ..TaskTemplate::default()
                     })
                     .collect(),
@@ -444,7 +445,7 @@ mod test_inventory {
             let id_base = task_source_kind.to_id_base();
             inventory.task_scheduled(
                 task_source_kind.clone(),
-                task.resolve_task(id_base, TaskContext::default())
+                task.resolve_task(&id_base, TaskContext::default())
                     .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
             );
         });

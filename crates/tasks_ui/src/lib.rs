@@ -243,7 +243,7 @@ fn schedule_task(
     cx: &mut ViewContext<'_, Workspace>,
 ) {
     if let Some(spawn_in_terminal) =
-        task_to_resolve.resolve_task(task_source_kind.to_id_base(), task_cx)
+        task_to_resolve.resolve_task(&task_source_kind.to_id_base(), task_cx)
     {
         schedule_resolved_task(
             workspace,

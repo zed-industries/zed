@@ -21,7 +21,7 @@ pub use vscode_format::VsCodeTaskFile;
 pub struct TaskId(pub String);
 
 /// Contains all information needed by Zed to spawn a new terminal tab for the given task.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnInTerminal {
     /// Id of the task to use when determining task tab affinity.
     pub id: TaskId,
@@ -44,7 +44,7 @@ pub struct SpawnInTerminal {
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedTask {
     /// A way to distinguish tasks produced by the same template, but different contexts.
     /// NOTE: Resolved tasks may have the same labels, commands and do the same things,

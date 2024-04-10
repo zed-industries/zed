@@ -94,7 +94,7 @@ impl TasksModalDelegate {
         };
         Some((
             source_kind,
-            new_oneshot.resolve_task(id_base, self.task_context.clone())?,
+            new_oneshot.resolve_task(&id_base, self.task_context.clone())?,
         ))
     }
 
@@ -194,11 +194,11 @@ impl PickerDelegate for TasksModalDelegate {
                         None => {
                             let Ok((worktree, language)) =
                                 picker.delegate.workspace.update(cx, |workspace, cx| {
-                                active_item_selection_properties(workspace, cx)
-                            })
-                        else {
-                            return Vec::new();
-                        };
+                                    active_item_selection_properties(workspace, cx)
+                                })
+                            else {
+                                return Vec::new();
+                            };
                             let (used, current) =
                                 picker.delegate.inventory.update(cx, |inventory, cx| {
                                     inventory.used_and_current_resolved_tasks(
@@ -395,6 +395,7 @@ impl PickerDelegate for TasksModalDelegate {
     }
 }
 
+// TODO kb more tests on recent tasks from language templates
 #[cfg(test)]
 mod tests {
     use gpui::{TestAppContext, VisualTestContext};
@@ -549,7 +550,7 @@ mod tests {
         });
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["echo 4", "another one", "example task", "echo 40"],
+            vec!["echo 4", "another one", "example task"],
         );
     }
 
