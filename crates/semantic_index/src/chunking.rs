@@ -123,3 +123,116 @@ fn split_text(
         range.start = range.end;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
+
+    #[test]
+    fn test_chunk_text() {
+        let text = "a\n".repeat(1000);
+        let chunks = chunk_text(&text, None);
+        assert_eq!(
+            chunks.len(),
+            ((2000_f64) / (CHUNK_THRESHOLD as f64)).ceil() as usize
+        );
+    }
+
+    #[gpui::test]
+    async fn test_chunk_text_grammar() {
+        // Let's set up a big text with some known segments
+        // We'll then chunk it and verify that the chunks are correct
+
+        let text = r#"
+use gpui::*;
+
+struct WindowContent {
+    text: SharedString,
+}
+
+impl Render for WindowContent {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .bg(rgb(0x1e2025))
+            .size_full()
+            .justify_center()
+            .items_center()
+            .text_xl()
+            .text_color(rgb(0xffffff))
+            .child(self.text.clone())
+    }
+}
+
+fn main() {
+    App::new().run(|cx: &mut AppContext| {
+        // Create several new windows, positioned in the top right corner of each screen
+
+        for screen in cx.displays() {
+            let options = {
+                let popup_margin_width = DevicePixels::from(16);
+                let popup_margin_height = DevicePixels::from(-0) - DevicePixels::from(48);
+
+                let window_size = Size {
+                    width: px(400.),
+                    height: px(72.),
+                };
+
+                let screen_bounds = screen.bounds();
+                let size: Size<DevicePixels> = window_size.into();
+
+                let bounds = gpui::Bounds::<DevicePixels> {
+                    origin: screen_bounds.upper_right()
+                        - point(size.width + popup_margin_width, popup_margin_height),
+                    size: window_size.into(),
+                };
+
+                WindowOptions {
+                    // Set the bounds of the window in screen coordinates
+                    bounds: Some(bounds),
+                    // Specify the display_id to ensure the window is created on the correct screen
+                    display_id: Some(screen.id()),
+
+                    titlebar: None,
+                    window_background: WindowBackgroundAppearance::default(),
+                    focus: false,
+                    show: true,
+                    kind: WindowKind::PopUp,
+                    is_movable: false,
+                    fullscreen: false,
+                }
+            };
+
+            cx.open_window(options, |cx| {
+                cx.new_view(|_| WindowContent {
+                    text: format!("{:?}", screen.id()).into(),
+                })
+            });
+        }
+    });
+}"#;
+
+        let language = Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        );
+
+        let chunks = chunk_text(text, language.grammar());
+        assert_eq!(chunks.len(), 2);
+
+        assert_eq!(chunks[0].range.start, 0);
+        assert_eq!(chunks[0].range.end, 1470);
+        // The break between chunks is right before the "Specify the display_id" comment
+
+        assert_eq!(chunks[1].range.start, 1470);
+        assert_eq!(chunks[1].range.end, 2168);
+    }
+}
