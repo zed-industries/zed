@@ -751,20 +751,21 @@ impl LocalWorktree {
 
     pub fn load_buffer(
         &mut self,
-        id: BufferId,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Model<Buffer>>> {
         let path = Arc::from(path);
+        let reservation = cx.reserve_model();
+        let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
         cx.spawn(move |this, mut cx| async move {
             let (file, contents, diff_base) = this
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))?
                 .await?;
             let text_buffer = cx
                 .background_executor()
-                .spawn(async move { text::Buffer::new(0, id, contents) })
+                .spawn(async move { text::Buffer::new(0, buffer_id, contents) })
                 .await;
-            cx.new_model(|_| {
+            cx.insert_model(reservation, |_| {
                 Buffer::build(
                     text_buffer,
                     diff_base,
@@ -777,13 +778,13 @@ impl LocalWorktree {
 
     pub fn new_buffer(
         &mut self,
-        buffer_id: BufferId,
         path: Arc<Path>,
         cx: &mut ModelContext<Worktree>,
     ) -> Model<Buffer> {
-        let text_buffer = text::Buffer::new(0, buffer_id, "".into());
         let worktree = cx.handle();
-        cx.new_model(|_| {
+        cx.new_model(|cx| {
+            let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
+            let text_buffer = text::Buffer::new(0, buffer_id, "".into());
             Buffer::build(
                 text_buffer,
                 None,
