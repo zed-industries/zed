@@ -5,9 +5,9 @@ use std::sync::{Arc, OnceLock};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use extension::ExtensionStore;
-use gpui::{Entity, Model, VisualContext};
+use gpui::{Model, VisualContext};
 use language::Buffer;
-use ui::ViewContext;
+use ui::{SharedString, ViewContext};
 use workspace::notifications::NotificationId;
 use workspace::{notifications::simple_message_notification, Workspace};
 
@@ -144,7 +144,7 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
         struct ExtensionSuggestionNotification;
 
         let notification_id = NotificationId::identified::<ExtensionSuggestionNotification>(
-            buffer.entity_id().as_u64() as usize,
+            SharedString::from(extension_id.clone()),
         );
 
         workspace.show_notification(notification_id, cx, |cx| {
