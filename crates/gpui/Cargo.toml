@@ -66,7 +66,6 @@ sum_tree.workspace = true
 taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "1876f72bee5e376023eaa518aa7b8a34c769bd1b" }
 thiserror.workspace = true
 time.workspace = true
-unicode-segmentation.workspace = true
 util.workspace = true
 uuid = { version = "1.1.2", features = ["v4", "v5"] }
 waker-fn = "1.1.0"
