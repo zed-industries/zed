@@ -665,8 +665,7 @@ impl ChannelChat {
                     if summary.count == 0 {
                         store.set_acknowledged_message_id(self.channel_id, None);
                     } else if deleted_message_ix == summary.count {
-                        let latest_id = summary.max_id;
-                        if let ChannelMessageId::Saved(id) = latest_id {
+                        if let ChannelMessageId::Saved(id) = summary.max_id {
                             store.set_acknowledged_message_id(self.channel_id, Some(id));
                         }
                     }
