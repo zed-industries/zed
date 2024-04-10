@@ -10,6 +10,17 @@ pub struct WorkspaceSettings {
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
+    pub restore_on_startup: RestoreOnStartupBehaviour,
+}
+
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreOnStartupBehaviour {
+    /// Always start with an empty editor
+    None,
+    /// Restore the workspace that was closed last.
+    #[default]
+    LastWorkspace,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -32,6 +43,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: off
     pub autosave: Option<AutosaveSetting>,
+    /// Controls previous session restoration in freshly launched Zed instance.
+    /// Values: none, last_workspace
+    /// Default: last_workspace
+    pub restore_on_startup: Option<RestoreOnStartupBehaviour>,
 }
 
 #[derive(Deserialize)]

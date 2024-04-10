@@ -62,7 +62,7 @@ use util::{
 };
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
-use workspace::{AppState, WorkspaceStore};
+use workspace::{AppState, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, ensure_only_instance, handle_cli_connection,
     handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, IsOnlyInstance,
@@ -504,7 +504,15 @@ async fn installation_id() -> Result<(String, bool)> {
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: AsyncAppContext) {
     maybe!(async {
-        if let Some(location) = workspace::last_opened_workspace_paths().await {
+        let restore_behaviour =
+            cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)?;
+        let location = match restore_behaviour {
+            workspace::RestoreOnStartupBehaviour::LastWorkspace => {
+                workspace::last_opened_workspace_paths().await
+            }
+            _ => None,
+        };
+        if let Some(location) = location {
             cx.update(|cx| {
                 workspace::open_paths(
                     location.paths().as_ref(),

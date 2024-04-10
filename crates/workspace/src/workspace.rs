@@ -81,7 +81,9 @@ use ui::{
 };
 use util::ResultExt;
 use uuid::Uuid;
-pub use workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings};
+pub use workspace_settings::{
+    AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
+};
 
 use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
