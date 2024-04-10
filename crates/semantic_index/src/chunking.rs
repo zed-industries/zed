@@ -388,7 +388,7 @@ mod tests {
             "Should handle both parsable and unparsable sections correctly"
         );
 
-        let expected_chunks = vec![
+        let expected_chunks = [
             "fn main() {",
             " let a = 1;",
             " let b = 2;",
