@@ -742,41 +742,40 @@ impl Workspace {
                 if this.bounds_save_task_queued.is_some() {
                     return;
                 }
-                this.bounds_save_task_queued = Some(cx.spawn(|weak_this, mut cx| async move {
+                this.bounds_save_task_queued = Some(cx.spawn(|this, mut cx| async move {
                     cx.background_executor()
                         .timer(Duration::from_millis(100))
                         .await;
-                    weak_this
-                        .update(&mut cx, |inner_this, cx| {
-                            if let Some(display) = cx.display() {
-                                let window_bounds = cx.window_bounds();
-                                let fullscreen = cx.is_fullscreen();
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(display) = cx.display() {
+                            let window_bounds = cx.window_bounds();
+                            let fullscreen = cx.is_fullscreen();
 
-                                if let Some(display_uuid) = display.uuid().log_err() {
-                                    // Only update the window bounds when not full screen,
-                                    // so we can remember the last non-fullscreen bounds
-                                    // across restarts
-                                    if fullscreen {
-                                        cx.background_executor()
-                                            .spawn(DB.set_fullscreen(workspace_id, true))
-                                            .detach_and_log_err(cx);
-                                    } else if !cx.is_minimized() {
-                                        cx.background_executor()
-                                            .spawn(DB.set_fullscreen(workspace_id, false))
-                                            .detach_and_log_err(cx);
-                                        cx.background_executor()
-                                            .spawn(DB.set_window_bounds(
-                                                workspace_id,
-                                                SerializedWindowsBounds(window_bounds),
-                                                display_uuid,
-                                            ))
-                                            .detach_and_log_err(cx);
-                                    }
+                            if let Some(display_uuid) = display.uuid().log_err() {
+                                // Only update the window bounds when not full screen,
+                                // so we can remember the last non-fullscreen bounds
+                                // across restarts
+                                if fullscreen {
+                                    cx.background_executor()
+                                        .spawn(DB.set_fullscreen(workspace_id, true))
+                                        .detach_and_log_err(cx);
+                                } else if !cx.is_minimized() {
+                                    cx.background_executor()
+                                        .spawn(DB.set_fullscreen(workspace_id, false))
+                                        .detach_and_log_err(cx);
+                                    cx.background_executor()
+                                        .spawn(DB.set_window_bounds(
+                                            workspace_id,
+                                            SerializedWindowsBounds(window_bounds),
+                                            display_uuid,
+                                        ))
+                                        .detach_and_log_err(cx);
                                 }
                             }
-                            inner_this.bounds_save_task_queued.take();
-                        })
-                        .ok();
+                        }
+                        this.bounds_save_task_queued.take();
+                    })
+                    .ok();
                 }));
                 cx.notify();
             }),
