@@ -25,17 +25,17 @@ pub struct TextFieldStyle {
 
 /// A Text Field view that can be used to create text fields like search inputs, form fields, etc.
 ///
-/// It wraps a single line [Editor] view and allows for common field properties like labels, placeholders, icons, etc.
+/// It wraps a single line [`Editor`] view and allows for common field properties like labels, placeholders, icons, etc.
 pub struct TextField {
     /// An optional label for the text field.
     ///
-    /// It's position is determined by the [FieldLabelLayout]
+    /// Its position is determined by the [`FieldLabelLayout`].
     label: Option<SharedString>,
     /// The placeholder text for the text field.
     ///
     /// All text fields must have placeholder text that is displayed when the field is empty.
     placeholder: SharedString,
-    /// Exposes the underlying View<[Editor]> to allow for customizing the editor beyond the provided API.
+    /// Exposes the underlying [`View<Editor>`] to allow for customizing the editor beyond the provided API.
     ///
     /// This likely will only be public in the short term, ideally the API will be expanded to cover necessary use cases.
     pub editor: View<Editor>,
