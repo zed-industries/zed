@@ -272,6 +272,7 @@ fn main() {
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
         tasks_ui::init(cx);
+        debugger_ui::init(cx);
         channel::init(&client, user_store.clone(), cx);
         search::init(cx);
         vim::init(cx);

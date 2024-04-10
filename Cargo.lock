@@ -2992,6 +2992,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96a6ac251f4a2aca6b3f91340350eab87ae57c3f127ffeb585e92bd336717991"
 
 [[package]]
+name = "dap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dap 0.4.1-alpha1",
+ "futures 0.3.28",
+ "gpui",
+ "log",
+ "parking_lot",
+ "postage",
+ "release_channel",
+ "serde",
+ "serde_json",
+ "smol",
+ "util",
+]
+
+[[package]]
+name = "dap"
+version = "0.4.1-alpha1"
+source = "git+https://github.com/sztomi/dap-rs?branch=main#913a2a520416a2a81a1f09a7946f595d5ae3ee4a"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "dashmap"
 version = "5.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3037,6 +3065,29 @@ dependencies = [
  "sqlez_macros",
  "tempfile",
  "util",
+]
+
+[[package]]
+name = "debugger_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dap 0.1.0",
+ "db",
+ "editor",
+ "gpui",
+ "serde",
+ "serde_derive",
+ "ui",
+ "workspace",
+]
+
+[[package]]
+name = "debuggers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dap 0.1.0",
 ]
 
 [[package]]
@@ -12598,6 +12649,7 @@ dependencies = [
  "copilot",
  "copilot_ui",
  "db",
+ "debugger_ui",
  "diagnostics",
  "editor",
  "embed-manifest",

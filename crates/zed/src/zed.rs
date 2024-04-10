@@ -7,6 +7,7 @@ use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
 use client::ZED_URL_SCHEME;
 use collections::VecDeque;
+use debugger_ui::debugger_panel::DebugPanel;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
@@ -201,6 +202,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace_handle.clone(),
                 cx.clone(),
             );
+
+            let debug_panel = workspace_handle.update(&mut cx.clone(), |workspace, cx| {
+                cx.new_view(|cx| DebugPanel::new(workspace::dock::DockPosition::Bottom, cx))
+            })?;
+
             let (
                 project_panel,
                 terminal_panel,
@@ -224,6 +230,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
+                workspace.add_panel(debug_panel, cx);
                 cx.focus_self();
             })
         })
