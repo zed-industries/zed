@@ -29,10 +29,7 @@ use settings::{
     SettingsStore, DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use task::{
-    oneshot_source::OneshotSource,
-    static_source::{StaticSource, TrackedFile},
-};
+use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 
@@ -163,23 +160,17 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
                     inventory.add_source(
-                        TaskSourceKind::UserInput,
-                        |cx| OneshotSource::new(cx),
-                        cx,
-                    );
-                    inventory.add_source(
-                        TaskSourceKind::AbsPath(paths::TASKS.clone()),
+                        TaskSourceKind::AbsPath {
+                            id_base: "global_tasks",
+                            abs_path: paths::TASKS.clone(),
+                        },
                         |cx| {
                             let tasks_file_rx = watch_config_file(
                                 &cx.background_executor(),
                                 fs,
                                 paths::TASKS.clone(),
                             );
-                            StaticSource::new(
-                                "global_tasks",
-                                TrackedFile::new(tasks_file_rx, cx),
-                                cx,
-                            )
+                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
                         },
                         cx,
                     );
