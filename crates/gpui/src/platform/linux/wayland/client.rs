@@ -717,7 +717,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClient {
                     state.enter_token = Some(());
                     state.mouse_focused_window = Some(window.clone());
                     state.cursor.set_serial_id(serial);
-                    state.cursor.set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
+                    state
+                        .cursor
+                        .set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
                     drop(state);
                     window.set_focused(true);
                 }
@@ -748,7 +750,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClient {
                     return;
                 }
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
-                state.cursor.set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
+                state
+                    .cursor
+                    .set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
 
                 if let Some(window) = state.mouse_focused_window.clone() {
                     let input = PlatformInput::MouseMove(MouseMoveEvent {
