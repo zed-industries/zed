@@ -9,7 +9,6 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-name = "ui_text_field"
 path = "src/ui_text_field.rs"
 
 [dependencies]
