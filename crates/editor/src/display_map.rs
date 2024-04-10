@@ -157,7 +157,7 @@ impl DisplayMap {
         );
     }
 
-    pub fn fold<T: ToOffset>(
+    pub fn fold<T: ToOffset<MultiBuffer>>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
@@ -180,7 +180,7 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    pub fn unfold<T: ToOffset>(
+    pub fn unfold<T: ToOffset<MultiBuffer>>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
@@ -693,7 +693,10 @@ impl DisplaySnapshot {
             })
     }
 
-    pub fn buffer_chars_at(&self, mut offset: usize) -> impl Iterator<Item = (char, usize)> + '_ {
+    pub fn buffer_chars_at(
+        &self,
+        mut offset: Offset<MultiBuffer>,
+    ) -> impl Iterator<Item = (char, usize)> + '_ {
         self.buffer_snapshot.chars_at(offset).map(move |ch| {
             let ret = (ch, offset);
             offset += ch.len_utf8();
@@ -703,7 +706,7 @@ impl DisplaySnapshot {
 
     pub fn reverse_buffer_chars_at(
         &self,
-        mut offset: usize,
+        mut offset: Offset<MultiBuffer>,
     ) -> impl Iterator<Item = (char, usize)> + '_ {
         self.buffer_snapshot
             .reversed_chars_at(offset)
@@ -732,7 +735,7 @@ impl DisplaySnapshot {
 
     pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Fold>
     where
-        T: ToOffset,
+        T: ToOffset<MultiBuffer>,
     {
         self.fold_snapshot.folds_in_range(range)
     }
@@ -744,7 +747,7 @@ impl DisplaySnapshot {
         self.block_snapshot.blocks_in_range(rows)
     }
 
-    pub fn intersects_fold<T: ToOffset>(&self, offset: T) -> bool {
+    pub fn intersects_fold<T: ToOffset<MultiBuffer>>(&self, offset: T) -> bool {
         self.fold_snapshot.intersects_fold(offset)
     }
 

@@ -16,7 +16,7 @@ use language::{
     Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
-use offset::{Offset, ToOffset};
+pub use offset::{Offset, ToOffset};
 use std::{
     borrow::Cow,
     cell::{Ref, RefCell},
@@ -2167,8 +2167,10 @@ impl MultiBufferSnapshot {
 
         let mut chunk = &[][..];
         let excerpt_bytes = if let Some(excerpt) = excerpts.item() {
-            let mut excerpt_bytes = excerpt
-                .bytes_in_range(range.start - *excerpts.start()..range.end - *excerpts.start());
+            // todo: po: add a difference type for offset arithmetic
+            let start = Offset::new(range.start - *excerpts.start());
+            let end = Offset::new(range.end - *excerpts.start());
+            let mut excerpt_bytes = excerpt.bytes_in_range(start..end);
             chunk = excerpt_bytes.next().unwrap_or(&[][..]);
             Some(excerpt_bytes)
         } else {
@@ -2192,9 +2194,9 @@ impl MultiBufferSnapshot {
 
         let mut chunk = &[][..];
         let excerpt_bytes = if let Some(excerpt) = excerpts.item() {
-            let mut excerpt_bytes = excerpt.reversed_bytes_in_range(
-                range.start.saturating_sub(*excerpts.start())..range.end - *excerpts.start(),
-            );
+            let start = Offset::new(range.start.saturating_sub(*excerpts.start()));
+            let end = Offset::new(range.end - *excerpts.start());
+            let mut excerpt_bytes = excerpt.reversed_bytes_in_range(start..end);
             chunk = excerpt_bytes.next().unwrap_or(&[][..]);
             Some(excerpt_bytes)
         } else {
@@ -2997,7 +2999,8 @@ impl MultiBufferSnapshot {
     pub fn enclosing_bracket_ranges<T: ToOffset<MultiBuffer>>(
         &self,
         range: Range<T>,
-    ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + '_> {
+    ) -> Option<impl Iterator<Item = (Range<Offset<MultiBuffer>>, Range<Offset<MultiBuffer>>)> + '_>
+    {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let excerpt = self.excerpt_containing(range.clone())?;
 
@@ -3023,7 +3026,8 @@ impl MultiBufferSnapshot {
     pub fn bracket_ranges<T: ToOffset<MultiBuffer>>(
         &self,
         range: Range<T>,
-    ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + '_> {
+    ) -> Option<impl Iterator<Item = (Range<Offset<MultiBuffer>>, Range<Offset<MultiBuffer>>)> + '_>
+    {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let excerpt = self.excerpt_containing(range.clone())?;
 
@@ -3063,14 +3067,14 @@ impl MultiBufferSnapshot {
                         .map(move |mut redacted_range| {
                             // Re-base onto the excerpts coordinates in the multibuffer
                             redacted_range.start =
-                                excerpt_offset + (redacted_range.start - excerpt_buffer_start);
+                                excerpt_offset.0 + (redacted_range.start - excerpt_buffer_start);
                             redacted_range.end =
-                                excerpt_offset + (redacted_range.end - excerpt_buffer_start);
+                                excerpt_offset.0 + (redacted_range.end - excerpt_buffer_start);
 
                             redacted_range
                         })
-                        .skip_while(move |redacted_range| redacted_range.end < range.start)
-                        .take_while(move |redacted_range| redacted_range.start < range.end)
+                        .skip_while(move |redacted_range| redacted_range.end < range.start.0)
+                        .take_while(move |redacted_range| redacted_range.start < range.end.0)
                 })
             })
             .flatten()
@@ -3330,7 +3334,7 @@ impl MultiBufferSnapshot {
     pub fn range_for_syntax_ancestor<T: ToOffset<MultiBuffer>>(
         &self,
         range: Range<T>,
-    ) -> Option<Range<usize>> {
+    ) -> Option<Range<Offset<MultiBuffer>>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let excerpt = self.excerpt_containing(range.clone())?;
 
@@ -3756,13 +3760,13 @@ impl Excerpt {
         }
     }
 
-    fn bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
+    fn bytes_in_range(&self, range: Range<Offset<MultiBuffer>>) -> ExcerptBytes {
         let content_start = self.range.context.start.to_offset(&self.buffer);
-        let bytes_start = content_start + range.start;
-        let bytes_end = content_start + cmp::min(range.end, self.text_summary.len);
+        let bytes_start = content_start + range.start.0;
+        let bytes_end = content_start + cmp::min(range.end.0, self.text_summary.len);
         let footer_height = if self.has_trailing_newline
-            && range.start <= self.text_summary.len
-            && range.end > self.text_summary.len
+            && range.start.0 <= self.text_summary.len
+            && range.end.0 > self.text_summary.len
         {
             1
         } else {
@@ -3777,13 +3781,13 @@ impl Excerpt {
         }
     }
 
-    fn reversed_bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
+    fn reversed_bytes_in_range(&self, range: Range<Offset<MultiBuffer>>) -> ExcerptBytes {
         let content_start = self.range.context.start.to_offset(&self.buffer);
-        let bytes_start = content_start + range.start;
-        let bytes_end = content_start + cmp::min(range.end, self.text_summary.len);
+        let bytes_start = content_start + range.start.0;
+        let bytes_end = content_start + cmp::min(range.end.0, self.text_summary.len);
         let footer_height = if self.has_trailing_newline
-            && range.start <= self.text_summary.len
-            && range.end > self.text_summary.len
+            && range.start.0 <= self.text_summary.len
+            && range.end.0 > self.text_summary.len
         {
             1
         } else {
@@ -3989,7 +3993,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for TextSummary {
 
 impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Offset<MultiBuffer> {
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self.0 += summary.text.len;
+        self.0 += summary.text.len;
     }
 }
 
@@ -4117,7 +4121,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
             self.excerpts.next(&());
             let excerpt = self.excerpts.item()?;
             self.excerpt_chunks = Some(excerpt.chunks_in_range(
-                0..self.range.end - self.excerpts.start(),
+                0..self.range.end - *self.excerpts.start(),
                 self.language_aware,
             ));
             self.next()
@@ -4136,8 +4140,9 @@ impl<'a> MultiBufferBytes<'a> {
             } else {
                 self.excerpts.next(&());
                 if let Some(excerpt) = self.excerpts.item() {
-                    let mut excerpt_bytes =
-                        excerpt.bytes_in_range(0..self.range.end - self.excerpts.start());
+                    // todo: po: another use for difference type.
+                    let end = Offset::new(self.range.end.0 - self.excerpts.start().0);
+                    let mut excerpt_bytes = excerpt.bytes_in_range(Offset::zero()..end);
                     self.chunk = excerpt_bytes.next().unwrap();
                     self.excerpt_bytes = Some(excerpt_bytes);
                 }
@@ -4182,9 +4187,11 @@ impl<'a> ReversedMultiBufferBytes<'a> {
             } else {
                 self.excerpts.prev(&());
                 if let Some(excerpt) = self.excerpts.item() {
-                    let mut excerpt_bytes = excerpt.reversed_bytes_in_range(
-                        self.range.start.saturating_sub(*self.excerpts.start())..usize::MAX,
-                    );
+                    // todo: po: should this take a self.excerpts.end() as the end of range instead?
+                    let start =
+                        Offset::new(self.range.start.saturating_sub(*self.excerpts.start()));
+                    let mut excerpt_bytes =
+                        excerpt.reversed_bytes_in_range(start..Offset::new(usize::MAX));
                     self.chunk = excerpt_bytes.next().unwrap();
                     self.excerpt_bytes = Some(excerpt_bytes);
                 }
@@ -4254,8 +4261,7 @@ impl<'a> Iterator for ExcerptChunks<'a> {
 
 impl ToOffset<MultiBuffer> for Point {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> Offset<MultiBuffer> {
-        let offset = snapshot.point_to_offset(*self);
-        Offset::new(offset)
+        snapshot.point_to_offset(*self)
     }
 }
 
@@ -4269,15 +4275,13 @@ impl ToOffset<MultiBuffer> for Point {
 
 impl ToOffset<MultiBuffer> for OffsetUtf16 {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> Offset<MultiBuffer> {
-        let offset = snapshot.offset_utf16_to_offset(*self);
-        Offset::new(offset)
+        snapshot.offset_utf16_to_offset(*self)
     }
 }
 
 impl ToOffset<MultiBuffer> for PointUtf16 {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> Offset<MultiBuffer> {
-        let offset = snapshot.point_utf16_to_offset(*self);
-        Offset::new(offset)
+        snapshot.point_utf16_to_offset(*self)
     }
 }
 
@@ -4287,11 +4291,11 @@ impl ToOffsetUtf16 for OffsetUtf16 {
     }
 }
 
-impl ToOffsetUtf16 for usize {
-    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
-        snapshot.offset_to_offset_utf16(*self)
-    }
-}
+// impl ToOffsetUtf16 for usize {
+//     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
+//         snapshot.offset_to_offset_utf16(*self)
+//     }
+// }
 
 // impl ToPoint for usize {
 //     fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
@@ -4305,11 +4309,11 @@ impl ToPoint for Point {
     }
 }
 
-impl ToPointUtf16 for usize {
-    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
-        snapshot.offset_to_point_utf16(*self)
-    }
-}
+// impl ToPointUtf16 for usize {
+//     fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+//         snapshot.offset_to_point_utf16(*self)
+//     }
+// }
 
 impl ToPointUtf16 for Point {
     fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {

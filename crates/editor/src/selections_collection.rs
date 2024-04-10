@@ -490,7 +490,13 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub fn insert_range<T>(&mut self, range: Range<T>)
     where
-        T: 'a + ToOffset + ToPoint + TextDimension + Ord + Sub<T, Output = T> + std::marker::Copy,
+        T: 'a
+            + ToOffset<multi_buffer::MultiBuffer>
+            + ToPoint
+            + TextDimension
+            + Ord
+            + Sub<T, Output = T>
+            + std::marker::Copy,
     {
         let mut selections = self.all(self.cx);
         let mut start = range.start.to_offset(&self.buffer());
@@ -513,7 +519,11 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub fn select<T>(&mut self, mut selections: Vec<Selection<T>>)
     where
-        T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
+        T: ToOffset<multi_buffer::MultiBuffer>
+            + ToPoint
+            + Ord
+            + std::marker::Copy
+            + std::fmt::Debug,
     {
         let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         selections.sort_unstable_by_key(|s| s.start);
@@ -562,7 +572,7 @@ impl<'a> MutableSelectionsCollection<'a> {
     pub fn select_ranges<I, T>(&mut self, ranges: I)
     where
         I: IntoIterator<Item = Range<T>>,
-        T: ToOffset,
+        T: ToOffset<multi_buffer::MultiBuffer>,
     {
         let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         let ranges = ranges

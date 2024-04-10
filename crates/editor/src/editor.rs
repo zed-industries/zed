@@ -1670,11 +1670,15 @@ impl Editor {
         }
     }
 
-    pub fn language_at<T: ToOffset>(&self, point: T, cx: &AppContext) -> Option<Arc<Language>> {
+    pub fn language_at<T: ToOffset<MultiBuffer>>(
+        &self,
+        point: T,
+        cx: &AppContext,
+    ) -> Option<Arc<Language>> {
         self.buffer.read(cx).language_at(point, cx)
     }
 
-    pub fn file_at<T: ToOffset>(
+    pub fn file_at<T: ToOffset<MultiBuffer>>(
         &self,
         point: T,
         cx: &AppContext,
@@ -1963,7 +1967,7 @@ impl Editor {
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut ViewContext<Self>)
     where
         I: IntoIterator<Item = (Range<S>, T)>,
-        S: ToOffset,
+        S: ToOffset<MultiBuffer>,
         T: Into<Arc<str>>,
     {
         if self.read_only(cx) {
@@ -1977,7 +1981,7 @@ impl Editor {
     pub fn edit_with_autoindent<I, S, T>(&mut self, edits: I, cx: &mut ViewContext<Self>)
     where
         I: IntoIterator<Item = (Range<S>, T)>,
-        S: ToOffset,
+        S: ToOffset<MultiBuffer>,
         T: Into<Arc<str>>,
     {
         if self.read_only(cx) {
@@ -1996,7 +2000,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
-        S: ToOffset,
+        S: ToOffset<MultiBuffer>,
         T: Into<Arc<str>>,
     {
         if self.read_only(cx) {
@@ -3067,7 +3071,7 @@ impl Editor {
     /// Iterate the given selections, and for each one, find the smallest surrounding
     /// autoclose region. This uses the ordering of the selections and the autoclose
     /// regions to avoid repeated comparisons.
-    fn selections_with_autoclose_regions<'a, D: ToOffset + Clone>(
+    fn selections_with_autoclose_regions<'a, D: ToOffset<MultiBuffer> + Clone>(
         &'a self,
         selections: impl IntoIterator<Item = Selection<D>>,
         buffer: &'a MultiBufferSnapshot,
@@ -3122,7 +3126,10 @@ impl Editor {
         });
     }
 
-    fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
+    fn completion_query(
+        buffer: &MultiBufferSnapshot,
+        position: impl ToOffset<MultiBuffer>,
+    ) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset);
         if offset > word_range.start && kind == Some(CharKind::Word) {
@@ -8610,7 +8617,7 @@ impl Editor {
         self.fold_ranges(ranges, true, cx);
     }
 
-    pub fn fold_ranges<T: ToOffset + Clone>(
+    pub fn fold_ranges<T: ToOffset<MultiBuffer> + Clone>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         auto_scroll: bool,
@@ -8628,7 +8635,7 @@ impl Editor {
         }
     }
 
-    pub fn unfold_ranges<T: ToOffset + Clone>(
+    pub fn unfold_ranges<T: ToOffset<MultiBuffer> + Clone>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
@@ -10019,7 +10026,7 @@ impl EditorSnapshot {
             })
     }
 
-    pub fn language_at<T: ToOffset>(&self, position: T) -> Option<&Arc<Language>> {
+    pub fn language_at<T: ToOffset<MultiBuffer>>(&self, position: T) -> Option<&Arc<Language>> {
         self.display_snapshot.buffer_snapshot.language_at(position)
     }
 
@@ -10482,7 +10489,7 @@ trait SelectionExt {
         -> Range<u32>;
 }
 
-impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
+impl<T: ToPoint + ToOffset<MultiBuffer>> SelectionExt for Selection<T> {
     fn point_range(&self, buffer: &MultiBufferSnapshot) -> Range<Point> {
         let start = self.start.to_point(buffer);
         let end = self.end.to_point(buffer);
@@ -10539,7 +10546,7 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
 impl<T: InvalidationRegion> InvalidationStack<T> {
     fn invalidate<S>(&mut self, selections: &[Selection<S>], buffer: &MultiBufferSnapshot)
     where
-        S: Clone + ToOffset,
+        S: Clone + ToOffset<MultiBuffer>,
     {
         while let Some(region) = self.last() {
             let all_selections_inside_invalidation_ranges =
@@ -10780,7 +10787,7 @@ trait RangeToAnchorExt {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
 }
 
-impl<T: ToOffset> RangeToAnchorExt for Range<T> {
+impl<T: ToOffset<MultiBuffer>> RangeToAnchorExt for Range<T> {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor> {
         snapshot.anchor_after(self.start)..snapshot.anchor_before(self.end)
     }

@@ -5,7 +5,7 @@ use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, scroll::ScrollAnchor, CharKind, EditorStyle, ToOffset, ToPoint};
 use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;
-use multi_buffer::MultiBufferSnapshot;
+use multi_buffer::{MultiBufferSnapshot, Offset};
 use serde::Deserialize;
 
 use std::{ops::Range, sync::Arc};
@@ -472,8 +472,8 @@ pub fn find_boundary_exclusive(
 /// the [`DisplaySnapshot`]. The offsets are relative to the start of a buffer.
 pub fn chars_after(
     map: &DisplaySnapshot,
-    mut offset: usize,
-) -> impl Iterator<Item = (char, Range<usize>)> + '_ {
+    mut offset: Offset<multi_buffer::MultiBuffer>,
+) -> impl Iterator<Item = (char, Range<Offset<multi_buffer::MultiBuffer>>)> + '_ {
     map.buffer_snapshot.chars_at(offset).map(move |ch| {
         let before = offset;
         offset = offset + ch.len_utf8();
@@ -486,13 +486,13 @@ pub fn chars_after(
 /// the [`DisplaySnapshot`]. The offsets are relative to the start of a buffer.
 pub fn chars_before(
     map: &DisplaySnapshot,
-    mut offset: usize,
-) -> impl Iterator<Item = (char, Range<usize>)> + '_ {
+    mut offset: Offset<multi_buffer::MultiBuffer>,
+) -> impl Iterator<Item = (char, Range<Offset<multi_buffer::MultiBuffer>>)> + '_ {
     map.buffer_snapshot
         .reversed_chars_at(offset)
         .map(move |ch| {
             let after = offset;
-            offset = offset - ch.len_utf8();
+            offset = Offset::new(offset.0 - ch.len_utf8());
             (ch, offset..after)
         })
 }

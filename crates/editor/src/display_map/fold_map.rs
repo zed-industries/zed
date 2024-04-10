@@ -4,7 +4,7 @@ use super::{
 };
 use gpui::{ElementId, HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
+use multi_buffer::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset};
 use std::{
     any::TypeId,
     cmp::{self, Ordering},
@@ -74,7 +74,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
 pub(crate) struct FoldMapWriter<'a>(&'a mut FoldMap);
 
 impl<'a> FoldMapWriter<'a> {
-    pub(crate) fn fold<T: ToOffset>(
+    pub(crate) fn fold<T: ToOffset<MultiBuffer>>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
@@ -129,7 +129,7 @@ impl<'a> FoldMapWriter<'a> {
         (self.0.snapshot.clone(), edits)
     }
 
-    pub(crate) fn unfold<T: ToOffset>(
+    pub(crate) fn unfold<T: ToOffset<MultiBuffer>>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
@@ -609,7 +609,7 @@ impl FoldSnapshot {
 
     pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Fold>
     where
-        T: ToOffset,
+        T: ToOffset<MultiBuffer>,
     {
         let mut folds = intersecting_folds(&self.inlay_snapshot, &self.folds, range, false);
         iter::from_fn(move || {
@@ -621,7 +621,7 @@ impl FoldSnapshot {
 
     pub fn intersects_fold<T>(&self, offset: T) -> bool
     where
-        T: ToOffset,
+        T: ToOffset<MultiBuffer>,
     {
         let buffer_offset = offset.to_offset(&self.inlay_snapshot.buffer);
         let inlay_offset = self.inlay_snapshot.to_inlay_offset(buffer_offset);
@@ -741,7 +741,7 @@ fn intersecting_folds<'a, T>(
     inclusive: bool,
 ) -> FilterCursor<'a, impl 'a + FnMut(&FoldSummary) -> bool, Fold, usize>
 where
-    T: ToOffset,
+    T: ToOffset<MultiBuffer>,
 {
     let buffer = &inlay_snapshot.buffer;
     let start = buffer.anchor_before(range.start.to_offset(buffer));

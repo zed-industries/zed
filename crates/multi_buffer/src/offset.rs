@@ -1,4 +1,3 @@
-use std::num::Saturating;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 use crate::{MultiBuffer, MultiBufferSnapshot};
@@ -23,9 +22,8 @@ impl Sub for Offset<MultiBuffer> {
 
 use rand::distributions::uniform::{SampleBorrow, SampleUniform, UniformInt, UniformSampler};
 use rand::Rng;
-use text::TextDimension;
 
-struct OffsetUniform<S>(UniformInt<usize>, core::marker::PhantomData<S>);
+pub struct OffsetUniform<S>(UniformInt<usize>, core::marker::PhantomData<S>);
 
 impl<S> UniformSampler for OffsetUniform<S> {
     type X = Offset<S>;
@@ -118,7 +116,7 @@ impl<S: 'static> std::fmt::Debug for Offset<S> {
     }
 }
 
-impl<S: 'static> Offset<S> {
+impl<S> Offset<S> {
     pub fn new(val: usize) -> Self {
         Self(val, Default::default())
     }
@@ -151,7 +149,7 @@ impl WithMapping for MultiBuffer {
 }
 
 impl ToOffset<MultiBuffer> for Offset<MultiBuffer> {
-    fn to_offset(&self, cx: &MultiBufferSnapshot) -> Offset<MultiBuffer> {
+    fn to_offset(&self, _: &MultiBufferSnapshot) -> Offset<MultiBuffer> {
         *self
     }
 }
