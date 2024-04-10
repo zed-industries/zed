@@ -282,9 +282,10 @@ impl DirectWriteState {
     }
 
     fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
-        // TODO: Determine the proper system UI font.
         let family_name = if target_font.family == ".SystemUIFont" {
-            "Zed Sans"
+            // https://learn.microsoft.com/en-us/windows/win32/uxguide/vis-fonts
+            // Segoe UI is the Windows font intended for user interface text strings.
+            "Segoe UI"
         } else {
             target_font.family.as_ref()
         };
