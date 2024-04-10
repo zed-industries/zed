@@ -178,7 +178,6 @@ pub struct Project {
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
-    next_buffer_id: BufferId,
     loading_buffers: HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
     incomplete_remote_buffers: HashMap<BufferId, Model<Buffer>>,
     shared_buffers: HashMap<proto::PeerId, HashSet<BufferId>>,
@@ -675,7 +674,6 @@ impl Project {
                 flush_language_server_update: None,
                 pending_language_server_update: None,
                 collaborators: Default::default(),
-                next_buffer_id: BufferId::new(1).unwrap(),
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 loading_buffers_by_path: Default::default(),
@@ -792,7 +790,6 @@ impl Project {
                 pending_language_server_update: None,
                 flush_language_server_update: None,
                 loading_buffers_by_path: Default::default(),
-                next_buffer_id: BufferId::new(1).unwrap(),
                 loading_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 incomplete_remote_buffers: Default::default(),
@@ -1849,9 +1846,8 @@ impl Project {
         if self.is_remote() {
             return Err(anyhow!("creating buffers as a guest is not supported yet"));
         }
-        let id = self.next_buffer_id.next();
         let buffer = cx.new_model(|cx| {
-            Buffer::new(self.replica_id(), id, text)
+            Buffer::local(text, cx)
                 .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
         });
         self.register_buffer(&buffer, cx)?;
@@ -1950,10 +1946,9 @@ impl Project {
         worktree: Model<Worktree>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        let buffer_id = self.next_buffer_id.next();
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let worktree = worktree.as_local_mut().unwrap();
-            worktree.load_buffer(buffer_id, &path, cx)
+            worktree.load_buffer(&path, cx)
         });
         fn is_not_found_error(error: &anyhow::Error) -> bool {
             error
@@ -1967,7 +1962,7 @@ impl Project {
                 Err(error) if is_not_found_error(&error) => {
                     worktree.update(&mut cx, |worktree, cx| {
                         let worktree = worktree.as_local_mut().unwrap();
-                        worktree.new_buffer(buffer_id, path, cx)
+                        worktree.new_buffer(path, cx)
                     })
                 }
                 Err(e) => Err(e),

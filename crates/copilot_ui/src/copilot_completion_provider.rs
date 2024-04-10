@@ -272,7 +272,7 @@ mod tests {
     use indoc::indoc;
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
-        BufferId, Point,
+        Point,
     };
     use project::Project;
     use serde_json::json;
@@ -729,20 +729,8 @@ mod tests {
 
         let (copilot, copilot_lsp) = Copilot::fake(cx);
 
-        let buffer_1 = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                "a = 1\nb = 2\n",
-            )
-        });
-        let buffer_2 = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                "c = 3\nd = 4\n",
-            )
-        });
+        let buffer_1 = cx.new_model(|cx| Buffer::local("a = 1\nb = 2\n", cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local("c = 3\nd = 4\n", cx));
         let multibuffer = cx.new_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
             multibuffer.push_excerpts(

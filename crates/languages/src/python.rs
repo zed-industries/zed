@@ -186,7 +186,6 @@ mod tests {
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
-    use text::BufferId;
 
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
@@ -204,8 +203,7 @@ mod tests {
         });
 
         cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
-                .with_language(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
                 let ix = buffer.len();
                 buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);

@@ -1700,8 +1700,7 @@ impl MultiBuffer {
 #[cfg(any(test, feature = "test-support"))]
 impl MultiBuffer {
     pub fn build_simple(text: &str, cx: &mut gpui::AppContext) -> Model<Self> {
-        let buffer = cx
-            .new_model(|cx| Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text));
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx));
         cx.new_model(|cx| Self::singleton(buffer, cx))
     }
 
@@ -1711,9 +1710,7 @@ impl MultiBuffer {
     ) -> Model<Self> {
         let multi = cx.new_model(|_| Self::new(0, Capability::ReadWrite));
         for (text, ranges) in excerpts {
-            let buffer = cx.new_model(|cx| {
-                Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
-            });
+            let buffer = cx.new_model(|cx| Buffer::local(text, cx));
             let excerpt_ranges = ranges.into_iter().map(|range| ExcerptRange {
                 context: range,
                 primary: None,
@@ -1802,9 +1799,7 @@ impl MultiBuffer {
             if excerpt_ids.is_empty() || (rng.gen() && excerpt_ids.len() < max_excerpts) {
                 let buffer_handle = if rng.gen() || self.buffers.borrow().is_empty() {
                     let text = RandomCharIter::new(&mut *rng).take(10).collect::<String>();
-                    buffers.push(cx.new_model(|cx| {
-                        Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
-                    }));
+                    buffers.push(cx.new_model(|cx| Buffer::local(text, cx)));
                     let buffer = buffers.last().unwrap().read(cx);
                     log::info!(
                         "Creating new buffer {} with text: {:?}",
@@ -4327,13 +4322,7 @@ mod tests {
 
     #[gpui::test]
     fn test_singleton(cx: &mut AppContext) {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                sample_text(6, 6, 'a'),
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
         let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
         let snapshot = multibuffer.read(cx).snapshot(cx);
@@ -4360,8 +4349,7 @@ mod tests {
 
     #[gpui::test]
     fn test_remote(cx: &mut AppContext) {
-        let host_buffer =
-            cx.new_model(|cx| Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "a"));
+        let host_buffer = cx.new_model(|cx| Buffer::local("a", cx));
         let guest_buffer = cx.new_model(|cx| {
             let state = host_buffer.read(cx).to_proto();
             let ops = cx
@@ -4392,20 +4380,8 @@ mod tests {
 
     #[gpui::test]
     fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
-        let buffer_1 = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                sample_text(6, 6, 'a'),
-            )
-        });
-        let buffer_2 = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                sample_text(6, 6, 'g'),
-            )
-        });
+        let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
         let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
 
         let events = Arc::new(RwLock::new(Vec::<Event>::new()));
@@ -4638,20 +4614,8 @@ mod tests {
 
     #[gpui::test]
     fn test_excerpt_events(cx: &mut AppContext) {
-        let buffer_1 = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                sample_text(10, 3, 'a'),
-            )
-        });
-        let buffer_2 = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                sample_text(10, 3, 'm'),
-            )
-        });
+        let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(10, 3, 'm'), cx));
 
         let leader_multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let follower_multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
@@ -4756,13 +4720,7 @@ mod tests {
 
     #[gpui::test]
     fn test_push_excerpts_with_context_lines(cx: &mut AppContext) {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                sample_text(20, 3, 'a'),
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
         let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts_with_context_lines(
@@ -4798,13 +4756,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_stream_excerpts_with_context_lines(cx: &mut TestAppContext) {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                sample_text(20, 3, 'a'),
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
         let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             let snapshot = buffer.read(cx);
@@ -4850,9 +4802,7 @@ mod tests {
 
     #[gpui::test]
     fn test_singleton_multibuffer_anchors(cx: &mut AppContext) {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "abcd")
-        });
+        let buffer = cx.new_model(|cx| Buffer::local("abcd", cx));
         let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
         let old_snapshot = multibuffer.read(cx).snapshot(cx);
         buffer.update(cx, |buffer, cx| {
@@ -4872,12 +4822,8 @@ mod tests {
 
     #[gpui::test]
     fn test_multibuffer_anchors(cx: &mut AppContext) {
-        let buffer_1 = cx.new_model(|cx| {
-            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "abcd")
-        });
-        let buffer_2 = cx.new_model(|cx| {
-            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "efghi")
-        });
+        let buffer_1 = cx.new_model(|cx| Buffer::local("abcd", cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local("efghi", cx));
         let multibuffer = cx.new_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
             multibuffer.push_excerpts(
@@ -4934,16 +4880,8 @@ mod tests {
 
     #[gpui::test]
     fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut AppContext) {
-        let buffer_1 = cx.new_model(|cx| {
-            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "abcd")
-        });
-        let buffer_2 = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                "ABCDEFGHIJKLMNOP",
-            )
-        });
+        let buffer_1 = cx.new_model(|cx| Buffer::local("abcd", cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local("ABCDEFGHIJKLMNOP", cx));
         let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
 
         // Create an insertion id in buffer 1 that doesn't exist in buffer 2.
@@ -5154,13 +5092,7 @@ mod tests {
                         let base_text = util::RandomCharIter::new(&mut rng)
                             .take(10)
                             .collect::<String>();
-                        buffers.push(cx.new_model(|cx| {
-                            Buffer::new(
-                                0,
-                                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                                base_text,
-                            )
-                        }));
+                        buffers.push(cx.new_model(|cx| Buffer::local(base_text, cx)));
                         buffers.last().unwrap()
                     } else {
                         buffers.choose(&mut rng).unwrap()
@@ -5502,12 +5434,8 @@ mod tests {
         let test_settings = SettingsStore::test(cx);
         cx.set_global(test_settings);
 
-        let buffer_1 = cx.new_model(|cx| {
-            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "1234")
-        });
-        let buffer_2 = cx.new_model(|cx| {
-            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "5678")
-        });
+        let buffer_1 = cx.new_model(|cx| Buffer::local("1234", cx));
+        let buffer_2 = cx.new_model(|cx| Buffer::local("5678", cx));
         let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
         let group_interval = multibuffer.read(cx).history.group_interval;
         multibuffer.update(cx, |multibuffer, cx| {
