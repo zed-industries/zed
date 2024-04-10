@@ -1,5 +1,6 @@
-use crate::extension_manifest::SchemaVersion;
+use crate::extension_manifest::{LibManifestEntry, SchemaVersion};
 use crate::extension_settings::ExtensionSettings;
+use crate::wasm_host::WasmHost;
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
@@ -710,6 +711,55 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
 
     // The old language server directory has been cleaned up.
     assert!(fs.metadata(&expected_server_path).await.unwrap().is_none());
+}
+
+#[gpui::test]
+async fn test_bad_wasm(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let wasm_host = cx.update(|cx| {
+        WasmHost::new(
+            FakeFs::new(cx.background_executor().clone()),
+            FakeHttpClient::with_200_response(),
+            FakeNodeRuntime::new(),
+            Arc::new(LanguageRegistry::test(cx.background_executor().clone())),
+            PathBuf::from("/the/work/dir".to_string()),
+            cx,
+        )
+    });
+
+    let mut wasm_bytes = std::fs::read("/Users/maxdeviant/Library/Application Support/Zed/extensions/installed/dart/extension.wasm").unwrap();
+
+    // range end index 267037 out of range for slice of length 253952
+
+    dbg!(&wasm_bytes.len());
+
+    wasm_bytes.truncate(253952);
+
+    std::fs::write("/tmp/bad-extension.wasm", wasm_bytes.clone()).unwrap();
+
+    let manifest = Arc::new(ExtensionManifest {
+        id: "the-extension".into(),
+        name: "The Extension".into(),
+        version: "0.0.1".into(),
+        schema_version: SchemaVersion(1),
+        description: Default::default(),
+        repository: Default::default(),
+        authors: Default::default(),
+        lib: LibManifestEntry {
+            kind: None,
+            version: None,
+        },
+        themes: Default::default(),
+        languages: Default::default(),
+        grammars: Default::default(),
+        language_servers: Default::default(),
+    });
+
+    let result = wasm_host
+        .load_extension(wasm_bytes, manifest, cx.executor())
+        .await;
+    dbg!(result.map(|_| ()));
 }
 
 fn init_test(cx: &mut TestAppContext) {
