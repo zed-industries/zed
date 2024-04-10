@@ -73,14 +73,14 @@ mod test {
     use crate::{test::VimTestContext, Vim};
     use editor::Editor;
     use gpui::{Context, Entity, VisualTestContext};
-    use language::{Buffer, BufferId};
+    use language::Buffer;
 
     // regression test for blur called with a different active editor
     #[gpui::test]
     async fn test_blur_focus(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        let buffer = cx.new_model(|_| Buffer::new(0, BufferId::new(1).unwrap(), "a = 1\nb = 2\n"));
+        let buffer = cx.new_model(|cx| Buffer::local("a = 1\nb = 2\n", cx));
         let window2 = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
         let editor2 = cx
             .update(|cx| {
@@ -115,7 +115,7 @@ mod test {
         let mut cx1 = VisualTestContext::from_window(cx.window, &cx);
         let editor1 = cx.editor.clone();
 
-        let buffer = cx.new_model(|_| Buffer::new(0, BufferId::new(1).unwrap(), "a = 1\nb = 2\n"));
+        let buffer = cx.new_model(|cx| Buffer::local("a = 1\nb = 2\n", cx));
         let (editor2, cx2) = cx.add_window_view(|cx| Editor::for_buffer(buffer, None, cx));
 
         editor2.update(cx2, |_, cx| {
