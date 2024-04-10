@@ -308,8 +308,6 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let mut highlight_style = match inlay.id {
                     InlayId::Suggestion(_) => self.highlight_styles.suggestion,
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
-                    // TODO: Use separate style?
-                    InlayId::Blame(_) => self.highlight_styles.inlay_hint,
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;

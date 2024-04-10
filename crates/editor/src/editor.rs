@@ -217,7 +217,6 @@ pub fn render_parsed_markdown(
 pub(crate) enum InlayId {
     Suggestion(usize),
     Hint(usize),
-    Blame(usize),
 }
 
 impl InlayId {
@@ -225,7 +224,6 @@ impl InlayId {
         match self {
             Self::Suggestion(id) => *id,
             Self::Hint(id) => *id,
-            Self::Blame(id) => *id,
         }
     }
 }

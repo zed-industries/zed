@@ -1092,6 +1092,67 @@ impl EditorElement {
             .collect()
     }
 
+    fn layout_inline_blame(
+        &self,
+        rows: Range<u32>,
+        buffer_rows: impl Iterator<Item = Option<u32>>,
+        newest_selection_head: DisplayPoint,
+        cx: &mut ElementContext,
+    ) -> Option<Vec<Option<ShapedLine>>> {
+        let Some(blame) = self.editor.read(cx).blame.as_ref().cloned() else {
+            return None;
+        };
+
+        let blamed_rows = blame.update(cx, |blame, cx| {
+            blame.blame_for_rows(buffer_rows, cx).collect::<Vec<_>>()
+        });
+
+        let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
+
+        let mut shaped_blame_lines = Vec::with_capacity(rows.len());
+
+        for (ix, display_row) in rows.enumerate() {
+            if newest_selection_head.row() != display_row {
+                shaped_blame_lines.push(None);
+                continue;
+            }
+
+            if let Some(Some(blame_entry)) = blamed_rows.get(ix) {
+                let relative_timestamp = match blame_entry.author_offset_date_time() {
+                    Ok(timestamp) => time_format::format_localized_timestamp(
+                        timestamp,
+                        time::OffsetDateTime::now_utc(),
+                        cx.local_timezone(),
+                        time_format::TimestampFormat::Relative,
+                    ),
+                    Err(_) => "Error parsing date".to_string(),
+                };
+
+                let author = blame_entry.author.as_deref().unwrap_or_default();
+                let summary = blame_entry.summary.as_deref().unwrap_or_default();
+                let text = format!("{}, {} • {}", author, relative_timestamp, summary);
+
+                let run = TextRun {
+                    len: text.len(),
+                    font: self.style.text.font(),
+                    color: cx.theme().status().hint,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let shaped_line = cx
+                    .text_system()
+                    .shape_line(text.clone().into(), font_size, &[run])
+                    .unwrap();
+
+                shaped_blame_lines.push(Some(shaped_line));
+                continue;
+            }
+        }
+
+        Some(shaped_blame_lines)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn layout_blame_entries(
         &self,
@@ -1339,72 +1400,6 @@ impl EditorElement {
         }
 
         (shaped_line_numbers, fold_statuses)
-    }
-
-    fn layout_inline_blame(
-        &self,
-        rows: Range<u32>,
-        buffer_rows: impl Iterator<Item = Option<u32>>,
-        newest_selection_head: DisplayPoint,
-        cx: &mut ElementContext,
-    ) -> Option<Vec<Option<ShapedLine>>> {
-        let editor = self.editor.read(cx);
-        let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
-
-        let mut shaped_blame_lines = Vec::with_capacity(rows.len());
-
-        // TODO: this is duplicated
-        let buffer_rows = buffer_rows.collect::<Vec<_>>();
-        let Some(blame) = editor.blame.as_ref().cloned() else {
-            return None;
-        };
-        let blamed_rows = blame.update(cx, |blame, cx| {
-            blame
-                .blame_for_rows(buffer_rows.clone(), cx)
-                .collect::<Vec<_>>()
-        });
-
-        // TODO: This is all pretty dumb
-        for (ix, _) in buffer_rows.into_iter().enumerate() {
-            let display_row = rows.start + ix as u32;
-            if newest_selection_head.row() == display_row {
-                if let Some(Some(blame_entry)) = blamed_rows.get(ix) {
-                    let relative_timestamp = match blame_entry.author_offset_date_time() {
-                        Ok(timestamp) => time_format::format_localized_timestamp(
-                            timestamp,
-                            time::OffsetDateTime::now_utc(),
-                            cx.local_timezone(),
-                            time_format::TimestampFormat::Relative,
-                        ),
-                        Err(_) => "Error parsing date".to_string(),
-                    };
-
-                    let author = blame_entry.author.as_deref().unwrap_or_default();
-                    let summary = blame_entry.summary.as_deref().unwrap_or_default();
-                    let text = format!("{}, {} • {}", author, relative_timestamp, summary);
-
-                    let run = TextRun {
-                        len: text.len(),
-                        font: self.style.text.font(),
-                        color: cx.theme().status().hint,
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    };
-                    let shaped_line = cx
-                        .text_system()
-                        .shape_line(text.clone().into(), font_size, &[run])
-                        .unwrap();
-
-                    shaped_blame_lines.push(Some(shaped_line));
-                    continue;
-                }
-            }
-
-            shaped_blame_lines.push(None);
-        }
-
-        Some(shaped_blame_lines)
     }
 
     fn layout_lines(
