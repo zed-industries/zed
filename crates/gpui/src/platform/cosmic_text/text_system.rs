@@ -18,9 +18,9 @@ use pathfinder_geometry::{
 use smallvec::SmallVec;
 use std::{borrow::Cow, sync::Arc};
 
-pub(crate) struct LinuxTextSystem(RwLock<LinuxTextSystemState>);
+pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
 
-struct LinuxTextSystemState {
+struct CosmicTextSystemState {
     swash_cache: SwashCache,
     font_system: FontSystem,
     /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
@@ -32,14 +32,14 @@ struct LinuxTextSystemState {
     postscript_names: HashMap<FontId, String>,
 }
 
-impl LinuxTextSystem {
+impl CosmicTextSystem {
     pub(crate) fn new() -> Self {
         let mut font_system = FontSystem::new();
 
         // todo(linux) make font loading non-blocking
         font_system.db_mut().load_system_fonts();
 
-        Self(RwLock::new(LinuxTextSystemState {
+        Self(RwLock::new(CosmicTextSystemState {
             font_system,
             swash_cache: SwashCache::new(),
             loaded_fonts_store: Vec::new(),
@@ -49,13 +49,13 @@ impl LinuxTextSystem {
     }
 }
 
-impl Default for LinuxTextSystem {
+impl Default for CosmicTextSystem {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PlatformTextSystem for LinuxTextSystem {
+impl PlatformTextSystem for CosmicTextSystem {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.0.write().add_fonts(fonts)
     }
@@ -189,7 +189,7 @@ impl PlatformTextSystem for LinuxTextSystem {
     }
 }
 
-impl LinuxTextSystemState {
+impl CosmicTextSystemState {
     #[profiling::function]
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         let db = self.font_system.db_mut();
@@ -235,8 +235,15 @@ impl LinuxTextSystemState {
                 .get_font(font_id)
                 .ok_or_else(|| anyhow!("Could not load font"))?;
 
-            // HACK: to let the storybook run, we should actually do better font fallback
-            if font.as_swash().charmap().map('m') == 0 || postscript_name == "Segoe Fluent Icons" {
+            // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
+            let allowed_bad_font_names = [
+                "SegoeFluentIcons", // NOTE: Segoe fluent icons postscript name is inconsistent
+                "Segoe Fluent Icons",
+            ];
+
+            if font.as_swash().charmap().map('m') == 0
+                && !allowed_bad_font_names.contains(&postscript_name.as_str())
+            {
                 self.font_system.db_mut().remove_face(font.id());
                 continue;
             };
