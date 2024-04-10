@@ -1103,6 +1103,13 @@ impl EditorElement {
         max_width: Option<Pixels>,
         cx: &mut ElementContext,
     ) -> Option<Vec<AnyElement>> {
+        if !self
+            .editor
+            .update(cx, |editor, cx| editor.render_git_blame_gutter(cx))
+        {
+            return None;
+        }
+
         let Some(blame) = self.editor.read(cx).blame.as_ref().cloned() else {
             return None;
         };

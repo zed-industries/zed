@@ -463,7 +463,7 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
-    show_git_blame: bool,
+    show_git_blame_gutter: bool,
     blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
     custom_context_menu: Option<
@@ -480,7 +480,7 @@ pub struct Editor {
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
-    show_git_blame: bool,
+    render_git_blame_gutter: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
@@ -1498,7 +1498,7 @@ impl Editor {
             vim_replace_map: Default::default(),
             show_inline_completions: mode == EditorMode::Full,
             custom_context_menu: None,
-            show_git_blame: false,
+            show_git_blame_gutter: false,
             blame: None,
             blame_subscription: None,
             _subscriptions: vec![
@@ -1531,6 +1531,8 @@ impl Editor {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
         }
+
+        this.start_git_blame(cx);
 
         this.report_editor_event("open", None, cx);
         this
@@ -1646,10 +1648,7 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
-            show_git_blame: self
-                .blame
-                .as_ref()
-                .map_or(false, |blame| blame.read(cx).has_generated_entries()),
+            render_git_blame_gutter: self.render_git_blame_gutter(cx),
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
@@ -8843,25 +8842,19 @@ impl Editor {
     }
 
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
-        if self.show_git_blame {
-            self.blame_subscription.take();
-            self.blame.take();
-            self.show_git_blame = false
+        if !self.show_git_blame_gutter {
+            self.show_git_blame_gutter = true
         } else {
-            if let Err(error) = self.show_git_blame_internal(cx) {
-                log::error!("failed to toggle on 'git blame': {}", error);
-                return;
-            }
-            self.show_git_blame = true
+            self.show_git_blame_gutter = false
         }
 
         cx.notify();
     }
 
-    fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Result<()> {
+    fn start_git_blame(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(project) = self.project.as_ref() {
             let Some(buffer) = self.buffer().read(cx).as_singleton() else {
-                anyhow::bail!("git blame not available in multi buffers")
+                return;
             };
 
             let project = project.clone();
@@ -8869,12 +8862,18 @@ impl Editor {
             self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
             self.blame = Some(blame);
         }
-
-        Ok(())
     }
 
     pub fn blame(&self) -> Option<&Model<GitBlame>> {
         self.blame.as_ref()
+    }
+
+    pub fn render_git_blame_gutter(&mut self, cx: &mut WindowContext) -> bool {
+        self.show_git_blame_gutter
+            && self
+                .blame
+                .as_ref()
+                .map_or(false, |blame| blame.read(cx).has_generated_entries())
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
@@ -10058,7 +10057,7 @@ impl EditorSnapshot {
         };
 
         let git_blame_entries_width = self
-            .show_git_blame
+            .render_git_blame_gutter
             .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
