@@ -463,7 +463,7 @@ impl TestAppContext {
     }
 }
 
-impl<T: Send> Model<T> {
+impl<T: 'static> Model<T> {
     /// Block until the next event is emitted by the model, then return it.
     pub fn next_event<Evt>(&self, cx: &mut TestAppContext) -> Evt
     where
@@ -490,6 +490,31 @@ impl<T: Send> Model<T> {
             }
         }
         panic!("no event received")
+    }
+
+    /// Returns a future that resolves when the model notifies.
+    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
+        let mut cx = cx.app.app.borrow_mut();
+        let subscription = cx.observe(self, move |_, _| {
+            tx.try_send(()).ok();
+        });
+
+        let duration = if std::env::var("CI").is_ok() {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_secs(1)
+        };
+
+        async move {
+            let notification = crate::util::timeout(duration, rx.recv())
+                .await
+                .expect("next notification timed out");
+            drop(subscription);
+            notification.expect("model dropped while test was waiting for its next notification")
+        }
     }
 }
 

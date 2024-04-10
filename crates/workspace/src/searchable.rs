@@ -18,10 +18,20 @@ pub enum SearchEvent {
     ActiveMatchChanged,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Direction {
     Prev,
+    #[default]
     Next,
+}
+
+impl Direction {
+    pub fn opposite(&self) -> Self {
+        match self {
+            Direction::Prev => Direction::Next,
+            Direction::Next => Direction::Prev,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]

@@ -41,6 +41,10 @@ pub trait LspCommand: 'static + Sized + Send {
         true
     }
 
+    fn status(&self) -> Option<String> {
+        None
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -895,6 +899,18 @@ impl LspCommand for GetReferences {
     type LspRequest = lsp::request::References;
     type ProtoRequest = proto::GetReferences;
 
+    fn status(&self) -> Option<String> {
+        return Some("Finding references...".to_owned());
+    }
+
+    fn check_capabilities(&self, capabilities: &ServerCapabilities) -> bool {
+        match &capabilities.references_provider {
+            Some(OneOf::Left(has_support)) => *has_support,
+            Some(OneOf::Right(_)) => true,
+            None => false,
+        }
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -1691,9 +1707,10 @@ impl LspCommand for GetCodeActions {
     ) -> lsp::CodeActionParams {
         let relevant_diagnostics = buffer
             .snapshot()
-            .diagnostics_in_range::<_, usize>(self.range.clone(), false)
+            .diagnostics_in_range::<_, language::PointUtf16>(self.range.clone(), false)
             .map(|entry| entry.to_lsp_diagnostic_stub())
-            .collect();
+            .collect::<Vec<_>>();
+
         lsp::CodeActionParams {
             text_document: lsp::TextDocumentIdentifier::new(
                 lsp::Url::from_file_path(path).unwrap(),

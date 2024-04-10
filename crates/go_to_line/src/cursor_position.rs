@@ -9,9 +9,16 @@ use ui::{
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
+#[derive(Copy, Clone, Default, PartialOrd, PartialEq)]
+struct SelectionStats {
+    lines: usize,
+    characters: usize,
+    selections: usize,
+}
+
 pub struct CursorPosition {
     position: Option<Point>,
-    selected_count: usize,
+    selected_count: SelectionStats,
     workspace: WeakView<Workspace>,
     _observe_active_editor: Option<Subscription>,
 }
@@ -20,7 +27,7 @@ impl CursorPosition {
     pub fn new(workspace: &Workspace) -> Self {
         Self {
             position: None,
-            selected_count: 0,
+            selected_count: Default::default(),
             workspace: workspace.weak_handle(),
             _observe_active_editor: None,
         }
@@ -30,10 +37,11 @@ impl CursorPosition {
         let editor = editor.read(cx);
         let buffer = editor.buffer().read(cx).snapshot(cx);
 
-        self.selected_count = 0;
+        self.selected_count = Default::default();
+        self.selected_count.selections = editor.selections.count();
         let mut last_selection: Option<Selection<usize>> = None;
         for selection in editor.selections.all::<usize>(cx) {
-            self.selected_count += selection.end - selection.start;
+            self.selected_count.characters += selection.end - selection.start;
             if last_selection
                 .as_ref()
                 .map_or(true, |last_selection| selection.id > last_selection.id)
@@ -41,9 +49,49 @@ impl CursorPosition {
                 last_selection = Some(selection);
             }
         }
+        for selection in editor.selections.all::<Point>(cx) {
+            if selection.end != selection.start {
+                self.selected_count.lines += (selection.end.row - selection.start.row + 1) as usize;
+            }
+        }
         self.position = last_selection.map(|s| s.head().to_point(&buffer));
 
         cx.notify();
+    }
+
+    fn write_position(&self, text: &mut String) {
+        if self.selected_count
+            <= (SelectionStats {
+                selections: 1,
+                ..Default::default()
+            })
+        {
+            // Do not write out anything if we have just one empty selection.
+            return;
+        }
+        let SelectionStats {
+            lines,
+            characters,
+            selections,
+        } = self.selected_count;
+        let lines = (lines > 1).then_some((lines, "line"));
+        let selections = (selections > 1).then_some((selections, "selection"));
+        let characters = (characters > 0).then_some((characters, "character"));
+        if (None, None, None) == (characters, selections, lines) {
+            // Nothing to display.
+            return;
+        }
+        write!(text, " (").unwrap();
+        let mut wrote_once = false;
+        for (count, name) in [selections, lines, characters].into_iter().flatten() {
+            if wrote_once {
+                write!(text, ", ").unwrap();
+            }
+            let plural_suffix = if count > 1 { "s" } else { "" };
+            write!(text, "{count} {name}{plural_suffix}").unwrap();
+            wrote_once = true;
+        }
+        text.push(')');
     }
 }
 
@@ -55,9 +103,7 @@ impl Render for CursorPosition {
                 position.row + 1,
                 position.column + 1
             );
-            if self.selected_count > 0 {
-                write!(text, " ({} selected)", self.selected_count).unwrap();
-            }
+            self.write_position(&mut text);
 
             el.child(
                 Button::new("go-to-line-column", text)

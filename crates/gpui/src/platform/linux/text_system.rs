@@ -210,9 +210,16 @@ impl LinuxTextSystemState {
     #[profiling::function]
     fn load_family(
         &mut self,
-        name: &SharedString,
+        name: &str,
         _features: FontFeatures,
     ) -> Result<SmallVec<[FontId; 4]>> {
+        // TODO: Determine the proper system UI font.
+        let name = if name == ".SystemUIFont" {
+            "Zed Sans"
+        } else {
+            name
+        };
+
         let mut font_ids = SmallVec::new();
         let families = self
             .font_system

@@ -54,9 +54,8 @@ class IssueData:
 
 @app.command()
 def main(
-    issue_reference_number: int,
     github_token: Optional[str] = None,
-    prod: bool = False,
+    issue_reference_number: Optional[int] = None,
     query_day_interval: Optional[int] = None,
 ) -> None:
     start_time: datetime = datetime.now()
@@ -94,7 +93,7 @@ def main(
         error_message_to_erroneous_issue_data,
     )
 
-    if prod:
+    if issue_reference_number:
         top_ranking_issues_issue: Issue = repository.get_issue(issue_reference_number)
         top_ranking_issues_issue.edit(body=issue_text)
     else:

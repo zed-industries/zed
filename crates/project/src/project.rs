@@ -55,7 +55,8 @@ use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
-    MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus, ServerStatus,
+    LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
+    ServerStatus,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -99,7 +100,7 @@ use text::{Anchor, BufferId, RopeFingerprint};
 use util::{
     debug_panic, defer,
     http::{HttpClient, Url},
-    maybe, merge_json_value_into,
+    maybe, merge_json_value_into, parse_env_output,
     paths::{
         LOCAL_SETTINGS_RELATIVE_PATH, LOCAL_TASKS_RELATIVE_PATH, LOCAL_VSCODE_TASKS_RELATIVE_PATH,
     },
@@ -346,7 +347,7 @@ pub enum LanguageServerState {
     },
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: String,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
@@ -2857,21 +2858,29 @@ impl Project {
 
         cx.spawn(move |this, mut cx| async move {
             while let Some(()) = settings_changed_rx.next().await {
-                let servers: Vec<_> = this.update(&mut cx, |this, _| {
-                    this.language_servers
-                        .values()
-                        .filter_map(|state| match state {
-                            LanguageServerState::Starting(_) => None,
-                            LanguageServerState::Running {
-                                adapter, server, ..
-                            } => Some((adapter.clone(), server.clone())),
+                let servers = this.update(&mut cx, |this, cx| {
+                    this.language_server_ids
+                        .iter()
+                        .filter_map(|((worktree_id, _), server_id)| {
+                            let worktree = this.worktree_for_id(*worktree_id, cx)?;
+                            let state = this.language_servers.get(server_id)?;
+                            let delegate = ProjectLspAdapterDelegate::new(this, &worktree, cx);
+                            match state {
+                                LanguageServerState::Starting(_) => None,
+                                LanguageServerState::Running {
+                                    adapter, server, ..
+                                } => Some((
+                                    adapter.adapter.clone(),
+                                    server.clone(),
+                                    delegate as Arc<dyn LspAdapterDelegate>,
+                                )),
+                            }
                         })
-                        .collect()
+                        .collect::<Vec<_>>()
                 })?;
 
-                for (adapter, server) in servers {
-                    let settings =
-                        cx.update(|cx| adapter.workspace_configuration(server.root_path(), cx))?;
+                for (adapter, server, delegate) in servers {
+                    let settings = adapter.workspace_configuration(&delegate, &mut cx).await?;
 
                     server
                         .notify::<lsp::notification::DidChangeConfiguration>(
@@ -2985,12 +2994,13 @@ impl Project {
         }
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
+        let lsp_adapter_delegate = ProjectLspAdapterDelegate::new(self, worktree_handle, cx);
         let pending_server = match self.languages.create_pending_language_server(
             stderr_capture.clone(),
             language.clone(),
             adapter.clone(),
             Arc::clone(&worktree_path),
-            ProjectLspAdapterDelegate::new(self, worktree_handle, cx),
+            lsp_adapter_delegate.clone(),
             cx,
         ) {
             Some(pending_server) => pending_server,
@@ -3018,7 +3028,7 @@ impl Project {
             cx.spawn(move |this, mut cx| async move {
                 let result = Self::setup_and_insert_language_server(
                     this.clone(),
-                    &worktree_path,
+                    lsp_adapter_delegate,
                     override_options,
                     pending_server,
                     adapter.clone(),
@@ -3142,7 +3152,7 @@ impl Project {
     #[allow(clippy::too_many_arguments)]
     async fn setup_and_insert_language_server(
         this: WeakModel<Self>,
-        worktree_path: &Path,
+        delegate: Arc<dyn LspAdapterDelegate>,
         override_initialization_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
         adapter: Arc<CachedLspAdapter>,
@@ -3155,7 +3165,7 @@ impl Project {
             this.clone(),
             override_initialization_options,
             pending_server,
-            worktree_path,
+            delegate,
             adapter.clone(),
             server_id,
             cx,
@@ -3185,13 +3195,16 @@ impl Project {
         this: WeakModel<Self>,
         override_options: Option<serde_json::Value>,
         pending_server: PendingLanguageServer,
-        worktree_path: &Path,
+        delegate: Arc<dyn LspAdapterDelegate>,
         adapter: Arc<CachedLspAdapter>,
         server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) -> Result<Arc<LanguageServer>> {
-        let workspace_config =
-            cx.update(|cx| adapter.workspace_configuration(worktree_path, cx))?;
+        let workspace_config = adapter
+            .adapter
+            .clone()
+            .workspace_configuration(&delegate, cx)
+            .await?;
         let (language_server, mut initialization_options) = pending_server.task.await?;
 
         let name = language_server.name();
@@ -3220,14 +3233,14 @@ impl Project {
 
         language_server
             .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
-                let adapter = adapter.clone();
-                let worktree_path = worktree_path.to_path_buf();
-                move |params, cx| {
+                let adapter = adapter.adapter.clone();
+                let delegate = delegate.clone();
+                move |params, mut cx| {
                     let adapter = adapter.clone();
-                    let worktree_path = worktree_path.clone();
+                    let delegate = delegate.clone();
                     async move {
                         let workspace_config =
-                            cx.update(|cx| adapter.workspace_configuration(&worktree_path, cx))?;
+                            adapter.workspace_configuration(&delegate, &mut cx).await?;
                         Ok(params
                             .items
                             .into_iter()
@@ -3911,19 +3924,6 @@ impl Project {
                         },
                         cx,
                     );
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id,
-                            message: proto::update_language_server::Variant::WorkStart(
-                                proto::LspWorkStart {
-                                    token,
-                                    message: report.message,
-                                    percentage: report.percentage,
-                                },
-                            ),
-                        },
-                    )
-                    .ok();
                 }
             }
             lsp::WorkDoneProgress::Report(report) => {
@@ -3971,15 +3971,6 @@ impl Project {
                     .ok();
                 } else {
                     self.on_lsp_work_end(language_server_id, token.clone(), cx);
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id,
-                            message: proto::update_language_server::Variant::WorkEnd(
-                                proto::LspWorkEnd { token },
-                            ),
-                        },
-                    )
-                    .ok();
                 }
             }
         }
@@ -3993,8 +3984,20 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            status.pending_work.insert(token, progress);
+            status.pending_work.insert(token.clone(), progress.clone());
             cx.notify();
+        }
+
+        if self.is_local() {
+            self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
+                    token,
+                    message: progress.message,
+                    percentage: progress.percentage.map(|p| p as u32),
+                }),
+            })
+            .ok();
         }
     }
 
@@ -4035,6 +4038,16 @@ impl Project {
             cx.emit(Event::RefreshInlayHints);
             status.pending_work.remove(&token);
             cx.notify();
+        }
+
+        if self.is_local() {
+            self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
+                    token,
+                }),
+            })
+            .ok();
         }
     }
 
@@ -4676,10 +4689,11 @@ impl Project {
                     }
                 }
                 (Formatter::Auto, FormatOnSave::On | FormatOnSave::Off) => {
-                    if let Some(new_operation) =
-                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await
-                    {
-                        format_operation = Some(new_operation);
+                    let prettier =
+                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await;
+
+                    if let Some(operation) = prettier {
+                        format_operation = Some(operation?);
                     } else if let Some((language_server, buffer_abs_path)) = server_and_buffer {
                         format_operation = Some(FormatOperation::Lsp(
                             Self::format_via_lsp(
@@ -4696,10 +4710,11 @@ impl Project {
                     }
                 }
                 (Formatter::Prettier, FormatOnSave::On | FormatOnSave::Off) => {
-                    if let Some(new_operation) =
-                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await
-                    {
-                        format_operation = Some(new_operation);
+                    let prettier =
+                        prettier_support::format_with_prettier(&project, buffer, &mut cx).await;
+
+                    if let Some(operation) = prettier {
+                        format_operation = Some(operation?);
                     }
                 }
             };
@@ -5683,7 +5698,7 @@ impl Project {
     }
 
     fn code_actions_impl(
-        &self,
+        &mut self,
         buffer_handle: &Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
@@ -5763,7 +5778,7 @@ impl Project {
     }
 
     pub fn code_actions<T: Clone + ToOffset>(
-        &self,
+        &mut self,
         buffer_handle: &Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
@@ -6117,7 +6132,7 @@ impl Project {
     }
 
     fn prepare_rename_impl(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
@@ -6130,7 +6145,7 @@ impl Project {
         )
     }
     pub fn prepare_rename<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
@@ -6140,7 +6155,7 @@ impl Project {
     }
 
     fn perform_rename_impl(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: PointUtf16,
         new_name: String,
@@ -6160,7 +6175,7 @@ impl Project {
         )
     }
     pub fn perform_rename<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: T,
         new_name: String,
@@ -6172,7 +6187,7 @@ impl Project {
     }
 
     pub fn on_type_format_impl(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: PointUtf16,
         trigger: String,
@@ -6196,7 +6211,7 @@ impl Project {
     }
 
     pub fn on_type_format<T: ToPointUtf16>(
-        &self,
+        &mut self,
         buffer: Model<Buffer>,
         position: T,
         trigger: String,
@@ -6208,7 +6223,7 @@ impl Project {
     }
 
     pub fn inlay_hints<T: ToOffset>(
-        &self,
+        &mut self,
         buffer_handle: Model<Buffer>,
         range: Range<T>,
         cx: &mut ModelContext<Self>,
@@ -6218,7 +6233,7 @@ impl Project {
         self.inlay_hints_impl(buffer_handle, range, cx)
     }
     fn inlay_hints_impl(
-        &self,
+        &mut self,
         buffer_handle: Model<Buffer>,
         range: Range<Anchor>,
         cx: &mut ModelContext<Self>,
@@ -6697,24 +6712,58 @@ impl Project {
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
             if let (Some(file), Some(language_server)) = (file, language_server) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
+                let status = request.status();
                 return cx.spawn(move |this, cx| async move {
                     if !request.check_capabilities(language_server.capabilities()) {
                         return Ok(Default::default());
                     }
 
-                    let result = language_server.request::<R::LspRequest>(lsp_params).await;
-                    let response = match result {
-                        Ok(response) => response,
+                    let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
 
-                        Err(err) => {
-                            log::warn!(
-                                "Generic lsp request to {} failed: {}",
-                                language_server.name(),
-                                err
-                            );
-                            return Err(err);
-                        }
+                    let id = lsp_request.id();
+                    let _cleanup = if status.is_some() {
+                        cx.update(|cx| {
+                            this.update(cx, |this, cx| {
+                                this.on_lsp_work_start(
+                                    language_server.server_id(),
+                                    id.to_string(),
+                                    LanguageServerProgress {
+                                        message: status.clone(),
+                                        percentage: None,
+                                        last_update_at: Instant::now(),
+                                    },
+                                    cx,
+                                );
+                            })
+                        })
+                        .log_err();
+
+                        Some(defer(|| {
+                            cx.update(|cx| {
+                                this.update(cx, |this, cx| {
+                                    this.on_lsp_work_end(
+                                        language_server.server_id(),
+                                        id.to_string(),
+                                        cx,
+                                    );
+                                })
+                            })
+                            .log_err();
+                        }))
+                    } else {
+                        None
                     };
+
+                    let result = lsp_request.await;
+
+                    let response = result.map_err(|err| {
+                        log::warn!(
+                            "Generic lsp request to {} failed: {}",
+                            language_server.name(),
+                            err
+                        );
+                        err
+                    })?;
 
                     request
                         .response_from_lsp(
@@ -6722,7 +6771,7 @@ impl Project {
                             this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
                             buffer_handle,
                             language_server.server_id(),
-                            cx,
+                            cx.clone(),
                         )
                         .await
                 });
@@ -9874,7 +9923,9 @@ async fn populate_labels_for_symbols(
             if let Some(lsp_adapter) = lsp_adapter {
                 labels = lsp_adapter
                     .labels_for_symbols(&label_params, &language)
-                    .await;
+                    .await
+                    .log_err()
+                    .unwrap_or_default();
             }
         }
 
@@ -9913,6 +9964,8 @@ async fn populate_labels_for_completions(
         lsp_adapter
             .labels_for_completions(&lsp_completions, language)
             .await
+            .log_err()
+            .unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -10309,6 +10362,14 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
         self.http_client.clone()
     }
 
+    fn worktree_id(&self) -> u64 {
+        self.worktree.id().to_proto()
+    }
+
+    fn worktree_root_path(&self) -> &Path {
+        self.worktree.abs_path().as_ref()
+    }
+
     async fn shell_env(&self) -> HashMap<String, String> {
         self.load_shell_env().await;
         self.shell_env.lock().as_ref().cloned().unwrap_or_default()
@@ -10516,7 +10577,7 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
         });
 
     let command = format!(
-        "cd '{}';{} printf '%s' {marker}; /usr/bin/env -0; exit 0;",
+        "cd '{}';{} printf '%s' {marker}; /usr/bin/env; exit 0;",
         dir.display(),
         additional_command.unwrap_or("")
     );
@@ -10543,13 +10604,11 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
 
     let mut parsed_env = HashMap::default();
     let env_output = &stdout[env_output_start + marker.len()..];
-    for line in env_output.split_terminator('\0') {
-        if let Some(separator_index) = line.find('=') {
-            let key = line[..separator_index].to_string();
-            let value = line[separator_index + 1..].to_string();
-            parsed_env.insert(key, value);
-        }
-    }
+
+    parse_env_output(env_output, |key, value| {
+        parsed_env.insert(key, value);
+    });
+
     Ok(parsed_env)
 }
 

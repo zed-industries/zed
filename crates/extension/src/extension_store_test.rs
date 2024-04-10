@@ -619,6 +619,53 @@ async fn test_extension_store_with_gleam_extension(cx: &mut TestAppContext) {
         ]
     );
 
+    // The extension creates custom labels for completion items.
+    fake_server.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(lsp::CompletionResponse::Array(vec![
+            lsp::CompletionItem {
+                label: "foo".into(),
+                kind: Some(lsp::CompletionItemKind::FUNCTION),
+                detail: Some("fn() -> Result(Nil, Error)".into()),
+                ..Default::default()
+            },
+            lsp::CompletionItem {
+                label: "bar.baz".into(),
+                kind: Some(lsp::CompletionItemKind::FUNCTION),
+                detail: Some("fn(List(a)) -> a".into()),
+                ..Default::default()
+            },
+            lsp::CompletionItem {
+                label: "Quux".into(),
+                kind: Some(lsp::CompletionItemKind::CONSTRUCTOR),
+                detail: Some("fn(String) -> T".into()),
+                ..Default::default()
+            },
+            lsp::CompletionItem {
+                label: "my_string".into(),
+                kind: Some(lsp::CompletionItemKind::CONSTANT),
+                detail: Some("String".into()),
+                ..Default::default()
+            },
+        ])))
+    });
+
+    let completion_labels = project
+        .update(cx, |project, cx| project.completions(&buffer, 0, cx))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.label.text)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        completion_labels,
+        [
+            "foo: fn() -> Result(Nil, Error)".to_string(),
+            "bar.baz: fn(List(a)) -> a".to_string(),
+            "Quux: fn(String) -> T".to_string(),
+            "my_string: String".to_string(),
+        ]
+    );
+
     // Simulate a new version of the language server being released
     language_server_version.lock().version = "v2.0.0".into();
     language_server_version.lock().binary_contents = "the-new-binary-contents".into();

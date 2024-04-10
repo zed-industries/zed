@@ -2,7 +2,7 @@ use gpui::{
     px, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle,
 };
 use language::HighlightId;
-use std::{ops::Range, path::PathBuf};
+use std::{fmt::Display, ops::Range, path::PathBuf};
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -226,7 +226,9 @@ pub enum Link {
     },
     /// A link to a path on the filesystem.
     Path {
-        /// The path to the item.
+        /// The path as provided in the Markdown document.
+        display_path: PathBuf,
+        /// The absolute path to the item.
         path: PathBuf,
     },
 }
@@ -239,16 +241,32 @@ impl Link {
 
         let path = PathBuf::from(&text);
         if path.is_absolute() && path.exists() {
-            return Some(Link::Path { path });
+            return Some(Link::Path {
+                display_path: path.clone(),
+                path,
+            });
         }
 
         if let Some(file_location_directory) = file_location_directory {
+            let display_path = path;
             let path = file_location_directory.join(text);
             if path.exists() {
-                return Some(Link::Path { path });
+                return Some(Link::Path { display_path, path });
             }
         }
 
         None
+    }
+}
+
+impl Display for Link {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Link::Web { url } => write!(f, "{}", url),
+            Link::Path {
+                display_path,
+                path: _,
+            } => write!(f, "{}", display_path.display()),
+        }
     }
 }

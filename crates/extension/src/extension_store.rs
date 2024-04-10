@@ -237,6 +237,7 @@ impl ExtensionStore {
                 node_runtime,
                 language_registry.clone(),
                 work_dir,
+                cx,
             ),
             wasm_extensions: Vec::new(),
             fs,
@@ -961,8 +962,10 @@ impl ExtensionStore {
             };
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
             for (language_server_name, config) in extension.manifest.language_servers.iter() {
-                self.language_registry
-                    .remove_lsp_adapter(config.language.as_ref(), language_server_name);
+                for language in config.languages() {
+                    self.language_registry
+                        .remove_lsp_adapter(&language, language_server_name);
+                }
             }
         }
 
@@ -1101,19 +1104,21 @@ impl ExtensionStore {
                 this.reload_complete_senders.clear();
 
                 for (manifest, wasm_extension) in &wasm_extensions {
-                    for (language_server_name, language_server_config) in &manifest.language_servers
-                    {
-                        this.language_registry.register_lsp_adapter(
-                            language_server_config.language.clone(),
-                            Arc::new(ExtensionLspAdapter {
-                                extension: wasm_extension.clone(),
-                                host: this.wasm_host.clone(),
-                                config: wit::LanguageServerConfig {
-                                    name: language_server_name.0.to_string(),
-                                    language_name: language_server_config.language.to_string(),
-                                },
-                            }),
-                        );
+                    for (language_server_id, language_server_config) in &manifest.language_servers {
+                        for language in language_server_config.languages() {
+                            this.language_registry.register_lsp_adapter(
+                                language.clone(),
+                                Arc::new(ExtensionLspAdapter {
+                                    extension: wasm_extension.clone(),
+                                    host: this.wasm_host.clone(),
+                                    language_server_id: language_server_id.clone(),
+                                    config: wit::LanguageServerConfig {
+                                        name: language_server_id.0.to_string(),
+                                        language_name: language.to_string(),
+                                    },
+                                }),
+                            );
+                        }
                     }
                 }
                 this.wasm_extensions.extend(wasm_extensions);

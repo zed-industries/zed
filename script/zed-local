@@ -14,6 +14,7 @@ OPTIONS
   --release        Build Zed in release mode
   -2, -3, -4, ...  Spawn multiple Zed instances, with their windows tiled.
   --top            Arrange the Zed windows so they take up the top half of the screen.
+  --stable         Use stable Zed release installed on local machine for all instances (except for the first one).
 `.trim();
 
 const { spawn, execFileSync } = require("child_process");
@@ -29,6 +30,7 @@ const DIGIT_FLAG_REGEX = /^--?(\d+)$/;
 let instanceCount = 1;
 let isReleaseMode = false;
 let isTop = false;
+let othersOnStable = false;
 
 const args = process.argv.slice(2);
 while (args.length > 0) {
@@ -44,6 +46,8 @@ while (args.length > 0) {
   } else if (arg === "--help") {
     console.log(HELP);
     process.exit(0);
+  } else if (arg === "--stable") {
+    othersOnStable = true;
   } else {
     break;
   }
@@ -123,8 +127,11 @@ setTimeout(() => {
       row * instanceHeight + titleBarHeight,
     ].join(",");
     const size = [instanceWidth, instanceHeight].join(",");
-
-    spawn(zedBinary, i == 0 ? args : [], {
+    let binaryPath = zedBinary;
+    if (i != 0 && othersOnStable) {
+      binaryPath = "/Applications/Zed.app/Contents/MacOS/zed";
+    }
+    spawn(binaryPath, i == 0 ? args : [], {
       stdio: "inherit",
       env: {
         ZED_IMPERSONATE: users[i],

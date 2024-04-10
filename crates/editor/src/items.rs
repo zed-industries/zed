@@ -705,31 +705,38 @@ impl Item for Editor {
                 .await?;
             }
 
-            // Only format and save the buffers with changes. For clean buffers,
-            // we simulate saving by calling `Buffer::did_save`, so that language servers or
-            // other downstream listeners of save events get notified.
-            let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.is_dirty() || buffer.has_conflict()
-                    })
-                    .unwrap_or(false)
-            });
+            if buffers.len() == 1 {
+                // Apply full save routine for singleton buffers, to allow to `touch` the file via the editor.
+                project
+                    .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))?
+                    .await?;
+            } else {
+                // For multi-buffers, only format and save the buffers with changes.
+                // For clean buffers, we simulate saving by calling `Buffer::did_save`,
+                // so that language servers or other downstream listeners of save events get notified.
+                let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
+                    buffer
+                        .update(&mut cx, |buffer, _| {
+                            buffer.is_dirty() || buffer.has_conflict()
+                        })
+                        .unwrap_or(false)
+                });
 
-            project
-                .update(&mut cx, |project, cx| {
-                    project.save_buffers(dirty_buffers, cx)
-                })?
-                .await?;
-            for buffer in clean_buffers {
-                buffer
-                    .update(&mut cx, |buffer, cx| {
-                        let version = buffer.saved_version().clone();
-                        let fingerprint = buffer.saved_version_fingerprint();
-                        let mtime = buffer.saved_mtime();
-                        buffer.did_save(version, fingerprint, mtime, cx);
-                    })
-                    .ok();
+                project
+                    .update(&mut cx, |project, cx| {
+                        project.save_buffers(dirty_buffers, cx)
+                    })?
+                    .await?;
+                for buffer in clean_buffers {
+                    buffer
+                        .update(&mut cx, |buffer, cx| {
+                            let version = buffer.saved_version().clone();
+                            let fingerprint = buffer.saved_version_fingerprint();
+                            let mtime = buffer.saved_mtime();
+                            buffer.did_save(version, fingerprint, mtime, cx);
+                        })
+                        .ok();
+                }
             }
 
             Ok(())

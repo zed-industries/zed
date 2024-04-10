@@ -1,6 +1,6 @@
 //! A source of tasks, based on a static configuration, deserialized from the tasks config file, and related infrastructure for tracking changes to the file.
 
-use std::{borrow::Cow, path::Path, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use collections::HashMap;
 use futures::StreamExt;
@@ -42,23 +42,24 @@ pub fn tasks_for(tasks: TaskDefinitions, id_base: &str) -> Vec<Arc<dyn Task>> {
 }
 
 impl Task for StaticTask {
-    fn exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
+    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal> {
         let TaskContext {
             cwd,
             task_variables,
         } = cx;
+        let task_variables = task_variables.into_env_variables();
         let cwd = self
             .definition
             .cwd
             .clone()
             .and_then(|path| {
-                subst::substitute(&path, &task_variables.0)
+                subst::substitute(&path, &task_variables)
                     .map(Into::into)
                     .ok()
             })
             .or(cwd);
         let mut definition_env = self.definition.env.clone();
-        definition_env.extend(task_variables.0);
+        definition_env.extend(task_variables);
         Some(SpawnInTerminal {
             id: self.id.clone(),
             cwd,
@@ -267,9 +268,8 @@ impl StaticSource {
 }
 
 impl TaskSource for StaticSource {
-    fn tasks_for_path(
+    fn tasks_to_schedule(
         &mut self,
-        _: Option<&Path>,
         _: &mut ModelContext<Box<dyn TaskSource>>,
     ) -> Vec<Arc<dyn Task>> {
         self.tasks
