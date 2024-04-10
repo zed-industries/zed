@@ -102,3 +102,4 @@ theme.workspace = true
 unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+headless.workspace = true

@@ -36,7 +36,6 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) {
     cx.set_global(GlobalDevServer(dev_server.clone()));
 
     // Set up a handler when the dev server is shut down by the user pressing Ctrl-C
-
     let (tx, rx) = futures::channel::oneshot::channel();
     set_ctrlc_handler(move || tx.send(()).log_err().unwrap()).log_err();
 

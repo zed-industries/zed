@@ -2211,6 +2211,7 @@ dependencies = [
  "git",
  "google_ai",
  "gpui",
+ "headless",
  "hex",
  "indoc",
  "language",

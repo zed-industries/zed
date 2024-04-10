@@ -235,18 +235,11 @@ pub fn generate_dev_server_token(id: usize, access_token: String) -> String {
     format!("{}.{}", id, access_token)
 }
 
-// a dev_server_token has the format <id>.<base64>. This is to make them
-// relatively easy to copy/paste around.
 pub async fn verify_dev_server_token(
     dev_server_token: &str,
     db: &Arc<Database>,
 ) -> anyhow::Result<dev_server::Model> {
-    let mut parts = dev_server_token.splitn(2, '.');
-    let id = DevServerId(parts.next().unwrap_or_default().parse()?);
-    let token = parts
-        .next()
-        .ok_or_else(|| anyhow!("invalid dev server token format"))?;
-
+    let (id, token) = split_dev_server_token(dev_server_token)?;
     let token_hash = hash_access_token(&token);
     let server = db.get_dev_server(id).await?;
 
@@ -260,6 +253,17 @@ pub async fn verify_dev_server_token(
     } else {
         Err(anyhow!("wrong token for dev server"))
     }
+}
+
+// a dev_server_token has the format <id>.<base64>. This is to make them
+// relatively easy to copy/paste around.
+pub fn split_dev_server_token(dev_server_token: &str) -> anyhow::Result<(DevServerId, &str)> {
+    let mut parts = dev_server_token.splitn(2, '.');
+    let id = DevServerId(parts.next().unwrap_or_default().parse()?);
+    let token = parts
+        .next()
+        .ok_or_else(|| anyhow!("invalid dev server token format"))?;
+    Ok((id, token))
 }
 
 #[cfg(test)]

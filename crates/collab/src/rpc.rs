@@ -1012,13 +1012,12 @@ impl Server {
             },
         )?;
         tracing::info!("sent hello message");
+        if let Some(send_connection_id) = send_connection_id.take() {
+            let _ = send_connection_id.send(connection_id);
+        }
 
         match principal {
             Principal::User(user) | Principal::Impersonated { user, admin: _ } => {
-                if let Some(send_connection_id) = send_connection_id.take() {
-                    let _ = send_connection_id.send(connection_id);
-                }
-
                 if !user.connected_once {
                     self.peer.send(connection_id, proto::ShowContacts {})?;
                     self.app_state

@@ -4634,7 +4634,7 @@ pub fn join_remote_project(
     project_id: ProjectId,
     app_state: Arc<AppState>,
     cx: &mut AppContext,
-) -> Task<Result<()>> {
+) -> Task<Result<WindowHandle<Workspace>>> {
     let windows = cx.windows();
     cx.spawn(|mut cx| async move {
         let existing_workspace = windows.into_iter().find_map(|window| {
@@ -4681,7 +4681,7 @@ pub fn join_remote_project(
             cx.activate_window();
         })?;
 
-        anyhow::Ok(())
+        anyhow::Ok(workspace)
     })
 }
 

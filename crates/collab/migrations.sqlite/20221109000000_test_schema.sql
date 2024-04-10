@@ -45,7 +45,7 @@ CREATE UNIQUE INDEX "index_rooms_on_channel_id" ON "rooms" ("channel_id");
 
 CREATE TABLE "projects" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "room_id" INTEGER REFERENCES rooms (id) ON DELETE CASCADE NOT NULL,
+    "room_id" INTEGER REFERENCES rooms (id) ON DELETE CASCADE,
     "host_user_id" INTEGER REFERENCES users (id),
     "host_connection_id" INTEGER,
     "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
