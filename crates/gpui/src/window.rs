@@ -2267,20 +2267,6 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         subscription
     }
 
-    /// Register a callback to be invoked when the window is going to close.
-    pub fn observe_window_closing(
-        &mut self,
-        mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
-    ) -> Subscription {
-        let view = self.view.downgrade();
-        let (subscription, closing) = self.window.closing_observers.insert(
-            (),
-            Box::new(move |cx| view.update(cx, |view, cx| callback(view, cx)).is_ok()),
-        );
-        closing();
-        subscription
-    }
-
     /// Registers a callback to be invoked when the window appearance changes.
     pub fn observe_window_appearance(
         &mut self,

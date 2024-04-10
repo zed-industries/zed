@@ -571,6 +571,7 @@ pub struct Workspace {
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
+    bounds_save_task_queued: Option<Task<()>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -737,36 +738,46 @@ impl Workspace {
 
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
-            cx.observe_window_bounds(|_, cx| {
-                cx.notify();
-            }),
-            cx.observe_window_closing(move |_, cx| {
-                if let Some(display) = cx.display() {
-                    let window_bounds = cx.window_bounds();
-                    let fullscreen = cx.is_fullscreen();
-
-                    if let Some(display_uuid) = display.uuid().log_err() {
-                        // Only update the window bounds when not full screen,
-                        // so we can remember the last non-fullscreen bounds
-                        // across restarts
-                        if fullscreen {
-                            cx.background_executor()
-                                .spawn(DB.set_fullscreen(workspace_id, true))
-                                .detach_and_log_err(cx);
-                        } else if !cx.is_minimized() {
-                            cx.background_executor()
-                                .spawn(DB.set_fullscreen(workspace_id, false))
-                                .detach_and_log_err(cx);
-                            cx.background_executor()
-                                .spawn(DB.set_window_bounds(
-                                    workspace_id,
-                                    SerializedWindowsBounds(window_bounds),
-                                    display_uuid,
-                                ))
-                                .detach_and_log_err(cx);
-                        }
-                    }
+            cx.observe_window_bounds(move |this, cx| {
+                if this.bounds_save_task_queued.is_some() {
+                    return;
                 }
+                this.bounds_save_task_queued = Some(cx.spawn(|this, mut cx| async move {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(100))
+                        .await;
+                    this.update(&mut cx, |_, cx| {
+                        if let Some(display) = cx.display() {
+                            let window_bounds = cx.window_bounds();
+                            let fullscreen = cx.is_fullscreen();
+
+                            if let Some(display_uuid) = display.uuid().log_err() {
+                                // Only update the window bounds when not full screen,
+                                // so we can remember the last non-fullscreen bounds
+                                // across restarts
+                                if fullscreen {
+                                    cx.background_executor()
+                                        .spawn(DB.set_fullscreen(workspace_id, true))
+                                        .detach_and_log_err(cx);
+                                } else if !cx.is_minimized() {
+                                    cx.background_executor()
+                                        .spawn(DB.set_fullscreen(workspace_id, false))
+                                        .detach_and_log_err(cx);
+                                    cx.background_executor()
+                                        .spawn(DB.set_window_bounds(
+                                            workspace_id,
+                                            SerializedWindowsBounds(window_bounds),
+                                            display_uuid,
+                                        ))
+                                        .detach_and_log_err(cx);
+                                }
+                            }
+                        }
+                    })
+                    .ok();
+                }));
+                this.bounds_save_task_queued.take();
+                cx.notify();
             }),
             cx.observe_window_appearance(|_, cx| {
                 let window_appearance = cx.appearance();
@@ -832,6 +843,7 @@ impl Workspace {
             workspace_actions: Default::default(),
             // This data will be incorrect, but it will be overwritten by the time it needs to be used.
             bounds: Default::default(),
+            bounds_save_task_queued: None,
         }
     }
 
@@ -4779,6 +4791,47 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<DevicePixels>> {
     let height: usize = parts.next()?.parse().ok()?;
     Some(size((width as i32).into(), (height as i32).into()))
 }
+
+// pub fn spawn<Fut, R>(&mut self, f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut) -> Task<R>
+// where
+//     R: 'static,
+//     Fut: Future<Output = R> + 'static,
+
+// async fn save_bounds_task(this: &mut Workspace, cx: &mut ViewContext<'static, Workspace>) {
+//     cx.background_executor()
+//         .timer(Duration::from_millis(100))
+//         .await;
+//     this.update(|this, cx| {
+//         if let Some(display) = cx.display() {
+//             let window_bounds = cx.window_bounds();
+//             let fullscreen = cx.is_fullscreen();
+
+//             if let Some(display_uuid) = display.uuid().log_err() {
+//                 // Only update the window bounds when not full screen,
+//                 // so we can remember the last non-fullscreen bounds
+//                 // across restarts
+//                 if fullscreen {
+//                     cx.background_executor()
+//                         .spawn(DB.set_fullscreen(this, true))
+//                         .detach_and_log_err(cx);
+//                 } else if !cx.is_minimized() {
+//                     cx.background_executor()
+//                         .spawn(DB.set_fullscreen(this, false))
+//                         .detach_and_log_err(cx);
+//                     cx.background_executor()
+//                         .spawn(DB.set_window_bounds(
+//                             this,
+//                             SerializedWindowsBounds(window_bounds),
+//                             display_uuid,
+//                         ))
+//                         .detach_and_log_err(cx);
+//                 }
+//             }
+//         }
+//         this.bounds_save_task_queued = false;
+//     })
+//     .ok()
+// }
 
 struct DisconnectedOverlay;
 
