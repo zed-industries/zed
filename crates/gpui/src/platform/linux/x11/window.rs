@@ -240,6 +240,7 @@ impl X11WindowState {
             bounds: params.bounds.map(|v| v.0),
             scale_factor: 1.0,
             renderer: BladeRenderer::new(gpu, gpu_extent),
+            atoms: *atoms,
 
             input_handler: None,
         }
@@ -273,7 +274,6 @@ impl X11Window {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
             x_window,
-            atoms: *atoms,
         }
     }
 
@@ -446,13 +446,13 @@ impl PlatformWindow for X11Window {
             )
             .unwrap();
 
-        self.0
+        self
             .xcb_connection
             .change_property8(
                 xproto::PropMode::REPLACE,
-                self.0.x_window,
-                self.0.atoms._NET_WM_NAME,
-                self.0.atoms.UTF8_STRING,
+                self.x_window,
+                self.state.borrow().atoms._NET_WM_NAME,
+                self.state.borrow().atoms.UTF8_STRING,
                 title.as_bytes(),
             )
             .unwrap();
