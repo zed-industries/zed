@@ -521,6 +521,11 @@ pub enum Event {
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
     SpawnTask(SpawnInTerminal),
+    OpenBundledFile {
+        text: Cow<'static, str>,
+        title: &'static str,
+        language: &'static str,
+    },
     ZoomChanged,
 }
 

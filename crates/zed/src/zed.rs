@@ -112,10 +112,16 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, cx);
         cx.subscribe(&workspace_handle, {
-            move |workspace, _, event, cx| {
-                if let workspace::Event::PaneAdded(pane) = event {
+            move |workspace, _, event, cx| match event {
+                workspace::Event::PaneAdded(pane) => {
                     initialize_pane(workspace, pane, cx);
                 }
+                workspace::Event::OpenBundledFile {
+                    text,
+                    title,
+                    language,
+                } => open_bundled_file(workspace, text.clone(), title, language, cx),
+                _ => {}
             }
         })
         .detach();
