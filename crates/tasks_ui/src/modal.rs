@@ -195,8 +195,13 @@ impl PickerDelegate for TasksModalDelegate {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
                     let candidates = picker.delegate.candidates.get_or_insert_with(|| {
-                        let (worktree, language) =
-                            active_item_selection_properties(&picker.delegate.workspace, cx);
+                        let Ok((worktree, language)) =
+                            picker.delegate.workspace.update(cx, |workspace, cx| {
+                                active_item_selection_properties(workspace, cx)
+                            })
+                        else {
+                            return Vec::new();
+                        };
                         picker.delegate.inventory.update(cx, |inventory, cx| {
                             inventory.list_tasks(language, worktree, true, cx)
                         })
@@ -376,6 +381,8 @@ mod tests {
     use project::{FakeFs, Project};
     use serde_json::json;
 
+    use crate::modal::Spawn;
+
     use super::*;
 
     #[gpui::test]
@@ -514,13 +521,29 @@ mod tests {
             vec!["echo 4", "another one", "example task", "echo 40"],
             "Last recently used one show task should be listed last, as it is a fire-and-forget task"
         );
+
+        cx.dispatch_action(Spawn {
+            task_name: Some("example task".to_string()),
+        });
+        let tasks_picker = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<TasksModal>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["echo 4", "another one", "example task", "echo 40"],
+        );
     }
 
     fn open_spawn_tasks(
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) -> View<Picker<TasksModalDelegate>> {
-        cx.dispatch_action(crate::modal::Spawn::default());
+        cx.dispatch_action(Spawn::default());
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<TasksModal>(cx)
