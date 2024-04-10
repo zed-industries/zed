@@ -1,5 +1,6 @@
 use collections::HashMap;
 use gpui::AppContext;
+use language::LspBinaryConfigProvider;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -45,6 +46,16 @@ pub enum GitGutterSetting {
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
+}
+
+impl LspBinaryConfigProvider for BinarySettings {
+    fn path(&self) -> Option<String> {
+        self.path.clone()
+    }
+
+    fn arguments(&self) -> Option<Vec<String>> {
+        self.arguments.clone()
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

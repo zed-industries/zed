@@ -109,6 +109,50 @@ lazy_static! {
     ));
 }
 
+/// Types that can provide information about the LSP binary
+/// to invoke and its associated arguments
+pub trait LspBinaryConfigProvider {
+    fn path(&self) -> Option<String>;
+    fn arguments(&self) -> Option<Vec<String>>;
+}
+
+impl<T> LspBinaryConfigProvider for Option<T>
+where
+    T: LspBinaryConfigProvider,
+{
+    fn path(&self) -> Option<String> {
+        if let Some(provider) = self {
+            return provider.path();
+        } else {
+            None
+        }
+    }
+    fn arguments(&self) -> Option<Vec<String>> {
+        if let Some(provider) = self {
+            return provider.arguments();
+        } else {
+            None
+        }
+    }
+}
+
+impl LspBinaryConfigProvider for Option<&dyn LspBinaryConfigProvider> {
+    fn path(&self) -> Option<String> {
+        if let Some(provider) = self {
+            return provider.path();
+        } else {
+            None
+        }
+    }
+    fn arguments(&self) -> Option<Vec<String>> {
+        if let Some(provider) = self {
+            return provider.arguments();
+        } else {
+            None
+        }
+    }
+}
+
 /// Types that represent a position in a buffer, and can be converted into
 /// an LSP position, to send to a language server.
 pub trait ToLspPosition {
@@ -119,6 +163,12 @@ pub trait ToLspPosition {
 /// A name of a language server.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct LanguageServerName(pub Arc<str>);
+
+impl AsRef<OsStr> for LanguageServerName {
+    fn as_ref(&self) -> &OsStr {
+        (*self.0).as_ref()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
@@ -244,6 +294,11 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_id(&self) -> u64;
     fn worktree_root_path(&self) -> &Path;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
+    fn get_user_lsp_binary_config<'a>(
+        &self,
+        language: LanguageServerName,
+        cx: &'a AppContext,
+    ) -> Option<&'a dyn LspBinaryConfigProvider>;
 
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
@@ -328,10 +383,36 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn check_if_user_installed(
         &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncAppContext,
+        delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        None
+        let name = self.name();
+        if let (Some(path), arguments) = cx
+            .update(|app_cx| {
+                let provider = delegate.get_user_lsp_binary_config(name.clone(), app_cx);
+                (provider.path(), provider.arguments())
+            })
+            .ok()
+            .unwrap_or((None, None))
+        {
+            Some(LanguageServerBinary {
+                path: path.into(),
+                arguments: arguments
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|arg| arg.into())
+                    .collect(),
+                env: None,
+            })
+        } else {
+            let env = delegate.shell_env().await;
+            let path = delegate.which(name.as_ref()).await?;
+            Some(LanguageServerBinary {
+                path,
+                arguments: Vec::new(),
+                env: Some(env),
+            })
+        }
     }
 
     async fn fetch_latest_server_version(

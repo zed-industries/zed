@@ -48,8 +48,8 @@ use language::{
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation, Event as BufferEvent,
     File as _, Language, LanguageRegistry, LanguageServerName, LocalFile, LspAdapterDelegate,
-    Operation, Patch, PendingLanguageServer, PointUtf16, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    LspBinaryConfigProvider, Operation, Patch, PendingLanguageServer, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use log::error;
 use lsp::{
@@ -10363,6 +10363,24 @@ impl LspAdapterDelegate for ProjectLspAdapterDelegate {
 
     fn worktree_root_path(&self) -> &Path {
         self.worktree.abs_path().as_ref()
+    }
+
+    fn get_user_lsp_binary_config<'a>(
+        &self,
+        language: LanguageServerName,
+        cx: &'a AppContext,
+    ) -> Option<&'a dyn LspBinaryConfigProvider> {
+        self.project
+            .upgrade()?
+            .read(cx)
+            .current_lsp_settings
+            .get(&language.0)
+            .and_then(|lsp_settings| {
+                lsp_settings
+                    .binary
+                    .as_ref()
+                    .map(|bin_settings| bin_settings as &'a dyn LspBinaryConfigProvider)
+            })
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {

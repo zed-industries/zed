@@ -15,10 +15,14 @@ use util::{
 #[derive(Copy, Clone)]
 pub struct LuaLspAdapter;
 
+impl LuaLspAdapter {
+    const SERVER_NAME: &'static str = "lua-language-server";
+}
+
 #[async_trait(?Send)]
 impl super::LspAdapter for LuaLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("lua-language-server".into())
+        LanguageServerName(Self::SERVER_NAME.into())
     }
 
     async fn fetch_latest_server_version(
@@ -65,7 +69,7 @@ impl super::LspAdapter for LuaLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
 
-        let binary_path = container_dir.join("bin/lua-language-server");
+        let binary_path = container_dir.join("bin/").join(Self::SERVER_NAME);
 
         if fs::metadata(&binary_path).await.is_err() {
             let mut response = delegate
@@ -125,7 +129,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
                 && entry
                     .file_name()
                     .to_str()
-                    .map_or(false, |name| name == "lua-language-server")
+                    .map_or(false, |name| name == LuaLspAdapter::SERVER_NAME)
             {
                 last_binary_path = Some(entry.path());
             }
