@@ -128,19 +128,17 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
         build_notification: impl FnOnce(&mut ViewContext<Self>) -> View<V>,
     ) {
-        let type_id = TypeId::of::<V>();
-        self.dismiss_notification_internal(type_id, &id, cx);
+        self.dismiss_notification_internal(&id, cx);
 
         let notification = build_notification(cx);
         cx.subscribe(&notification, {
             let id = id.clone();
             move |this, _, _: &DismissEvent, cx| {
-                this.dismiss_notification_internal(type_id, &id, cx);
+                this.dismiss_notification_internal(&id, cx);
             }
         })
         .detach();
-        self.notifications
-            .push((type_id, id, Box::new(notification)));
+        self.notifications.push((id, Box::new(notification)));
         cx.notify();
     }
 
@@ -161,20 +159,12 @@ impl Workspace {
         );
     }
 
-    pub fn dismiss_notification<V: Notification>(
-        &mut self,
-        id: &NotificationId,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let type_id = TypeId::of::<V>();
-
-        self.dismiss_notification_internal(type_id, id, cx)
+    pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+        self.dismiss_notification_internal(id, cx)
     }
 
     pub fn show_toast(&mut self, toast: Toast, cx: &mut ViewContext<Self>) {
-        self.dismiss_notification::<simple_message_notification::MessageNotification>(
-            &toast.id, cx,
-        );
+        self.dismiss_notification(&toast.id, cx);
         self.show_notification(toast.id, cx, |cx| {
             cx.new_view(|_cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
@@ -189,24 +179,18 @@ impl Workspace {
     }
 
     pub fn dismiss_toast(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
-        self.dismiss_notification::<simple_message_notification::MessageNotification>(id, cx);
+        self.dismiss_notification(id, cx);
     }
 
-    fn dismiss_notification_internal(
-        &mut self,
-        type_id: TypeId,
-        id: &NotificationId,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.notifications
-            .retain(|(existing_type_id, existing_id, _)| {
-                if (*existing_type_id, existing_id) == (type_id, id) {
-                    cx.notify();
-                    false
-                } else {
-                    true
-                }
-            });
+    fn dismiss_notification_internal(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+        self.notifications.retain(|(existing_id, _)| {
+            if existing_id == id {
+                cx.notify();
+                false
+            } else {
+                true
+            }
+        });
     }
 }
 

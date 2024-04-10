@@ -554,7 +554,7 @@ pub struct Workspace {
     status_bar: View<StatusBar>,
     modal_layer: View<ModalLayer>,
     titlebar_item: Option<AnyView>,
-    notifications: Vec<(TypeId, NotificationId, Box<dyn NotificationHandle>)>,
+    notifications: Vec<(NotificationId, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
     follower_states: HashMap<View<Pane>, FollowerState>,
     last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
@@ -2847,7 +2847,7 @@ impl Workspace {
                     .children(
                         self.notifications
                             .iter()
-                            .map(|(_, _, notification)| notification.to_any()),
+                            .map(|(_, notification)| notification.to_any()),
                     ),
             )
         }

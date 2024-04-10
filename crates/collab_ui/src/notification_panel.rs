@@ -537,7 +537,7 @@ impl NotificationPanel {
             .update(cx, |workspace, cx| {
                 let id = NotificationId::unique::<NotificationToast>();
 
-                workspace.dismiss_notification::<NotificationToast>(&id, cx);
+                workspace.dismiss_notification(&id, cx);
                 workspace.show_notification(id, cx, |cx| {
                     let workspace = cx.view().downgrade();
                     cx.new_view(|_| NotificationToast {
@@ -558,7 +558,7 @@ impl NotificationPanel {
                 self.workspace
                     .update(cx, |workspace, cx| {
                         let id = NotificationId::unique::<NotificationToast>();
-                        workspace.dismiss_notification::<NotificationToast>(&id, cx)
+                        workspace.dismiss_notification(&id, cx)
                     })
                     .ok();
             }
