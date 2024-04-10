@@ -600,7 +600,7 @@ impl DirectWriteState {
                 let enumerator = self.components.factory.TranslateColorGlyphRun2(
                     D2D_POINT_2F {
                         x: subpixel_shift.x / params.scale_factor,
-                        y: subpixel_shift.y / params.scale_factor,
+                        y: -subpixel_shift.y / params.scale_factor,
                     },
                     &glyph_run as _,
                     None,
@@ -621,7 +621,7 @@ impl DirectWriteState {
                     match emoji.glyphImageFormat {
                         DWRITE_GLYPH_IMAGE_FORMATS_COLR => bitmap_render_target.DrawGlyphRun(
                             subpixel_shift.x / params.scale_factor,
-                            subpixel_shift.y / params.scale_factor,
+                            -subpixel_shift.y / params.scale_factor,
                             DWRITE_MEASURING_MODE_NATURAL,
                             &emoji.Base.glyphRun,
                             &render_params,
@@ -630,7 +630,7 @@ impl DirectWriteState {
                         ),
                         _ => bitmap_render_target.DrawGlyphRunWithColorSupport(
                             subpixel_shift.x / params.scale_factor,
-                            subpixel_shift.y / params.scale_factor,
+                            -subpixel_shift.y / params.scale_factor,
                             DWRITE_MEASURING_MODE_NATURAL,
                             &emoji.Base.glyphRun,
                             &render_params,
@@ -657,7 +657,7 @@ impl DirectWriteState {
             } else {
                 bitmap_render_target.DrawGlyphRun(
                     subpixel_shift.x / params.scale_factor,
-                    subpixel_shift.y / params.scale_factor,
+                    -subpixel_shift.y / params.scale_factor,
                     DWRITE_MEASURING_MODE_NATURAL,
                     &glyph_run,
                     &render_params,
