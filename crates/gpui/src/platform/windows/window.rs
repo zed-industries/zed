@@ -239,7 +239,7 @@ impl WindowsWindowInner {
             control: self.is_virtual_key_pressed(VK_CONTROL),
             alt: self.is_virtual_key_pressed(VK_MENU),
             shift: self.is_virtual_key_pressed(VK_SHIFT),
-            command: self.is_virtual_key_pressed(VK_LWIN) || self.is_virtual_key_pressed(VK_RWIN),
+            platform: self.is_virtual_key_pressed(VK_LWIN) || self.is_virtual_key_pressed(VK_RWIN),
             function: false,
         }
     }
@@ -1297,6 +1297,7 @@ impl Drop for WindowsWindow {
     fn drop(&mut self) {
         unsafe {
             let _ = RevokeDragDrop(self.inner.hwnd);
+            self.inner.renderer.borrow_mut().destroy();
         }
     }
 }
@@ -1466,6 +1467,10 @@ impl PlatformWindow for WindowsWindow {
         unsafe { SetWindowTextW(self.inner.hwnd, &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))
             .ok();
+    }
+
+    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
+        // todo(windows)
     }
 
     // todo(windows)

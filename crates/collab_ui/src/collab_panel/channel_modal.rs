@@ -5,9 +5,9 @@ use client::{
 };
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, div, overlay, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusableView,
-    Model, ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext,
-    WeakView,
+    actions, anchored, deferred, div, AppContext, ClipboardItem, DismissEvent, EventEmitter,
+    FocusableView, Model, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -409,9 +409,12 @@ impl PickerDelegate for ChannelModalDelegate {
                             .children(
                                 if let (Some((menu, _)), true) = (&self.context_menu, selected) {
                                     Some(
-                                        overlay()
-                                            .anchor(gpui::AnchorCorner::TopRight)
-                                            .child(menu.clone()),
+                                        deferred(
+                                            anchored()
+                                                .anchor(gpui::AnchorCorner::TopRight)
+                                                .child(menu.clone()),
+                                        )
+                                        .with_priority(1),
                                     )
                                 } else {
                                     None

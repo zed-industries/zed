@@ -1,9 +1,7 @@
 use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
 use anyhow::anyhow;
-use std::{
-    hash::Hash,
-    sync::{Arc, OnceLock},
-};
+use std::{hash::Hash, sync::Arc};
+use tiny_skia::Pixmap;
 
 #[derive(Clone, PartialEq, Hash, Eq)]
 pub(crate) struct RenderSvgParams {
@@ -11,8 +9,14 @@ pub(crate) struct RenderSvgParams {
     pub(crate) size: Size<DevicePixels>,
 }
 
+#[derive(Clone)]
 pub(crate) struct SvgRenderer {
     asset_source: Arc<dyn AssetSource>,
+}
+
+pub enum SvgSize {
+    Size(Size<DevicePixels>),
+    ScaleFactor(f32),
 }
 
 impl SvgRenderer {
@@ -27,20 +31,8 @@ impl SvgRenderer {
 
         // Load the tree.
         let bytes = self.asset_source.load(&params.path)?;
-        let tree =
-            resvg::usvg::Tree::from_data(&bytes, &resvg::usvg::Options::default(), svg_fontdb())?;
 
-        // Render the SVG to a pixmap with the specified width and height.
-        let mut pixmap =
-            resvg::tiny_skia::Pixmap::new(params.size.width.into(), params.size.height.into())
-                .unwrap();
-
-        let ratio = params.size.width.0 as f32 / tree.size().width();
-        resvg::render(
-            &tree,
-            resvg::tiny_skia::Transform::from_scale(ratio, ratio),
-            &mut pixmap.as_mut(),
-        );
+        let pixmap = self.render_pixmap(&bytes, SvgSize::Size(params.size))?;
 
         // Convert the pixmap's pixels into an alpha mask.
         let alpha_mask = pixmap
@@ -50,14 +42,29 @@ impl SvgRenderer {
             .collect::<Vec<_>>();
         Ok(alpha_mask)
     }
-}
 
-/// Returns the global font database used for SVG rendering.
-fn svg_fontdb() -> &'static resvg::usvg::fontdb::Database {
-    static FONTDB: OnceLock<resvg::usvg::fontdb::Database> = OnceLock::new();
-    FONTDB.get_or_init(|| {
-        let mut fontdb = resvg::usvg::fontdb::Database::new();
-        fontdb.load_system_fonts();
-        fontdb
-    })
+    pub fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {
+        let tree = usvg::Tree::from_data(&bytes, &usvg::Options::default())?;
+
+        let tree_size = tree.svg_node().size;
+
+        let size = match size {
+            SvgSize::Size(size) => size,
+            SvgSize::ScaleFactor(scale) => crate::size(
+                DevicePixels((tree_size.width() * scale as f64) as i32),
+                DevicePixels((tree_size.height() * scale as f64) as i32),
+            ),
+        };
+
+        // Render the SVG to a pixmap with the specified width and height.
+        let mut pixmap = tiny_skia::Pixmap::new(size.width.into(), size.height.into()).unwrap();
+
+        resvg::render(
+            &tree,
+            usvg::FitTo::Width(size.width.into()),
+            pixmap.as_mut(),
+        );
+
+        Ok(pixmap)
+    }
 }

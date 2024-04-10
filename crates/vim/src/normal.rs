@@ -15,13 +15,14 @@ use crate::{
     motion::{self, first_non_whitespace, next_line_end, right, Motion},
     object::Object,
     state::{Mode, Operator},
+    surrounds::{check_and_move_to_valid_bracket_pair, SurroundsType},
     Vim,
 };
 use collections::BTreeSet;
 use editor::scroll::Autoscroll;
-use editor::{Bias, DisplayPoint};
+use editor::Bias;
 use gpui::{actions, ViewContext, WindowContext};
-use language::SelectionGoal;
+use language::{Point, SelectionGoal};
 use log::error;
 use workspace::Workspace;
 
@@ -178,6 +179,7 @@ pub fn normal_motion(
             Some(Operator::Change) => change_motion(vim, motion, times, cx),
             Some(Operator::Delete) => delete_motion(vim, motion, times, cx),
             Some(Operator::Yank) => yank_motion(vim, motion, times, cx),
+            Some(Operator::AddSurrounds { target: None }) => {}
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -188,21 +190,40 @@ pub fn normal_motion(
 
 pub fn normal_object(object: Object, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
+        let mut waiting_operator: Option<Operator> = None;
         match vim.maybe_pop_operator() {
             Some(Operator::Object { around }) => match vim.maybe_pop_operator() {
                 Some(Operator::Change) => change_object(vim, object, around, cx),
                 Some(Operator::Delete) => delete_object(vim, object, around, cx),
                 Some(Operator::Yank) => yank_object(vim, object, around, cx),
+                Some(Operator::AddSurrounds { target: None }) => {
+                    waiting_operator = Some(Operator::AddSurrounds {
+                        target: Some(SurroundsType::Object(object)),
+                    });
+                }
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
                 }
             },
+            Some(Operator::DeleteSurrounds) => {
+                waiting_operator = Some(Operator::DeleteSurrounds);
+            }
+            Some(Operator::ChangeSurrounds { target: None }) => {
+                if check_and_move_to_valid_bracket_pair(vim, object, cx) {
+                    waiting_operator = Some(Operator::ChangeSurrounds {
+                        target: Some(object),
+                    });
+                }
+            }
             _ => {
-                // Can't do anything with change/delete/yank and text objects. Ignoring
+                // Can't do anything with change/delete/yank/surrounds and text objects. Ignoring
             }
         }
         vim.clear_operator(cx);
-    })
+        if let Some(operator) = waiting_operator {
+            vim.push_operator(operator, cx);
+        }
+    });
 }
 
 pub(crate) fn move_cursor(
@@ -283,19 +304,20 @@ fn insert_line_above(_: &mut Workspace, _: &InsertLineAbove, cx: &mut ViewContex
         vim.switch_mode(Mode::Insert, false, cx);
         vim.update_active_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
-                let (map, old_selections) = editor.selections.all_display(cx);
-                let selection_start_rows: BTreeSet<u32> = old_selections
+                let selections = editor.selections.all::<Point>(cx);
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+                let selection_start_rows: BTreeSet<u32> = selections
                     .into_iter()
-                    .map(|selection| selection.start.row())
+                    .map(|selection| selection.start.row)
                     .collect();
                 let edits = selection_start_rows.into_iter().map(|row| {
-                    let (indent, _) = map.line_indent(row);
-                    let start_of_line =
-                        motion::start_of_line(&map, false, DisplayPoint::new(row, 0))
-                            .to_point(&map);
-                    let mut new_text = " ".repeat(indent as usize);
-                    new_text.push('\n');
-                    (start_of_line..start_of_line, new_text)
+                    let indent = snapshot
+                        .indent_size_for_line(row)
+                        .chars()
+                        .collect::<String>();
+                    let start_of_line = Point::new(row, 0);
+                    (start_of_line..start_of_line, indent + "\n")
                 });
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -317,20 +339,20 @@ fn insert_line_below(_: &mut Workspace, _: &InsertLineBelow, cx: &mut ViewContex
         vim.update_active_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
-                let (map, old_selections) = editor.selections.all_display(cx);
-                let selection_end_rows: BTreeSet<u32> = old_selections
+                let selections = editor.selections.all::<Point>(cx);
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+                let selection_end_rows: BTreeSet<u32> = selections
                     .into_iter()
-                    .map(|selection| selection.end.row())
+                    .map(|selection| selection.end.row)
                     .collect();
                 let edits = selection_end_rows.into_iter().map(|row| {
-                    let (indent, _) = map.line_indent(row);
-                    let end_of_line =
-                        motion::end_of_line(&map, false, DisplayPoint::new(row, 0), 1)
-                            .to_point(&map);
-
-                    let mut new_text = "\n".to_string();
-                    new_text.push_str(&" ".repeat(indent as usize));
-                    (end_of_line..end_of_line, new_text)
+                    let indent = snapshot
+                        .indent_size_for_line(row)
+                        .chars()
+                        .collect::<String>();
+                    let end_of_line = Point::new(row, snapshot.line_len(row));
+                    (end_of_line..end_of_line, "\n".to_string() + &indent)
                 });
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.maybe_move_cursors_with(|map, cursor, goal| {

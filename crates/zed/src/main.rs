@@ -21,7 +21,9 @@ use editor::{Editor, EditorMode};
 use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
-use gpui::{App, AppContext, AsyncAppContext, Context, SemanticVersion, Task, ViewContext};
+use gpui::{
+    App, AppContext, AsyncAppContext, Context, SemanticVersion, Task, ViewContext, VisualContext,
+};
 use image_viewer;
 use isahc::{prelude::Configurable, Request};
 use language::LanguageRegistry;
@@ -54,7 +56,7 @@ use std::{
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
     http::{HttpClient, HttpClientWithUrl},
-    maybe,
+    maybe, parse_env_output,
     paths::{self, CRASHES_DIR, CRASHES_RETIRED_DIR},
     ResultExt, TryFutureExt,
 };
@@ -70,11 +72,31 @@ use zed::{
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+fn fail_to_launch(e: anyhow::Error) {
+    App::new().run(move |cx| {
+        let window = cx.open_window(gpui::WindowOptions::default(), |cx| cx.new_view(|_| gpui::Empty));
+        window.update(cx, |_, cx| {
+            let response = cx.prompt(gpui::PromptLevel::Critical, "Zed failed to launch", Some(&format!("{}\n\nFor help resolving this, please open an issue on https://github.com/zed-industries/zed", e)), &["Exit"]);
+
+            cx.spawn(|_, mut cx| async move {
+                response.await?;
+                cx.update(|cx| {
+                    cx.quit()
+                })
+            }).detach_and_log_err(cx);
+        }).log_err();
+    })
+}
+
 fn main() {
     menu::init();
     zed_actions::init();
 
-    init_paths();
+    if let Err(e) = init_paths() {
+        fail_to_launch(e);
+        return;
+    }
+
     init_logger();
 
     if ensure_only_instance() != IsOnlyInstance::Yes {
@@ -208,12 +230,21 @@ fn main() {
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
+
         cx.observe_global::<SettingsStore>({
             let languages = languages.clone();
             let http = http.clone();
             let client = client.clone();
 
             move |cx| {
+                for &mut window in cx.windows().iter_mut() {
+                    let background_appearance = cx.theme().window_background_appearance();
+                    window
+                        .update(cx, |_, cx| {
+                            cx.set_background_appearance(background_appearance)
+                        })
+                        .ok();
+                }
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
@@ -500,14 +531,21 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: AsyncAppConte
     .log_err();
 }
 
-fn init_paths() {
-    std::fs::create_dir_all(&*util::paths::CONFIG_DIR).expect("could not create config path");
-    std::fs::create_dir_all(&*util::paths::EXTENSIONS_DIR)
-        .expect("could not create extensions path");
-    std::fs::create_dir_all(&*util::paths::LANGUAGES_DIR).expect("could not create languages path");
-    std::fs::create_dir_all(&*util::paths::DB_DIR).expect("could not create database path");
-    std::fs::create_dir_all(&*util::paths::LOGS_DIR).expect("could not create logs path");
-    std::fs::create_dir_all(&*util::paths::TEMP_DIR).expect("could not create tmp path");
+fn init_paths() -> anyhow::Result<()> {
+    for path in [
+        &*util::paths::CONFIG_DIR,
+        &*util::paths::EXTENSIONS_DIR,
+        &*util::paths::LANGUAGES_DIR,
+        &*util::paths::DB_DIR,
+        &*util::paths::LOGS_DIR,
+        &*util::paths::TEMP_DIR,
+    ]
+    .iter()
+    {
+        std::fs::create_dir_all(path)
+            .map_err(|e| anyhow!("Could not create directory {:?}: {}", path, e))?;
+    }
+    Ok(())
 }
 
 fn init_logger() {
@@ -897,7 +935,7 @@ async fn load_login_shell_environment() -> Result<()> {
     // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
     // do that, but it does, and `exit 0` helps.
     let shell_cmd = format!(
-        "{}echo {marker}; /usr/bin/env -0; exit 0;",
+        "{}printf '%s' {marker}; /usr/bin/env; exit 0;",
         shell_cmd_prefix.as_deref().unwrap_or("")
     );
 
@@ -914,13 +952,9 @@ async fn load_login_shell_environment() -> Result<()> {
 
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
-        for line in env_output.split_terminator('\0') {
-            if let Some(separator_index) = line.find('=') {
-                let key = &line[..separator_index];
-                let value = &line[separator_index + 1..];
-                env::set_var(key, value);
-            }
-        }
+
+        parse_env_output(env_output, |key, value| env::set_var(key, value));
+
         log::info!(
             "set environment variables from shell:{}, path:{}",
             shell,
@@ -1073,7 +1107,7 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
         while (events.next().await).is_some() {
             cx.update(|cx| {
                 cx.update_global(|file_types, _| {
-                    *file_types = project_panel::file_associations::FileAssociations::new(Assets);
+                    *file_types = file_icons::FileIcons::new(Assets);
                 });
             })
             .ok();

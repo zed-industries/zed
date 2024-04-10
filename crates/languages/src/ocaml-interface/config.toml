@@ -1,4 +1,5 @@
 name = "OCaml Interface"
+code_fence_block_name = "ocaml"
 grammar = "ocaml_interface"
 path_suffixes = ["mli"]
 block_comment = ["(* ", "*)"]
@@ -9,3 +10,4 @@ brackets = [
   { start = "[", end = "]", close = true, newline = true },
   { start = "(", end = ")", close = true, newline = true }
 ]
+tab_size = 2

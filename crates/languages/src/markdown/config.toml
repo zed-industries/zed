@@ -12,3 +12,6 @@ brackets = [
     { start = "`", end = "`", close = false, newline = false },
 ]
 prettier_parser_name = "markdown"
+
+tab_size = 2
+soft_wrap = "preferred_line_length"

@@ -4,12 +4,12 @@ use crate::{
     DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowKind, WindowParams,
+    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowKind, WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        CGPoint, NSApplication, NSBackingStoreBuffered, NSEventModifierFlags,
+        CGPoint, NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
         NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
@@ -82,6 +82,17 @@ type NSDragOperation = NSUInteger;
 const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    // Widely used private APIs; Apple uses them for their Terminal.app.
+    fn CGSMainConnectionID() -> id;
+    fn CGSSetWindowBackgroundBlurRadius(
+        connection_id: id,
+        window_id: NSInteger,
+        radius: i64,
+    ) -> i32;
+}
 
 #[ctor]
 unsafe fn build_classes() {
@@ -509,6 +520,7 @@ impl MacWindow {
     pub fn open(
         handle: AnyWindowHandle,
         WindowParams {
+            window_background,
             bounds,
             titlebar,
             kind,
@@ -606,7 +618,7 @@ impl MacWindow {
                 )
             };
 
-            let window = Self(Arc::new(Mutex::new(MacWindowState {
+            let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
                 native_window,
@@ -684,6 +696,8 @@ impl MacWindow {
 
             native_window.setContentView_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
+
+            window.set_background_appearance(window_background);
 
             match kind {
                 WindowKind::Normal => {
@@ -839,7 +853,7 @@ impl PlatformWindow for MacWindow {
                 control,
                 alt,
                 shift,
-                command,
+                platform: command,
                 function,
             }
         }
@@ -964,6 +978,31 @@ impl PlatformWindow for MacWindow {
             let _: () = msg_send![app, changeWindowsItem:window title:title filename:false];
             let _: () = msg_send![window, setTitle: title];
             self.0.lock().move_traffic_light();
+        }
+    }
+
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+        let this = self.0.as_ref().lock();
+        let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
+            80
+        } else {
+            0
+        };
+        let opaque = if background_appearance == WindowBackgroundAppearance::Opaque {
+            YES
+        } else {
+            NO
+        };
+        unsafe {
+            this.native_window.setOpaque_(opaque);
+            let clear_color = if opaque == YES {
+                NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
+            } else {
+                NSColor::clearColor(nil)
+            };
+            this.native_window.setBackgroundColor_(clear_color);
+            let window_number = this.native_window.windowNumber();
+            CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
         }
     }
 
@@ -1809,16 +1848,17 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
     let window_state = unsafe { get_window_state(this) };
-    if send_new_event(&window_state, {
-        let position = drag_event_position(&window_state, dragging_info);
-        let paths = external_paths_from_event(dragging_info);
-        PlatformInput::FileDrop(FileDropEvent::Entered { position, paths })
-    }) {
-        window_state.lock().external_files_dragged = true;
-        NSDragOperationCopy
-    } else {
-        NSDragOperationNone
+    let position = drag_event_position(&window_state, dragging_info);
+    let paths = external_paths_from_event(dragging_info);
+    if let Some(event) =
+        paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
+    {
+        if send_new_event(&window_state, event) {
+            window_state.lock().external_files_dragged = true;
+            return NSDragOperationCopy;
+        }
     }
+    NSDragOperationNone
 }
 
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
@@ -1856,10 +1896,13 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
     }
 }
 
-fn external_paths_from_event(dragging_info: *mut Object) -> ExternalPaths {
+fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths> {
     let mut paths = SmallVec::new();
     let pasteboard: id = unsafe { msg_send![dragging_info, draggingPasteboard] };
     let filenames = unsafe { NSPasteboard::propertyListForType(pasteboard, NSFilenamesPboardType) };
+    if filenames == nil {
+        return None;
+    }
     for file in unsafe { filenames.iter() } {
         let path = unsafe {
             let f = NSString::UTF8String(file);
@@ -1867,7 +1910,7 @@ fn external_paths_from_event(dragging_info: *mut Object) -> ExternalPaths {
         };
         paths.push(PathBuf::from(path))
     }
-    ExternalPaths(paths)
+    Some(ExternalPaths(paths))
 }
 
 extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {

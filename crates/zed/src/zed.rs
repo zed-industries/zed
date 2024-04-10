@@ -18,7 +18,6 @@ pub use open_listener::*;
 use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
-use language::LanguageSource;
 use project::TaskSourceKind;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
@@ -34,6 +33,8 @@ use task::{
     oneshot_source::OneshotSource,
     static_source::{StaticSource, TrackedFile},
 };
+use theme::ActiveTheme;
+use workspace::notifications::NotificationId;
 
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
@@ -104,6 +105,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         is_movable: true,
         display_id: display.map(|display| display.id()),
         fullscreen: false,
+        window_background: cx.theme().window_background_appearance(),
     }
 }
 
@@ -132,6 +134,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
+        let tasks_indicator = tasks_ui::TaskStatusIndicator::new(workspace.weak_handle(), cx);
         let active_buffer_language =
             cx.new_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let vim_mode_indicator = cx.new_view(|cx| vim::ModeIndicator::new(cx));
@@ -141,6 +144,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(copilot, cx);
+            status_bar.add_right_item(tasks_indicator, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);
@@ -183,11 +187,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                                 cx,
                             )
                         },
-                        cx,
-                    );
-                    inventory.add_source(
-                        TaskSourceKind::Buffer,
-                        |cx| LanguageSource::new(app_state.languages.clone(), cx),
                         cx,
                     );
                 })
@@ -261,9 +260,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         .await
                         .context("error creating CLI symlink")?;
                     workspace.update(&mut cx, |workspace, cx| {
+                        struct InstalledZedCli;
+
                         workspace.show_toast(
                             Toast::new(
-                                0,
+                                NotificationId::unique::<InstalledZedCli>(),
                                 format!(
                                     "Installed `zed` to {}. You can launch {} from your terminal.",
                                     path.to_string_lossy(),
@@ -282,9 +283,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.spawn(|workspace, mut cx| async move {
                     register_zed_scheme(&cx).await?;
                     workspace.update(&mut cx, |workspace, cx| {
+                        struct RegisterZedScheme;
+
                         workspace.show_toast(
                             Toast::new(
-                                0,
+                                NotificationId::unique::<RegisterZedScheme>(),
                                 format!(
                                     "zed:// links will now open in {}.",
                                     ReleaseChannel::global(cx).display_name()
@@ -563,14 +566,20 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                 workspace
                     .update(&mut cx, |workspace, cx| {
                         let Some(log) = log else {
-                            workspace.show_notification(29, cx, |cx| {
-                                cx.new_view(|_| {
-                                    MessageNotification::new(format!(
-                                        "Unable to access/open log file at path {:?}",
-                                        paths::LOG.as_path()
-                                    ))
-                                })
-                            });
+                            struct OpenLogError;
+
+                            workspace.show_notification(
+                                NotificationId::unique::<OpenLogError>(),
+                                cx,
+                                |cx| {
+                                    cx.new_view(|_| {
+                                        MessageNotification::new(format!(
+                                            "Unable to access/open log file at path {:?}",
+                                            paths::LOG.as_path()
+                                        ))
+                                    })
+                                },
+                            );
                             return;
                         };
                         let project = workspace.project().clone();
@@ -615,6 +624,7 @@ pub fn handle_keymap_file_changes(
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
+
         if new_base_keymap != old_base_keymap || new_vim_enabled != old_vim_enabled {
             old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
@@ -756,7 +766,9 @@ fn open_local_file(
         })
         .detach();
     } else {
-        workspace.show_notification(0, cx, |cx| {
+        struct NoOpenFolders;
+
+        workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
             cx.new_view(|_| MessageNotification::new("This project has no folders open."))
         })
     }
@@ -3070,6 +3082,7 @@ mod tests {
             let mut app_state = AppState::test(cx);
 
             let state = Arc::get_mut(&mut app_state).unwrap();
+            env_logger::try_init().ok();
 
             state.build_window_options = build_window_options;
             theme::init(theme::LoadThemes::JustBase, cx);
@@ -3087,6 +3100,7 @@ mod tests {
             project_panel::init((), cx);
             terminal_view::init(cx);
             assistant::init(app_state.client.clone(), cx);
+            tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), cx);
             app_state
         })

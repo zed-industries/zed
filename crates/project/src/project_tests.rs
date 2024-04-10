@@ -4484,10 +4484,12 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
 
     let mut servers_with_hover_requests = HashMap::default();
     for i in 0..language_server_names.len() {
-        let new_server = fake_tsx_language_servers
-            .next()
-            .await
-            .unwrap_or_else(|| panic!("Failed to get language server #{i}"));
+        let new_server = fake_tsx_language_servers.next().await.unwrap_or_else(|| {
+            panic!(
+                "Failed to get language server #{i} with name {}",
+                &language_server_names[i]
+            )
+        });
         let new_server_name = new_server.server.name();
         assert!(
             !servers_with_hover_requests.contains_key(new_server_name),
@@ -4553,6 +4555,76 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             .sorted()
             .collect::<Vec<_>>(),
         "Should receive hover responses from all related servers with hover capabilities"
+    );
+}
+
+#[gpui::test]
+async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.ts": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp_adapter(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let fake_server = fake_language_servers
+        .next()
+        .await
+        .expect("failed to get the language server");
+
+    let mut request_handled =
+        fake_server.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Array(vec![
+                    lsp::MarkedString::String("".to_string()),
+                    lsp::MarkedString::String("      ".to_string()),
+                    lsp::MarkedString::String("\n\n\n".to_string()),
+                ]),
+                range: None,
+            }))
+        });
+
+    let hover_task = project.update(cx, |project, cx| {
+        project.hover(&buffer, Point::new(0, 0), cx)
+    });
+    let () = request_handled
+        .next()
+        .await
+        .expect("All hover requests should have been triggered");
+    assert_eq!(
+        Vec::<String>::new(),
+        hover_task
+            .await
+            .into_iter()
+            .map(|hover| hover.contents.iter().map(|block| &block.text).join("|"))
+            .sorted()
+            .collect::<Vec<_>>(),
+        "Empty hover parts should be ignored"
     );
 }
 
@@ -4636,10 +4708,12 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
 
     let mut servers_with_actions_requests = HashMap::default();
     for i in 0..language_server_names.len() {
-        let new_server = fake_tsx_language_servers
-            .next()
-            .await
-            .unwrap_or_else(|| panic!("Failed to get language server #{i}"));
+        let new_server = fake_tsx_language_servers.next().await.unwrap_or_else(|| {
+            panic!(
+                "Failed to get language server #{i} with name {}",
+                &language_server_names[i]
+            )
+        });
         let new_server_name = new_server.server.name();
         assert!(
             !servers_with_actions_requests.contains_key(new_server_name),

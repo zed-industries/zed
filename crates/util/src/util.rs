@@ -3,14 +3,12 @@ pub mod fs;
 pub mod github;
 pub mod http;
 pub mod paths;
-mod semantic_version;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
 use futures::Future;
 use lazy_static::lazy_static;
 use rand::{seq::SliceRandom, Rng};
-pub use semantic_version::*;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -129,6 +127,32 @@ where
             }
             start_index = index;
         }
+    }
+}
+
+/// Parse the result of calling `usr/bin/env` with no arguments
+pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
+    let mut current_key: Option<String> = None;
+    let mut current_value: Option<String> = None;
+
+    for line in env.split_terminator('\n') {
+        if let Some(separator_index) = line.find('=') {
+            if &line[..separator_index] != "" {
+                if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
+                    f(key, value)
+                }
+                current_key = Some(line[..separator_index].to_string());
+                current_value = Some(line[separator_index + 1..].to_string());
+                continue;
+            };
+        }
+        if let Some(value) = current_value.as_mut() {
+            value.push('\n');
+            value.push_str(line);
+        }
+    }
+    if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
+        f(key, value)
     }
 }
 
@@ -369,6 +393,7 @@ impl<F: FnOnce()> Drop for Deferred<F> {
 }
 
 /// Run the given function when the returned value is dropped (unless it's cancelled).
+#[must_use]
 pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
     Deferred(Some(f))
 }
@@ -509,9 +534,8 @@ pub struct NumericPrefixWithSuffix<'a>(i32, &'a str);
 
 impl<'a> NumericPrefixWithSuffix<'a> {
     pub fn from_numeric_prefixed_str(str: &'a str) -> Option<Self> {
-        let mut chars = str.chars();
-        let prefix: String = chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
-        let remainder = chars.as_str();
+        let i = str.chars().take_while(|c| c.is_ascii_digit()).count();
+        let (prefix, remainder) = str.split_at(i);
 
         match prefix.parse::<i32>() {
             Ok(prefix) => Some(NumericPrefixWithSuffix(prefix, remainder)),
@@ -590,6 +614,57 @@ mod tests {
         assert_eq!(truncate_and_trailoff("èèèèèè", 7), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 6), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 5), "èèèèè…");
+    }
+
+    #[test]
+    fn test_numeric_prefix_str_method() {
+        let target = "1a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, "a"))
+        );
+
+        let target = "12ab";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, "ab"))
+        );
+
+        let target = "12_ab";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, "_ab"))
+        );
+
+        let target = "1_2ab";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, "_2ab"))
+        );
+
+        let target = "1.2";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, ".2"))
+        );
+
+        let target = "1.2_a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, ".2_a"))
+        );
+
+        let target = "12.2_a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, ".2_a"))
+        );
+
+        let target = "12a.2_a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, "a.2_a"))
+        );
     }
 
     #[test]

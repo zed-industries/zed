@@ -29,6 +29,9 @@ struct BladeAtlasState {
     uploads: Vec<PendingUpload>,
 }
 
+#[cfg(gles)]
+unsafe impl Send for BladeAtlasState {}
+
 impl BladeAtlasState {
     fn destroy(&mut self) {
         self.storage.destroy(&self.gpu);

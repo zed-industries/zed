@@ -12,13 +12,14 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use ::util::{ResultExt, SemanticVersion};
+use ::util::ResultExt;
 use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock};
+use semantic_version::SemanticVersion;
 use smallvec::SmallVec;
 use time::UtcOffset;
 use windows::{
@@ -56,7 +57,7 @@ pub(crate) struct WindowsPlatformInner {
     background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     main_receiver: flume::Receiver<Runnable>,
-    text_system: Arc<WindowsTextSystem>,
+    text_system: Arc<CosmicTextSystem>,
     callbacks: Mutex<Callbacks>,
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     pub(crate) dispatch_event: OwnedHandle,
@@ -154,7 +155,7 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event.to_raw()));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system = Arc::new(WindowsTextSystem::new());
+        let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = Mutex::new(Callbacks::default());
         let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
@@ -274,9 +275,37 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    // todo(windows)
     fn restart(&self) {
-        unimplemented!()
+        let pid = std::process::id();
+        let Some(app_path) = self.app_path().log_err() else {
+            return;
+        };
+        let script = format!(
+            r#"
+            $pidToWaitFor = {}
+            $exePath = "{}"
+
+            while ($true) {{
+                $process = Get-Process -Id $pidToWaitFor -ErrorAction SilentlyContinue
+                if (-not $process) {{
+                    Start-Process -FilePath $exePath
+                    break
+                }}
+                Start-Sleep -Seconds 0.1
+            }}
+            "#,
+            pid,
+            app_path.display(),
+        );
+        let restart_process = std::process::Command::new("powershell.exe")
+            .arg("-command")
+            .arg(script)
+            .spawn();
+
+        match restart_process {
+            Ok(_) => self.quit(),
+            Err(e) => log::error!("failed to spawn restart script: {:?}", e),
+        }
     }
 
     // todo(windows)
@@ -513,11 +542,11 @@ impl Platform for WindowsPlatform {
         let mut info = unsafe { std::mem::zeroed() };
         let status = unsafe { RtlGetVersion(&mut info) };
         if status.is_ok() {
-            Ok(SemanticVersion {
-                major: info.dwMajorVersion as _,
-                minor: info.dwMinorVersion as _,
-                patch: info.dwBuildNumber as _,
-            })
+            Ok(SemanticVersion::new(
+                info.dwMajorVersion as _,
+                info.dwMinorVersion as _,
+                info.dwBuildNumber as _,
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "unable to get Windows version: {}",
@@ -606,11 +635,11 @@ impl Platform for WindowsPlatform {
         let version_info = unsafe { &*(version_info_raw as *mut VS_FIXEDFILEINFO) };
         // https://learn.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-vs_fixedfileinfo
         if version_info.dwSignature == 0xFEEF04BD {
-            return Ok(SemanticVersion {
-                major: ((version_info.dwProductVersionMS >> 16) & 0xFFFF) as usize,
-                minor: (version_info.dwProductVersionMS & 0xFFFF) as usize,
-                patch: ((version_info.dwProductVersionLS >> 16) & 0xFFFF) as usize,
-            });
+            return Ok(SemanticVersion::new(
+                ((version_info.dwProductVersionMS >> 16) & 0xFFFF) as usize,
+                (version_info.dwProductVersionMS & 0xFFFF) as usize,
+                ((version_info.dwProductVersionLS >> 16) & 0xFFFF) as usize,
+            ));
         } else {
             log::error!(
                 "no version info present: {}",
@@ -620,9 +649,8 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    // todo(windows)
     fn app_path(&self) -> Result<PathBuf> {
-        Err(anyhow!("not yet implemented"))
+        Ok(std::env::current_exe()?)
     }
 
     fn local_timezone(&self) -> UtcOffset {

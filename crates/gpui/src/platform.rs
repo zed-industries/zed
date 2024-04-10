@@ -6,6 +6,9 @@
 mod app_menu;
 mod keystroke;
 
+#[cfg(not(target_os = "macos"))]
+mod cosmic_text;
+
 #[cfg(target_os = "linux")]
 mod linux;
 
@@ -49,14 +52,17 @@ use uuid::Uuid;
 
 pub use app_menu::*;
 pub use keystroke::*;
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) use cosmic_text::*;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
+pub use semantic_version::SemanticVersion;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
 use time::UtcOffset;
-pub use util::SemanticVersion;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
 
@@ -66,7 +72,14 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 }
 #[cfg(target_os = "linux")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
-    Rc::new(LinuxPlatform::new())
+    let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
+    let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
+
+    if use_wayland {
+        Rc::new(WaylandClient::new())
+    } else {
+        Rc::new(X11Client::new())
+    }
 }
 // todo("windows")
 #[cfg(target_os = "windows")]
@@ -118,8 +131,7 @@ pub(crate) trait Platform: 'static {
     fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
-    fn add_recent_documents(&self, _paths: &[PathBuf]) {}
-    fn clear_recent_documents(&self) {}
+    fn add_recent_document(&self, _path: &Path) {}
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
@@ -190,6 +202,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn activate(&self);
     fn is_active(&self) -> bool;
     fn set_title(&mut self, title: &str);
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance);
     fn set_edited(&mut self, edited: bool);
     fn show_character_palette(&self);
     fn minimize(&self);
@@ -207,6 +220,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: &Scene);
+    fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     #[cfg(target_os = "windows")]
@@ -533,6 +547,9 @@ pub struct WindowOptions {
     /// The display to create the window on, if this is None,
     /// the window will be created on the main display
     pub display_id: Option<DisplayId>,
+
+    /// The appearance of the window background.
+    pub window_background: WindowBackgroundAppearance,
 }
 
 /// The variables that can be configured when creating a new window
@@ -555,6 +572,8 @@ pub(crate) struct WindowParams {
     pub show: bool,
 
     pub display_id: Option<DisplayId>,
+
+    pub window_background: WindowBackgroundAppearance,
 }
 
 impl Default for WindowOptions {
@@ -572,6 +591,7 @@ impl Default for WindowOptions {
             is_movable: true,
             display_id: None,
             fullscreen: false,
+            window_background: WindowBackgroundAppearance::default(),
         }
     }
 }
@@ -631,6 +651,27 @@ impl Default for WindowAppearance {
     fn default() -> Self {
         Self::Light
     }
+}
+
+/// The appearance of the background of the window itself, when there is
+/// no content or the content is transparent.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub enum WindowBackgroundAppearance {
+    /// Opaque.
+    ///
+    /// This lets the window manager know that content behind this
+    /// window does not need to be drawn.
+    ///
+    /// Actual color depends on the system and themes should define a fully
+    /// opaque background color instead.
+    #[default]
+    Opaque,
+    /// Plain alpha transparency.
+    Transparent,
+    /// Transparency, but the contents behind the window are blurred.
+    ///
+    /// Not always supported.
+    Blurred,
 }
 
 /// The options that can be configured for a file dialog prompt

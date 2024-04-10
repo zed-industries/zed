@@ -16,7 +16,9 @@
       "escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
-      "shift-enter": "menu::UseSelectedQuery",
+      "shift-enter": "picker::UseSelectedQuery",
+      "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
+      "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "ctrl-o": "workspace::Open",
@@ -26,7 +28,7 @@
       "ctrl-0": "zed::ResetBufferFontSize",
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
-      "ctrl-h": "zed::Hide",
+      "alt-f9": "zed::Hide",
       "f11": "zed::ToggleFullScreen"
     }
   },
@@ -36,7 +38,6 @@
       "escape": "editor::Cancel",
       "backspace": "editor::Backspace",
       "shift-backspace": "editor::Backspace",
-      "ctrl-h": "editor::Backspace",
       "delete": "editor::Delete",
       "ctrl-d": "editor::Delete",
       "tab": "editor::Tab",
@@ -136,7 +137,8 @@
       // ],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
-      "ctrl-k ctrl-r": "editor::RevertSelectedHunks"
+      "ctrl-k ctrl-r": "editor::RevertSelectedHunks",
+      "ctrl-alt-g b": "editor::ToggleGitBlame"
     }
   },
   {
@@ -147,10 +149,11 @@
       "ctrl-shift-enter": "editor::NewlineBelow",
       "ctrl-enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
-      "ctrl-f": [
+      "ctrl-f": "buffer_search::Deploy",
+      "ctrl-h": [
         "buffer_search::Deploy",
         {
-          "focus": true
+          "replace_enabled": true
         }
       ],
       // "cmd-e": [
@@ -209,14 +212,16 @@
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
-      "alt-tab": "search::CycleMode"
+      "alt-tab": "search::CycleMode",
+      "ctrl-f": "search::FocusSearch",
+      "ctrl-h": "search::ToggleReplace"
     }
   },
   {
     "context": "BufferSearchBar && in_replace",
     "bindings": {
       "enter": "search::ReplaceNext",
-      "cmd-enter": "search::ReplaceAll"
+      "ctrl-enter": "search::ReplaceAll"
     }
   },
   {
@@ -231,6 +236,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "alt-tab": "search::CycleMode",
+      "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-ctrl-g": "search::ActivateRegexMode",
       "alt-ctrl-x": "search::ActivateTextMode"
@@ -255,7 +261,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "alt-tab": "search::CycleMode",
-      "cmd-shift-h": "search::ToggleReplace",
+      "ctrl-shift-h": "search::ToggleReplace",
       "alt-ctrl-g": "search::ActivateRegexMode",
       "alt-ctrl-x": "search::ActivateTextMode"
     }
@@ -301,8 +307,10 @@
         }
       ],
       "ctrl-alt-shift-down": "editor::DuplicateLine",
-      "ctrl-shift-right": "editor::SelectLargerSyntaxNode",
-      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode",
+      "ctrl-shift-left": "editor::SelectToPreviousWordStart",
+      "ctrl-shift-right": "editor::SelectToNextWordEnd",
+      "ctrl-shift-up": "editor::SelectLargerSyntaxNode", //todo(linux) tmp keybinding
+      "ctrl-shift-down": "editor::SelectSmallerSyntaxNode", //todo(linux) tmp keybinding
       "ctrl-d": [
         "editor::SelectNext",
         {
@@ -351,14 +359,14 @@
       "ctrl-shift-]": "editor::UnfoldLines",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
-      "alt-cmd-r": "editor::RevealInFinder",
+      "alt-ctrl-r": "editor::RevealInFinder",
       "ctrl-alt-shift-c": "editor::DisplayCursorNames"
     }
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
-      "cmd-shift-o": "outline::Toggle",
+      "ctrl-shift-o": "outline::Toggle",
       "ctrl-g": "go_to_line::Toggle"
     }
   },
@@ -414,9 +422,15 @@
       "ctrl-j": "workspace::ToggleBottomDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "ctrl-shift-f": "pane::DeploySearch",
+      "ctrl-shift-h": [
+        "pane::DeploySearch",
+        {
+          "replace_enabled": true
+        }
+      ],
       "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
-      "ctrl-t": "project_symbols::Toggle",
+      "ctrl-shift-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
       "ctrl-tab": "tab_switcher::Toggle",
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
@@ -546,7 +560,7 @@
       "delete": "project_panel::Delete",
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": true }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": true }],
-      "alt-cmd-r": "project_panel::RevealInFinder",
+      "alt-ctrl-r": "project_panel::RevealInFinder",
       "alt-shift-f": "project_panel::NewSearchInDirectory"
     }
   },
@@ -593,7 +607,10 @@
   },
   {
     "context": "TabSwitcher",
-    "bindings": { "ctrl-shift-tab": "menu::SelectPrev" }
+    "bindings": {
+      "ctrl-shift-tab": "menu::SelectPrev",
+      "ctrl-backspace": "tab_switcher::CloseSelectedItem"
+    }
   },
   {
     "context": "Terminal",
@@ -607,7 +624,12 @@
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
-      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"]
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+
+      // Some nice conveniences
+      "ctrl-backspace": ["terminal::SendText", "\u0015"],
+      "ctrl-right": ["terminal::SendText", "\u0005"],
+      "ctrl-left": ["terminal::SendText", "\u0001"]
     }
   }
 ]

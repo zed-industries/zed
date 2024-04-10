@@ -19,7 +19,9 @@
       "cmd-escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
-      "shift-enter": "menu::UseSelectedQuery",
+      "shift-enter": "picker::UseSelectedQuery",
+      "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
+      "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
@@ -156,7 +158,8 @@
       ],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
-      "cmd-alt-z": "editor::RevertSelectedHunks"
+      "cmd-alt-z": "editor::RevertSelectedHunks",
+      "cmd-alt-g b": "editor::ToggleGitBlame"
     }
   },
   {
@@ -167,10 +170,11 @@
       "cmd-shift-enter": "editor::NewlineAbove",
       "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
-      "cmd-f": [
+      "cmd-f": "buffer_search::Deploy",
+      "cmd-alt-f": [
         "buffer_search::Deploy",
         {
-          "focus": true
+          "replace_enabled": true
         }
       ],
       "cmd-e": [
@@ -229,7 +233,9 @@
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
-      "alt-tab": "search::CycleMode"
+      "alt-tab": "search::CycleMode",
+      "cmd-f": "search::FocusSearch",
+      "cmd-alt-f": "search::ToggleReplace"
     }
   },
   {
@@ -251,6 +257,7 @@
     "bindings": {
       "escape": "project_search::ToggleFocus",
       "alt-tab": "search::CycleMode",
+      "cmd-shift-f": "search::FocusSearch",
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ActivateRegexMode",
       "alt-cmd-x": "search::ActivateTextMode"
@@ -433,6 +440,12 @@
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "pane::DeploySearch",
+      "cmd-shift-h": [
+        "pane::DeploySearch",
+        {
+          "replace_enabled": true
+        }
+      ],
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
@@ -603,7 +616,10 @@
   },
   {
     "context": "TabSwitcher",
-    "bindings": { "ctrl-shift-tab": "menu::SelectPrev" }
+    "bindings": {
+      "ctrl-shift-tab": "menu::SelectPrev",
+      "ctrl-backspace": "tab_switcher::CloseSelectedItem"
+    }
   },
   {
     "context": "Terminal",

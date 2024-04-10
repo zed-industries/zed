@@ -25,6 +25,9 @@ pub struct Branch {
 
 pub trait GitRepository: Send {
     fn reload_index(&self);
+
+    /// Loads a git repository entry's contents.
+    /// Note that for symlink entries, this will return the contents of the symlink, not the target.
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
 
     /// Returns the URL of the remote with the given name.
@@ -229,10 +232,10 @@ impl GitRepository for RealGitRepository {
     }
 
     fn blame(&self, path: &Path, content: Rope) -> Result<git::blame::Blame> {
-        let git_dir_path = self.repository.path();
-        let working_directory = git_dir_path.parent().with_context(|| {
-            format!("failed to get git working directory for {:?}", git_dir_path)
-        })?;
+        let working_directory = self
+            .repository
+            .workdir()
+            .with_context(|| format!("failed to get git working directory for file {:?}", path))?;
 
         const REMOTE_NAME: &str = "origin";
         let remote_url = self.remote_url(REMOTE_NAME);

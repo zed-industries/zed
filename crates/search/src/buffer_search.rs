@@ -1,13 +1,13 @@
 mod registrar;
 
 use crate::{
-    history::SearchHistory,
     mode::{next_mode, SearchMode},
     search_bar::render_nav_button,
-    ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery,
-    ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
+    ActivateRegexMode, ActivateTextMode, CycleMode, FocusSearch, NextHistoryQuery,
+    PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches,
+    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
+use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     actions::{Tab, TabPrev},
@@ -20,10 +20,13 @@ use gpui::{
     ParentElement as _, Render, Styled, Subscription, Task, TextStyle, View, ViewContext,
     VisualContext as _, WhiteSpace, WindowContext,
 };
-use project::search::SearchQuery;
+use project::{
+    search::SearchQuery,
+    search_history::{SearchHistory, SearchHistoryCursor},
+};
 use serde::Deserialize;
 use settings::Settings;
-use std::{any::Any, sync::Arc};
+use std::sync::Arc;
 use theme::ThemeSettings;
 
 use ui::{h_flex, prelude::*, IconButton, IconName, ToggleButton, Tooltip};
@@ -39,15 +42,32 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MIN_INPUT_WIDTH_REMS: f32 = 15.;
 const MAX_INPUT_WIDTH_REMS: f32 = 30.;
+const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
+
+const fn true_value() -> bool {
+    true
+}
 
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
+    #[serde(default = "true_value")]
     pub focus: bool,
+    #[serde(default)]
+    pub replace_enabled: bool,
 }
 
 impl_actions!(buffer_search, [Deploy]);
 
 actions!(buffer_search, [Dismiss, FocusEditor]);
+
+impl Deploy {
+    pub fn find() -> Self {
+        Self {
+            focus: true,
+            replace_enabled: false,
+        }
+    }
+}
 
 pub enum Event {
     UpdateLocation,
@@ -67,14 +87,14 @@ pub struct BufferSearchBar {
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
     active_search: Option<Arc<SearchQuery>>,
-    searchable_items_with_matches:
-        HashMap<Box<dyn WeakSearchableItemHandle>, Vec<Box<dyn Any + Send>>>,
+    searchable_items_with_matches: HashMap<Box<dyn WeakSearchableItemHandle>, AnyVec<dyn Send>>,
     pending_search: Option<Task<()>>,
     search_options: SearchOptions,
     default_options: SearchOptions,
     query_contains_error: bool,
     dismissed: bool,
     search_history: SearchHistory,
+    search_history_cursor: SearchHistoryCursor,
     current_mode: SearchMode,
     replace_enabled: bool,
 }
@@ -187,7 +207,7 @@ impl Render for BufferSearchBar {
                 let matches_count = self
                     .searchable_items_with_matches
                     .get(&searchable_item.downgrade())
-                    .map(Vec::len)
+                    .map(AnyVec::len)
                     .unwrap_or(0);
                 if let Some(match_ix) = self.active_match_index {
                     Some(format!("{}/{}", match_ix + 1, matches_count))
@@ -466,6 +486,9 @@ impl ToolbarItemView for BufferSearchBar {
 
 impl BufferSearchBar {
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
+        registrar.register_handler(ForDeployed(|this, _: &FocusSearch, cx| {
+            this.query_editor.focus_handle(cx).focus(cx);
+        }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleCaseSensitive, cx| {
             if this.supported_options().case {
                 this.toggle_case_sensitive(action, cx);
@@ -526,6 +549,7 @@ impl BufferSearchBar {
         let replacement_editor = cx.new_view(|cx| Editor::single_line(cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
+
         Self {
             query_editor,
             query_editor_focused: false,
@@ -540,7 +564,11 @@ impl BufferSearchBar {
             pending_search: None,
             query_contains_error: false,
             dismissed: true,
-            search_history: SearchHistory::default(),
+            search_history: SearchHistory::new(
+                Some(MAX_BUFFER_SEARCH_HISTORY_SIZE),
+                project::search_history::QueryInsertionBehavior::ReplacePreviousIfContains,
+            ),
+            search_history_cursor: Default::default(),
             current_mode: SearchMode::default(),
             active_search: None,
             replace_enabled: false,
@@ -574,9 +602,17 @@ impl BufferSearchBar {
     pub fn deploy(&mut self, deploy: &Deploy, cx: &mut ViewContext<Self>) -> bool {
         if self.show(cx) {
             self.search_suggested(cx);
+            self.replace_enabled = deploy.replace_enabled;
             if deploy.focus {
-                self.select_query(cx);
-                let handle = self.query_editor.focus_handle(cx);
+                let mut handle = self.query_editor.focus_handle(cx).clone();
+                let mut select_query = true;
+                if deploy.replace_enabled && handle.is_focused(cx) {
+                    handle = self.replacement_editor.focus_handle(cx).clone();
+                    select_query = false;
+                };
+                if select_query {
+                    self.select_query(cx);
+                }
                 cx.focus(&handle);
             }
             return true;
@@ -934,7 +970,8 @@ impl BufferSearchBar {
                                 .insert(active_searchable_item.downgrade(), matches);
 
                             this.update_match_index(cx);
-                            this.search_history.add(query_text);
+                            this.search_history
+                                .add(&mut this.search_history_cursor, query_text);
                             if !this.dismissed {
                                 let matches = this
                                     .searchable_items_with_matches
@@ -953,7 +990,7 @@ impl BufferSearchBar {
         done_rx
     }
 
-    fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
         let new_index = self
             .active_searchable_item
             .as_ref()
@@ -996,23 +1033,35 @@ impl BufferSearchBar {
     }
 
     fn next_history_query(&mut self, _: &NextHistoryQuery, cx: &mut ViewContext<Self>) {
-        if let Some(new_query) = self.search_history.next().map(str::to_string) {
+        if let Some(new_query) = self
+            .search_history
+            .next(&mut self.search_history_cursor)
+            .map(str::to_string)
+        {
             let _ = self.search(&new_query, Some(self.search_options), cx);
         } else {
-            self.search_history.reset_selection();
+            self.search_history_cursor.reset();
             let _ = self.search("", Some(self.search_options), cx);
         }
     }
 
     fn previous_history_query(&mut self, _: &PreviousHistoryQuery, cx: &mut ViewContext<Self>) {
         if self.query(cx).is_empty() {
-            if let Some(new_query) = self.search_history.current().map(str::to_string) {
+            if let Some(new_query) = self
+                .search_history
+                .current(&mut self.search_history_cursor)
+                .map(str::to_string)
+            {
                 let _ = self.search(&new_query, Some(self.search_options), cx);
                 return;
             }
         }
 
-        if let Some(new_query) = self.search_history.previous().map(str::to_string) {
+        if let Some(new_query) = self
+            .search_history
+            .previous(&mut self.search_history_cursor)
+            .map(str::to_string)
+        {
             let _ = self.search(&new_query, Some(self.search_options), cx);
         }
     }
@@ -1045,7 +1094,7 @@ impl BufferSearchBar {
                                 .as_ref()
                                 .clone()
                                 .with_replacement(self.replacement(cx));
-                            searchable_item.replace(&matches[active_index], &query, cx);
+                            searchable_item.replace(matches.at(active_index), &query, cx);
                             self.select_next_match(&SelectNextMatch, cx);
                         }
                         should_propagate = false;
@@ -1078,6 +1127,11 @@ impl BufferSearchBar {
             }
         }
     }
+
+    pub fn match_exists(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.update_match_index(cx);
+        self.active_match_index.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -1087,7 +1141,7 @@ mod tests {
     use super::*;
     use editor::{DisplayPoint, Editor};
     use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
-    use language::{Buffer, BufferId};
+    use language::Buffer;
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -1107,9 +1161,7 @@ mod tests {
     ) -> (View<Editor>, View<BufferSearchBar>, &mut VisualTestContext) {
         init_globals(cx);
         let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            Buffer::local(
                 r#"
                 A regular expression (shortened as regex or regexp;[1] also referred to as
                 rational expression[2][3]) is a sequence of characters that specifies a search
@@ -1117,6 +1169,7 @@ mod tests {
                 for "find" or "find and replace" operations on strings, or for input validation.
                 "#
                 .unindent(),
+                cx,
             )
         });
         let cx = cx.add_empty_window();
@@ -1465,13 +1518,7 @@ mod tests {
             expected_query_matches_count > 1,
             "Should pick a query with multiple results"
         );
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                buffer_text,
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
         let window = cx.add_window(|_| gpui::Empty);
 
         let editor = window.build_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
@@ -1667,13 +1714,7 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
         .unindent();
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                buffer_text,
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
         let cx = cx.add_empty_window();
 
         let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));

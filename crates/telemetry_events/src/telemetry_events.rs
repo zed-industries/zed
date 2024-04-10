@@ -1,6 +1,6 @@
+use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, sync::Arc};
-use util::SemanticVersion;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct EventRequestBody {
