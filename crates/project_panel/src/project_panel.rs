@@ -1443,7 +1443,9 @@ impl ProjectPanel {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
                             h_flex().h_6().child(
-                                Label::new(file_name.replace('\n', "")).color(filename_text_color),
+                                Label::new(file_name)
+                                    .single_line()
+                                    .color(filename_text_color),
                             )
                         }
                         .ml_1(),
