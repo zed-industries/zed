@@ -337,7 +337,7 @@ pub mod test_inventory {
 
     use crate::Inventory;
 
-    use super::TaskSourceKind;
+    use super::{task_source_kind_preference, TaskSourceKind};
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct TestTask {
@@ -394,7 +394,6 @@ pub mod test_inventory {
     pub fn list_task_names(
         inventory: &Model<Inventory>,
         worktree: Option<WorktreeId>,
-        // TODO kb split into different tests
         lru: bool,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
@@ -457,6 +456,7 @@ pub mod test_inventory {
             all.extend(current);
             all.into_iter()
                 .map(|(source_kind, task)| (source_kind, task.resolved_label))
+                .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
                 .collect()
         })
     }
@@ -759,6 +759,7 @@ mod tests {
             // worktree-less tasks come later in the list
             .chain(worktree_independent_tasks.iter())
             .cloned()
+            .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
             .collect::<Vec<_>>();
 
         assert_eq!(list_tasks(&inventory_with_statics, None, cx), all_tasks);
@@ -768,6 +769,7 @@ mod tests {
                 .iter()
                 .chain(worktree_independent_tasks.iter())
                 .cloned()
+                .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
                 .collect::<Vec<_>>(),
         );
         assert_eq!(
@@ -776,6 +778,7 @@ mod tests {
                 .iter()
                 .chain(worktree_independent_tasks.iter())
                 .cloned()
+                .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
                 .collect::<Vec<_>>(),
         );
     }

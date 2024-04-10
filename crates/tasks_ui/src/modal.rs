@@ -532,8 +532,8 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["echo 4", "another one", "example task", "echo 40"],
-            "Last recently used one show task should be listed last, as it is a fire-and-forget task"
+            vec!["echo 4", "another one", "example task"],
+            "No query should be added to the list, as it was submitted with secondary action (that maps to omit_history = true)"
         );
 
         cx.dispatch_action(Spawn {
