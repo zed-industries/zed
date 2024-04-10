@@ -31,10 +31,19 @@ impl ModeIndicator {
 
         if vim.enabled {
             self.mode = Some(vim.state().mode);
-            self.operators = vim.state().current_operators_description();
+            self.operators = self.current_operators_description(&vim);
         } else {
             self.mode = None;
         }
+    }
+
+    fn current_operators_description(&self, vim: &Vim) -> String {
+        vim.state()
+            .operator_stack
+            .iter()
+            .map(|item| item.id())
+            .collect::<Vec<_>>()
+            .join("")
     }
 }
 
