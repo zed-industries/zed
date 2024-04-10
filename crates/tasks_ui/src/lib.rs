@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use ::settings::Settings;
 use editor::Editor;
-use gpui::{AppContext, ViewContext, WeakView, WindowContext};
+use gpui::{AppContext, ViewContext, WindowContext};
 use language::{Language, Point};
 use modal::{Spawn, TasksModal};
 use project::{Location, WorktreeId};
@@ -60,17 +60,17 @@ fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewC
 fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
     cx.spawn(|workspace, mut cx| async move {
         let did_spawn = workspace
-            .update(&mut cx, |this, cx| {
-                let (worktree, language) = active_item_selection_properties(&workspace, cx);
-                let tasks = this.project().update(cx, |project, cx| {
+            .update(&mut cx, |workspace, cx| {
+                let (worktree, language) = active_item_selection_properties(workspace, cx);
+                let tasks = workspace.project().update(cx, |project, cx| {
                     project.task_inventory().update(cx, |inventory, cx| {
                         inventory.list_tasks(language, worktree, false, cx)
                     })
                 });
                 let (_, target_task) = tasks.into_iter().find(|(_, task)| task.name() == name)?;
-                let cwd = task_cwd(this, cx).log_err().flatten();
-                let task_context = task_context(this, cwd, cx);
-                schedule_task(this, &target_task, task_context, false, cx);
+                let cwd = task_cwd(workspace, cx).log_err().flatten();
+                let task_context = task_context(workspace, cwd, cx);
+                schedule_task(workspace, &target_task, task_context, false, cx);
                 Some(())
             })
             .ok()
@@ -88,13 +88,10 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
 }
 
 fn active_item_selection_properties(
-    workspace: &WeakView<Workspace>,
+    workspace: &Workspace,
     cx: &mut WindowContext,
 ) -> (Option<WorktreeId>, Option<Arc<Language>>) {
-    let active_item = workspace
-        .update(cx, |workspace, cx| workspace.active_item(cx))
-        .ok()
-        .flatten();
+    let active_item = workspace.active_item(cx);
     let worktree_id = active_item
         .as_ref()
         .and_then(|item| item.project_path(cx))
