@@ -32,4 +32,4 @@ jobs:
       - name: Run Danger
         run: pnpm run --dir script/danger danger ci
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.DANGER_GITHUB_API_TOKEN }}
