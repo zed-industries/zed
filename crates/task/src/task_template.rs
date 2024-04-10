@@ -9,8 +9,12 @@ use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{ResolvedTask, SpawnInTerminal, TaskContext, TaskId, ZED_VARIABLE_NAME_PREFIX};
 
-/// Static task template from the tasks config file.
+/// A template definition of a Zed task to run.
 /// May use the [`VariableName`] to get the corresponding substitutions into its fields.
+///
+/// Template itself is not ready to spawn a task, it needs to be resolved with a [`TaskContext`] first, that
+/// contains all relevant Zed state in task variables.
+/// A single template may produce different tasks (or none) for different contexts.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct TaskTemplate {
@@ -67,8 +71,14 @@ impl TaskTemplates {
     }
 }
 
+// TODO kb tests + tests on tasks modal
 impl TaskTemplate {
-    /// TODO kb tests + docs
+    /// Replaces all `VariableName` task variables in the task template string fields.
+    /// If any replacement fails or the new string substitutions still have [`ZED_VARIABLE_NAME_PREFIX`],
+    /// `None` is returned.
+    ///
+    /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
+    /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
     pub fn resolve_task(&self, id_base: String, cx: TaskContext) -> Option<ResolvedTask> {
         let TaskContext {
             cwd,

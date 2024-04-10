@@ -43,20 +43,25 @@ pub struct SpawnInTerminal {
     pub reveal: RevealStrategy,
 }
 
+/// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.
 #[derive(Clone)]
-/// TODO kb docs
 pub struct ResolvedTask {
-    /// TODO kb docs
+    /// A way to distinguish tasks produced by the same template, but different contexts.
+    /// NOTE: Resolved tasks may have the same labels, commands and do the same things,
+    /// but still may have different ids if the context was different during the resolution.
+    /// Since the template has `env` field, for a generic task that may be a bash command,
+    /// so it's impossible to determine the id equality without more context in a generic case.
     pub id: TaskId,
-    /// TODO kb docs
+    /// A template the task got resolved from.
     pub original_task: TaskTemplate,
-    /// TODO kb docs
+    /// Full, unshortened label of the task after all resolutions are made.
     pub resolved_label: String,
-    /// TODO kb docs
+    /// Further actions that need to take place after the resolved task is spawned,
+    /// with all task variables resolved.
     pub resolved: Option<SpawnInTerminal>,
 }
 
-/// Variables, available for use in [`TaskContext`] when a Zed's task gets turned into real command.
+/// Variables, available for use in [`TaskContext`] when a Zed's [`TaskTemplate`] gets resolved into a [`ResolvedTask`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub enum VariableName {
     /// An absolute path of the currently opened file.
@@ -88,7 +93,7 @@ impl VariableName {
     }
 }
 
-/// TODO kb docs
+/// A prefix that all [`VariableName`] variants are prefixed with when used in environment variables and similar template contexts.
 pub const ZED_VARIABLE_NAME_PREFIX: &str = "ZED_";
 
 impl std::fmt::Display for VariableName {
@@ -135,7 +140,8 @@ impl FromIterator<(VariableName, String)> for TaskVariables {
     }
 }
 
-/// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function)
+/// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function).
+/// Keeps all Zed-related state inside, used to produce a resolved task out of its template.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TaskContext {
     /// A path to a directory in which the task should be executed.

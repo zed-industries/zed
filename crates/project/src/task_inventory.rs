@@ -154,7 +154,8 @@ impl Inventory {
         )
     }
 
-    /// Pulls its sources to list runnables for the editor given, or all runnables for no editor.
+    /// Pulls its task sources relevant to the worktree and the language given,
+    /// returns all task templates with their source kinds, in no specific order.
     pub fn list_tasks(
         &self,
         language: Option<Arc<Language>>,
@@ -189,7 +190,10 @@ impl Inventory {
             .collect()
     }
 
-    /// TODO kb docs
+    /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContext`] given.
+    /// Joins the new resolutions with the resolved tasks that were used (spawned) before,
+    /// orders them so that the most recently used come first, all equally used ones are ordered so that the most specific tasks come first.
+    /// Deduplicates the tasks by their labels and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
     pub fn used_and_current_resolved_tasks(
         &self,
         language: Option<Arc<Language>>,
@@ -283,7 +287,8 @@ impl Inventory {
         }
     }
 
-    /// TODO kb docs
+    /// Deletes a resolved task from history, using its id.
+    /// A similar may still resurface in `used_and_current_resolved_tasks` when its [`TaskTemplate`] is resolved again.
     pub fn delete_previously_used(&mut self, id: &TaskId) {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
