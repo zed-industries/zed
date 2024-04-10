@@ -453,9 +453,7 @@ impl<T: Item> ItemHandle for View<T> {
                             }
 
                             workspace.update(&mut cx, |workspace, cx| {
-                                let item = item.upgrade().expect(
-                                    "item to be alive, otherwise task would have been dropped",
-                                );
+                                let Some(item) = item.upgrade() else { return };
                                 workspace.update_followers(
                                     is_project_item,
                                     proto::update_followers::Variant::UpdateView(
