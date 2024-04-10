@@ -890,7 +890,7 @@ mod tests {
             .unwrap();
 
         // todo!(): use a fixture
-        let project_path = Path::new(".");
+        let project_path = Path::new("./fixture");
 
         let project = cx
             .spawn(|mut cx| async move { Project::example([project_path], &mut cx).await })
@@ -925,13 +925,17 @@ mod tests {
             })
             .await;
 
-        // Find result that is greater than 0.5
-        let search_result = results.iter().find(|result| result.score > 0.5).unwrap();
+        assert!(results.len() > 1, "should have found some results");
 
-        assert_eq!(
-            search_result.path.to_string_lossy(),
-            "src/semantic_index.rs"
-        );
+        for result in &results {
+            println!("result: {:?}", result.path);
+            println!("score: {:?}", result.score);
+        }
+
+        // Find result that is greater than 0.5
+        let search_result = results.iter().find(|result| result.score > 0.9).unwrap();
+
+        assert_eq!(search_result.path.to_string_lossy(), "needle.md");
 
         let content = cx
             .update(|cx| {
