@@ -217,6 +217,7 @@ pub fn render_parsed_markdown(
 pub(crate) enum InlayId {
     Suggestion(usize),
     Hint(usize),
+    Blame(usize),
 }
 
 impl InlayId {
@@ -224,6 +225,7 @@ impl InlayId {
         match self {
             Self::Suggestion(id) => *id,
             Self::Hint(id) => *id,
+            Self::Blame(id) => *id,
         }
     }
 }
@@ -466,6 +468,7 @@ pub struct Editor {
     show_git_blame_gutter: bool,
     blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
+    blame_inlay_hint: Option<InlayId>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -1501,6 +1504,7 @@ impl Editor {
             show_git_blame_gutter: false,
             blame: None,
             blame_subscription: None,
+            blame_inlay_hint: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1914,6 +1918,7 @@ impl Editor {
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
             self.discard_inline_completion(cx);
+            self.refresh_git_blame_inlays(cx);
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
@@ -8874,6 +8879,101 @@ impl Editor {
                 .blame
                 .as_ref()
                 .map_or(false, |blame| blame.read(cx).has_generated_entries())
+    }
+
+    // Disabling because let's see if we can get it to work at render
+    const BLAME_INLAYS: bool = false;
+    fn refresh_git_blame_inlays(&mut self, cx: &mut ViewContext<Self>) {
+        if !Self::BLAME_INLAYS {
+            return;
+        }
+
+        let cursor_buffer_row = self.selections.newest::<Point>(cx).head().row;
+
+        let mut to_remove = Vec::new();
+        if let Some(inlay_id) = self.blame_inlay_hint.take() {
+            to_remove.push(inlay_id);
+        }
+
+        let mut to_insert = Vec::new();
+        if let Some(blame_entry) = self.blame_entry_for_buffer_row(cursor_buffer_row, cx) {
+            let cursor_display_row = self.selections.newest_display(cx).head().row();
+            let inlay_position = self.position_for_blame_inlay(cursor_display_row, cx);
+            let inlay = self.inlay_for_blame_entry(inlay_position, blame_entry, cx);
+            self.blame_inlay_hint.replace(inlay.id);
+            to_insert.push(inlay);
+        };
+
+        self.splice_inlays(to_remove, to_insert, cx);
+    }
+
+    fn position_for_blame_inlay(&mut self, display_row: u32, cx: &mut ViewContext<Self>) -> Anchor {
+        let snapshot = self.snapshot(cx);
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+
+        let end_of_line_display =
+            DisplayPoint::new(display_row, snapshot.display_snapshot.line_len(display_row));
+
+        // TODO We want to go from `DisplayPoint` to `Anchor`, which is why we first go to `offset`
+        // with a bias of Left, so we don't go into next line, and then turn that offset into last
+        // column on the display row.
+        // There should be an easier way to to from DisplayPoint to Anchor.
+
+        let end_of_line_offset =
+            end_of_line_display.to_offset(&snapshot.display_snapshot, Bias::Left);
+
+        multi_buffer_snapshot.anchor_at(end_of_line_offset, Bias::Right)
+    }
+
+    fn inlay_for_blame_entry(
+        &mut self,
+        position: Anchor,
+        blame_entry: ::git::blame::BlameEntry,
+        cx: &mut ViewContext<Self>,
+    ) -> Inlay {
+        let new_inlay_id = post_inc(&mut self.next_inlay_id);
+        let new_id = InlayId::Blame(new_inlay_id);
+
+        let relative_timestamp = match blame_entry.author_offset_date_time() {
+            Ok(timestamp) => time_format::format_localized_timestamp(
+                timestamp,
+                time::OffsetDateTime::now_utc(),
+                cx.local_timezone(),
+                time_format::TimestampFormat::Relative,
+            ),
+            Err(_) => "Error parsing date".to_string(),
+        };
+
+        let padding = " ".repeat(6);
+        let text = format!(
+            "{}{}, {} • {}",
+            padding,
+            blame_entry.author.unwrap_or_default(),
+            relative_timestamp,
+            blame_entry.summary.unwrap_or_default()
+        );
+
+        Inlay {
+            id: new_id,
+            text: text.into(),
+            position,
+        }
+    }
+
+    fn blame_entry_for_buffer_row(
+        &self,
+        buffer_row: u32,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<::git::blame::BlameEntry> {
+        if let Some(blame) = self.blame.as_ref() {
+            blame
+                .update(cx, |blame, cx| {
+                    blame.blame_for_rows([Some(buffer_row)], cx).next()
+                })
+                .flatten()
+        } else {
+            None
+        }
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
