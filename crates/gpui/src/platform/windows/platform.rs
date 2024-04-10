@@ -160,7 +160,7 @@ impl WindowsPlatform {
             Arc::new(direct_write) as Arc<dyn PlatformTextSystem>
         } else {
             log::info!("Using cosmic text system.");
-            Arc::new(WindowsTextSystem::new()) as Arc<dyn PlatformTextSystem>
+            Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
         };
         let callbacks = Mutex::new(Callbacks::default());
         let raw_window_handles = RwLock::new(SmallVec::new());
