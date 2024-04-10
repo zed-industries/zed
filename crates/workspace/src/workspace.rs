@@ -2073,6 +2073,15 @@ impl Workspace {
         path: impl Into<ProjectPath>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+        self.split_path_preview(path, false, cx)
+    }
+
+    pub fn split_path_preview(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        allow_preview: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
             self.panes
                 .first()
@@ -2093,7 +2102,7 @@ impl Workspace {
                 let pane = pane.upgrade()?;
                 let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
                 new_pane.update(cx, |new_pane, cx| {
-                    Some(new_pane.open_item(project_entry_id, true, false, cx, build_item))
+                    Some(new_pane.open_item(project_entry_id, true, allow_preview, cx, build_item))
                 })
             })
             .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?

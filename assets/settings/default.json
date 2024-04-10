@@ -291,13 +291,18 @@
   },
   // Settings related to the editor's tabs
   "tabs": {
-    // Whether to show opened editors as preview editors.
-    // Preview editors do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
-    "enable_preview_tabs": true,
     // Show git status colors in the editor tabs.
     "git_status": false,
     // Position of the close button on the editor tabs.
-    "close_position": "right"
+    "close_position": "right",
+    // Settings related to preview tabs.
+    "preview_tabs": {
+      // Whether to show opened editors as preview editors.
+      // Preview editors do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
+      "enabled": true,
+      // Whether to open a preview editor when opening a file using the file finder.
+      "enable_preview_from_file_finder": false
+    }
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
