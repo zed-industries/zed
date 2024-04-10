@@ -67,7 +67,7 @@ unsafe impl HasRawDisplayHandle for RawWindow {
 
 pub struct WaylandWindowState {
     xdg_surface: xdg_surface::XdgSurface,
-    surface: wl_surface::WlSurface,
+    pub surface: wl_surface::WlSurface,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashSet<ObjectId>,
@@ -209,6 +209,18 @@ impl WaylandWindow {
         }
     }
 
+    pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
+        match event {
+            xdg_surface::Event::Configure { serial } => {
+                let state = self.state.borrow();
+                state.xdg_surface.ack_configure(serial);
+                drop(state);
+                self.frame();
+            }
+            _ => {}
+        }
+    }
+
     pub fn handle_toplevel_decoration_event(&self, event: zxdg_toplevel_decoration_v1::Event) {
         match event {
             zxdg_toplevel_decoration_v1::Event::Configure { mode } => match mode {
@@ -253,6 +265,7 @@ impl WaylandWindow {
                 self.set_fullscreen(fullscreen);
                 let mut state = self.state.borrow_mut();
                 state.maximized = true;
+
                 false
             }
             xdg_toplevel::Event::Close => {

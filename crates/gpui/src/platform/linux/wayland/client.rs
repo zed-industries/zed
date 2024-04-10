@@ -446,11 +446,12 @@ impl Dispatch<xdg_surface::XdgSurface, ObjectId> for WaylandClient {
         _: &QueueHandle<Self>,
     ) {
         let mut state = state.0.borrow_mut();
+        let Some(window) = state.windows.get(surface_id).cloned() else {
+            return;
+        };
 
-        // todo(linux): Apply the configuration changes as we go
-        if let xdg_surface::Event::Configure { serial, .. } = event {
-            xdg_surface.ack_configure(serial);
-        }
+        drop(state);
+        window.handle_xdg_surface_event(event);
     }
 }
 
