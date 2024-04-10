@@ -112,8 +112,6 @@ pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
-#[cfg(feature = "test-support")]
-pub use task_inventory::test_inventory::*;
 pub use task_inventory::{Inventory, TaskSourceKind};
 pub use worktree::{
     DiagnosticSummary, Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId,

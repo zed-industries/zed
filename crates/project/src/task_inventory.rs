@@ -328,8 +328,8 @@ fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_inventory {
+#[cfg(test)]
+mod test_inventory {
     use gpui::{AppContext, Context as _, Model, ModelContext, TestAppContext};
     use itertools::Itertools;
     use task::{TaskContext, TaskId, TaskSource, TaskTemplate, TaskTemplates};
@@ -350,7 +350,7 @@ pub mod test_inventory {
     }
 
     impl StaticTestSource {
-        pub fn new(
+        pub(super) fn new(
             task_names: impl IntoIterator<Item = String>,
             cx: &mut AppContext,
         ) -> Model<Box<dyn TaskSource>> {
@@ -391,36 +391,41 @@ pub mod test_inventory {
         }
     }
 
-    pub fn list_task_names(
+    pub(super) fn task_template_names(
         inventory: &Model<Inventory>,
         worktree: Option<WorktreeId>,
-        lru: bool,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
         inventory.update(cx, |inventory, cx| {
-            if lru {
-                let (used, current) = inventory.used_and_current_resolved_tasks(
-                    None,
-                    worktree,
-                    TaskContext::default(),
-                    cx,
-                );
-                used.into_iter()
-                    .chain(current)
-                    .map(|(_, task)| task.original_task.label)
-                    .collect()
-            } else {
-                inventory
-                    .list_tasks(None, worktree, cx)
-                    .into_iter()
-                    .map(|(_, task)| task.label)
-                    .sorted()
-                    .collect()
-            }
+            inventory
+                .list_tasks(None, worktree, cx)
+                .into_iter()
+                .map(|(_, task)| task.label)
+                .sorted()
+                .collect()
         })
     }
 
-    pub fn register_task_used(
+    pub(super) fn resolved_task_names(
+        inventory: &Model<Inventory>,
+        worktree: Option<WorktreeId>,
+        cx: &mut TestAppContext,
+    ) -> Vec<String> {
+        inventory.update(cx, |inventory, cx| {
+            let (used, current) = inventory.used_and_current_resolved_tasks(
+                None,
+                worktree,
+                TaskContext::default(),
+                cx,
+            );
+            used.into_iter()
+                .chain(current)
+                .map(|(_, task)| task.original_task.label)
+                .collect()
+        })
+    }
+
+    pub(super) fn register_task_used(
         inventory: &Model<Inventory>,
         task_name: &str,
         cx: &mut TestAppContext,
@@ -440,7 +445,7 @@ pub mod test_inventory {
         });
     }
 
-    pub fn list_tasks(
+    pub(super) fn list_tasks(
         inventory: &Model<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
@@ -472,12 +477,12 @@ mod tests {
     #[gpui::test]
     fn test_task_list_sorting(cx: &mut TestAppContext) {
         let inventory = cx.update(Inventory::new);
-        let initial_tasks = list_task_names(&inventory, None, true, cx);
+        let initial_tasks = resolved_task_names(&inventory, None, cx);
         assert!(
             initial_tasks.is_empty(),
             "No tasks expected for empty inventory, but got {initial_tasks:?}"
         );
-        let initial_tasks = list_task_names(&inventory, None, false, cx);
+        let initial_tasks = task_template_names(&inventory, None, cx);
         assert!(
             initial_tasks.is_empty(),
             "No tasks expected for empty inventory, but got {initial_tasks:?}"
@@ -514,22 +519,22 @@ mod tests {
             "3_task".to_string(),
         ];
         assert_eq!(
-            list_task_names(&inventory, None, false, cx),
+            task_template_names(&inventory, None, cx),
             &expected_initial_state,
         );
         assert_eq!(
-            list_task_names(&inventory, None, true, cx),
+            resolved_task_names(&inventory, None, cx),
             &expected_initial_state,
             "Tasks with equal amount of usages should be sorted alphanumerically"
         );
 
         register_task_used(&inventory, "2_task", cx);
         assert_eq!(
-            list_task_names(&inventory, None, false, cx),
+            task_template_names(&inventory, None, cx),
             &expected_initial_state,
         );
         assert_eq!(
-            list_task_names(&inventory, None, true, cx),
+            resolved_task_names(&inventory, None, cx),
             vec![
                 "2_task".to_string(),
                 "1_a_task".to_string(),
@@ -543,11 +548,11 @@ mod tests {
         register_task_used(&inventory, "1_task", cx);
         register_task_used(&inventory, "3_task", cx);
         assert_eq!(
-            list_task_names(&inventory, None, false, cx),
+            task_template_names(&inventory, None, cx),
             &expected_initial_state,
         );
         assert_eq!(
-            list_task_names(&inventory, None, true, cx),
+            resolved_task_names(&inventory, None, cx),
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -574,11 +579,11 @@ mod tests {
             "3_task".to_string(),
         ];
         assert_eq!(
-            list_task_names(&inventory, None, false, cx),
+            task_template_names(&inventory, None, cx),
             &expected_updated_state,
         );
         assert_eq!(
-            list_task_names(&inventory, None, true, cx),
+            resolved_task_names(&inventory, None, cx),
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -591,11 +596,11 @@ mod tests {
 
         register_task_used(&inventory, "11_hello", cx);
         assert_eq!(
-            list_task_names(&inventory, None, false, cx),
+            task_template_names(&inventory, None, cx),
             &expected_updated_state,
         );
         assert_eq!(
-            list_task_names(&inventory, None, true, cx),
+            resolved_task_names(&inventory, None, cx),
             vec![
                 "11_hello".to_string(),
                 "3_task".to_string(),
