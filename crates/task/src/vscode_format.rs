@@ -15,7 +15,7 @@ struct TaskOptions {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct VsCodeTaskTemplate {
+struct VsCodeTaskDefinition {
     label: String,
     #[serde(flatten)]
     command: Option<Command>,
@@ -83,7 +83,7 @@ impl EnvVariableReplacer {
     }
 }
 
-impl VsCodeTaskTemplate {
+impl VsCodeTaskDefinition {
     fn to_zed_format(self, replacer: &EnvVariableReplacer) -> anyhow::Result<TaskTemplate> {
         if self.other_attributes.contains_key("dependsOn") {
             bail!("Encountered unsupported `dependsOn` key during deserialization");
@@ -118,10 +118,10 @@ impl VsCodeTaskTemplate {
     }
 }
 
-/// [`VsCodeTaskFile`] is a superset of Code's task template format.
+/// [`VsCodeTaskFile`] is a superset of Code's task definition format.
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct VsCodeTaskFile {
-    tasks: Vec<VsCodeTaskTemplate>,
+    tasks: Vec<VsCodeTaskDefinition>,
 }
 
 impl TryFrom<VsCodeTaskFile> for TaskTemplates {
@@ -143,7 +143,7 @@ impl TryFrom<VsCodeTaskFile> for TaskTemplates {
         let templates = value
             .tasks
             .into_iter()
-            .filter_map(|vscode_template| vscode_template.to_zed_format(&replacer).log_err())
+            .filter_map(|vscode_definition| vscode_definition.to_zed_format(&replacer).log_err())
             .collect();
         Ok(Self(templates))
     }
@@ -154,19 +154,19 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        vscode_format::{Command, VsCodeTaskTemplate},
+        vscode_format::{Command, VsCodeTaskDefinition},
         TaskTemplate, TaskTemplates, VsCodeTaskFile,
     };
 
     use super::EnvVariableReplacer;
 
-    fn compare_without_other_attributes(lhs: VsCodeTaskTemplate, rhs: VsCodeTaskTemplate) {
+    fn compare_without_other_attributes(lhs: VsCodeTaskDefinition, rhs: VsCodeTaskDefinition) {
         assert_eq!(
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 other_attributes: Default::default(),
                 ..lhs
             },
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 other_attributes: Default::default(),
                 ..rhs
             },
@@ -201,11 +201,11 @@ mod tests {
     #[test]
     fn can_deserialize_ts_tasks() {
         static TYPESCRIPT_TASKS: &'static str = include_str!("../test_data/typescript.json");
-        let vscode_templates: VsCodeTaskFile =
+        let vscode_definitions: VsCodeTaskFile =
             serde_json_lenient::from_str(&TYPESCRIPT_TASKS).unwrap();
 
         let expected = vec![
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "gulp: tests".to_string(),
                 command: Some(Command::Npm {
                     script: "build:tests:notypecheck".to_string(),
@@ -213,7 +213,7 @@ mod tests {
                 other_attributes: Default::default(),
                 options: None,
             },
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "tsc: watch ./src".to_string(),
                 command: Some(Command::Shell {
                     command: "node".to_string(),
@@ -227,7 +227,7 @@ mod tests {
                 other_attributes: Default::default(),
                 options: None,
             },
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "npm: build:compiler".to_string(),
                 command: Some(Command::Npm {
                     script: "build:compiler".to_string(),
@@ -235,7 +235,7 @@ mod tests {
                 other_attributes: Default::default(),
                 options: None,
             },
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "npm: build:tests".to_string(),
                 command: Some(Command::Npm {
                     script: "build:tests:notypecheck".to_string(),
@@ -245,8 +245,8 @@ mod tests {
             },
         ];
 
-        assert_eq!(vscode_templates.tasks.len(), expected.len());
-        vscode_templates
+        assert_eq!(vscode_definitions.tasks.len(), expected.len());
+        vscode_definitions
             .tasks
             .iter()
             .zip(expected)
@@ -284,17 +284,17 @@ mod tests {
             },
         ];
 
-        let tasks: TaskTemplates = vscode_templates.try_into().unwrap();
+        let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
     }
 
     #[test]
     fn can_deserialize_rust_analyzer_tasks() {
         static RUST_ANALYZER_TASKS: &'static str = include_str!("../test_data/rust-analyzer.json");
-        let vscode_templates: VsCodeTaskFile =
+        let vscode_definitions: VsCodeTaskFile =
             serde_json_lenient::from_str(&RUST_ANALYZER_TASKS).unwrap();
         let expected = vec![
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "Build Extension in Background".to_string(),
                 command: Some(Command::Npm {
                     script: "watch".to_string(),
@@ -302,7 +302,7 @@ mod tests {
                 options: None,
                 other_attributes: Default::default(),
             },
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "Build Extension".to_string(),
                 command: Some(Command::Npm {
                     script: "build".to_string(),
@@ -310,7 +310,7 @@ mod tests {
                 options: None,
                 other_attributes: Default::default(),
             },
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "Build Server".to_string(),
                 command: Some(Command::Shell {
                     command: "cargo build --package rust-analyzer".to_string(),
@@ -319,7 +319,7 @@ mod tests {
                 options: None,
                 other_attributes: Default::default(),
             },
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "Build Server (Release)".to_string(),
                 command: Some(Command::Shell {
                     command: "cargo build --release --package rust-analyzer".to_string(),
@@ -328,7 +328,7 @@ mod tests {
                 options: None,
                 other_attributes: Default::default(),
             },
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "Pretest".to_string(),
                 command: Some(Command::Npm {
                     script: "pretest".to_string(),
@@ -336,21 +336,21 @@ mod tests {
                 options: None,
                 other_attributes: Default::default(),
             },
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "Build Server and Extension".to_string(),
                 command: None,
                 options: None,
                 other_attributes: Default::default(),
             },
-            VsCodeTaskTemplate {
+            VsCodeTaskDefinition {
                 label: "Build Server (Release) and Extension".to_string(),
                 command: None,
                 options: None,
                 other_attributes: Default::default(),
             },
         ];
-        assert_eq!(vscode_templates.tasks.len(), expected.len());
-        vscode_templates
+        assert_eq!(vscode_definitions.tasks.len(), expected.len());
+        vscode_definitions
             .tasks
             .iter()
             .zip(expected)
@@ -385,7 +385,7 @@ mod tests {
                 ..Default::default()
             },
         ];
-        let tasks: TaskTemplates = vscode_templates.try_into().unwrap();
+        let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
     }
 }
