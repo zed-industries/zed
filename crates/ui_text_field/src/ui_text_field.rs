@@ -11,10 +11,9 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::*;
 
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FieldLabelLayout {
     Inline,
-    #[default]
     Stacked,
 }
 
@@ -69,7 +68,7 @@ impl TextField {
             placeholder: placeholder_text,
             editor,
             start_icon: None,
-            label_layout: FieldLabelLayout::default(),
+            label_layout: FieldLabelLayout::Stacked,
         }
     }
 
@@ -134,10 +133,24 @@ impl Render for TextField {
             ..Default::default()
         };
 
+        let stacked_label: Option<Label> = if self.label_layout == FieldLabelLayout::Stacked {
+            self.label
+                .clone()
+                .map(|label| Label::new(label).size(LabelSize::Small))
+        } else {
+            None
+        };
+
+        let inline_label: Option<Label> = if self.label_layout == FieldLabelLayout::Inline {
+            self.label
+                .clone()
+                .map(|label| Label::new(label).size(LabelSize::Small))
+        } else {
+            None
+        };
+
         div()
-            .when_some(self.label.clone(), |this, label| {
-                this.child(Label::new(label).size(LabelSize::Small))
-            })
+            .when_some(stacked_label, |this, label| this.child(label))
             .child(
                 v_flex()
                     .w_full()
@@ -151,13 +164,20 @@ impl Render for TextField {
                     .w_48()
                     .child(
                         h_flex()
-                            .gap_1()
-                            .when_some(self.start_icon, |this, icon| {
-                                this.child(
-                                    Icon::new(icon).size(IconSize::Small).color(Color::Muted),
-                                )
-                            })
-                            .child(EditorElement::new(&self.editor, editor_style)),
+                            .gap_2()
+                            .when_some(inline_label, |this, label| this.child(label))
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .when_some(self.start_icon, |this, icon| {
+                                        this.child(
+                                            Icon::new(icon)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    })
+                                    .child(EditorElement::new(&self.editor, editor_style)),
+                            ),
                     ),
             )
     }
