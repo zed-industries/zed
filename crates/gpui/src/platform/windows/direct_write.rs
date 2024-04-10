@@ -563,15 +563,7 @@ impl DirectWriteState {
             bidiLevel: 0,
         };
 
-        // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
-        let mut bitmap_size = glyph_bounds.size;
-        if params.subpixel_variant.x > 0 {
-            bitmap_size.width += DevicePixels(1);
-        }
-        if params.subpixel_variant.y > 0 {
-            bitmap_size.height += DevicePixels(1);
-        }
-        let bitmap_size = bitmap_size;
+        let bitmap_size = glyph_bounds.size;
         let total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
         let transform = DWRITE_MATRIX {
             m11: params.scale_factor,
@@ -591,16 +583,13 @@ impl DirectWriteState {
             let bitmap_render_target: IDWriteBitmapRenderTarget3 =
                 std::mem::transmute(bitmap_render_target);
             let render_params = self.components.factory.CreateRenderingParams()?;
-            let subpixel_shift = params
-                .subpixel_variant
-                .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
 
             if params.is_emoji {
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
                 let enumerator = self.components.factory.TranslateColorGlyphRun2(
                     D2D_POINT_2F {
-                        x: subpixel_shift.x / params.scale_factor,
-                        y: -subpixel_shift.y / params.scale_factor,
+                        x: 0.0,
+                        y: 0.0,
                     },
                     &glyph_run as _,
                     None,
@@ -620,8 +609,8 @@ impl DirectWriteState {
                     let emoji = &*run;
                     match emoji.glyphImageFormat {
                         DWRITE_GLYPH_IMAGE_FORMATS_COLR => bitmap_render_target.DrawGlyphRun(
-                            subpixel_shift.x / params.scale_factor,
-                            -subpixel_shift.y / params.scale_factor,
+                            0.0,
+                            0.0,
                             DWRITE_MEASURING_MODE_NATURAL,
                             &emoji.Base.glyphRun,
                             &render_params,
@@ -629,8 +618,8 @@ impl DirectWriteState {
                             None,
                         ),
                         _ => bitmap_render_target.DrawGlyphRunWithColorSupport(
-                            subpixel_shift.x / params.scale_factor,
-                            -subpixel_shift.y / params.scale_factor,
+                            0.0,
+                            0.0,
                             DWRITE_MEASURING_MODE_NATURAL,
                             &emoji.Base.glyphRun,
                             &render_params,
@@ -656,8 +645,8 @@ impl DirectWriteState {
                 Ok((bitmap_size, raw_bytes))
             } else {
                 bitmap_render_target.DrawGlyphRun(
-                    subpixel_shift.x / params.scale_factor,
-                    -subpixel_shift.y / params.scale_factor,
+                    0.0,
+                    0.0,
                     DWRITE_MEASURING_MODE_NATURAL,
                     &glyph_run,
                     &render_params,
