@@ -5,11 +5,6 @@ use sea_orm::{sea_query::Expr, ColumnTrait, EntityTrait, QueryFilter};
 use std::ops::Sub;
 use time::{Duration, OffsetDateTime, PrimitiveDateTime};
 
-// async fn $postgres_test_name(cx: &mut gpui::TestAppContext) {
-//     let test_db = $crate::db::TestDb::postgres(cx.executor().clone());
-//     $test_name(test_db.db()).await;
-// }
-
 // SQLite does not support array arguments, so we only test this against a real postgres instance
 #[gpui::test]
 async fn test_get_embeddings_postgres(cx: &mut gpui::TestAppContext) {

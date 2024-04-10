@@ -20,13 +20,13 @@ pub fn chunk_text(text: &str, grammar: Option<&Arc<Grammar>>) -> Vec<Chunk> {
             parser.parse(&text, None).expect("invalid language")
         });
 
-        chunk_parse_tree(tree, &text)
+        chunk_parse_tree(tree, &text, CHUNK_THRESHOLD)
     } else {
         chunk_lines(&text)
     }
 }
 
-fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
+fn chunk_parse_tree(tree: Tree, text: &str, chunk_threshold: usize) -> Vec<Chunk> {
     let mut chunk_ranges = Vec::new();
     let mut cursor = tree.walk();
 
@@ -35,7 +35,7 @@ fn chunk_parse_tree(tree: Tree, text: &str) -> Vec<Chunk> {
         let node = cursor.node();
 
         // If adding the node to the current chunk exceeds the threshold
-        if node.end_byte() - range.start > CHUNK_THRESHOLD {
+        if node.end_byte() - range.start > chunk_threshold {
             // Try to descend into its first child. If we can't, flush the current
             // range and try again.
             if cursor.goto_first_child() {
@@ -129,6 +129,91 @@ mod tests {
     use super::*;
     use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
 
+    // This example comes from crates/gpui/examples/window_positioning.rs which
+    // has the property of being CHUNK_THRESHOLD < TEXT.len() < 2*CHUNK_THRESHOLD
+    static TEXT: &str = r#"
+    use gpui::*;
+
+    struct WindowContent {
+        text: SharedString,
+    }
+
+    impl Render for WindowContent {
+        fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+            div()
+                .flex()
+                .bg(rgb(0x1e2025))
+                .size_full()
+                .justify_center()
+                .items_center()
+                .text_xl()
+                .text_color(rgb(0xffffff))
+                .child(self.text.clone())
+        }
+    }
+
+    fn main() {
+        App::new().run(|cx: &mut AppContext| {
+            // Create several new windows, positioned in the top right corner of each screen
+
+            for screen in cx.displays() {
+                let options = {
+                    let popup_margin_width = DevicePixels::from(16);
+                    let popup_margin_height = DevicePixels::from(-0) - DevicePixels::from(48);
+
+                    let window_size = Size {
+                        width: px(400.),
+                        height: px(72.),
+                    };
+
+                    let screen_bounds = screen.bounds();
+                    let size: Size<DevicePixels> = window_size.into();
+
+                    let bounds = gpui::Bounds::<DevicePixels> {
+                        origin: screen_bounds.upper_right()
+                            - point(size.width + popup_margin_width, popup_margin_height),
+                        size: window_size.into(),
+                    };
+
+                    WindowOptions {
+                        // Set the bounds of the window in screen coordinates
+                        bounds: Some(bounds),
+                        // Specify the display_id to ensure the window is created on the correct screen
+                        display_id: Some(screen.id()),
+
+                        titlebar: None,
+                        window_background: WindowBackgroundAppearance::default(),
+                        focus: false,
+                        show: true,
+                        kind: WindowKind::PopUp,
+                        is_movable: false,
+                        fullscreen: false,
+                    }
+                };
+
+                cx.open_window(options, |cx| {
+                    cx.new_view(|_| WindowContent {
+                        text: format!("{:?}", screen.id()).into(),
+                    })
+                });
+            }
+        });
+    }"#;
+
+    fn setup_rust_language() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )
+    }
+
     #[test]
     fn test_chunk_text() {
         let text = "a\n".repeat(1000);
@@ -139,100 +224,186 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    async fn test_chunk_text_grammar() {
+    #[test]
+    fn test_chunk_text_grammar() {
         // Let's set up a big text with some known segments
         // We'll then chunk it and verify that the chunks are correct
 
-        let text = r#"
-use gpui::*;
+        let language = setup_rust_language();
 
-struct WindowContent {
-    text: SharedString,
-}
-
-impl Render for WindowContent {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .bg(rgb(0x1e2025))
-            .size_full()
-            .justify_center()
-            .items_center()
-            .text_xl()
-            .text_color(rgb(0xffffff))
-            .child(self.text.clone())
-    }
-}
-
-fn main() {
-    App::new().run(|cx: &mut AppContext| {
-        // Create several new windows, positioned in the top right corner of each screen
-
-        for screen in cx.displays() {
-            let options = {
-                let popup_margin_width = DevicePixels::from(16);
-                let popup_margin_height = DevicePixels::from(-0) - DevicePixels::from(48);
-
-                let window_size = Size {
-                    width: px(400.),
-                    height: px(72.),
-                };
-
-                let screen_bounds = screen.bounds();
-                let size: Size<DevicePixels> = window_size.into();
-
-                let bounds = gpui::Bounds::<DevicePixels> {
-                    origin: screen_bounds.upper_right()
-                        - point(size.width + popup_margin_width, popup_margin_height),
-                    size: window_size.into(),
-                };
-
-                WindowOptions {
-                    // Set the bounds of the window in screen coordinates
-                    bounds: Some(bounds),
-                    // Specify the display_id to ensure the window is created on the correct screen
-                    display_id: Some(screen.id()),
-
-                    titlebar: None,
-                    window_background: WindowBackgroundAppearance::default(),
-                    focus: false,
-                    show: true,
-                    kind: WindowKind::PopUp,
-                    is_movable: false,
-                    fullscreen: false,
-                }
-            };
-
-            cx.open_window(options, |cx| {
-                cx.new_view(|_| WindowContent {
-                    text: format!("{:?}", screen.id()).into(),
-                })
-            });
-        }
-    });
-}"#;
-
-        let language = Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        );
-
-        let chunks = chunk_text(text, language.grammar());
+        let chunks = chunk_text(TEXT, language.grammar());
         assert_eq!(chunks.len(), 2);
 
         assert_eq!(chunks[0].range.start, 0);
-        assert_eq!(chunks[0].range.end, 1470);
+        assert_eq!(chunks[0].range.end, 1498);
         // The break between chunks is right before the "Specify the display_id" comment
 
-        assert_eq!(chunks[1].range.start, 1470);
-        assert_eq!(chunks[1].range.end, 2168);
+        assert_eq!(chunks[1].range.start, 1498);
+        assert_eq!(chunks[1].range.end, 2396);
+    }
+
+    #[test]
+    fn test_chunk_parse_tree() {
+        let language = setup_rust_language();
+        let grammar = language.grammar().unwrap();
+
+        let tree = with_parser(|parser| {
+            parser
+                .set_language(&grammar.ts_language)
+                .expect("incompatible grammar");
+            parser.parse(TEXT, None).expect("invalid language")
+        });
+
+        let chunks = chunk_parse_tree(tree, TEXT, 250);
+        assert_eq!(chunks.len(), 11);
+    }
+
+    #[test]
+    fn test_chunk_unparsable() {
+        // Even if a chunk is unparsable, we should still be able to chunk it
+        let language = setup_rust_language();
+        let grammar = language.grammar().unwrap();
+
+        let text = r#"fn main() {"#;
+        let tree = with_parser(|parser| {
+            parser
+                .set_language(&grammar.ts_language)
+                .expect("incompatible grammar");
+            parser.parse(text, None).expect("invalid language")
+        });
+
+        let chunks = chunk_parse_tree(tree, text, 250);
+        assert_eq!(chunks.len(), 1);
+
+        assert_eq!(chunks[0].range.start, 0);
+        assert_eq!(chunks[0].range.end, 11);
+    }
+
+    #[test]
+    fn test_empty_text() {
+        let language = setup_rust_language();
+        let grammar = language.grammar().unwrap();
+
+        let tree = with_parser(|parser| {
+            parser
+                .set_language(&grammar.ts_language)
+                .expect("incompatible grammar");
+            parser.parse("", None).expect("invalid language")
+        });
+
+        let chunks = chunk_parse_tree(tree, "", CHUNK_THRESHOLD);
+        assert!(chunks.is_empty(), "Chunks should be empty for empty text");
+    }
+
+    #[test]
+    fn test_single_large_node() {
+        let large_text = "static ".to_owned() + "a".repeat(CHUNK_THRESHOLD - 1).as_str() + " = 2";
+
+        let language = setup_rust_language();
+        let grammar = language.grammar().unwrap();
+
+        let tree = with_parser(|parser| {
+            parser
+                .set_language(&grammar.ts_language)
+                .expect("incompatible grammar");
+            parser.parse(&large_text, None).expect("invalid language")
+        });
+
+        let chunks = chunk_parse_tree(tree, &large_text, CHUNK_THRESHOLD);
+
+        assert_eq!(
+            chunks.len(),
+            3,
+            "Large chunks are broken up according to grammar as best as possible"
+        );
+
+        // Expect chunks to be static, aaaaaa..., and = 2
+        assert_eq!(chunks[0].range.start, 0);
+        assert_eq!(chunks[0].range.end, "static".len());
+
+        assert_eq!(chunks[1].range.start, "static".len());
+        assert_eq!(chunks[1].range.end, "static".len() + CHUNK_THRESHOLD);
+
+        assert_eq!(chunks[2].range.start, "static".len() + CHUNK_THRESHOLD);
+        assert_eq!(chunks[2].range.end, large_text.len());
+    }
+
+    #[test]
+    fn test_multiple_small_nodes() {
+        let small_text = "a b c d e f g h i j k l m n o p q r s t u v w x y z";
+        let language = setup_rust_language();
+        let grammar = language.grammar().unwrap();
+
+        let tree = with_parser(|parser| {
+            parser
+                .set_language(&grammar.ts_language)
+                .expect("incompatible grammar");
+            parser.parse(small_text, None).expect("invalid language")
+        });
+
+        let chunks = chunk_parse_tree(tree, small_text, 5);
+        assert!(
+            chunks.len() > 1,
+            "Should have multiple chunks for multiple small nodes"
+        );
+    }
+
+    #[test]
+    fn test_node_with_children() {
+        let nested_text = "fn main() { let a = 1; let b = 2; }";
+        let language = setup_rust_language();
+        let grammar = language.grammar().unwrap();
+
+        let tree = with_parser(|parser| {
+            parser
+                .set_language(&grammar.ts_language)
+                .expect("incompatible grammar");
+            parser.parse(nested_text, None).expect("invalid language")
+        });
+
+        let chunks = chunk_parse_tree(tree, nested_text, 10);
+        assert!(
+            chunks.len() > 1,
+            "Should have multiple chunks for a node with children"
+        );
+    }
+
+    #[test]
+    fn test_text_with_unparsable_sections() {
+        // This test uses purposefully hit-or-miss sizing of 11 characters per likely chunk
+        let mixed_text = "fn main() { let a = 1; let b = 2; } unparsable bits here";
+        let language = setup_rust_language();
+        let grammar = language.grammar().unwrap();
+
+        let tree = with_parser(|parser| {
+            parser
+                .set_language(&grammar.ts_language)
+                .expect("incompatible grammar");
+            parser.parse(mixed_text, None).expect("invalid language")
+        });
+
+        let chunks = chunk_parse_tree(tree, mixed_text, 11);
+        assert!(
+            chunks.len() > 1,
+            "Should handle both parsable and unparsable sections correctly"
+        );
+
+        let expected_chunks = vec![
+            "fn main() {",
+            " let a = 1;",
+            " let b = 2;",
+            " }",
+            " unparsable",
+            " bits here",
+        ];
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(
+                &mixed_text[chunk.range.clone()],
+                expected_chunks[i],
+                "Chunk {} should match",
+                i
+            );
+        }
     }
 }
