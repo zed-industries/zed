@@ -1442,9 +1442,11 @@ impl ProjectPanel {
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            h_flex()
-                                .h_6()
-                                .child(Label::new(file_name).color(filename_text_color))
+                            h_flex().h_6().child(
+                                Label::new(file_name)
+                                    .single_line()
+                                    .color(filename_text_color),
+                            )
                         }
                         .ml_1(),
                     )

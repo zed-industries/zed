@@ -701,6 +701,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClient {
         qh: &QueueHandle<Self>,
     ) {
         let mut state = client.0.borrow_mut();
+        let cursor_icon_name = state.cursor_icon_name.clone();
 
         match event {
             wl_pointer::Event::Enter {
@@ -716,7 +717,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClient {
                     state.enter_token = Some(());
                     state.mouse_focused_window = Some(window.clone());
                     state.cursor.set_serial_id(serial);
-                    state.cursor.set_icon(&wl_pointer, None);
+                    state
+                        .cursor
+                        .set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
                     drop(state);
                     window.set_focused(true);
                 }
@@ -747,7 +750,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClient {
                     return;
                 }
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
-                state.cursor.set_icon(&wl_pointer, None);
+                state
+                    .cursor
+                    .set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
 
                 if let Some(window) = state.mouse_focused_window.clone() {
                     let input = PlatformInput::MouseMove(MouseMoveEvent {

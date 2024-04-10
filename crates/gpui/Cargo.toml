@@ -12,11 +12,7 @@ workspace = true
 
 [features]
 default = []
-test-support = [
-    "backtrace",
-    "collections/test-support",
-    "util/test-support",
-]
+test-support = ["backtrace", "collections/test-support", "util/test-support"]
 runtime_shaders = []
 macos-blade = ["blade-graphics", "blade-macros", "blade-rwh", "bytemuck"]
 

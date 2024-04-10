@@ -380,6 +380,12 @@ impl ChannelStore {
             .is_some_and(|state| state.has_new_messages())
     }
 
+    pub fn set_acknowledged_message_id(&mut self, channel_id: ChannelId, message_id: Option<u64>) {
+        if let Some(state) = self.channel_states.get_mut(&channel_id) {
+            state.latest_chat_message = message_id;
+        }
+    }
+
     pub fn last_acknowledge_message_id(&self, channel_id: ChannelId) -> Option<u64> {
         self.channel_states.get(&channel_id).and_then(|state| {
             if let Some(last_message_id) = state.latest_chat_message {
