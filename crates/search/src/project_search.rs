@@ -1,7 +1,8 @@
 use crate::{
-    mode::SearchMode, ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery,
-    PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleReplace, ToggleWholeWord,
+    mode::SearchMode, ActivateRegexMode, ActivateTextMode, CycleMode, FocusSearch,
+    NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
+    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleReplace,
+    ToggleWholeWord,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -60,6 +61,9 @@ const SEARCH_CONTEXT: u32 = 2;
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+        register_workspace_action(workspace, move |search_bar, _: &FocusSearch, cx| {
+            search_bar.focus_search(cx);
+        });
         register_workspace_action(workspace, move |search_bar, _: &ToggleFilters, cx| {
             search_bar.toggle_filters(cx);
         });
@@ -797,7 +801,7 @@ impl ProjectSearchView {
     // If no search exists in the workspace, create a new one.
     fn deploy_search(
         workspace: &mut Workspace,
-        _: &workspace::DeploySearch,
+        action: &workspace::DeploySearch,
         cx: &mut ViewContext<Workspace>,
     ) {
         let existing = workspace
@@ -806,7 +810,7 @@ impl ProjectSearchView {
             .items()
             .find_map(|item| item.downcast::<ProjectSearchView>());
 
-        Self::existing_or_new_search(workspace, existing, cx)
+        Self::existing_or_new_search(workspace, existing, action, cx);
     }
 
     fn search_in_new(workspace: &mut Workspace, _: &SearchInNew, cx: &mut ViewContext<Workspace>) {
@@ -846,12 +850,13 @@ impl ProjectSearchView {
         _: &workspace::NewSearch,
         cx: &mut ViewContext<Workspace>,
     ) {
-        Self::existing_or_new_search(workspace, None, cx)
+        Self::existing_or_new_search(workspace, None, &DeploySearch::find(), cx)
     }
 
     fn existing_or_new_search(
         workspace: &mut Workspace,
         existing: Option<View<ProjectSearchView>>,
+        action: &workspace::DeploySearch,
         cx: &mut ViewContext<Workspace>,
     ) {
         let query = workspace.active_item(cx).and_then(|item| {
@@ -887,6 +892,7 @@ impl ProjectSearchView {
         };
 
         search.update(cx, |search, cx| {
+            search.replace_enabled = action.replace_enabled;
             if let Some(query) = query {
                 search.set_query(&query, cx);
             }
@@ -1170,6 +1176,14 @@ impl ProjectSearchBar {
 
     fn tab_previous(&mut self, _: &editor::actions::TabPrev, cx: &mut ViewContext<Self>) {
         self.cycle_field(Direction::Prev, cx);
+    }
+
+    fn focus_search(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(search_view) = self.active_project_search.as_ref() {
+            search_view.update(cx, |search_view, cx| {
+                search_view.query_editor.focus_handle(cx).focus(cx);
+            });
+        }
     }
 
     fn cycle_field(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
@@ -2011,7 +2025,7 @@ pub mod tests {
                         .update(cx, |toolbar, cx| toolbar.add_item(search_bar, cx))
                 });
 
-                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch, cx)
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch::find(), cx)
             })
             .unwrap();
 
@@ -2160,7 +2174,7 @@ pub mod tests {
 
         workspace
             .update(cx, |workspace, cx| {
-                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch, cx)
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch::find(), cx)
             })
             .unwrap();
         window.update(cx, |_, cx| {
@@ -3259,7 +3273,7 @@ pub mod tests {
             .unwrap();
 
         // Deploy a new search
-        cx.dispatch_action(window.into(), DeploySearch);
+        cx.dispatch_action(window.into(), DeploySearch::find());
 
         // Both panes should now have a project search in them
         window
@@ -3284,7 +3298,7 @@ pub mod tests {
             .unwrap();
 
         // Deploy a new search
-        cx.dispatch_action(window.into(), DeploySearch);
+        cx.dispatch_action(window.into(), DeploySearch::find());
 
         // The project search view should now be focused in the second pane
         // And the number of items should be unchanged.

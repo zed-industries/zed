@@ -86,6 +86,12 @@ pub struct RevealInProjectPanel {
     pub entry_id: Option<u64>,
 }
 
+#[derive(PartialEq, Clone, Deserialize)]
+pub struct DeploySearch {
+    #[serde(default)]
+    pub replace_enabled: bool,
+}
+
 impl_actions!(
     pane,
     [
@@ -93,7 +99,8 @@ impl_actions!(
         CloseActiveItem,
         CloseInactiveItems,
         ActivateItem,
-        RevealInProjectPanel
+        RevealInProjectPanel,
+        DeploySearch,
     ]
 );
 
@@ -107,7 +114,6 @@ actions!(
         CloseItemsToTheLeft,
         CloseItemsToTheRight,
         GoBack,
-        DeploySearch,
         GoForward,
         ReopenClosedItem,
         SplitLeft,
@@ -116,6 +122,14 @@ actions!(
         SplitDown,
     ]
 );
+
+impl DeploySearch {
+    pub fn find() -> Self {
+        Self {
+            replace_enabled: false,
+        }
+    }
+}
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 

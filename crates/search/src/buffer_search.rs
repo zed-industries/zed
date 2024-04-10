@@ -3,9 +3,9 @@ mod registrar;
 use crate::{
     mode::{next_mode, SearchMode},
     search_bar::render_nav_button,
-    ActivateRegexMode, ActivateTextMode, CycleMode, NextHistoryQuery, PreviousHistoryQuery,
-    ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
+    ActivateRegexMode, ActivateTextMode, CycleMode, FocusSearch, NextHistoryQuery,
+    PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions, SelectAllMatches,
+    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleReplace, ToggleWholeWord,
 };
 use any_vec::AnyVec;
 use collections::HashMap;
@@ -44,14 +44,30 @@ const MIN_INPUT_WIDTH_REMS: f32 = 15.;
 const MAX_INPUT_WIDTH_REMS: f32 = 30.;
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
+const fn true_value() -> bool {
+    true
+}
+
 #[derive(PartialEq, Clone, Deserialize)]
 pub struct Deploy {
+    #[serde(default = "true_value")]
     pub focus: bool,
+    #[serde(default)]
+    pub replace_enabled: bool,
 }
 
 impl_actions!(buffer_search, [Deploy]);
 
 actions!(buffer_search, [Dismiss, FocusEditor]);
+
+impl Deploy {
+    pub fn find() -> Self {
+        Self {
+            focus: true,
+            replace_enabled: false,
+        }
+    }
+}
 
 pub enum Event {
     UpdateLocation,
@@ -470,6 +486,9 @@ impl ToolbarItemView for BufferSearchBar {
 
 impl BufferSearchBar {
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
+        registrar.register_handler(ForDeployed(|this, _: &FocusSearch, cx| {
+            this.query_editor.focus_handle(cx).focus(cx);
+        }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleCaseSensitive, cx| {
             if this.supported_options().case {
                 this.toggle_case_sensitive(action, cx);
@@ -583,9 +602,17 @@ impl BufferSearchBar {
     pub fn deploy(&mut self, deploy: &Deploy, cx: &mut ViewContext<Self>) -> bool {
         if self.show(cx) {
             self.search_suggested(cx);
+            self.replace_enabled = deploy.replace_enabled;
             if deploy.focus {
-                self.select_query(cx);
-                let handle = self.query_editor.focus_handle(cx);
+                let mut handle = self.query_editor.focus_handle(cx).clone();
+                let mut select_query = true;
+                if deploy.replace_enabled && handle.is_focused(cx) {
+                    handle = self.replacement_editor.focus_handle(cx).clone();
+                    select_query = false;
+                };
+                if select_query {
+                    self.select_query(cx);
+                }
                 cx.focus(&handle);
             }
             return true;
@@ -1114,7 +1141,7 @@ mod tests {
     use super::*;
     use editor::{DisplayPoint, Editor};
     use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
-    use language::{Buffer, BufferId};
+    use language::Buffer;
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -1134,9 +1161,7 @@ mod tests {
     ) -> (View<Editor>, View<BufferSearchBar>, &mut VisualTestContext) {
         init_globals(cx);
         let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
+            Buffer::local(
                 r#"
                 A regular expression (shortened as regex or regexp;[1] also referred to as
                 rational expression[2][3]) is a sequence of characters that specifies a search
@@ -1144,6 +1169,7 @@ mod tests {
                 for "find" or "find and replace" operations on strings, or for input validation.
                 "#
                 .unindent(),
+                cx,
             )
         });
         let cx = cx.add_empty_window();
@@ -1492,13 +1518,7 @@ mod tests {
             expected_query_matches_count > 1,
             "Should pick a query with multiple results"
         );
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                buffer_text,
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
         let window = cx.add_window(|_| gpui::Empty);
 
         let editor = window.build_view(cx, |cx| Editor::for_buffer(buffer.clone(), None, cx));
@@ -1694,13 +1714,7 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
         .unindent();
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                buffer_text,
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
         let cx = cx.add_empty_window();
 
         let editor = cx.new_view(|cx| Editor::for_buffer(buffer.clone(), None, cx));

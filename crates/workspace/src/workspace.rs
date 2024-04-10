@@ -571,6 +571,7 @@ pub struct Workspace {
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
+    bounds_save_task_queued: Option<Task<()>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -737,33 +738,45 @@ impl Workspace {
 
         let subscriptions = vec![
             cx.observe_window_activation(Self::on_window_activation_changed),
-            cx.observe_window_bounds(move |_, cx| {
-                if let Some(display) = cx.display() {
-                    let window_bounds = cx.window_bounds();
-                    let fullscreen = cx.is_fullscreen();
-
-                    if let Some(display_uuid) = display.uuid().log_err() {
-                        // Only update the window bounds when not full screen,
-                        // so we can remember the last non-fullscreen bounds
-                        // across restarts
-                        if fullscreen {
-                            cx.background_executor()
-                                .spawn(DB.set_fullscreen(workspace_id, true))
-                                .detach_and_log_err(cx);
-                        } else if !cx.is_minimized() {
-                            cx.background_executor()
-                                .spawn(DB.set_fullscreen(workspace_id, false))
-                                .detach_and_log_err(cx);
-                            cx.background_executor()
-                                .spawn(DB.set_window_bounds(
-                                    workspace_id,
-                                    SerializedWindowsBounds(window_bounds),
-                                    display_uuid,
-                                ))
-                                .detach_and_log_err(cx);
-                        }
-                    }
+            cx.observe_window_bounds(move |this, cx| {
+                if this.bounds_save_task_queued.is_some() {
+                    return;
                 }
+                this.bounds_save_task_queued = Some(cx.spawn(|this, mut cx| async move {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(100))
+                        .await;
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(display) = cx.display() {
+                            let window_bounds = cx.window_bounds();
+                            let fullscreen = cx.is_fullscreen();
+
+                            if let Some(display_uuid) = display.uuid().log_err() {
+                                // Only update the window bounds when not full screen,
+                                // so we can remember the last non-fullscreen bounds
+                                // across restarts
+                                if fullscreen {
+                                    cx.background_executor()
+                                        .spawn(DB.set_fullscreen(workspace_id, true))
+                                        .detach_and_log_err(cx);
+                                } else if !cx.is_minimized() {
+                                    cx.background_executor()
+                                        .spawn(DB.set_fullscreen(workspace_id, false))
+                                        .detach_and_log_err(cx);
+                                    cx.background_executor()
+                                        .spawn(DB.set_window_bounds(
+                                            workspace_id,
+                                            SerializedWindowsBounds(window_bounds),
+                                            display_uuid,
+                                        ))
+                                        .detach_and_log_err(cx);
+                                }
+                            }
+                        }
+                        this.bounds_save_task_queued.take();
+                    })
+                    .ok();
+                }));
                 cx.notify();
             }),
             cx.observe_window_appearance(|_, cx| {
@@ -830,6 +843,7 @@ impl Workspace {
             workspace_actions: Default::default(),
             // This data will be incorrect, but it will be overwritten by the time it needs to be used.
             bounds: Default::default(),
+            bounds_save_task_queued: None,
         }
     }
 

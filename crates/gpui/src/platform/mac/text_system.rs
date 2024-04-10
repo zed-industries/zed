@@ -219,16 +219,18 @@ impl MacTextSystemState {
         Ok(())
     }
 
-    fn load_family(
-        &mut self,
-        name: &SharedString,
-        features: FontFeatures,
-    ) -> Result<SmallVec<[FontId; 4]>> {
+    fn load_family(&mut self, name: &str, features: FontFeatures) -> Result<SmallVec<[FontId; 4]>> {
+        let name = if name == ".SystemUIFont" {
+            ".AppleSystemUIFont"
+        } else {
+            name
+        };
+
         let mut font_ids = SmallVec::new();
         let family = self
             .memory_source
-            .select_family_by_name(name.as_ref())
-            .or_else(|_| self.system_source.select_family_by_name(name.as_ref()))?;
+            .select_family_by_name(name)
+            .or_else(|_| self.system_source.select_family_by_name(name))?;
         for font in family.fonts() {
             let mut font = font.load()?;
 

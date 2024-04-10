@@ -352,7 +352,8 @@ impl WorkspaceDb {
                 // Clear out panes and pane_groups
                 conn.exec_bound(sql!(
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
-                    DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)?;
+                    DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
+                .context("Clearing old panes")?;
 
                 conn.exec_bound(sql!(
                     DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?

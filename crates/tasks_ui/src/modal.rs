@@ -284,29 +284,27 @@ impl PickerDelegate for TasksModalDelegate {
         let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
         let (source_kind, _) = &candidates[hit.candidate_id];
-        let language_name = if let TaskSourceKind::Language { name } = source_kind {
-            Some(name)
-        } else {
-            None
-        };
 
         let highlighted_location = HighlightedText {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
             char_count: hit.string.chars().count(),
         };
-        let language_icon = language_name
-            .and_then(|language| {
-                let language = language.to_lowercase();
-                file_icons::FileIcons::get(cx).get_type_icon(&language)
-            })
-            .map(|icon_path| Icon::from_path(icon_path));
+        let base_item = ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
+            .inset(true)
+            .spacing(ListItemSpacing::Sparse);
+        let icon = match source_kind {
+            TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
+            TaskSourceKind::AbsPath { .. } => Some(Icon::new(IconName::Settings)),
+            TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),
+            TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
+                .get_type_icon(&name.to_lowercase())
+                .map(|icon_path| Icon::from_path(icon_path)),
+        };
         Some(
-            ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .map(|this| {
-                    let this = if matches!(source_kind, TaskSourceKind::UserInput) {
+            base_item
+                .map(|item| {
+                    let item = if matches!(source_kind, TaskSourceKind::UserInput) {
                         let task_index = hit.candidate_id;
                         let delete_button = div().child(
                             IconButton::new("delete", IconName::Close)
@@ -323,14 +321,14 @@ impl PickerDelegate for TasksModalDelegate {
                                 }))
                                 .tooltip(|cx| Tooltip::text("Delete an one-shot task", cx)),
                         );
-                        this.end_hover_slot(delete_button)
+                        item.end_hover_slot(delete_button)
                     } else {
-                        this
+                        item
                     };
-                    if let Some(icon) = language_icon {
-                        this.end_slot(icon)
+                    if let Some(icon) = icon {
+                        item.end_slot(icon)
                     } else {
-                        this
+                        item
                     }
                 })
                 .selected(selected)

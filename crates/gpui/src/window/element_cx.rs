@@ -264,6 +264,18 @@ impl<'a> Context for ElementContext<'a> {
         self.cx.new_model(build_model)
     }
 
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+        self.cx.reserve_model()
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: crate::Reservation<T>,
+        build_model: impl FnOnce(&mut crate::ModelContext<'_, T>) -> T,
+    ) -> Self::Result<crate::Model<T>> {
+        self.cx.insert_model(reservation, build_model)
+    }
+
     fn update_model<T, R>(
         &mut self,
         handle: &crate::Model<T>,

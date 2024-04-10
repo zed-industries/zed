@@ -91,13 +91,13 @@ impl Render for QuickActionBar {
             "toggle buffer search",
             IconName::MagnifyingGlass,
             !self.buffer_search_bar.read(cx).is_dismissed(),
-            Box::new(buffer_search::Deploy { focus: false }),
+            Box::new(buffer_search::Deploy::find()),
             "Buffer Search",
             {
                 let buffer_search_bar = self.buffer_search_bar.clone();
                 move |_, cx| {
                     buffer_search_bar.update(cx, |search_bar, cx| {
-                        search_bar.toggle(&buffer_search::Deploy { focus: true }, cx)
+                        search_bar.toggle(&buffer_search::Deploy::find(), cx)
                     });
                 }
             },

@@ -1,7 +1,7 @@
 name = "Rust"
 grammar = "rust"
 path_suffixes = ["rs"]
-line_comments = [ "/// ", "//! ", "// "]
+line_comments = ["// ", "/// ", "//! "]
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

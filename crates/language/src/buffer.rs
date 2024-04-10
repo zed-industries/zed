@@ -503,9 +503,9 @@ pub enum CharKind {
 
 impl Buffer {
     /// Create a new buffer with the given base text.
-    pub fn new<T: Into<String>>(replica_id: ReplicaId, id: BufferId, base_text: T) -> Self {
+    pub fn local<T: Into<String>>(base_text: T, cx: &mut ModelContext<Self>) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, id, base_text.into()),
+            TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
             None,
             None,
             Capability::ReadWrite,
@@ -517,10 +517,10 @@ impl Buffer {
         remote_id: BufferId,
         replica_id: ReplicaId,
         capability: Capability,
-        base_text: String,
+        base_text: impl Into<String>,
     ) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, remote_id, base_text),
+            TextBuffer::new(replica_id, remote_id, base_text.into()),
             None,
             None,
             capability,

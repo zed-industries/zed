@@ -31,7 +31,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
+use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use parking_lot::Mutex;
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -1310,7 +1310,7 @@ impl Conversation {
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "");
+            let mut buffer = Buffer::local("", cx);
             buffer.set_language_registry(language_registry);
             cx.spawn(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
@@ -1398,11 +1398,7 @@ impl Conversation {
         let mut message_anchors = Vec::new();
         let mut next_message_id = MessageId(0);
         let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                saved_conversation.text,
-            );
+            let mut buffer = Buffer::local(saved_conversation.text, cx);
             for message in saved_conversation.messages {
                 message_anchors.push(MessageAnchor {
                     id: message.id,
