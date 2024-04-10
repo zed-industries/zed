@@ -192,11 +192,9 @@ impl_actions!(
     ]
 );
 
-// #[derive(Deserialize)]
 pub struct Toast {
     id: NotificationId,
     msg: Cow<'static, str>,
-    // #[serde(skip)]
     on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
 }
 

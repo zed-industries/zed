@@ -277,11 +277,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.spawn(|workspace, mut cx| async move {
                     register_zed_scheme(&cx).await?;
                     workspace.update(&mut cx, |workspace, cx| {
-                        struct RegisteredZedScheme;
+                        struct RegisterZedScheme;
 
                         workspace.show_toast(
                             Toast::new(
-                                NotificationId::unique::<RegisteredZedScheme>(),
+                                NotificationId::unique::<RegisterZedScheme>(),
                                 format!(
                                     "zed:// links will now open in {}.",
                                     ReleaseChannel::global(cx).display_name()
