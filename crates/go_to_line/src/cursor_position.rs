@@ -3,7 +3,7 @@ use gpui::{AppContext, Subscription, View, WeakView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use std::{default, fmt::Write};
+use std::fmt::Write;
 use text::{Point, Selection};
 use ui::{
     div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ParentElement,
