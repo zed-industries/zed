@@ -83,6 +83,7 @@ use util::ResultExt;
 use uuid::Uuid;
 pub use workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings};
 
+use crate::notifications::NotificationId;
 use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     SerializedAxis,
@@ -191,16 +192,14 @@ impl_actions!(
     ]
 );
 
-#[derive(Deserialize)]
 pub struct Toast {
-    id: usize,
+    id: NotificationId,
     msg: Cow<'static, str>,
-    #[serde(skip)]
     on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut WindowContext)>)>,
 }
 
 impl Toast {
-    pub fn new<I: Into<Cow<'static, str>>>(id: usize, msg: I) -> Self {
+    pub fn new<I: Into<Cow<'static, str>>>(id: NotificationId, msg: I) -> Self {
         Toast {
             id,
             msg: msg.into(),
@@ -229,7 +228,7 @@ impl PartialEq for Toast {
 impl Clone for Toast {
     fn clone(&self) -> Self {
         Toast {
-            id: self.id,
+            id: self.id.clone(),
             msg: self.msg.clone(),
             on_click: self.on_click.clone(),
         }
@@ -555,7 +554,7 @@ pub struct Workspace {
     status_bar: View<StatusBar>,
     modal_layer: View<ModalLayer>,
     titlebar_item: Option<AnyView>,
-    notifications: Vec<(TypeId, usize, Box<dyn NotificationHandle>)>,
+    notifications: Vec<(NotificationId, Box<dyn NotificationHandle>)>,
     project: Model<Project>,
     follower_states: HashMap<View<Pane>, FollowerState>,
     last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
@@ -634,18 +633,32 @@ impl Workspace {
                     }
                 }
 
-                project::Event::Notification(message) => this.show_notification(0, cx, |cx| {
-                    cx.new_view(|_| MessageNotification::new(message.clone()))
-                }),
+                project::Event::Notification(message) => {
+                    struct ProjectNotification;
+
+                    this.show_notification(
+                        NotificationId::unique::<ProjectNotification>(),
+                        cx,
+                        |cx| cx.new_view(|_| MessageNotification::new(message.clone())),
+                    )
+                }
 
                 project::Event::LanguageServerPrompt(request) => {
+                    struct LanguageServerPrompt;
+
                     let mut hasher = DefaultHasher::new();
                     request.lsp_name.as_str().hash(&mut hasher);
                     let id = hasher.finish();
 
-                    this.show_notification(id as usize, cx, |cx| {
-                        cx.new_view(|_| notifications::LanguageServerPrompt::new(request.clone()))
-                    });
+                    this.show_notification(
+                        NotificationId::identified::<LanguageServerPrompt>(id as usize),
+                        cx,
+                        |cx| {
+                            cx.new_view(|_| {
+                                notifications::LanguageServerPrompt::new(request.clone())
+                            })
+                        },
+                    );
                 }
 
                 _ => {}
@@ -2834,7 +2847,7 @@ impl Workspace {
                     .children(
                         self.notifications
                             .iter()
-                            .map(|(_, _, notification)| notification.to_any()),
+                            .map(|(_, notification)| notification.to_any()),
                     ),
             )
         }
@@ -3831,13 +3844,19 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
     workspace
         .update(cx, |workspace, cx| {
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
-                workspace.show_notification_once(0, cx, |cx| {
-                    cx.new_view(|_| {
-                        MessageNotification::new("Failed to load the database file.")
-                            .with_click_message("Click to let us know about this error")
-                            .on_click(|cx| cx.open_url(REPORT_ISSUE_URL))
-                    })
-                });
+                struct DatabaseFailedNotification;
+
+                workspace.show_notification_once(
+                    NotificationId::unique::<DatabaseFailedNotification>(),
+                    cx,
+                    |cx| {
+                        cx.new_view(|_| {
+                            MessageNotification::new("Failed to load the database file.")
+                                .with_click_message("Click to let us know about this error")
+                                .on_click(|cx| cx.open_url(REPORT_ISSUE_URL))
+                        })
+                    },
+                );
             }
         })
         .log_err();

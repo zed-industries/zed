@@ -34,6 +34,7 @@ use task::{
     static_source::{StaticSource, TrackedFile},
 };
 use theme::ActiveTheme;
+use workspace::notifications::NotificationId;
 
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
@@ -253,9 +254,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         .await
                         .context("error creating CLI symlink")?;
                     workspace.update(&mut cx, |workspace, cx| {
+                        struct InstalledZedCli;
+
                         workspace.show_toast(
                             Toast::new(
-                                0,
+                                NotificationId::unique::<InstalledZedCli>(),
                                 format!(
                                     "Installed `zed` to {}. You can launch {} from your terminal.",
                                     path.to_string_lossy(),
@@ -274,9 +277,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.spawn(|workspace, mut cx| async move {
                     register_zed_scheme(&cx).await?;
                     workspace.update(&mut cx, |workspace, cx| {
+                        struct RegisterZedScheme;
+
                         workspace.show_toast(
                             Toast::new(
-                                0,
+                                NotificationId::unique::<RegisterZedScheme>(),
                                 format!(
                                     "zed:// links will now open in {}.",
                                     ReleaseChannel::global(cx).display_name()
@@ -555,14 +560,20 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                 workspace
                     .update(&mut cx, |workspace, cx| {
                         let Some(log) = log else {
-                            workspace.show_notification(29, cx, |cx| {
-                                cx.new_view(|_| {
-                                    MessageNotification::new(format!(
-                                        "Unable to access/open log file at path {:?}",
-                                        paths::LOG.as_path()
-                                    ))
-                                })
-                            });
+                            struct OpenLogError;
+
+                            workspace.show_notification(
+                                NotificationId::unique::<OpenLogError>(),
+                                cx,
+                                |cx| {
+                                    cx.new_view(|_| {
+                                        MessageNotification::new(format!(
+                                            "Unable to access/open log file at path {:?}",
+                                            paths::LOG.as_path()
+                                        ))
+                                    })
+                                },
+                            );
                             return;
                         };
                         let project = workspace.project().clone();
@@ -749,7 +760,9 @@ fn open_local_file(
         })
         .detach();
     } else {
-        workspace.show_notification(0, cx, |cx| {
+        struct NoOpenFolders;
+
+        workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
             cx.new_view(|_| MessageNotification::new("This project has no folders open."))
         })
     }
