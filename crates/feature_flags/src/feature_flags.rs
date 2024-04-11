@@ -18,6 +18,11 @@ pub trait FeatureFlag {
     const NAME: &'static str;
 }
 
+pub struct Remoting {}
+impl FeatureFlag for Remoting {
+    const NAME: &'static str = "remoting";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where

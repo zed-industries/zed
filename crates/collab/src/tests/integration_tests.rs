@@ -3760,7 +3760,7 @@ async fn test_leaving_project(
 
     // Client B can't join the project, unless they re-join the room.
     cx_b.spawn(|cx| {
-        Project::remote(
+        Project::in_room(
             project_id,
             client_b.app_state.client.clone(),
             client_b.user_store().clone(),

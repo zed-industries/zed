@@ -4704,6 +4704,61 @@ pub fn join_hosted_project(
     })
 }
 
+pub fn join_remote_project(
+    project_id: ProjectId,
+    app_state: Arc<AppState>,
+    cx: &mut AppContext,
+) -> Task<Result<WindowHandle<Workspace>>> {
+    let windows = cx.windows();
+    cx.spawn(|mut cx| async move {
+        let existing_workspace = windows.into_iter().find_map(|window| {
+            window.downcast::<Workspace>().and_then(|window| {
+                window
+                    .update(&mut cx, |workspace, cx| {
+                        if workspace.project().read(cx).remote_id() == Some(project_id.0) {
+                            Some(window)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(None)
+            })
+        });
+
+        let workspace = if let Some(existing_workspace) = existing_workspace {
+            existing_workspace
+        } else {
+            let project = Project::remote(
+                project_id.0,
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx.clone(),
+            )
+            .await?;
+
+            let window_bounds_override = window_bounds_env_override();
+            cx.update(|cx| {
+                let mut options = (app_state.build_window_options)(None, cx);
+                options.bounds = window_bounds_override;
+                cx.open_window(options, |cx| {
+                    cx.new_view(|cx| {
+                        Workspace::new(Default::default(), project, app_state.clone(), cx)
+                    })
+                })
+            })?
+        };
+
+        workspace.update(&mut cx, |_, cx| {
+            cx.activate(true);
+            cx.activate_window();
+        })?;
+
+        anyhow::Ok(workspace)
+    })
+}
+
 pub fn join_in_room_project(
     project_id: u64,
     follow_user_id: u64,

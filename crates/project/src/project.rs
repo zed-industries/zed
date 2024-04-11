@@ -1,3 +1,4 @@
+pub mod connection_manager;
 pub mod debounced_delay;
 pub mod lsp_command;
 pub mod lsp_ext_command;
@@ -234,6 +235,7 @@ enum BufferOrderedMessage {
     Resync,
 }
 
+#[derive(Debug)]
 enum LocalProjectUpdate {
     WorktreesChanged,
     CreateBufferForPeer {
@@ -597,6 +599,7 @@ impl Project {
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+        connection_manager::init(client.clone(), cx);
         Self::init_settings(cx);
 
         client.add_model_message_handler(Self::handle_add_collaborator);
@@ -734,6 +737,24 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
+        let project =
+            Self::in_room(remote_id, client, user_store, languages, fs, cx.clone()).await?;
+        cx.update(|cx| {
+            connection_manager::Manager::global(cx).update(cx, |manager, cx| {
+                manager.maintain_project_connection(&project, cx)
+            })
+        })?;
+        Ok(project)
+    }
+
+    pub async fn in_room(
+        remote_id: u64,
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
         let subscription = client.subscribe_to_entity(remote_id)?;
@@ -753,6 +774,7 @@ impl Project {
         )
         .await
     }
+
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
         subscription: PendingEntitySubscription<Project>,
@@ -1561,7 +1583,7 @@ impl Project {
                                     })
                                 })?
                                 .await;
-                            if update_project.is_ok() {
+                            if update_project.log_err().is_some() {
                                 for worktree in worktrees {
                                     worktree.update(&mut cx, |worktree, cx| {
                                         let worktree = worktree.as_local_mut().unwrap();

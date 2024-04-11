@@ -10,9 +10,7 @@ use backtrace::Backtrace;
 use chrono::Utc;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{
-    parse_zed_link, telemetry::Telemetry, Client, ClientSettings, DevServerToken, UserStore,
-};
+use client::{parse_zed_link, telemetry::Telemetry, Client, DevServerToken, UserStore};
 use collab_ui::channel_view::ChannelView;
 use copilot::Copilot;
 use copilot_ui::CopilotCompletionProvider;
@@ -88,7 +86,72 @@ fn fail_to_launch(e: anyhow::Error) {
     })
 }
 
-fn main() {
+fn init_headless(dev_server_token: DevServerToken) {
+    if let Err(e) = init_paths() {
+        log::error!("Failed to launch: {}", e);
+        return;
+    }
+    init_logger();
+
+    App::new().run(|cx| {
+        release_channel::init(env!("CARGO_PKG_VERSION"), cx);
+        if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
+            AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
+        }
+
+        let mut store = SettingsStore::default();
+        store
+            .set_default_settings(default_settings().as_ref(), cx)
+            .unwrap();
+        cx.set_global(store);
+
+        client::init_settings(cx);
+
+        let clock = Arc::new(clock::RealSystemClock);
+        let http = Arc::new(HttpClientWithUrl::new(
+            &client::ClientSettings::get_global(cx).server_url,
+        ));
+
+        let client = client::Client::new(clock, http.clone(), cx);
+        let client = client.clone();
+        client.set_dev_server_token(dev_server_token);
+
+        project::Project::init(&client, cx);
+        client::init(&client, cx);
+
+        let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
+            cx.path_for_auxiliary_executable("git")
+                .context("could not find git binary path")
+                .log_err()
+        } else {
+            None
+        };
+        let fs = Arc::new(RealFs::new(git_binary_path));
+
+        let mut languages =
+            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
+        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
+        let languages = Arc::new(languages);
+        let node_runtime = RealNodeRuntime::new(http.clone());
+
+        language::init(cx);
+        languages::init(languages.clone(), node_runtime.clone(), cx);
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+
+        headless::init(
+            client.clone(),
+            headless::AppState {
+                languages: languages.clone(),
+                user_store: user_store.clone(),
+                fs: fs.clone(),
+                node_runtime: node_runtime.clone(),
+            },
+            cx,
+        );
+    })
+}
+
+fn init_ui() {
     menu::init();
     zed_actions::init();
 
@@ -269,7 +332,6 @@ fn main() {
             .to_string(),
         );
         telemetry.flush_events();
-
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
             client: client.clone(),
@@ -277,7 +339,7 @@ fn main() {
             fs: fs.clone(),
             build_window_options,
             workspace_store,
-            node_runtime,
+            node_runtime: node_runtime.clone(),
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
@@ -319,31 +381,17 @@ fn main() {
 
         cx.activate(true);
 
-        let mut args = Args::parse();
-        if let Some(dev_server_token) = args.dev_server_token.take() {
-            let dev_server_token = DevServerToken(dev_server_token);
-            let server_url = ClientSettings::get_global(&cx).server_url.clone();
-            let client = client.clone();
-            client.set_dev_server_token(dev_server_token);
-            cx.spawn(|cx| async move {
-                client.authenticate_and_connect(false, &cx).await?;
-                log::info!("Connected to {}", server_url);
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        } else {
-            let urls: Vec<_> = args
-                .paths_or_urls
-                .iter()
-                .filter_map(|arg| parse_url_arg(arg, cx).log_err())
-                .collect();
-
-            if !urls.is_empty() {
-                listener.open_urls(urls)
-            }
-        }
-
+        let args = Args::parse();
         let mut triggered_authentication = false;
+        let urls: Vec<_> = args
+            .paths_or_urls
+            .iter()
+            .filter_map(|arg| parse_url_arg(arg, cx).log_err())
+            .collect();
+
+        if !urls.is_empty() {
+            listener.open_urls(urls)
+        }
 
         match open_rx
             .try_next()
@@ -380,6 +428,16 @@ fn main() {
                 .detach_and_log_err(cx);
         }
     });
+}
+
+fn main() {
+    let mut args = Args::parse();
+    if let Some(dev_server_token) = args.dev_server_token.take() {
+        let dev_server_token = DevServerToken(dev_server_token);
+        init_headless(dev_server_token)
+    } else {
+        init_ui()
+    }
 }
 
 fn handle_open_request(

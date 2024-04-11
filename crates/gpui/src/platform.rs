@@ -73,12 +73,17 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 #[cfg(target_os = "linux")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
     let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
+    let x11_display = std::env::var_os("DISPLAY");
+
     let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
+    let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
 
     if use_wayland {
         Rc::new(WaylandClient::new())
-    } else {
+    } else if use_x11 {
         Rc::new(X11Client::new())
+    } else {
+        Rc::new(HeadlessClient::new())
     }
 }
 // todo("windows")

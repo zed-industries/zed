@@ -759,8 +759,9 @@ impl Client {
         read_credentials_from_keychain(cx).await.is_some()
     }
 
-    pub fn set_dev_server_token(&self, token: DevServerToken) {
+    pub fn set_dev_server_token(&self, token: DevServerToken) -> &Self {
         self.state.write().credentials = Some(Credentials::DevServer { token });
+        self
     }
 
     #[async_recursion(?Send)]
