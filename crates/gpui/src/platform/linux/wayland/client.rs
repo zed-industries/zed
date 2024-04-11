@@ -437,7 +437,7 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
 
         match event {
             wl_callback::Event::Done { callback_data } => {
-                window.frame();
+                window.frame(true);
             }
             _ => {}
         }

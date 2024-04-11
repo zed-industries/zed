@@ -237,11 +237,12 @@ impl WaylandWindowStatePtr {
         Rc::ptr_eq(&self.state, &other.state)
     }
 
-    pub fn frame(&self) {
-        let state = self.state.borrow_mut();
-        state.surface.frame(&state.globals.qh, state.surface.id());
-        drop(state);
-
+    pub fn frame(&self, from_frame_callback: bool) {
+        if from_frame_callback {
+            let state = self.state.borrow_mut();
+            state.surface.frame(&state.globals.qh, state.surface.id());
+            drop(state);
+        }
         let mut cb = self.callbacks.borrow_mut();
         if let Some(fun) = cb.request_frame.as_mut() {
             fun();
@@ -254,7 +255,7 @@ impl WaylandWindowStatePtr {
                 let state = self.state.borrow();
                 state.xdg_surface.ack_configure(serial);
                 drop(state);
-                self.frame();
+                self.frame(false);
             }
             _ => {}
         }
