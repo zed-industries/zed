@@ -6,7 +6,7 @@ use gpui::{
     ScrollHandle, Task, View, ViewContext,
 };
 use rpc::proto::{self, CreateDevServerResponse, DevServerStatus};
-use ui::{prelude::*, Indicator, Tooltip};
+use ui::{prelude::*, Indicator, ModalHeader, ModalRow, SectionHeader, Tooltip};
 use util::ResultExt;
 use workspace::ModalView;
 
@@ -205,58 +205,88 @@ impl DevServerModal {
         let dev_server_id = dev_server.id;
         let status = dev_server.status;
 
-        v_flex()
-            .ml_5()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id(("status", dev_server.id.0))
-                            .relative()
-                            .child(Icon::new(IconName::Server))
-                            .child(div().absolute().bottom_0().left(rems_from_px(12.0)).child(
-                                Indicator::dot().color(match status {
-                                    DevServerStatus::Online => Color::Created,
-                                    DevServerStatus::Offline => Color::Deleted,
-                                }),
-                            ))
-                            .tooltip(move |cx| {
-                                Tooltip::text(
-                                    match status {
-                                        DevServerStatus::Online => "Online",
-                                        DevServerStatus::Offline => "Offline",
-                                    },
-                                    cx,
+        ModalRow::new().child(
+            v_flex()
+                .w_full()
+                .child(
+                    h_flex()
+                        .group("dev-server")
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .id(("status", dev_server.id.0))
+                                        .relative()
+                                        .child(Icon::new(IconName::Server))
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .bottom_0()
+                                                .left(rems_from_px(12.0))
+                                                .child(Indicator::dot().color(match status {
+                                                    DevServerStatus::Online => Color::Created,
+                                                    DevServerStatus::Offline => Color::Deleted,
+                                                })),
+                                        )
+                                        .tooltip(move |cx| {
+                                            Tooltip::text(
+                                                match status {
+                                                    DevServerStatus::Online => "Online",
+                                                    DevServerStatus::Offline => "Offline",
+                                                },
+                                                cx,
+                                            )
+                                        }),
                                 )
-                            }),
-                    )
-                    .child(dev_server.name.clone()),
-            )
-            .children(
-                channel_store
-                    .remote_projects_for_id(dev_server.channel_id)
-                    .iter()
-                    .filter_map(|remote_project| {
-                        if remote_project.dev_server_id == dev_server.id {
-                            Some(self.render_remote_project(remote_project, cx))
-                        } else {
-                            None
-                        }
-                    }),
-            )
-            .child(div().ml_8().child(
-                Button::new(("add-project", dev_server_id.0), "Add Project").on_click(cx.listener(
-                    move |this, _, cx| {
-                        this.mode = Mode::CreateRemoteProject(CreateRemoteProject {
-                            dev_server_id,
-                            creating: None,
-                            remote_project: None,
-                        });
-                        cx.notify();
-                    },
+                                .child(dev_server.name.clone()),
+                        )
+                        .child(
+                            h_flex()
+                                .visible_on_hover("dev-server")
+                                .gap_1()
+                                .child(
+                                    IconButton::new("edit-dev-server", IconName::Pencil)
+                                        .disabled(true) //TODO implement this on the collab side
+                                        .tooltip(|cx| {
+                                            Tooltip::text("Coming Soon - Edit dev server", cx)
+                                        }),
+                                )
+                                .child(
+                                    IconButton::new("remove-dev-server", IconName::Close)
+                                        .disabled(true) //TODO implement this on the collab side
+                                        .tooltip(|cx| {
+                                            Tooltip::text("Coming Soon - Remove dev server", cx)
+                                        }),
+                                ),
+                        ),
+                )
+                .children(
+                    channel_store
+                        .remote_projects_for_id(dev_server.channel_id)
+                        .iter()
+                        .filter_map(|remote_project| {
+                            if remote_project.dev_server_id == dev_server.id {
+                                Some(self.render_remote_project(remote_project, cx))
+                            } else {
+                                None
+                            }
+                        }),
+                )
+                .child(div().ml_8().child(
+                    Button::new(("add-project", dev_server_id.0), "Add Project").on_click(
+                        cx.listener(move |this, _, cx| {
+                            this.mode = Mode::CreateRemoteProject(CreateRemoteProject {
+                                dev_server_id,
+                                creating: None,
+                                remote_project: None,
+                            });
+                            cx.notify();
+                        }),
+                    ),
                 )),
-            ))
+        )
     }
 
     fn render_remote_project(
@@ -289,24 +319,20 @@ impl DevServerModal {
             .pt_0p5()
             .gap_px()
             .child(
-                v_flex()
-                    .py_0p5()
-                    .px_1()
-                    .child(div().px_1().py_0p5().child("Manage Remote Projects")),
-            )
-            .child(
-                h_flex()
-                    .py_0p5()
-                    .px_1()
-                    .child(div().px_1().py_0p5().child(
-                        IconButton::new("back", IconName::ArrowLeft).on_click(cx.listener(
-                            |this, _, cx| {
-                                this.mode = Mode::Default;
-                                cx.notify()
-                            },
-                        )),
-                    ))
-                    .child("Register Dev Server"),
+                v_flex().py_0p5().px_1().child(
+                    h_flex()
+                        .px_1()
+                        .py_0p5()
+                        .child(
+                            IconButton::new("back", IconName::ArrowLeft)
+                                .style(ButtonStyle::Transparent)
+                                .on_click(cx.listener(|this, _: &gpui::ClickEvent, cx| {
+                                    this.mode = Mode::Default;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(Headline::new("Register dev server")),
+                ),
             )
             .child(
                 h_flex()
@@ -377,6 +403,7 @@ impl DevServerModal {
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let channel_store = self.channel_store.read(cx);
         let dev_servers = channel_store.dev_servers_for_id(self.channel_id);
+        // let dev_servers = Vec::new();
 
         v_flex()
             .id("scroll-container")
@@ -387,28 +414,49 @@ impl DevServerModal {
             .pt_0p5()
             .gap_px()
             .child(
-                v_flex()
-                    .py_0p5()
-                    .px_1()
-                    .child(div().px_1().py_0p5().child("Manage Remote Projects")),
+                ModalHeader::new("Manage Remote Project")
+                    .child(Headline::new("Manage Remote Projects")),
             )
-            .children(
+            .child(
+                ModalRow::new().child(
+                    SectionHeader::new("Dev Servers").end_slot(
+                        Button::new("register-dev-server-button", "New Server")
+                            .tooltip(|cx| Tooltip::text("Register a new dev server", cx))
+                            .on_click(cx.listener(|this, _, cx| {
+                                this.mode = Mode::CreateDevServer(Default::default());
+                                this.dev_server_name_editor
+                                    .read(cx)
+                                    .focus_handle(cx)
+                                    .focus(cx);
+                                cx.notify();
+                            })),
+                    ),
+                ),
+            )
+            .children(if dev_servers.is_empty() {
+                vec![ModalRow::new()
+                    .child(
+                        v_flex()
+                            .child(Label::new("No dev servers registered").color(Color::Muted))
+                            .child(
+                                Button::new("register-dev-server-button", "Register dev server")
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.mode = Mode::CreateDevServer(Default::default());
+                                        this.dev_server_name_editor
+                                            .read(cx)
+                                            .focus_handle(cx)
+                                            .focus(cx);
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .into_any_element()]
+            } else {
                 dev_servers
                     .iter()
-                    .map(|dev_server| self.render_dev_server(dev_server, cx)),
-            )
-            .child(div().px_1().child(
-                Button::new("toggle-create-dev-server-button", "Register New Server...").on_click(
-                    cx.listener(|this, _, cx| {
-                        this.mode = Mode::CreateDevServer(Default::default());
-                        this.dev_server_name_editor
-                            .read(cx)
-                            .focus_handle(cx)
-                            .focus(cx);
-                        cx.notify();
-                    }),
-                ),
-            ))
+                    .map(|dev_server| self.render_dev_server(dev_server, cx).into_any_element())
+                    .collect()
+            })
     }
 
     fn render_create_project(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -430,10 +478,8 @@ impl DevServerModal {
             .pt_0p5()
             .gap_px()
             .child(
-                v_flex()
-                    .py_0p5()
-                    .px_1()
-                    .child(div().px_1().py_0p5().child("Manage Remote Projects")),
+                ModalHeader::new("Manage Remote Project")
+                    .child(Headline::new("Manage Remote Projects")),
             )
             .child(
                 h_flex()
@@ -553,9 +599,10 @@ impl Render for DevServerModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .track_focus(&self.focus_handle)
-            .elevation_2(cx)
+            .elevation_3(cx)
             .key_context("DevServerModal")
             .on_action(cx.listener(Self::cancel))
+            .pb_4()
             .w(rems(34.))
             .min_h(rems(20.))
             .max_h(rems(40.))
