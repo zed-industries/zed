@@ -3069,7 +3069,7 @@ impl Render for InlineBlameTooltip {
                 .on_mouse_move(|_, cx| cx.stop_propagation())
                 .child(
                     v_flex()
-                        .min_w_40()
+                        .w(gpui::rems(30.))
                         .gap_4()
                         .child(
                             h_flex()
