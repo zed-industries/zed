@@ -24,9 +24,9 @@ use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds,
-    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementContext, ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
+    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
+    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementContext,
+    ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
@@ -52,7 +52,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
-use theme::{ActiveTheme, PlayerColor};
+use theme::{ActiveTheme, PlayerColor, ThemeSettings};
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
 use url::Url;
@@ -2970,7 +2970,7 @@ fn render_inline_blame_entry(
     let commit_message = blame.read(cx).message_for_entry(&blame_entry);
 
     let tooltip = cx.new_view(|_| {
-        InlineBlameTooltip::new(blame_entry, permalink, commit_message, style, workspace)
+        BlameEntryTooltip::new(blame_entry, permalink, commit_message, style, workspace)
     });
 
     h_flex()
@@ -2998,7 +2998,7 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) 
     }
 }
 
-struct InlineBlameTooltip {
+struct BlameEntryTooltip {
     blame_entry: BlameEntry,
     permalink: Option<Url>,
     commit_message: Option<CommitMessage>,
@@ -3007,7 +3007,7 @@ struct InlineBlameTooltip {
     scroll_handle: ScrollHandle,
 }
 
-impl InlineBlameTooltip {
+impl BlameEntryTooltip {
     fn new(
         blame_entry: BlameEntry,
         permalink: Option<Url>,
@@ -3026,7 +3026,7 @@ impl InlineBlameTooltip {
     }
 }
 
-impl Render for InlineBlameTooltip {
+impl Render for BlameEntryTooltip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let author = self
             .blame_entry
@@ -3055,7 +3055,9 @@ impl Render for InlineBlameTooltip {
             })
             .unwrap_or("<no commit message>".into_any());
 
+        let settings = ThemeSettings::get_global(cx);
         let line_height = self.style.text.line_height_in_pixels(cx.rem_size());
+        let message_max_height = (line_height * 10.) + settings.buffer_font_size / 3.;
 
         tooltip_container(cx, move |this, cx| {
             this.occlude()
@@ -3084,7 +3086,7 @@ impl Render for InlineBlameTooltip {
                                 .id("inline-blame-commit-message")
                                 .occlude()
                                 .child(message)
-                                .max_h(line_height * 10.2)
+                                .max_h(message_max_height)
                                 .overflow_y_scroll()
                                 .track_scroll(&self.scroll_handle),
                         )
@@ -3153,7 +3155,7 @@ fn render_blame_entry(
     let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
 
     let tooltip = cx.new_view(|_| {
-        InlineBlameTooltip::new(
+        BlameEntryTooltip::new(
             blame_entry.clone(),
             permalink.clone(),
             commit_message,
