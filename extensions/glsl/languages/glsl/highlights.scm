@@ -57,6 +57,14 @@
 (number_literal) @number
 (char_literal) @number
 
+(identifier) @variable
+
+(field_identifier) @property
+(statement_identifier) @label
+(type_identifier) @type
+(primitive_type) @type
+(sized_type_specifier) @type
+
 (call_expression
   function: (identifier) @function)
 (call_expression
@@ -67,19 +75,10 @@
 (preproc_function_def
   name: (identifier) @function.special)
 
-(field_identifier) @property
-(statement_identifier) @label
-(type_identifier) @type
-(primitive_type) @type
-(sized_type_specifier) @type
-
 ((identifier) @constant
  (#match? @constant "^[A-Z][A-Z\\d_]*$"))
 
-(identifier) @variable
-
 (comment) @comment
-; inherits: c
 
 [
   "in"
