@@ -23,9 +23,9 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds,
     ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementContext, ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, InteractiveText,
-    IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString,
+    ElementContext, ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
     TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
 };
@@ -2970,12 +2970,12 @@ fn render_inline_blame_entry(
 
     let tooltip = cx.new_view(|_| {
         InlineBlameTooltip::new(
-            blame_entry.clone(),
-            permalink.clone(),
-            commit_message.clone(),
-            parsed_message.clone(),
+            blame_entry,
+            permalink,
+            commit_message,
+            parsed_message,
             style,
-            workspace.clone(),
+            workspace,
         )
     });
 
@@ -2988,7 +2988,7 @@ fn render_inline_blame_entry(
         .child(Icon::new(IconName::FileGit).color(Color::Hint))
         .child(text)
         .gap_2()
-        .tooltip(move |cx| tooltip.clone().into())
+        .tooltip(move |_| tooltip.clone().into())
         .into_any()
 }
 
@@ -3011,6 +3011,7 @@ struct InlineBlameTooltip {
     parsed_message: Option<ParsedMarkdown>,
     style: EditorStyle,
     workspace: Option<WeakView<Workspace>>,
+    scroll_handle: ScrollHandle,
 }
 
 impl InlineBlameTooltip {
@@ -3029,6 +3030,7 @@ impl InlineBlameTooltip {
             commit_message,
             parsed_message,
             workspace,
+            scroll_handle: ScrollHandle::new(),
         }
     }
 }
@@ -3086,7 +3088,15 @@ impl Render for InlineBlameTooltip {
                                 .border_b_1()
                                 .border_color(cx.theme().colors().border),
                         )
-                        .child(message)
+                        .child(
+                            message, // div()
+                                    //     .id("inline-blame-commit-message")
+                                    //     .occlude()
+                                    //     .child(message)
+                                    //     .max_h(gpui::rems(10.))
+                                    //     .overflow_y_scroll()
+                                    //     .track_scroll(&self.scroll_handle),
+                        )
                         .child(
                             h_flex()
                                 .text_color(cx.theme().colors().text_muted)
