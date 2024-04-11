@@ -19,7 +19,7 @@ pub struct DevServerModal {
     remote_project_name_editor: View<Editor>,
     remote_project_path_editor: View<Editor>,
     dev_server_name_editor: View<Editor>,
-    _subscription: gpui::Subscription,
+    _subscriptions: [gpui::Subscription; 2],
 }
 
 #[derive(Default)]
@@ -54,20 +54,25 @@ impl DevServerModal {
             editor
         });
 
-        let subscription = cx.observe(&channel_store, |_, _, cx| {
-            cx.notify();
-        });
+        let focus_handle = cx.focus_handle();
+
+        let subscriptions = [
+            cx.observe(&channel_store, |_, _, cx| {
+                cx.notify();
+            }),
+            cx.on_focus_out(&focus_handle, |_, cx| { /* cx.emit(DismissEvent) */ }),
+        ];
 
         Self {
             mode: Mode::Default,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             scroll_handle: ScrollHandle::new(),
             channel_store,
             channel_id,
             remote_project_name_editor: name_editor,
             remote_project_path_editor: path_editor,
             dev_server_name_editor,
-            _subscription: subscription,
+            _subscriptions: subscriptions,
         }
     }
 
