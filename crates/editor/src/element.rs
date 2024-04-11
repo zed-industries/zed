@@ -1094,6 +1094,7 @@ impl EditorElement {
 
     fn layout_inline_blame(
         &self,
+        start_row: u32,
         row: u32,
         line_layouts: &[LineWithInvisibles],
         em_width: Pixels,
@@ -1107,15 +1108,16 @@ impl EditorElement {
             .update(cx, |blame, cx| blame.blame_for_rows([Some(row)], cx).next())
             .flatten()?;
 
-        let mut element = render_inline_blame_entry(blame_entry, &self.style.text, cx);
+        let mut element = render_inline_blame_entry(&blame, blame_entry, &self.style.text, cx);
 
         let start_y =
             content_origin.y + line_height * (row as f32 - scroll_pixel_position.y / line_height);
 
         let start_x = {
-            let line_layout = &line_layouts[row as usize];
+            let line_layout = &line_layouts[(row - start_row) as usize];
             let line_width = line_layout.line.width;
 
+            // TODO: define the padding as a constant
             content_origin.x + line_width + (em_width * 6.)
         };
 
@@ -2295,10 +2297,7 @@ impl EditorElement {
                 self.paint_lines(&invisible_display_ranges, layout, cx);
                 self.paint_redactions(layout, cx);
                 self.paint_cursors(layout, cx);
-
-                cx.with_element_id(Some("inline-blame"), |cx| {
-                    self.paint_inline_blame(layout, cx)
-                });
+                self.paint_inline_blame(layout, cx);
             },
         )
     }
@@ -2946,19 +2945,12 @@ impl EditorElement {
 }
 
 fn render_inline_blame_entry(
+    blame: &gpui::Model<GitBlame>,
     blame_entry: BlameEntry,
     text_style: &TextStyle,
     cx: &mut ElementContext<'_>,
 ) -> AnyElement {
-    let relative_timestamp = match blame_entry.author_offset_date_time() {
-        Ok(timestamp) => time_format::format_localized_timestamp(
-            timestamp,
-            time::OffsetDateTime::now_utc(),
-            cx.local_timezone(),
-            time_format::TimestampFormat::Relative,
-        ),
-        Err(_) => "Error parsing date".to_string(),
-    };
+    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
 
     let author = blame_entry.author.as_deref().unwrap_or_default();
     let text = format!("{}, {}", author, relative_timestamp);
@@ -2972,7 +2964,70 @@ fn render_inline_blame_entry(
         .child(Icon::new(IconName::FileGit).color(Color::Hint))
         .child(text)
         .gap_2()
+        .tooltip(move |cx| InlineBlameTooltip::new(blame_entry.clone(), cx))
         .into_any()
+}
+
+fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) -> String {
+    match blame_entry.author_offset_date_time() {
+        Ok(timestamp) => time_format::format_localized_timestamp(
+            timestamp,
+            time::OffsetDateTime::now_utc(),
+            cx.local_timezone(),
+            time_format::TimestampFormat::Relative,
+        ),
+        Err(_) => "Error parsing date".to_string(),
+    }
+}
+
+struct InlineBlameTooltip {
+    blame_entry: BlameEntry,
+}
+
+impl InlineBlameTooltip {
+    fn new(blame_entry: BlameEntry, cx: &mut WindowContext) -> AnyView {
+        cx.new_view(|_cx| Self { blame_entry }).into()
+    }
+}
+
+impl Render for InlineBlameTooltip {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let author = self
+            .blame_entry
+            .author
+            .clone()
+            .unwrap_or("<no name>".to_string());
+
+        let pretty_commit_id = format!("{}", self.blame_entry.sha);
+        let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+        let relative_timestamp = blame_entry_relative_timestamp(&self.blame_entry, cx);
+
+        let permalink = Some("https://example.com/TODO".to_string());
+        tooltip_container(cx, move |this, cx| {
+            this.occlude()
+                .on_mouse_move(|_, cx| cx.stop_propagation())
+                .child(
+                    v_flex().child(author).child(
+                        h_flex().gap_2().child(relative_timestamp).child(
+                            div()
+                                .id(SharedString::from(short_commit_id.clone()))
+                                .child(short_commit_id.clone())
+                                .when_some(permalink, |this, url| {
+                                    let url = url.clone();
+                                    this.cursor_pointer()
+                                        .on_mouse_down(MouseButton::Left, |_, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .on_click(move |_, cx| {
+                                            cx.stop_propagation();
+                                            cx.open_url(url.as_str())
+                                        })
+                                }),
+                        ),
+                    ),
+                )
+        })
+    }
 }
 
 fn render_blame_entry(
@@ -2999,15 +3054,7 @@ fn render_blame_entry(
     };
     last_used_color.replace((sha_color, blame_entry.sha));
 
-    let relative_timestamp = match blame_entry.author_offset_date_time() {
-        Ok(timestamp) => time_format::format_localized_timestamp(
-            timestamp,
-            time::OffsetDateTime::now_utc(),
-            cx.local_timezone(),
-            time_format::TimestampFormat::Relative,
-        ),
-        Err(_) => "Error parsing date".to_string(),
-    };
+    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
 
     let pretty_commit_id = format!("{}", blame_entry.sha);
     let short_commit_id = pretty_commit_id.clone().chars().take(6).collect::<String>();
@@ -3604,6 +3651,7 @@ impl Element for EditorElement {
                 if let Some(newest_selection_head) = newest_selection_head {
                     if (start_row..end_row).contains(&newest_selection_head.row()) {
                         inline_blame = self.layout_inline_blame(
+                            start_row,
                             newest_selection_head.row(),
                             &line_layouts,
                             em_width,
