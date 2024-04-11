@@ -3054,7 +3054,9 @@ impl Render for InlineBlameTooltip {
                 )
                 .into_any()
             })
-            .unwrap_or("no commit message".into_any());
+            .unwrap_or("<no commit message>".into_any());
+
+        let line_height = self.style.text.line_height_in_pixels(cx.rem_size());
 
         tooltip_container(cx, move |this, cx| {
             this.occlude()
@@ -3079,13 +3081,13 @@ impl Render for InlineBlameTooltip {
                                 .border_color(cx.theme().colors().border),
                         )
                         .child(
-                            message, // div()
-                                    //     .id("inline-blame-commit-message")
-                                    //     .occlude()
-                                    //     .child(message)
-                                    //     .max_h(gpui::rems(10.))
-                                    //     .overflow_y_scroll()
-                                    //     .track_scroll(&self.scroll_handle),
+                            div()
+                                .id("inline-blame-commit-message")
+                                .occlude()
+                                .child(message)
+                                .max_h(line_height * 10.2)
+                                .overflow_y_scroll()
+                                .track_scroll(&self.scroll_handle),
                         )
                         .child(
                             h_flex()
