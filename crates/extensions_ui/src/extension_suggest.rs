@@ -39,6 +39,8 @@ fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
             ("git-firefly", "TAG_EDITMSG"),
             ("git-firefly", "git-rebase-todo"),
             ("gleam", "gleam"),
+            ("glsl", "vert"),
+            ("glsl", "frag"),
             ("graphql", "gql"),
             ("graphql", "graphql"),
             ("haskell", "hs"),
