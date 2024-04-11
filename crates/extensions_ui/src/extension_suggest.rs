@@ -53,6 +53,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("purescript", &["purs"]),
     ("r", &["r", "R"]),
     ("sql", &["sql"]),
+    ("scheme", &["scm"]),
     ("svelte", &["svelte"]),
     ("swift", &["swift"]),
     ("templ", &["templ"]),

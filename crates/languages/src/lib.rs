@@ -81,7 +81,6 @@ pub fn init(
         ("regex", tree_sitter_regex::language()),
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
-        ("scheme", tree_sitter_scheme::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
         ("vue", tree_sitter_vue::language()),
@@ -274,7 +273,6 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ]
     );
-    language!("scheme");
     language!("racket");
     language!("regex");
     language!(
