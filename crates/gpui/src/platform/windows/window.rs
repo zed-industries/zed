@@ -82,21 +82,16 @@ impl WindowsWindowState {
         let click_state = ClickState::new();
         let fullscreen = None;
 
-        let fullscreen_restore_origin;
-        let fullscreen_restore_size;
-        if let Some(bounds) = fullscreen_restore_bounds {
-            fullscreen_restore_origin = Cell::new(bounds.origin);
-            fullscreen_restore_size = Cell::new(bounds.size);
+        let fullscreen_restore_bounds = if let Some(bounds) = fullscreen_restore_bounds {
+            Cell::new(bounds)
         } else {
-            fullscreen_restore_origin = Cell::new(Point::default());
-            fullscreen_restore_size = Cell::new(Size::default());
-        }
+            Cell::new(Bounds::default())
+        };
 
         Self {
             origin,
             physical_size,
-            fullscreen_restore_origin,
-            fullscreen_restore_size,
+            fullscreen_restore_bounds,
             scale_factor,
             callbacks,
             input_handler,
@@ -144,10 +139,7 @@ impl WindowsWindowState {
         };
 
         if self.is_fullscreen() {
-            WindowOpenStatus::FullScreen(Bounds {
-                origin: self.fullscreen_restore_origin.get(),
-                size: self.fullscreen_restore_size.get(),
-            })
+            WindowOpenStatus::FullScreen(self.fullscreen_restore_bounds.get())
         } else if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
             WindowOpenStatus::Maximized(bounds)
         } else {
