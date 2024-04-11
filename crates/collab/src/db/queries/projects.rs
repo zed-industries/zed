@@ -1087,7 +1087,7 @@ impl Database {
             }
 
             if connection_ids.contains(&connection_id)
-                && Some(connection_id) != project.host_connection().ok()
+                || Some(connection_id) == project.host_connection().ok()
             {
                 Ok(connection_ids)
             } else {
