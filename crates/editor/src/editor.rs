@@ -1091,9 +1091,7 @@ impl CompletionsMenu {
         let completions = self.completions.read();
         matches.sort_unstable_by_key(|mat| {
             let completion = &completions[mat.candidate_id];
-            let sort_key = completion.sort_key();
             let sort_text = completion.lsp_completion.sort_text.as_deref();
-            let score = Reverse(OrderedFloat(mat.score));
             let equals = Reverse(
                 query
                     .as_ref()
@@ -1110,16 +1108,15 @@ impl CompletionsMenu {
                     .chars()
                     .skip(matching_index)
                     .zip(query.unwrap().chars())
-                    .position(|(mat_char, query_char)| mat_char != query_char)
-                    .unwrap_or(query.unwrap().len()),
+                    .filter(|(mat, query)| mat == query)
+                    .count(),
             });
             (
                 equals,
+                Reverse(matching_index != usize::MAX),
+                sort_text,
                 matching_index,
                 matching_case_count,
-                sort_text,
-                score,
-                sort_key,
             )
         });
 
