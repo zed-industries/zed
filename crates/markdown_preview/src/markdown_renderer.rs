@@ -196,10 +196,7 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
                         ime_key: None,
                     };
                     Tooltip::text(
-                        format!(
-                            "{}-click to toggle the checkbox",
-                            secondary_modifier.to_string()
-                        ),
+                        format!("{}-click to toggle the checkbox", secondary_modifier),
                         cx,
                     )
                 })
