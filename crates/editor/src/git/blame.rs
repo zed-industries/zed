@@ -370,6 +370,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_blame_errors_are_reported(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/my-repo",
+            json!({
+                ".git": {},
+                "file.txt": r#"
+                    irrelevant contents
+                "#
+                .unindent()
+            }),
+        )
+        .await;
+
+        // Creating a GitBlame without a corresponding blame state
+        // will result in an error.
+
+        let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/my-repo/file.txt", cx)
+            })
+            .await
+            .unwrap();
+
+        let blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), cx));
+
+        let event = project.next_event(cx);
+
+        let project::Event::Notification(message) = event else {
+            panic!("Expected Notification, received {event:?}");
+        };
+
+        assert_eq!(
+            message.as_str(),
+            // we want the notification to be from the git blame
+            "failed to get blame for \"file.txt\""
+        );
+        drop(blame); // the blame has to live long enough
+    }
+
+    #[gpui::test]
     async fn test_blame_for_rows(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
