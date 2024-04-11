@@ -785,29 +785,15 @@ impl Workspace {
                         .await;
                     this.update(&mut cx, |this, cx| {
                         if let Some(display) = cx.display() {
-                            let window_bounds = cx.window_bounds();
-                            let fullscreen = cx.is_fullscreen();
-
                             if let Some(display_uuid) = display.uuid().log_err() {
-                                // Only update the window bounds when not full screen,
-                                // so we can remember the last non-fullscreen bounds
-                                // across restarts
-                                if fullscreen {
-                                    cx.background_executor()
-                                        .spawn(DB.set_fullscreen(workspace_id, true))
-                                        .detach_and_log_err(cx);
-                                } else if !cx.is_minimized() {
-                                    cx.background_executor()
-                                        .spawn(DB.set_fullscreen(workspace_id, false))
-                                        .detach_and_log_err(cx);
-                                    cx.background_executor()
-                                        .spawn(DB.set_window_bounds(
-                                            workspace_id,
-                                            SerializedWindowsBounds(window_bounds),
-                                            display_uuid,
-                                        ))
-                                        .detach_and_log_err(cx);
-                                }
+                                let restore_bounds = cx.restore_status();
+                                cx.background_executor()
+                                    .spawn(DB.set_window_open_status(
+                                        workspace_id,
+                                        SerializedWindowOpenStatus(restore_bounds),
+                                        display_uuid,
+                                    ))
+                                    .detach_and_log_err(cx);
                             }
                         }
                         this.bounds_save_task_queued.take();
