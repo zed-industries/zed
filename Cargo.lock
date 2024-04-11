@@ -5443,7 +5443,6 @@ dependencies = [
  "tree-sitter-ocaml",
  "tree-sitter-proto",
  "tree-sitter-python",
- "tree-sitter-racket",
  "tree-sitter-regex",
  "tree-sitter-ruby",
  "tree-sitter-rust",
@@ -10473,15 +10472,6 @@ name = "tree-sitter-python"
 version = "0.20.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6c93b1b1fbd0d399db3445f51fd3058e43d0b4dcff62ddbdb46e66550978aa5"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-racket"
-version = "0.0.1"
-source = "git+https://github.com/zed-industries/tree-sitter-racket?rev=eb010cf2c674c6fd9a6316a84e28ef90190fe51a#eb010cf2c674c6fd9a6316a84e28ef90190fe51a"
 dependencies = [
  "cc",
  "tree-sitter",

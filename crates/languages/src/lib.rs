@@ -77,7 +77,6 @@ pub fn init(
         ),
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
-        ("racket", tree_sitter_racket::language()),
         ("regex", tree_sitter_regex::language()),
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
@@ -273,7 +272,6 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ]
     );
-    language!("racket");
     language!("regex");
     language!(
         "yaml",
