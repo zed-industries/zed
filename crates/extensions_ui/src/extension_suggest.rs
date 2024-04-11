@@ -50,6 +50,7 @@ fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
             ("java", "java"),
             ("kotlin", "kt"),
             ("latex", "tex"),
+            ("lua", "lua"),
             ("make", "Makefile"),
             ("nix", "nix"),
             ("php", "php"),

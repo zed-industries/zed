@@ -110,6 +110,7 @@ members = [
     "extensions/gleam",
     "extensions/haskell",
     "extensions/html",
+    "extensions/lua",
     "extensions/php",
     "extensions/prisma",
     "extensions/purescript",
@@ -323,7 +324,6 @@ tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex
 tree-sitter-html = "0.19.0"
 tree-sitter-jsdoc = { git = "https://github.com/tree-sitter/tree-sitter-jsdoc", ref = "6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55" }
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
-tree-sitter-lua = "0.0.14"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
 tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "7dd29f9616822e5fc259f5b4ae6c4ded9a71a132" }

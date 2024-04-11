@@ -49,7 +49,6 @@ tree-sitter-hcl.workspace = true
 tree-sitter-heex.workspace = true
 tree-sitter-jsdoc.workspace = true
 tree-sitter-json.workspace = true
-tree-sitter-lua.workspace = true
 tree-sitter-markdown.workspace = true
 tree-sitter-nix.workspace = true
 tree-sitter-nu.workspace = true
