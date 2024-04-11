@@ -82,7 +82,6 @@
 
 (getter_signature
  (identifier) @function.method)
-
 (setter_signature
  name: (identifier) @function.method)
 (enum_declaration
@@ -110,6 +109,9 @@
  (#match? @type "^_?[A-Z].*[a-z]"))
 
 ("Function" @type)
+
+(const_builtin) @constant.builtin
+(final_builtin) @constant.builtin
 
 ; properties
 (unconditional_assignable_selector
@@ -180,6 +182,7 @@
  "is"
  "new"
  "super"
+ "this"
  "with"
  ] @keyword
 
@@ -210,17 +213,14 @@
 ] @keyword.coroutine
 
 [
- (const_builtin)
- (final_builtin)
  "abstract"
-  "covariant"
+ "covariant"
  "dynamic"
  "external"
  "static"
- "final"
-  "base"
-  "sealed"
- ] @type.qualifier
+ "base"
+ "sealed"
+] @type.qualifier
 
 ; when used as an identifier:
 ((identifier) @variable.builtin
