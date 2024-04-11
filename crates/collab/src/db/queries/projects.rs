@@ -1,3 +1,5 @@
+use util::ResultExt;
+
 use super::*;
 
 impl Database {
@@ -1061,12 +1063,21 @@ impl Database {
         connection_id: ConnectionId,
     ) -> Result<TransactionGuard<HashSet<ConnectionId>>> {
         self.project_transaction(project_id, |tx| async move {
+            let project = project::Entity::find_by_id(project_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+
             let mut collaborators = project_collaborator::Entity::find()
                 .filter(project_collaborator::Column::ProjectId.eq(project_id))
                 .stream(&*tx)
                 .await?;
 
             let mut connection_ids = HashSet::default();
+            if let Some(host_connection) = project.host_connection().log_err() {
+                connection_ids.insert(host_connection);
+            }
+
             while let Some(collaborator) = collaborators.next().await {
                 let collaborator = collaborator?;
                 connection_ids.insert(collaborator.connection());
