@@ -408,7 +408,7 @@ mod tests {
         assert_eq!(
             message.as_str(),
             // we want the notification to be from the git blame
-            "failed to get blame for \"file.txt\""
+            "Failed to blame \"file.txt\": failed to get blame for \"file.txt\""
         );
         drop(blame); // the blame has to live long enough
     }
