@@ -2548,7 +2548,7 @@ async fn update_language_server(
     let project_connection_ids = session
         .db()
         .await
-        .project_connection_ids(project_id, session.connection_id)
+        .project_connection_ids(project_id, session.connection_id, true)
         .await?;
     broadcast(
         Some(session.connection_id),
@@ -2694,7 +2694,7 @@ async fn broadcast_project_message_from_host<T: EntityMessage<Entity = ShareProj
     let project_connection_ids = session
         .db()
         .await
-        .project_connection_ids(project_id, session.connection_id)
+        .project_connection_ids(project_id, session.connection_id, false)
         .await?;
 
     broadcast(
@@ -2787,7 +2787,7 @@ async fn update_followers(request: proto::UpdateFollowers, session: UserSession)
     let connection_ids = if let Some(project_id) = request.project_id {
         let project_id = ProjectId::from_proto(project_id);
         database
-            .project_connection_ids(project_id, session.connection_id)
+            .project_connection_ids(project_id, session.connection_id, true)
             .await?
     } else {
         database

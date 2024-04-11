@@ -1061,6 +1061,7 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection_id: ConnectionId,
+        exclude_dev_server: bool,
     ) -> Result<TransactionGuard<HashSet<ConnectionId>>> {
         self.project_transaction(project_id, |tx| async move {
             let project = project::Entity::find_by_id(project_id)
@@ -1075,7 +1076,9 @@ impl Database {
 
             let mut connection_ids = HashSet::default();
             if let Some(host_connection) = project.host_connection().log_err() {
-                connection_ids.insert(host_connection);
+                if !exclude_dev_server {
+                    connection_ids.insert(host_connection);
+                }
             }
 
             while let Some(collaborator) = collaborators.next().await {
@@ -1083,10 +1086,14 @@ impl Database {
                 connection_ids.insert(collaborator.connection());
             }
 
-            if connection_ids.contains(&connection_id) {
+            if connection_ids.contains(&connection_id)
+                && Some(connection_id) != project.host_connection().ok()
+            {
                 Ok(connection_ids)
             } else {
-                Err(anyhow!("no such project"))?
+                Err(anyhow!(
+                    "can only send project updates to a project you're in"
+                ))?
             }
         })
         .await

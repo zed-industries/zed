@@ -86,7 +86,72 @@ fn fail_to_launch(e: anyhow::Error) {
     })
 }
 
-fn main() {
+fn init_headless(dev_server_token: DevServerToken) {
+    if let Err(e) = init_paths() {
+        log::error!("Failed to launch: {}", e);
+        return;
+    }
+    init_logger();
+
+    App::new().run(|cx| {
+        release_channel::init(env!("CARGO_PKG_VERSION"), cx);
+        if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
+            AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
+        }
+
+        let mut store = SettingsStore::default();
+        store
+            .set_default_settings(default_settings().as_ref(), cx)
+            .unwrap();
+        cx.set_global(store);
+
+        client::init_settings(cx);
+
+        let clock = Arc::new(clock::RealSystemClock);
+        let http = Arc::new(HttpClientWithUrl::new(
+            &client::ClientSettings::get_global(cx).server_url,
+        ));
+
+        let client = client::Client::new(clock, http.clone(), cx);
+        let client = client.clone();
+        client.set_dev_server_token(dev_server_token);
+
+        project::Project::init(&client, cx);
+        client::init(&client, cx);
+
+        let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
+            cx.path_for_auxiliary_executable("git")
+                .context("could not find git binary path")
+                .log_err()
+        } else {
+            None
+        };
+        let fs = Arc::new(RealFs::new(git_binary_path));
+
+        let mut languages =
+            LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
+        languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
+        let languages = Arc::new(languages);
+        let node_runtime = RealNodeRuntime::new(http.clone());
+
+        language::init(cx);
+        languages::init(languages.clone(), node_runtime.clone(), cx);
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+
+        headless::init(
+            client.clone(),
+            headless::AppState {
+                languages: languages.clone(),
+                user_store: user_store.clone(),
+                fs: fs.clone(),
+                node_runtime: node_runtime.clone(),
+            },
+            cx,
+        );
+    })
+}
+
+fn init_ui() {
     menu::init();
     zed_actions::init();
 
@@ -267,7 +332,6 @@ fn main() {
             .to_string(),
         );
         telemetry.flush_events();
-
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
             client: client.clone(),
@@ -317,70 +381,63 @@ fn main() {
 
         cx.activate(true);
 
-        let mut args = Args::parse();
+        let args = Args::parse();
         let mut triggered_authentication = false;
-        if let Some(dev_server_token) = args.dev_server_token.take() {
-            let dev_server_token = DevServerToken(dev_server_token);
-            let client = client.clone();
-            client.set_dev_server_token(dev_server_token);
+        let urls: Vec<_> = args
+            .paths_or_urls
+            .iter()
+            .filter_map(|arg| parse_url_arg(arg, cx).log_err())
+            .collect();
 
-            headless::init(
-                client.clone(),
-                headless::AppState {
-                    languages: languages.clone(),
-                    user_store: user_store.clone(),
-                    fs: fs.clone(),
-                    node_runtime: node_runtime.clone(),
-                },
-                cx,
-            );
-        } else {
-            let urls: Vec<_> = args
-                .paths_or_urls
-                .iter()
-                .filter_map(|arg| parse_url_arg(arg, cx).log_err())
-                .collect();
+        if !urls.is_empty() {
+            listener.open_urls(urls)
+        }
 
-            if !urls.is_empty() {
-                listener.open_urls(urls)
+        match open_rx
+            .try_next()
+            .ok()
+            .flatten()
+            .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
+        {
+            Some(request) => {
+                triggered_authentication = handle_open_request(request, app_state.clone(), cx)
             }
+            None => cx
+                .spawn({
+                    let app_state = app_state.clone();
+                    |cx| async move { restore_or_create_workspace(app_state, cx).await }
+                })
+                .detach(),
+        }
 
-            match open_rx
-                .try_next()
-                .ok()
-                .flatten()
-                .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
-            {
-                Some(request) => {
-                    triggered_authentication = handle_open_request(request, app_state.clone(), cx)
-                }
-                None => cx
-                    .spawn({
-                        let app_state = app_state.clone();
-                        |cx| async move { restore_or_create_workspace(app_state, cx).await }
-                    })
-                    .detach(),
+        let app_state = app_state.clone();
+        cx.spawn(move |cx| async move {
+            while let Some(urls) = open_rx.next().await {
+                cx.update(|cx| {
+                    if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
+                        handle_open_request(request, app_state.clone(), cx);
+                    }
+                })
+                .ok();
             }
+        })
+        .detach();
 
-            let app_state = app_state.clone();
-            cx.spawn(move |cx| async move {
-                while let Some(urls) = open_rx.next().await {
-                    cx.update(|cx| {
-                        if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
-                            handle_open_request(request, app_state.clone(), cx);
-                        }
-                    })
-                    .ok();
-                }
-            })
-            .detach();
-
-            if !triggered_authentication {
-                cx.spawn(|cx| async move { authenticate(client, &cx).await })
-                    .detach_and_log_err(cx);
-            }
+        if !triggered_authentication {
+            cx.spawn(|cx| async move { authenticate(client, &cx).await })
+                .detach_and_log_err(cx);
         }
     });
+}
+
+fn main() {
+    let mut args = Args::parse();
+    if let Some(dev_server_token) = args.dev_server_token.take() {
+        let dev_server_token = DevServerToken(dev_server_token);
+        init_headless(dev_server_token)
+    } else {
+        init_ui()
+    }
 }
 
 fn handle_open_request(
