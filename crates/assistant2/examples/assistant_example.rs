@@ -16,7 +16,7 @@ fn main() {
         Assets.load_fonts(cx).unwrap();
         KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
         client::init_settings(cx);
-        release_channel::init("0.0.0", cx);
+        release_channel::init("0.130.0", cx);
 
         let client = Client::production(cx);
         {

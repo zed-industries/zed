@@ -84,7 +84,7 @@ impl AssistantChat {
         // Detect which message is focused and send the ones above it
         //
         let completion = CompletionProvider::get(cx).complete(
-            "openai/gpt-4-turbo-preview".to_string(),
+            "gpt-4-turbo-preview".to_string(),
             self.messages(cx),
             Vec::new(),
             1.0,
