@@ -23,14 +23,14 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds,
     ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementContext, ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
-    StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
-    ViewContext, WindowContext,
+    ElementContext, ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, InteractiveText,
+    IntoElement, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
+    TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use language::language_settings::ShowWhitespaceSetting;
+use language::{language_settings::ShowWhitespaceSetting, ParsedMarkdown};
 use lsp::DiagnosticSeverity;
 use multi_buffer::Anchor;
 use project::{
@@ -54,7 +54,7 @@ use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
 use url::Url;
 use util::ResultExt;
-use workspace::item::Item;
+use workspace::{item::Item, Workspace};
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -1105,11 +1105,18 @@ impl EditorElement {
         cx: &mut ElementContext,
     ) -> Option<AnyElement> {
         let blame = self.editor.read(cx).blame.clone()?;
+        let workspace = self
+            .editor
+            .read(cx)
+            .workspace
+            .as_ref()
+            .map(|(w, _)| w.clone());
         let blame_entry = blame
             .update(cx, |blame, cx| blame.blame_for_rows([Some(row)], cx).next())
             .flatten()?;
 
-        let mut element = render_inline_blame_entry(&blame, blame_entry, &self.style.text, cx);
+        let mut element =
+            render_inline_blame_entry(&blame, blame_entry, &self.style, workspace, cx);
 
         let start_y =
             content_origin.y + line_height * (row as f32 - scroll_pixel_position.y / line_height);
@@ -2948,7 +2955,8 @@ impl EditorElement {
 fn render_inline_blame_entry(
     blame: &gpui::Model<GitBlame>,
     blame_entry: BlameEntry,
-    text_style: &TextStyle,
+    style: &EditorStyle,
+    workspace: Option<WeakView<Workspace>>,
     cx: &mut ElementContext<'_>,
 ) -> AnyElement {
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
@@ -2958,24 +2966,29 @@ fn render_inline_blame_entry(
 
     let permalink = blame.read(cx).permalink_for_entry(&blame_entry);
     let commit_message = blame.read(cx).message_for_entry(&blame_entry);
+    let parsed_message = blame.read(cx).parsed_message_for_entry(&blame_entry);
+
+    let tooltip = cx.new_view(|_| {
+        InlineBlameTooltip::new(
+            blame_entry.clone(),
+            permalink.clone(),
+            commit_message.clone(),
+            parsed_message.clone(),
+            style,
+            workspace.clone(),
+        )
+    });
 
     h_flex()
         .id("inline-blame")
         .w_full()
-        .font(text_style.font().family)
+        .font(style.text.font().family)
         .text_color(cx.theme().status().hint)
-        .line_height(text_style.line_height)
+        .line_height(style.text.line_height)
         .child(Icon::new(IconName::FileGit).color(Color::Hint))
         .child(text)
         .gap_2()
-        .tooltip(move |cx| {
-            InlineBlameTooltip::new(
-                blame_entry.clone(),
-                permalink.clone(),
-                commit_message.clone(),
-                cx,
-            )
-        })
+        .tooltip(move |cx| tooltip.clone().into())
         .into_any()
 }
 
@@ -2995,6 +3008,9 @@ struct InlineBlameTooltip {
     blame_entry: BlameEntry,
     permalink: Option<Url>,
     commit_message: Option<String>,
+    parsed_message: Option<ParsedMarkdown>,
+    style: EditorStyle,
+    workspace: Option<WeakView<Workspace>>,
 }
 
 impl InlineBlameTooltip {
@@ -3002,14 +3018,18 @@ impl InlineBlameTooltip {
         blame_entry: BlameEntry,
         permalink: Option<Url>,
         commit_message: Option<String>,
-        cx: &mut WindowContext,
-    ) -> AnyView {
-        cx.new_view(|_cx| Self {
+        parsed_message: Option<ParsedMarkdown>,
+        style: &EditorStyle,
+        workspace: Option<WeakView<Workspace>>,
+    ) -> Self {
+        Self {
+            style: style.clone(),
             blame_entry,
             permalink,
             commit_message,
-        })
-        .into()
+            parsed_message,
+            workspace,
+        }
     }
 }
 
@@ -3027,9 +3047,21 @@ impl Render for InlineBlameTooltip {
         let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
         let relative_timestamp = blame_entry_relative_timestamp(&self.blame_entry, cx);
 
-        let message = match &self.commit_message {
-            Some(message) => util::truncate_lines_and_trailoff(message, 15),
-            None => self.blame_entry.summary.clone().unwrap_or_default(),
+        let message = if let Some(parsed_message) = &self.parsed_message {
+            crate::render_parsed_markdown(
+                "blame-message",
+                &parsed_message,
+                &self.style,
+                self.workspace.clone(),
+                cx,
+            )
+            .into_any()
+        } else {
+            match &self.commit_message {
+                Some(message) => util::truncate_lines_and_trailoff(message, 15),
+                None => self.blame_entry.summary.clone().unwrap_or_default(),
+            }
+            .into_any_element()
         };
 
         tooltip_container(cx, move |this, cx| {

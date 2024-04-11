@@ -155,7 +155,7 @@ pub fn render_parsed_markdown(
     parsed: &language::ParsedMarkdown,
     editor_style: &EditorStyle,
     workspace: Option<WeakView<Workspace>>,
-    cx: &mut ViewContext<Editor>,
+    cx: &mut WindowContext,
 ) -> InteractiveText {
     let code_span_background_color = cx
         .theme()

@@ -5,7 +5,7 @@ use git::{
     Oid,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
-use language::{Bias, Buffer, BufferSnapshot, Edit};
+use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, ParsedMarkdown};
 use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
@@ -44,12 +44,15 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
     }
 }
 
+pub struct CommitMessage {}
+
 pub struct GitBlame {
     project: Model<Project>,
     buffer: Model<Buffer>,
     entries: SumTree<GitBlameEntry>,
     permalinks: HashMap<Oid, Url>,
     messages: HashMap<Oid, String>,
+    parsed_messages: HashMap<Oid, ParsedMarkdown>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
@@ -104,6 +107,7 @@ impl GitBlame {
             buffer_edits,
             permalinks: HashMap::default(),
             messages: HashMap::default(),
+            parsed_messages: HashMap::default(),
             task: Task::ready(Ok(())),
             generated: false,
             _refresh_subscription: refresh_subscription,
@@ -122,6 +126,10 @@ impl GitBlame {
 
     pub fn message_for_entry(&self, entry: &BlameEntry) -> Option<String> {
         self.messages.get(&entry.sha).cloned()
+    }
+
+    pub fn parsed_message_for_entry(&self, entry: &BlameEntry) -> Option<ParsedMarkdown> {
+        self.parsed_messages.get(&entry.sha).cloned()
     }
 
     pub fn blame_for_rows<'a>(
@@ -254,6 +262,7 @@ impl GitBlame {
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
+        let language_registry = self.project.read(cx).languages().clone();
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx
@@ -301,18 +310,42 @@ impl GitBlame {
                             );
                         }
 
-                        anyhow::Ok((entries, permalinks, messages))
+                        let mut parsed_messages = HashMap::default();
+                        for (oid, message) in messages.iter() {
+                            let mut parsed = ParsedMarkdown {
+                                text: String::new(),
+                                highlights: Vec::new(),
+                                regions: Vec::new(),
+                                region_ranges: Vec::new(),
+                            };
+
+                            markdown::parse_markdown_block(
+                                message,
+                                &language_registry,
+                                None,
+                                &mut parsed.text,
+                                &mut parsed.highlights,
+                                &mut parsed.region_ranges,
+                                &mut parsed.regions,
+                            )
+                            .await;
+
+                            parsed_messages.insert(*oid, parsed);
+                        }
+
+                        anyhow::Ok((entries, permalinks, messages, parsed_messages))
                     }
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| match result {
-                Ok((entries, permalinks, messages)) => {
+                Ok((entries, permalinks, messages, parsed_messages)) => {
                     this.buffer_edits = buffer_edits;
                     this.buffer_snapshot = snapshot;
                     this.entries = entries;
                     this.permalinks = permalinks;
                     this.messages = messages;
+                    this.parsed_messages = parsed_messages;
                     this.generated = true;
                     cx.notify();
                 }
