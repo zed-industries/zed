@@ -6,10 +6,7 @@ use gpui::{
     ScrollHandle, Task, View, ViewContext,
 };
 use rpc::proto::{self, CreateDevServerResponse, DevServerStatus};
-use ui::{
-    prelude::*, Indicator, List, ListHeader, ModalContent, ModalHeader, ModalRow, SectionHeader,
-    Tooltip,
-};
+use ui::{prelude::*, Indicator, List, ListHeader, ModalContent, ModalHeader, Tooltip};
 use util::ResultExt;
 use workspace::ModalView;
 

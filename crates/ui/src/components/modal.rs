@@ -1,7 +1,7 @@
 use gpui::*;
 use smallvec::SmallVec;
 
-use crate::{h_flex, Color, IconButton, IconButtonShape, IconName, Label, LabelCommon, LabelSize};
+use crate::{h_flex, IconButton, IconButtonShape, IconName, Label, LabelCommon, LabelSize};
 
 #[derive(IntoElement)]
 pub struct ModalHeader {
