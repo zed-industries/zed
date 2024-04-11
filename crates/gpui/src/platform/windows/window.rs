@@ -333,7 +333,6 @@ impl WindowsWindow {
         }
         unsafe { ShowWindow(raw_hwnd, show_cmd) };
         if fullscreen {
-            println!("Toggle fullscreen");
             wnd.toggle_fullscreen();
         }
 
