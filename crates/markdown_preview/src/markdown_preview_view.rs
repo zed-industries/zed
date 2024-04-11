@@ -201,7 +201,7 @@ impl MarkdownPreviewView {
                                             this.bg(cx.theme().colors().border)
                                         })
                                         .group_hover("markdown-block", |s| {
-                                            if ix == view.selected_block {
+                                            if ix == this.selected_block {
                                                 s
                                             } else {
                                                 s.bg(cx.theme().colors().border_variant)
