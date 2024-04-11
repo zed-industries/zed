@@ -60,7 +60,7 @@ impl DevServerModal {
             cx.observe(&channel_store, |_, _, cx| {
                 cx.notify();
             }),
-            cx.on_focus_out(&focus_handle, |_, cx| { /* cx.emit(DismissEvent) */ }),
+            cx.on_focus_out(&focus_handle, |_, _cx| { /* cx.emit(DismissEvent) */ }),
         ];
 
         Self {
