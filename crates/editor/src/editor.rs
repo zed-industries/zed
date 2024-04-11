@@ -1084,25 +1084,25 @@ impl CompletionsMenu {
             }
         }
 
-        for mat in &mut matches {
-            mat.string = mat.string.to_lowercase();
-        }
+        let matcher = AhoCorasick::builder()
+            .ascii_case_insensitive(true)
+            .build(query)
+            .unwrap();
         let completions = self.completions.read();
-        let lowercase_query = query.map(str::to_lowercase);
         matches.sort_unstable_by_key(|mat| {
             let completion = &completions[mat.candidate_id];
             let sort_key = completion.sort_key();
             let sort_text = completion.lsp_completion.sort_text.as_deref();
             let score = Reverse(OrderedFloat(mat.score));
             let equals = Reverse(
-                lowercase_query
+                query
                     .as_ref()
-                    .map_or(true, |query| mat.string.eq(query)),
+                    .map_or(true, |query| mat.string.eq_ignore_ascii_case(query)),
             );
-            let matching_index = lowercase_query
-                .as_ref()
-                .and_then(|query| mat.string.find(query))
-                .unwrap_or(usize::MAX);
+
+            let matching_index = matcher
+                .find(&mat.string)
+                .map_or(usize::MAX, |mat| mat.start());
             let matching_case_count = Reverse(match matching_index {
                 usize::MAX => 0,
                 _ => completion
