@@ -43,7 +43,7 @@ fn main() {
 
                 WindowOptions {
                     // Set the bounds of the window in screen coordinates
-                    open_status: Some(bounds),
+                    open_status: WindowOpenStatus::Windowed(Some(bounds)),
                     // Specify the display_id to ensure the window is created on the correct screen
                     display_id: Some(screen.id()),
 
@@ -53,7 +53,6 @@ fn main() {
                     show: true,
                     kind: WindowKind::PopUp,
                     is_movable: false,
-                    fullscreen: false,
                     app_id: None,
                 }
             };
