@@ -144,12 +144,39 @@ impl MarkdownPreviewView {
             let list_state =
                 ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
                     if let Some(view) = view.upgrade() {
-                        view.update(cx, |view, cx| {
-                            let Some(contents) = &view.contents else {
+                        view.update(cx, |this, cx| {
+                            let Some(contents) = &this.contents else {
                                 return div().into_any();
                             };
+
                             let mut render_cx =
-                                RenderContext::new(Some(view.workspace.clone()), cx);
+                                RenderContext::new(Some(this.workspace.clone()), cx)
+                                    .with_checkbox_clicked_callback({
+                                        let view = view.clone();
+                                        move |checked, source_range, cx| {
+                                            view.update(cx, |view, cx| {
+                                                if let Some(editor) = view
+                                                    .active_editor
+                                                    .as_ref()
+                                                    .map(|s| s.editor.clone())
+                                                {
+                                                    editor.update(cx, |editor, cx| {
+                                                        let task_marker =
+                                                            if checked { "[x]" } else { "[ ]" };
+
+                                                        editor.edit(
+                                                            vec![(source_range, task_marker)],
+                                                            cx,
+                                                        );
+                                                    });
+                                                    view.parse_markdown_from_active_editor(
+                                                        false, cx,
+                                                    );
+                                                    cx.notify();
+                                                }
+                                            })
+                                        }
+                                    });
                             let block = contents.children.get(ix).unwrap();
                             let rendered_block = render_markdown_block(block, &mut render_cx);
 
@@ -167,15 +194,15 @@ impl MarkdownPreviewView {
                                         }
                                     }
                                 }))
-                                .map(move |this| {
+                                .map(move |container| {
                                     let indicator = div()
                                         .h_full()
                                         .w(px(4.0))
-                                        .when(ix == view.selected_block, |this| {
+                                        .when(ix == this.selected_block, |this| {
                                             this.bg(cx.theme().colors().border)
                                         })
                                         .group_hover("markdown-block", |s| {
-                                            if ix == view.selected_block {
+                                            if ix == this.selected_block {
                                                 s
                                             } else {
                                                 s.bg(cx.theme().colors().border_variant)
@@ -183,7 +210,7 @@ impl MarkdownPreviewView {
                                         })
                                         .rounded_sm();
 
-                                    this.child(
+                                    container.child(
                                         div()
                                             .relative()
                                             .child(div().pl_4().child(rendered_block))
@@ -262,7 +289,7 @@ impl MarkdownPreviewView {
         let subscription = cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
             match event {
                 EditorEvent::Edited => {
-                    this.on_editor_edited(cx);
+                    this.parse_markdown_from_active_editor(true, cx);
                 }
                 EditorEvent::SelectionsChanged { .. } => {
                     let editor = editor.read(cx);
@@ -285,16 +312,20 @@ impl MarkdownPreviewView {
             _subscription: subscription,
         });
 
-        if let Some(state) = &self.active_editor {
-            self.parsing_markdown_task =
-                Some(self.parse_markdown_in_background(false, state.editor.clone(), cx));
-        }
+        self.parse_markdown_from_active_editor(false, cx);
     }
 
-    fn on_editor_edited(&mut self, cx: &mut ViewContext<Self>) {
+    fn parse_markdown_from_active_editor(
+        &mut self,
+        wait_for_debounce: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         if let Some(state) = &self.active_editor {
-            self.parsing_markdown_task =
-                Some(self.parse_markdown_in_background(true, state.editor.clone(), cx));
+            self.parsing_markdown_task = Some(self.parse_markdown_in_background(
+                wait_for_debounce,
+                state.editor.clone(),
+                cx,
+            ));
         }
     }
 

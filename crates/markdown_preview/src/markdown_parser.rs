@@ -502,8 +502,8 @@ impl<'a> MarkdownParser<'a> {
                             self.cursor += 1;
                         }
 
-                        if let Some(Event::TaskListMarker(checked)) = self.current_event() {
-                            task_item = Some(*checked);
+                        if let Some((Event::TaskListMarker(checked), range)) = self.current() {
+                            task_item = Some((*checked, range.clone()));
                             self.cursor += 1;
                         }
                     }
@@ -531,8 +531,8 @@ impl<'a> MarkdownParser<'a> {
                 Event::End(TagEnd::Item) => {
                     self.cursor += 1;
 
-                    let item_type = if let Some(checked) = task_item {
-                        ParsedMarkdownListItemType::Task(checked)
+                    let item_type = if let Some((checked, range)) = task_item {
+                        ParsedMarkdownListItemType::Task(checked, range)
                     } else if let Some(order) = order {
                         ParsedMarkdownListItemType::Ordered(order)
                     } else {
@@ -906,8 +906,8 @@ Some other content
             parsed.children,
             vec![list(
                 vec![
-                    list_item(1, Task(false), vec![p("TODO", 2..5)]),
-                    list_item(1, Task(true), vec![p("Checked", 13..16)]),
+                    list_item(1, Task(false, 2..5), vec![p("TODO", 2..5)]),
+                    list_item(1, Task(true, 13..16), vec![p("Checked", 13..16)]),
                 ],
                 0..25
             ),]
@@ -929,8 +929,8 @@ Some other content
             parsed.children,
             vec![list(
                 vec![
-                    list_item(1, Task(false), vec![p("Task 1", 2..5)]),
-                    list_item(1, Task(true), vec![p("Task 2", 16..19)]),
+                    list_item(1, Task(false, 2..5), vec![p("Task 1", 2..5)]),
+                    list_item(1, Task(true, 16..19), vec![p("Task 2", 16..19)]),
                 ],
                 0..27
             ),]
