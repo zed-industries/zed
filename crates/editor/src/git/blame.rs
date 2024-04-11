@@ -256,7 +256,7 @@ impl GitBlame {
         let blame = Project::blame_buffer(&self.project, &self.buffer, None, cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
-            let (entries, permalinks, messages) = cx
+            let result = cx
                 .background_executor()
                 .spawn({
                     let snapshot = snapshot.clone();
@@ -304,17 +304,24 @@ impl GitBlame {
                         anyhow::Ok((entries, permalinks, messages))
                     }
                 })
-                .await?;
+                .await;
 
-            this.update(&mut cx, |this, cx| {
-                this.buffer_edits = buffer_edits;
-                this.buffer_snapshot = snapshot;
-                this.entries = entries;
-                this.permalinks = permalinks;
-                this.messages = messages;
-                this.generated = true;
-                cx.notify();
-            })
+            match result {
+                Ok((entries, permalinks, messages)) => this.update(&mut cx, |this, cx| {
+                    this.buffer_edits = buffer_edits;
+                    this.buffer_snapshot = snapshot;
+                    this.entries = entries;
+                    this.permalinks = permalinks;
+                    this.messages = messages;
+                    this.generated = true;
+                    cx.notify();
+                }),
+                Err(error) => this.update(&mut cx, |this, cx| {
+                    this.project.update(cx, |_, cx| {
+                        cx.emit(project::Event::Notification(format!("{:#}", error)));
+                    })
+                }),
+            }
         });
     }
 }

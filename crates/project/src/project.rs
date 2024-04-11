@@ -7709,24 +7709,18 @@ impl Project {
                 anyhow::Ok((repo, relative_path, content))
             });
 
-            cx.to_async().spawn(|mut cx| {
-                let this = this.clone();
-                async move {
-                    let (repo, relative_path, content) = blame_params?;
-                    let lock = repo.lock();
-                    let blame_res = lock
-                        .blame(&relative_path, content)
-                        .with_context(|| format!("Failed to git blame {relative_path:?}"));
+            cx.background_executor().spawn(async move {
+                let (repo, relative_path, content) = blame_params?;
+                let lock = repo.lock();
+                let blame_res = lock
+                    .blame(&relative_path, content)
+                    .with_context(|| format!("Failed to git blame {relative_path:?}"));
 
-                    if let Err(ref err) = blame_res {
-                        log::error!("{err:?}");
-                        this.update(&mut cx, |_, cx| {
-                            cx.emit(Event::Notification(format!("{err:#}")));
-                        })?;
-                    }
-
-                    blame_res
+                if let Err(ref err) = blame_res {
+                    log::error!("{err:?}");
                 }
+
+                blame_res
             })
         } else {
             let project_id = project.remote_id();
