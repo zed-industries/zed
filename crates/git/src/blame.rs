@@ -78,6 +78,7 @@ fn run_git_blame(
         .arg(path.as_os_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
 
