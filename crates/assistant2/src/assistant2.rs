@@ -1,10 +1,28 @@
+mod completion_provider;
+
+use std::sync::Arc;
+
+use client::Client;
+use completion_provider::*;
 use editor::Editor;
-use gpui::{list, AnyElement, ListAlignment, ListState, Render, View};
+use futures::StreamExt;
+use gpui::{
+    list, prelude::IntoElement, AnyElement, AppContext, Global, ListAlignment, ListState, Render,
+    View,
+};
 use language::language_settings::SoftWrap;
 use semantic_index::SearchResult;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;
+
+gpui::actions!(assistant, [Submit]);
+
+pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+    cx.set_global(CompletionProvider::new(CloudCompletionProvider::new(
+        client,
+    )));
+}
 
 pub struct AssistantPanel {
     chat: View<AssistantChat>,
@@ -62,9 +80,37 @@ impl AssistantChat {
         }
     }
 
+    fn submit(&mut self, _: &Submit, cx: &mut ViewContext<Self>) {
+        // Detect which message is focused and send the ones above it
+        //
+        let completion = CompletionProvider::get(cx).complete(
+            "openai/gpt-4-turbo-preview".to_string(),
+            self.messages(cx),
+            Vec::new(),
+            1.0,
+        );
+
+        cx.spawn(|this, cx| async move {
+            dbg!();
+            let mut stream = completion.await?;
+            dbg!();
+
+            while let Some(chunk) = stream.next().await {
+                dbg!();
+                let text = chunk?;
+                dbg!(text);
+            }
+            dbg!();
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         match &self.messages[ix] {
             AssistantMessage::User { body, contexts } => div()
+                .on_action(cx.listener(Self::submit))
                 .p_2()
                 .text_color(cx.theme().colors().editor_foreground)
                 .font(ThemeSettings::get_global(cx).buffer_font.clone())
@@ -74,14 +120,31 @@ impl AssistantChat {
             AssistantMessage::Assistant { body } => body.clone().into_any_element(),
         }
     }
+
+    fn messages(&self, cx: &WindowContext) -> Vec<CompletionMessage> {
+        self.messages
+            .iter()
+            .map(|message| match message {
+                AssistantMessage::User { body, contexts } => CompletionMessage {
+                    role: CompletionRole::User,
+                    body: body.read(cx).text(cx),
+                },
+                AssistantMessage::Assistant { body } => CompletionMessage {
+                    role: CompletionRole::Assistant,
+                    body: body.to_string(),
+                },
+            })
+            .collect()
+    }
 }
 
 impl Render for AssistantChat {
-    fn render(
-        &mut self,
-        cx: &mut workspace::ui::prelude::ViewContext<Self>,
-    ) -> impl gpui::prelude::IntoElement {
-        list(self.list_state.clone()).size_full()
+    fn render(&mut self, cx: &mut workspace::ui::prelude::ViewContext<Self>) -> impl IntoElement {
+        div()
+            .flex_1()
+            .v_flex()
+            .key_context("AssistantChat")
+            .child(list(self.list_state.clone()).flex_1())
     }
 }
 

@@ -1,11 +1,13 @@
 use assets::Assets;
 use assistant2::AssistantPanel;
+use client::Client;
 use gpui::{App, View, WindowOptions};
 use settings::{KeymapFile, DEFAULT_KEYMAP_PATH};
 use theme::LoadThemes;
 use ui::{div, prelude::*, Render};
 
 fn main() {
+    env_logger::init();
     App::new().with_assets(Assets).run(|cx| {
         settings::init(cx);
         language::init(cx);
@@ -13,6 +15,16 @@ fn main() {
         theme::init(LoadThemes::JustBase, cx);
         Assets.load_fonts(cx).unwrap();
         KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
+        client::init_settings(cx);
+        release_channel::init("0.0.0", cx);
+
+        let client = Client::production(cx);
+        {
+            let client = client.clone();
+            cx.spawn(|cx| async move { client.authenticate_and_connect(false, &cx).await })
+                .detach_and_log_err(cx);
+        }
+        assistant2::init(client, cx);
 
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|cx| Example::new(cx))

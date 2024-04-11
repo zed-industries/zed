@@ -10141,7 +10141,7 @@ impl Render for Editor {
         let settings = ThemeSettings::get_global(cx);
 
         let text_style = match self.mode {
-            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => dbg!(cx.text_style()),
+            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => cx.text_style(),
             EditorMode::Full => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),

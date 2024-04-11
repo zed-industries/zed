@@ -381,10 +381,15 @@ dependencies = [
 name = "assistant2"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "assets",
+ "client",
  "editor",
+ "env_logger",
+ "futures 0.3.28",
  "gpui",
  "language",
+ "release_channel",
  "semantic_index",
  "settings",
  "theme",
