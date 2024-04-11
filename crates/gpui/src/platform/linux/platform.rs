@@ -28,8 +28,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::linux::wayland::WaylandClient;
 use crate::{
-    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, LinuxTextSystem, Menu, Modifiers,
+    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
+    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, Modifiers,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task,
     WindowAppearance, WindowOptions, WindowParams,
@@ -134,7 +134,7 @@ pub(crate) struct PlatformHandlers {
 pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
-    pub(crate) text_system: Arc<LinuxTextSystem>,
+    pub(crate) text_system: Arc<CosmicTextSystem>,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
 }
@@ -142,7 +142,7 @@ pub(crate) struct LinuxCommon {
 impl LinuxCommon {
     pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
-        let text_system = Arc::new(LinuxTextSystem::new());
+        let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
 
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
@@ -620,6 +620,24 @@ impl Keystroke {
             modifiers,
             key,
             ime_key,
+        }
+    }
+}
+
+impl Modifiers {
+    pub(super) fn from_xkb(keymap_state: &State) -> Self {
+        let shift = keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
+        let alt = keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
+        let control =
+            keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
+        let platform =
+            keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+        Modifiers {
+            shift,
+            alt,
+            control,
+            platform,
+            function: false,
         }
     }
 }

@@ -570,7 +570,6 @@ mod tests {
     use language::Capability;
     use project::Project;
     use settings::SettingsStore;
-    use text::BufferId;
     use util::post_inc;
 
     #[gpui::test]
@@ -870,13 +869,7 @@ mod tests {
 
             let font = font("Helvetica");
 
-            let buffer = cx.new_model(|cx| {
-                Buffer::new(
-                    0,
-                    BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                    "abc\ndefg\nhijkl\nmn",
-                )
-            });
+            let buffer = cx.new_model(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
             let multibuffer = cx.new_model(|cx| {
                 let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
                 multibuffer.push_excerpts(

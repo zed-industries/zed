@@ -78,6 +78,7 @@ impl Item for ImageView {
             .to_string_lossy()
             .to_string();
         Label::new(title)
+            .single_line()
             .color(if params.selected {
                 Color::Default
             } else {

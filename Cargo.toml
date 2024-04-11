@@ -90,6 +90,7 @@ members = [
     "crates/telemetry_events",
     "crates/time_format",
     "crates/ui",
+    "crates/ui_text_field",
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
@@ -214,6 +215,7 @@ theme_selector = { path = "crates/theme_selector" }
 telemetry_events = { path = "crates/telemetry_events" }
 time_format = { path = "crates/time_format" }
 ui = { path = "crates/ui" }
+ui_text_field = { path = "crates/ui_text_field" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
@@ -230,9 +232,8 @@ async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
 bitflags = "2.4.2"
-# todo(linux): Remove these once https://github.com/kvark/blade/pull/107 is merged and we've upgraded our renderer
-blade-graphics = { git = "https://github.com/zed-industries/blade", rev = "85981c0f4890a5fcd08da2a53cc4a0459247af44" }
-blade-macros = { git = "https://github.com/zed-industries/blade", rev = "85981c0f4890a5fcd08da2a53cc4a0459247af44" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "810ec594358aafea29a4a3d8ab601d25292b2ce4" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "810ec594358aafea29a4a3d8ab601d25292b2ce4" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 cap-std = "3.0"
 chrono = { version = "0.4", features = ["serde"] }
@@ -340,6 +341,7 @@ tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", r
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
 unindent = "0.1.7"
 unicase = "2.6"
+unicode-segmentation = "1.10"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 wasmparser = "0.201"

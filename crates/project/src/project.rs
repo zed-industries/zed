@@ -112,8 +112,6 @@ pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
-#[cfg(feature = "test-support")]
-pub use task_inventory::test_inventory::*;
 pub use task_inventory::{Inventory, TaskSourceKind};
 pub use worktree::{
     DiagnosticSummary, Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId,
@@ -178,7 +176,6 @@ pub struct Project {
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
-    next_buffer_id: BufferId,
     loading_buffers: HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
     incomplete_remote_buffers: HashMap<BufferId, Model<Buffer>>,
     shared_buffers: HashMap<proto::PeerId, HashSet<BufferId>>,
@@ -347,7 +344,7 @@ pub enum LanguageServerState {
     },
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: String,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
@@ -675,7 +672,6 @@ impl Project {
                 flush_language_server_update: None,
                 pending_language_server_update: None,
                 collaborators: Default::default(),
-                next_buffer_id: BufferId::new(1).unwrap(),
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 loading_buffers_by_path: Default::default(),
@@ -792,7 +788,6 @@ impl Project {
                 pending_language_server_update: None,
                 flush_language_server_update: None,
                 loading_buffers_by_path: Default::default(),
-                next_buffer_id: BufferId::new(1).unwrap(),
                 loading_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 incomplete_remote_buffers: Default::default(),
@@ -1849,9 +1844,8 @@ impl Project {
         if self.is_remote() {
             return Err(anyhow!("creating buffers as a guest is not supported yet"));
         }
-        let id = self.next_buffer_id.next();
         let buffer = cx.new_model(|cx| {
-            Buffer::new(self.replica_id(), id, text)
+            Buffer::local(text, cx)
                 .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
         });
         self.register_buffer(&buffer, cx)?;
@@ -1950,10 +1944,9 @@ impl Project {
         worktree: Model<Worktree>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        let buffer_id = self.next_buffer_id.next();
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let worktree = worktree.as_local_mut().unwrap();
-            worktree.load_buffer(buffer_id, &path, cx)
+            worktree.load_buffer(&path, cx)
         });
         fn is_not_found_error(error: &anyhow::Error) -> bool {
             error
@@ -1967,7 +1960,7 @@ impl Project {
                 Err(error) if is_not_found_error(&error) => {
                     worktree.update(&mut cx, |worktree, cx| {
                         let worktree = worktree.as_local_mut().unwrap();
-                        worktree.new_buffer(buffer_id, path, cx)
+                        worktree.new_buffer(path, cx)
                     })
                 }
                 Err(e) => Err(e),
@@ -3924,19 +3917,6 @@ impl Project {
                         },
                         cx,
                     );
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id,
-                            message: proto::update_language_server::Variant::WorkStart(
-                                proto::LspWorkStart {
-                                    token,
-                                    message: report.message,
-                                    percentage: report.percentage,
-                                },
-                            ),
-                        },
-                    )
-                    .ok();
                 }
             }
             lsp::WorkDoneProgress::Report(report) => {
@@ -3984,15 +3964,6 @@ impl Project {
                     .ok();
                 } else {
                     self.on_lsp_work_end(language_server_id, token.clone(), cx);
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id,
-                            message: proto::update_language_server::Variant::WorkEnd(
-                                proto::LspWorkEnd { token },
-                            ),
-                        },
-                    )
-                    .ok();
                 }
             }
         }
@@ -4006,8 +3977,20 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            status.pending_work.insert(token, progress);
+            status.pending_work.insert(token.clone(), progress.clone());
             cx.notify();
+        }
+
+        if self.is_local() {
+            self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
+                    token,
+                    message: progress.message,
+                    percentage: progress.percentage.map(|p| p as u32),
+                }),
+            })
+            .ok();
         }
     }
 
@@ -4048,6 +4031,16 @@ impl Project {
             cx.emit(Event::RefreshInlayHints);
             status.pending_work.remove(&token);
             cx.notify();
+        }
+
+        if self.is_local() {
+            self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
+                    token,
+                }),
+            })
+            .ok();
         }
     }
 
@@ -6721,7 +6714,7 @@ impl Project {
                     let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
 
                     let id = lsp_request.id();
-                    if status.is_some() {
+                    let _cleanup = if status.is_some() {
                         cx.update(|cx| {
                             this.update(cx, |this, cx| {
                                 this.on_lsp_work_start(
@@ -6737,22 +6730,35 @@ impl Project {
                             })
                         })
                         .log_err();
-                    }
+
+                        Some(defer(|| {
+                            cx.update(|cx| {
+                                this.update(cx, |this, cx| {
+                                    this.on_lsp_work_end(
+                                        language_server.server_id(),
+                                        id.to_string(),
+                                        cx,
+                                    );
+                                })
+                            })
+                            .log_err();
+                        }))
+                    } else {
+                        None
+                    };
 
                     let result = lsp_request.await;
-                    let response = match result {
-                        Ok(response) => response,
 
-                        Err(err) => {
-                            log::warn!(
-                                "Generic lsp request to {} failed: {}",
-                                language_server.name(),
-                                err
-                            );
-                            return Err(err);
-                        }
-                    };
-                    let result = request
+                    let response = result.map_err(|err| {
+                        log::warn!(
+                            "Generic lsp request to {} failed: {}",
+                            language_server.name(),
+                            err
+                        );
+                        err
+                    })?;
+
+                    request
                         .response_from_lsp(
                             response,
                             this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
@@ -6760,22 +6766,7 @@ impl Project {
                             language_server.server_id(),
                             cx.clone(),
                         )
-                        .await;
-
-                    if status.is_some() {
-                        cx.update(|cx| {
-                            this.update(cx, |this, cx| {
-                                this.on_lsp_work_end(
-                                    language_server.server_id(),
-                                    id.to_string(),
-                                    cx,
-                                );
-                            })
-                        })
-                        .log_err();
-                    }
-
-                    result
+                        .await
                 });
             }
         } else if let Some(project_id) = self.remote_id() {
@@ -7459,15 +7450,12 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
+                                id_base: "local_tasks_for_worktree",
                             },
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(
-                                    format!("local_tasks_for_workspace_{remote_worktree_id}"),
-                                    TrackedFile::new(tasks_file_rx, cx),
-                                    cx,
-                                )
+                                StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
                             },
                             cx,
                         );
@@ -7484,14 +7472,12 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
+                                id_base: "local_vscode_tasks_for_worktree",
                             },
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
                                 StaticSource::new(
-                                    format!(
-                                        "local_vscode_tasks_for_workspace_{remote_worktree_id}"
-                                    ),
                                     TrackedFile::new_convertible::<task::VsCodeTaskFile>(
                                         tasks_file_rx,
                                         cx,

@@ -29,11 +29,9 @@ use settings::{
     SettingsStore, DEFAULT_KEYMAP_PATH,
 };
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use task::{
-    oneshot_source::OneshotSource,
-    static_source::{StaticSource, TrackedFile},
-};
+use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
+use workspace::notifications::NotificationId;
 
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{
@@ -114,10 +112,16 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, cx);
         cx.subscribe(&workspace_handle, {
-            move |workspace, _, event, cx| {
-                if let workspace::Event::PaneAdded(pane) = event {
+            move |workspace, _, event, cx| match event {
+                workspace::Event::PaneAdded(pane) => {
                     initialize_pane(workspace, pane, cx);
                 }
+                workspace::Event::OpenBundledFile {
+                    text,
+                    title,
+                    language,
+                } => open_bundled_file(workspace, text.clone(), title, language, cx),
+                _ => {}
             }
         })
         .detach();
@@ -162,23 +166,17 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 let fs = app_state.fs.clone();
                 project.task_inventory().update(cx, |inventory, cx| {
                     inventory.add_source(
-                        TaskSourceKind::UserInput,
-                        |cx| OneshotSource::new(cx),
-                        cx,
-                    );
-                    inventory.add_source(
-                        TaskSourceKind::AbsPath(paths::TASKS.clone()),
+                        TaskSourceKind::AbsPath {
+                            id_base: "global_tasks",
+                            abs_path: paths::TASKS.clone(),
+                        },
                         |cx| {
                             let tasks_file_rx = watch_config_file(
                                 &cx.background_executor(),
                                 fs,
                                 paths::TASKS.clone(),
                             );
-                            StaticSource::new(
-                                "global_tasks",
-                                TrackedFile::new(tasks_file_rx, cx),
-                                cx,
-                            )
+                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
                         },
                         cx,
                     );
@@ -253,9 +251,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                         .await
                         .context("error creating CLI symlink")?;
                     workspace.update(&mut cx, |workspace, cx| {
+                        struct InstalledZedCli;
+
                         workspace.show_toast(
                             Toast::new(
-                                0,
+                                NotificationId::unique::<InstalledZedCli>(),
                                 format!(
                                     "Installed `zed` to {}. You can launch {} from your terminal.",
                                     path.to_string_lossy(),
@@ -274,9 +274,11 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 cx.spawn(|workspace, mut cx| async move {
                     register_zed_scheme(&cx).await?;
                     workspace.update(&mut cx, |workspace, cx| {
+                        struct RegisterZedScheme;
+
                         workspace.show_toast(
                             Toast::new(
-                                0,
+                                NotificationId::unique::<RegisterZedScheme>(),
                                 format!(
                                     "zed:// links will now open in {}.",
                                     ReleaseChannel::global(cx).display_name()
@@ -555,14 +557,20 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                 workspace
                     .update(&mut cx, |workspace, cx| {
                         let Some(log) = log else {
-                            workspace.show_notification(29, cx, |cx| {
-                                cx.new_view(|_| {
-                                    MessageNotification::new(format!(
-                                        "Unable to access/open log file at path {:?}",
-                                        paths::LOG.as_path()
-                                    ))
-                                })
-                            });
+                            struct OpenLogError;
+
+                            workspace.show_notification(
+                                NotificationId::unique::<OpenLogError>(),
+                                cx,
+                                |cx| {
+                                    cx.new_view(|_| {
+                                        MessageNotification::new(format!(
+                                            "Unable to access/open log file at path {:?}",
+                                            paths::LOG.as_path()
+                                        ))
+                                    })
+                                },
+                            );
                             return;
                         };
                         let project = workspace.project().clone();
@@ -749,7 +757,9 @@ fn open_local_file(
         })
         .detach();
     } else {
-        workspace.show_notification(0, cx, |cx| {
+        struct NoOpenFolders;
+
+        workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
             cx.new_view(|_| MessageNotification::new("This project has no folders open."))
         })
     }

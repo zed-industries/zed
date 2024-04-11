@@ -14,7 +14,7 @@ use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{static_source::RevealStrategy, SpawnInTerminal, TaskId};
+use task::{RevealStrategy, SpawnInTerminal, TaskId};
 use terminal::{
     terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
     SpawnTask,

@@ -22,8 +22,8 @@ use xkbcommon::xkb as xkbc;
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
-    px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Pixels, PlatformDisplay, PlatformInput,
-    Point, ScrollDelta, Size, TouchPhase, WindowParams,
+    px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers, ModifiersChangedEvent, Pixels,
+    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams,
 };
 
 use super::{super::SCROLL_LINES, X11Display, X11Window, XcbAtoms};
@@ -60,6 +60,7 @@ pub struct X11ClientState {
     pub(crate) x_root_index: usize,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
+    pub(crate) focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
 
     pub(crate) common: LinuxCommon,
@@ -99,6 +100,17 @@ impl X11Client {
 
         let atoms = atoms.reply().unwrap();
         let xkb = xkb.reply().unwrap();
+        let events = xkb::EventType::STATE_NOTIFY;
+        xcb_connection
+            .xkb_select_events(
+                xkb::ID::USE_CORE_KBD.into(),
+                0u8.into(),
+                events,
+                0u8.into(),
+                0u8.into(),
+                &xkb::SelectEventsAux::new(),
+            )
+            .unwrap();
         assert!(xkb.supported);
 
         let xkb_state = {
@@ -152,6 +164,7 @@ impl X11Client {
             x_root_index,
             atoms,
             windows: HashMap::default(),
+            focused_window: None,
             xkb: xkb_state,
             clipboard,
             primary,
@@ -205,10 +218,31 @@ impl X11Client {
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_focused(true);
+                self.0.borrow_mut().focused_window = Some(event.event);
             }
             Event::FocusOut(event) => {
                 let window = self.get_window(event.event)?;
                 window.set_focused(false);
+                self.0.borrow_mut().focused_window = None;
+            }
+            Event::XkbStateNotify(event) => {
+                let mut state = self.0.borrow_mut();
+                state.xkb.update_mask(
+                    event.base_mods.into(),
+                    event.latched_mods.into(),
+                    event.locked_mods.into(),
+                    0,
+                    0,
+                    event.locked_group.into(),
+                );
+                let modifiers = Modifiers::from_xkb(&state.xkb);
+                let focused_window_id = state.focused_window?;
+                drop(state);
+
+                let focused_window = self.get_window(focused_window_id)?;
+                focused_window.handle_input(PlatformInput::ModifiersChanged(
+                    ModifiersChangedEvent { modifiers },
+                ));
             }
             Event::KeyPress(event) => {
                 let window = self.get_window(event.event)?;
@@ -219,6 +253,10 @@ impl X11Client {
                     let code = event.detail.into();
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     state.xkb.update_key(code, xkbc::KeyDirection::Down);
+                    let keysym = state.xkb.key_get_one_sym(code);
+                    if keysym.is_modifier_key() {
+                        return Some(());
+                    }
                     keystroke
                 };
 
@@ -237,6 +275,10 @@ impl X11Client {
                     let code = event.detail.into();
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     state.xkb.update_key(code, xkbc::KeyDirection::Up);
+                    let keysym = state.xkb.key_get_one_sym(code);
+                    if keysym.is_modifier_key() {
+                        return Some(());
+                    }
                     keystroke
                 };
                 drop(state);

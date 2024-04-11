@@ -652,13 +652,27 @@ impl ChannelChat {
         let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left, &());
         if let Some(item) = cursor.item() {
             if item.id == ChannelMessageId::Saved(id) {
-                let ix = messages.summary().count;
+                let deleted_message_ix = messages.summary().count;
                 cursor.next(&());
                 messages.append(cursor.suffix(&()), &());
                 drop(cursor);
                 self.messages = messages;
+
+                // If the message that was deleted was the last acknowledged message,
+                // replace the acknowledged message with an earlier one.
+                self.channel_store.update(cx, |store, _| {
+                    let summary = self.messages.summary();
+                    if summary.count == 0 {
+                        store.set_acknowledged_message_id(self.channel_id, None);
+                    } else if deleted_message_ix == summary.count {
+                        if let ChannelMessageId::Saved(id) = summary.max_id {
+                            store.set_acknowledged_message_id(self.channel_id, Some(id));
+                        }
+                    }
+                });
+
                 cx.emit(ChannelChatEvent::MessagesUpdated {
-                    old_range: ix..ix + 1,
+                    old_range: deleted_message_ix..deleted_message_ix + 1,
                     new_count: 0,
                 });
             }

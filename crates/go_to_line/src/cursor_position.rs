@@ -1,5 +1,8 @@
 use editor::{Editor, ToPoint};
-use gpui::{Subscription, View, WeakView};
+use gpui::{AppContext, Subscription, View, WeakView};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsSources};
 use std::fmt::Write;
 use text::{Point, Selection};
 use ui::{
@@ -9,9 +12,16 @@ use ui::{
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
+#[derive(Copy, Clone, Default, PartialOrd, PartialEq)]
+struct SelectionStats {
+    lines: usize,
+    characters: usize,
+    selections: usize,
+}
+
 pub struct CursorPosition {
     position: Option<Point>,
-    selected_count: usize,
+    selected_count: SelectionStats,
     workspace: WeakView<Workspace>,
     _observe_active_editor: Option<Subscription>,
 }
@@ -20,7 +30,7 @@ impl CursorPosition {
     pub fn new(workspace: &Workspace) -> Self {
         Self {
             position: None,
-            selected_count: 0,
+            selected_count: Default::default(),
             workspace: workspace.weak_handle(),
             _observe_active_editor: None,
         }
@@ -30,10 +40,11 @@ impl CursorPosition {
         let editor = editor.read(cx);
         let buffer = editor.buffer().read(cx).snapshot(cx);
 
-        self.selected_count = 0;
+        self.selected_count = Default::default();
+        self.selected_count.selections = editor.selections.count();
         let mut last_selection: Option<Selection<usize>> = None;
         for selection in editor.selections.all::<usize>(cx) {
-            self.selected_count += selection.end - selection.start;
+            self.selected_count.characters += selection.end - selection.start;
             if last_selection
                 .as_ref()
                 .map_or(true, |last_selection| selection.id > last_selection.id)
@@ -41,9 +52,59 @@ impl CursorPosition {
                 last_selection = Some(selection);
             }
         }
+        for selection in editor.selections.all::<Point>(cx) {
+            if selection.end != selection.start {
+                self.selected_count.lines += (selection.end.row - selection.start.row) as usize;
+                if selection.end.column != 0 {
+                    self.selected_count.lines += 1;
+                }
+            }
+        }
         self.position = last_selection.map(|s| s.head().to_point(&buffer));
 
         cx.notify();
+    }
+
+    fn write_position(&self, text: &mut String, cx: &AppContext) {
+        if self.selected_count
+            <= (SelectionStats {
+                selections: 1,
+                ..Default::default()
+            })
+        {
+            // Do not write out anything if we have just one empty selection.
+            return;
+        }
+        let SelectionStats {
+            lines,
+            characters,
+            selections,
+        } = self.selected_count;
+        let format = LineIndicatorFormat::get(None, cx);
+        let is_short_format = format == &LineIndicatorFormat::Short;
+        let lines = (lines > 1).then_some((lines, "line"));
+        let selections = (selections > 1).then_some((selections, "selection"));
+        let characters = (characters > 0).then_some((characters, "character"));
+        if (None, None, None) == (characters, selections, lines) {
+            // Nothing to display.
+            return;
+        }
+        write!(text, " (").unwrap();
+        let mut wrote_once = false;
+        for (count, name) in [selections, lines, characters].into_iter().flatten() {
+            if wrote_once {
+                write!(text, ", ").unwrap();
+            }
+            let name = if is_short_format { &name[..1] } else { &name };
+            let plural_suffix = if count > 1 && !is_short_format {
+                "s"
+            } else {
+                ""
+            };
+            write!(text, "{count} {name}{plural_suffix}").unwrap();
+            wrote_once = true;
+        }
+        text.push(')');
     }
 }
 
@@ -55,9 +116,7 @@ impl Render for CursorPosition {
                 position.row + 1,
                 position.column + 1
             );
-            if self.selected_count > 0 {
-                write!(text, " ({} selected)", self.selected_count).unwrap();
-            }
+            self.write_position(&mut text, cx);
 
             el.child(
                 Button::new("go-to-line-column", text)
@@ -96,5 +155,39 @@ impl StatusItemView for CursorPosition {
         }
 
         cx.notify();
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, JsonSchema, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LineIndicatorFormat {
+    Short,
+    #[default]
+    Long,
+}
+
+/// Whether or not to automatically check for updates.
+///
+/// Values: short, long
+/// Default: short
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
+#[serde(transparent)]
+pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
+
+impl Settings for LineIndicatorFormat {
+    const KEY: Option<&'static str> = Some("line_indicator_format");
+
+    type FileContent = Option<LineIndicatorFormatContent>;
+
+    fn load(
+        sources: SettingsSources<Self::FileContent>,
+        _: &mut AppContext,
+    ) -> anyhow::Result<Self> {
+        let format = [sources.release_channel, sources.user]
+            .into_iter()
+            .find_map(|value| value.copied().flatten())
+            .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
+
+        Ok(format.0)
     }
 }

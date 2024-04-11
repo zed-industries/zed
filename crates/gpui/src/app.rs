@@ -32,9 +32,9 @@ use crate::{
     AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window,
-    WindowAppearance, WindowContext, WindowHandle, WindowId,
+    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
+    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -1251,6 +1251,22 @@ impl Context for AppContext {
         })
     }
 
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
+        Reservation(self.entities.reserve())
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        self.update(|cx| {
+            let slot = reservation.0;
+            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
+            cx.entities.insert(slot, entity)
+        })
+    }
+
     /// Updates the entity referenced by the given model. The function is passed a mutable reference to the
     /// entity along with a `ModelContext` for the entity.
     fn update_model<T: 'static, R>(
@@ -1264,6 +1280,18 @@ impl Context for AppContext {
             cx.entities.end_lease(entity);
             result
         })
+    }
+
+    fn read_model<T, R>(
+        &self,
+        handle: &Model<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        let entity = self.entities.read(handle);
+        read(entity, self)
     }
 
     fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
@@ -1293,18 +1321,6 @@ impl Context for AppContext {
 
             Ok(result)
         })
-    }
-
-    fn read_model<T, R>(
-        &self,
-        handle: &Model<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
-    ) -> Self::Result<R>
-    where
-        T: 'static,
-    {
-        let entity = self.entities.read(handle);
-        read(entity, self)
     }
 
     fn read_window<T, R>(
