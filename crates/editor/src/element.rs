@@ -1094,9 +1094,7 @@ impl EditorElement {
 
     fn layout_inline_blame(
         &self,
-        rows: Range<u32>,
-        buffer_rows: impl Iterator<Item = Option<u32>>,
-        newest_selection_head: DisplayPoint,
+        row: u32,
         line_layouts: &[LineWithInvisibles],
         em_width: Pixels,
         content_origin: gpui::Point<Pixels>,
@@ -1108,63 +1106,28 @@ impl EditorElement {
             return None;
         };
 
-        // TODO: Only request blame info for `newest_selection_head`
-        let blamed_rows = blame.update(cx, |blame, cx| {
-            blame.blame_for_rows(buffer_rows, cx).collect::<Vec<_>>()
-        });
+        let blame_entry = blame
+            .update(cx, |blame, cx| blame.blame_for_rows([Some(row)], cx).next())
+            .flatten()?;
 
-        for (ix, display_row) in rows.enumerate() {
-            if newest_selection_head.row() != display_row {
-                continue;
-            }
+        let mut element = render_inline_blame_entry(blame_entry, &self.style.text, cx);
 
-            if let Some(Some(blame_entry)) = blamed_rows.get(ix) {
-                let relative_timestamp = match blame_entry.author_offset_date_time() {
-                    Ok(timestamp) => time_format::format_localized_timestamp(
-                        timestamp,
-                        time::OffsetDateTime::now_utc(),
-                        cx.local_timezone(),
-                        time_format::TimestampFormat::Relative,
-                    ),
-                    Err(_) => "Error parsing date".to_string(),
-                };
+        let start_y =
+            content_origin.y + line_height * (row as f32 - scroll_pixel_position.y / line_height);
 
-                let author = blame_entry.author.as_deref().unwrap_or_default();
-                let text = format!("{}, {}", author, relative_timestamp);
+        let start_x = {
+            let line_layout = &line_layouts[row as usize];
+            let line_width = line_layout.line.width;
 
-                let mut element = h_flex()
-                    .w_full()
-                    .font(self.style.text.font().family)
-                    .text_color(cx.theme().status().hint)
-                    .line_height(self.style.text.line_height)
-                    .id(("inline-blame", ix))
-                    .child(Icon::new(IconName::FileGit).color(Color::Hint))
-                    .child(text)
-                    .gap_2()
-                    .into_any();
+            content_origin.x + line_width + (em_width * 6.)
+        };
 
-                let start_y = content_origin.y
-                    + line_height * (ix as f32 - scroll_pixel_position.y / line_height);
+        let absolute_offset = point(start_x, start_y);
+        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
 
-                let start_x = {
-                    let line_layout = &line_layouts[ix];
-                    let line_width = line_layout.line.width;
+        element.layout(absolute_offset, available_space, cx);
 
-                    content_origin.x + line_width + (em_width * 6.)
-                };
-
-                let absolute_offset = point(start_x, start_y);
-
-                element.layout(
-                    absolute_offset,
-                    size(AvailableSpace::MinContent, AvailableSpace::MinContent),
-                    cx,
-                );
-
-                return Some(element);
-            }
-        }
-        None
+        Some(element)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2988,6 +2951,36 @@ impl EditorElement {
     }
 }
 
+fn render_inline_blame_entry(
+    blame_entry: BlameEntry,
+    text_style: &TextStyle,
+    cx: &mut ElementContext<'_>,
+) -> AnyElement {
+    let relative_timestamp = match blame_entry.author_offset_date_time() {
+        Ok(timestamp) => time_format::format_localized_timestamp(
+            timestamp,
+            time::OffsetDateTime::now_utc(),
+            cx.local_timezone(),
+            time_format::TimestampFormat::Relative,
+        ),
+        Err(_) => "Error parsing date".to_string(),
+    };
+
+    let author = blame_entry.author.as_deref().unwrap_or_default();
+    let text = format!("{}, {}", author, relative_timestamp);
+
+    h_flex()
+        .id("inline-blame")
+        .w_full()
+        .font(text_style.font().family)
+        .text_color(cx.theme().status().hint)
+        .line_height(text_style.line_height)
+        .child(Icon::new(IconName::FileGit).color(Color::Hint))
+        .child(text)
+        .gap_2()
+        .into_any()
+}
+
 fn render_blame_entry(
     ix: usize,
     blame: &gpui::Model<GitBlame>,
@@ -3617,9 +3610,7 @@ impl Element for EditorElement {
                 if let Some(newest_selection_head) = newest_selection_head {
                     if (start_row..end_row).contains(&newest_selection_head.row()) {
                         inline_blame = self.layout_inline_blame(
-                            start_row..end_row,
-                            buffer_rows.clone(),
-                            newest_selection_head,
+                            newest_selection_head.row(),
                             &line_layouts,
                             em_width,
                             content_origin,
