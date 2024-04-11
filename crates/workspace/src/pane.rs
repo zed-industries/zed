@@ -1,5 +1,8 @@
 use crate::{
-    item::{ClosePosition, Item, ItemHandle, ItemSettings, TabContentParams, WeakItemHandle},
+    item::{
+        ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
+        WeakItemHandle,
+    },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
@@ -441,7 +444,7 @@ impl Pane {
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         self.display_nav_history_buttons = TabBarSettings::get_global(cx).show_nav_history_buttons;
 
-        if !ItemSettings::get_global(cx).preview_tabs.enabled {
+        if !PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = None;
         }
         cx.notify();
@@ -562,7 +565,7 @@ impl Pane {
     /// Marks the item with the given ID as the preview item.
     /// This will be ignored if the global setting `preview_tabs` is disabled.
     pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &AppContext) {
-        if ItemSettings::get_global(cx).preview_tabs.enabled {
+        if PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = item_id;
         }
     }
@@ -1901,7 +1904,7 @@ impl Render for Pane {
             .on_action(cx.listener(|pane: &mut Pane, _: &ActivateNextItem, cx| {
                 pane.activate_next_item(true, cx);
             }))
-            .when(ItemSettings::get_global(cx).preview_tabs.enabled, |this| {
+            .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
                 this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, cx| {
                     if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
                         if pane.is_active_preview_item(active_item_id) {

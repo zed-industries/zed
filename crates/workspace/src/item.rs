@@ -38,7 +38,6 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
 #[derive(Deserialize)]
 pub struct ItemSettings {
-    pub preview_tabs: PreviewTabsSettings,
     pub git_status: bool,
     pub close_position: ClosePosition,
 }
@@ -76,8 +75,6 @@ pub struct ItemSettingsContent {
     ///
     /// Default: right
     close_position: Option<ClosePosition>,
-    /// Settings related to preview tabs.
-    preview_tabs: Option<PreviewTabsSettingsContent>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -103,7 +100,7 @@ impl Settings for ItemSettings {
     }
 }
 
-impl Settings for PreviewTabsSettingsContent {
+impl Settings for PreviewTabsSettings {
     const KEY: Option<&'static str> = Some("preview_tabs");
 
     type FileContent = PreviewTabsSettingsContent;

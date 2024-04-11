@@ -24,7 +24,7 @@ use std::{
 use text::Point;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
-use workspace::{item::ItemSettings, ModalView, Workspace};
+use workspace::{item::PreviewTabsSettings, ModalView, Workspace};
 
 actions!(file_finder, [Toggle, SelectPrev]);
 
@@ -787,9 +787,8 @@ impl PickerDelegate for FileFinderDelegate {
                         |workspace: &mut Workspace,
                          project_path,
                          cx: &mut ViewContext<Workspace>| {
-                            let allow_preview = ItemSettings::get_global(cx)
-                                .preview_tabs
-                                .enable_preview_from_file_finder;
+                            let allow_preview =
+                                PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
                             if secondary {
                                 workspace.split_path_preview(project_path, allow_preview, cx)
                             } else {
