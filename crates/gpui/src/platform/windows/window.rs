@@ -501,6 +501,7 @@ impl WindowsWindowInner {
             VK_NEXT => Some("pagedown"),
             VK_ESCAPE => Some("escape"),
             VK_INSERT => Some("insert"),
+            VK_DELETE => Some("delete"),
             _ => None,
         };
 
