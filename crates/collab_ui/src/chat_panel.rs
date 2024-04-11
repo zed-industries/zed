@@ -532,6 +532,7 @@ impl ChatPanel {
                                 self.client.id(),
                                 &message,
                                 self.local_timezone,
+                                cx,
                             )
                         });
                         el.child(
@@ -746,6 +747,7 @@ impl ChatPanel {
         current_user_id: u64,
         message: &channel::ChannelMessage,
         local_timezone: UtcOffset,
+        cx: &AppContext,
     ) -> RichText {
         let mentions = message
             .mentions
@@ -771,7 +773,7 @@ impl ChatPanel {
             rich_text.highlights.push((
                 range.clone(),
                 Highlight::Highlight(HighlightStyle {
-                    fade_out: Some(0.8),
+                    color: Some(cx.theme().colors().text_muted),
                     ..Default::default()
                 }),
             ));
@@ -1198,6 +1200,7 @@ mod tests {
             102,
             &message,
             UtcOffset::UTC,
+            cx,
         );
 
         // Note that the "'" was replaced with ’ due to smart punctuation.
@@ -1251,6 +1254,7 @@ mod tests {
             102,
             &message,
             UtcOffset::UTC,
+            cx,
         );
 
         // Note that the "'" was replaced with ’ due to smart punctuation.
@@ -1297,6 +1301,7 @@ mod tests {
             102,
             &message,
             UtcOffset::UTC,
+            cx,
         );
 
         // Note that the "'" was replaced with ’ due to smart punctuation.
