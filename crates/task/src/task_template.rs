@@ -164,9 +164,8 @@ fn substitute_all_template_variables_in_str(
                 ret.push_str(default);
             }
         };
-        if let Some(substitution) = task_variables.get(variable_name) {
+        if let Some(mut name) = task_variables.get(variable_name).cloned() {
             // Got a task variable hit
-            let mut name = format!("{substitution}");
             append_previous_default(&mut name);
             return Ok(Some(name));
         } else if variable_name.starts_with(ZED_VARIABLE_NAME_PREFIX) {
