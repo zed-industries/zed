@@ -2939,7 +2939,7 @@ fn render_blame_entry(
 
     h_flex()
         .w_full()
-        .font(text_style.font().family)
+        .font_family(text_style.font().family)
         .line_height(text_style.line_height)
         .id(("blame", ix))
         .children([

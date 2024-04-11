@@ -35,9 +35,7 @@ use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use release_channel::{AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
 use serde::{Deserialize, Serialize};
-use settings::{
-    default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
-};
+use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use smol::process::Command;
 use std::{

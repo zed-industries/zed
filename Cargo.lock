@@ -381,6 +381,7 @@ dependencies = [
 name = "assistant2"
 version = "0.1.0"
 dependencies = [
+ "assets",
  "editor",
  "gpui",
  "language",

@@ -10,7 +10,7 @@ use gpui::{
     div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowOptions,
 };
 use log::LevelFilter;
-use settings::{default_settings, KeymapFile, Settings, SettingsStore};
+use settings::{KeymapFile, Settings};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme::{ThemeRegistry, ThemeSettings};
@@ -115,7 +115,7 @@ impl Render for StoryWrapper {
             .flex()
             .flex_col()
             .size_full()
-            .font("Zed Mono")
+            .font_family("Zed Mono")
             .child(self.story.clone())
     }
 }

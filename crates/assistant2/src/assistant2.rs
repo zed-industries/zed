@@ -1,6 +1,9 @@
 use editor::Editor;
 use gpui::{list, AnyElement, ListAlignment, ListState, Render, View};
+use language::language_settings::SoftWrap;
 use semantic_index::SearchResult;
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::prelude::*;
 
 pub struct AssistantPanel {
@@ -15,8 +18,12 @@ impl AssistantPanel {
 }
 
 impl Render for AssistantPanel {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().size_full().v_flex().child(self.chat.clone())
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .v_flex()
+            .bg(cx.theme().colors().background)
+            .child(self.chat.clone())
     }
 }
 
@@ -29,10 +36,9 @@ impl AssistantChat {
     fn new(cx: &mut ViewContext<Self>) -> Self {
         let messages = vec![AssistantMessage::User {
             body: cx.new_view(|cx| {
-                let editor = Editor::auto_height(80, cx);
-                editor
-                    .buffer()
-                    .update(cx, |buffer, cx| buffer.as_singleton().unwrap());
+                let mut editor = Editor::auto_height(80, cx);
+                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                editor.set_text("Hello, I'm trying to understand how to optimize a piece of Rust code for better performance. Could you provide some insights or guidelines on how to profile and identify bottlenecks in a Rust application?", cx);
                 editor
             }),
             contexts: Vec::new(),
@@ -57,7 +63,15 @@ impl AssistantChat {
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         match &self.messages[ix] {
-            AssistantMessage::User { body, contexts } => body.clone().into_any_element(),
+            AssistantMessage::User { body, contexts } => div()
+                .m_2()
+                .p_2()
+                .text_color(cx.theme().colors().editor_foreground)
+                .font(ThemeSettings::get_global(cx).buffer_font.clone())
+                .text_buffer(cx)
+                .bg(cx.theme().colors().editor_background)
+                .child(body.clone())
+                .into_any_element(),
             AssistantMessage::Assistant { body } => body.clone().into_any_element(),
         }
     }
@@ -68,7 +82,7 @@ impl Render for AssistantChat {
         &mut self,
         cx: &mut workspace::ui::prelude::ViewContext<Self>,
     ) -> impl gpui::prelude::IntoElement {
-        list(self.list_state.clone())
+        list(self.list_state.clone()).size_full()
     }
 }
 

@@ -1,14 +1,16 @@
+use assets::Assets;
 use assistant2::AssistantPanel;
 use gpui::{App, View, WindowOptions};
 use theme::LoadThemes;
 use ui::{div, prelude::*, Render};
 
 fn main() {
-    App::new().run(|cx| {
+    App::new().with_assets(Assets).run(|cx| {
         settings::init(cx);
         language::init(cx);
         editor::init(cx);
         theme::init(LoadThemes::JustBase, cx);
+        Assets.load_fonts(cx).unwrap();
 
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|cx| Example::new(cx))
