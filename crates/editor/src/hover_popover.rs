@@ -238,7 +238,9 @@ fn show_hover(
     let task = cx.spawn(|this, mut cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
-            let delay = if !ignore_timeout {
+            let delay = if ignore_timeout {
+                None
+            } else {
                 // Construct delay task to wait for later
                 let total_delay = Some(
                     cx.background_executor()
@@ -249,8 +251,6 @@ fn show_hover(
                     .timer(Duration::from_millis(HOVER_REQUEST_DELAY_MILLIS))
                     .await;
                 total_delay
-            } else {
-                None
             };
 
             // query the LSP for hover info

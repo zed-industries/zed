@@ -2737,15 +2737,15 @@ impl Project {
             futures::future::join_all(tasks).await;
 
             this.update(&mut cx, |this, cx| {
-                if !this.buffers_needing_diff.is_empty() {
-                    this.recalculate_buffer_diffs(cx).detach();
-                } else {
+                if this.buffers_needing_diff.is_empty() {
                     // TODO: Would a `ModelContext<Project>.notify()` suffice here?
                     for buffer in buffers {
                         if let Some(buffer) = buffer.upgrade() {
                             buffer.update(cx, |_, cx| cx.notify());
                         }
                     }
+                } else {
+                    this.recalculate_buffer_diffs(cx).detach();
                 }
             })
             .ok();

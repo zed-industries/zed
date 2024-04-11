@@ -2519,7 +2519,9 @@ impl CollabPanel {
         const FACEPILE_LIMIT: usize = 3;
         let participants = self.channel_store.read(cx).channel_participants(channel_id);
 
-        let face_pile = if !participants.is_empty() {
+        let face_pile = if participants.is_empty() {
+            None
+        } else {
             let extra_count = participants.len().saturating_sub(FACEPILE_LIMIT);
             let result = FacePile::new(
                 participants
@@ -2540,8 +2542,6 @@ impl CollabPanel {
             );
 
             Some(result)
-        } else {
-            None
         };
 
         let width = self.width.unwrap_or(px(240.));

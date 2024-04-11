@@ -222,21 +222,21 @@ impl TerminalView {
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
-        if !self
+        if self
             .terminal
             .read(cx)
             .last_content
             .mode
             .contains(TermMode::ALT_SCREEN)
         {
-            cx.show_character_palette();
-        } else {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &Keystroke::parse("ctrl-cmd-space").unwrap(),
                     TerminalSettings::get_global(cx).option_as_meta,
                 )
             });
+        } else {
+            cx.show_character_palette();
         }
     }
 

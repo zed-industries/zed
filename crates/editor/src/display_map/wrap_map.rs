@@ -126,12 +126,12 @@ impl WrapMap {
     ) -> bool {
         let font_with_size = (font, font_size);
 
-        if font_with_size != self.font_with_size {
+        if font_with_size == self.font_with_size {
+            false
+        } else {
             self.font_with_size = font_with_size;
             self.rewrap(cx);
             true
-        } else {
-            false
         }
     }
 

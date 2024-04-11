@@ -625,10 +625,10 @@ impl AssistantPanel {
         // If Markdown or No Language is Known, increase the randomness for more creative output
         // If Code, decrease temperature to get more deterministic outputs
         let temperature = if let Some(language) = language_name.clone() {
-            if language.as_ref() != "Markdown" {
-                0.5
-            } else {
+            if language.as_ref() == "Markdown" {
                 1.0
+            } else {
+                0.5
             }
         } else {
             1.0
