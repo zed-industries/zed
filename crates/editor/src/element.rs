@@ -52,6 +52,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
+use url::Url;
 use util::ResultExt;
 use workspace::item::Item;
 
@@ -2955,6 +2956,9 @@ fn render_inline_blame_entry(
     let author = blame_entry.author.as_deref().unwrap_or_default();
     let text = format!("{}, {}", author, relative_timestamp);
 
+    let permalink = blame.read(cx).permalink_for_entry(&blame_entry);
+    let commit_message = blame.read(cx).message_for_entry(&blame_entry);
+
     h_flex()
         .id("inline-blame")
         .w_full()
@@ -2964,7 +2968,14 @@ fn render_inline_blame_entry(
         .child(Icon::new(IconName::FileGit).color(Color::Hint))
         .child(text)
         .gap_2()
-        .tooltip(move |cx| InlineBlameTooltip::new(blame_entry.clone(), cx))
+        .tooltip(move |cx| {
+            InlineBlameTooltip::new(
+                blame_entry.clone(),
+                permalink.clone(),
+                commit_message.clone(),
+                cx,
+            )
+        })
         .into_any()
 }
 
@@ -2982,11 +2993,23 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) 
 
 struct InlineBlameTooltip {
     blame_entry: BlameEntry,
+    permalink: Option<Url>,
+    commit_message: Option<String>,
 }
 
 impl InlineBlameTooltip {
-    fn new(blame_entry: BlameEntry, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|_cx| Self { blame_entry }).into()
+    fn new(
+        blame_entry: BlameEntry,
+        permalink: Option<Url>,
+        commit_message: Option<String>,
+        cx: &mut WindowContext,
+    ) -> AnyView {
+        cx.new_view(|_cx| Self {
+            blame_entry,
+            permalink,
+            commit_message,
+        })
+        .into()
     }
 }
 
@@ -2998,33 +3021,65 @@ impl Render for InlineBlameTooltip {
             .clone()
             .unwrap_or("<no name>".to_string());
 
+        let author_email = self.blame_entry.author_mail.clone();
+
         let pretty_commit_id = format!("{}", self.blame_entry.sha);
         let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
         let relative_timestamp = blame_entry_relative_timestamp(&self.blame_entry, cx);
 
-        let permalink = Some("https://example.com/TODO".to_string());
+        let message = match &self.commit_message {
+            Some(message) => util::truncate_lines_and_trailoff(message, 15),
+            None => self.blame_entry.summary.clone().unwrap_or_default(),
+        };
+
         tooltip_container(cx, move |this, cx| {
             this.occlude()
                 .on_mouse_move(|_, cx| cx.stop_propagation())
                 .child(
-                    v_flex().child(author).child(
-                        h_flex().gap_2().child(relative_timestamp).child(
-                            div()
-                                .id(SharedString::from(short_commit_id.clone()))
-                                .child(short_commit_id.clone())
-                                .when_some(permalink, |this, url| {
-                                    let url = url.clone();
-                                    this.cursor_pointer()
-                                        .on_mouse_down(MouseButton::Left, |_, cx| {
-                                            cx.stop_propagation()
-                                        })
-                                        .on_click(move |_, cx| {
-                                            cx.stop_propagation();
-                                            cx.open_url(url.as_str())
-                                        })
-                                }),
+                    v_flex()
+                        .min_w_40()
+                        .gap_4()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(author)
+                                .when_some(author_email, |this, author_email| {
+                                    this.child(
+                                        div()
+                                            .text_color(cx.theme().colors().text_muted)
+                                            .child(author_email),
+                                    )
+                                })
+                                .pb_1()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border),
+                        )
+                        .child(message)
+                        .child(
+                            h_flex()
+                                .text_color(cx.theme().colors().text_muted)
+                                .w_full()
+                                .justify_between()
+                                .child(relative_timestamp)
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .id(SharedString::from(short_commit_id.clone()))
+                                        .child(Icon::new(IconName::FileGit).color(Color::Hint))
+                                        .child(short_commit_id.clone())
+                                        .when_some(self.permalink.clone(), |this, url| {
+                                            let url = url.clone();
+                                            this.cursor_pointer()
+                                                .on_mouse_down(MouseButton::Left, |_, cx| {
+                                                    cx.stop_propagation()
+                                                })
+                                                .on_click(move |_, cx| {
+                                                    cx.stop_propagation();
+                                                    cx.open_url(url.as_str())
+                                                })
+                                        }),
+                                ),
                         ),
-                    ),
                 )
         })
     }
@@ -3057,7 +3112,7 @@ fn render_blame_entry(
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
 
     let pretty_commit_id = format!("{}", blame_entry.sha);
-    let short_commit_id = pretty_commit_id.clone().chars().take(6).collect::<String>();
+    let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
 
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
     let name = util::truncate_and_trailoff(author_name, 20);
