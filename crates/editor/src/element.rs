@@ -1102,10 +1102,7 @@ impl EditorElement {
         line_height: Pixels,
         cx: &mut ElementContext,
     ) -> Option<AnyElement> {
-        let Some(blame) = self.editor.read(cx).blame.as_ref().cloned() else {
-            return None;
-        };
-
+        let blame = self.editor.read(cx).blame.clone()?;
         let blame_entry = blame
             .update(cx, |blame, cx| blame.blame_for_rows([Some(row)], cx).next())
             .flatten()?;
@@ -1148,10 +1145,7 @@ impl EditorElement {
             return None;
         }
 
-        let Some(blame) = self.editor.read(cx).blame.as_ref().cloned() else {
-            return None;
-        };
-
+        let blame = self.editor.read(cx).blame.clone()?;
         let blamed_rows: Vec<_> = blame.update(cx, |blame, cx| {
             blame.blame_for_rows(buffer_rows, cx).collect()
         });
