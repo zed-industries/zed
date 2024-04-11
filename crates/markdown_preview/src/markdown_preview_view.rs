@@ -164,14 +164,15 @@ impl MarkdownPreviewView {
                                                         let task_marker =
                                                             if checked { "[x]" } else { "[ ]" };
 
-                                                        editor.transact(cx, |editor, cx| {
-                                                            editor.edit(
-                                                                vec![(source_range, task_marker)],
-                                                                cx,
-                                                            );
-                                                        });
-                                                        cx.notify();
+                                                        editor.edit(
+                                                            vec![(source_range, task_marker)],
+                                                            cx,
+                                                        );
                                                     });
+                                                    view.parse_markdown_from_active_editor(
+                                                        false, cx,
+                                                    );
+                                                    cx.notify();
                                                 }
                                             })
                                         }
@@ -288,7 +289,7 @@ impl MarkdownPreviewView {
         let subscription = cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
             match event {
                 EditorEvent::Edited => {
-                    this.on_editor_edited(cx);
+                    this.parse_markdown_from_active_editor(true, cx);
                 }
                 EditorEvent::SelectionsChanged { .. } => {
                     let editor = editor.read(cx);
@@ -311,16 +312,20 @@ impl MarkdownPreviewView {
             _subscription: subscription,
         });
 
-        if let Some(state) = &self.active_editor {
-            self.parsing_markdown_task =
-                Some(self.parse_markdown_in_background(false, state.editor.clone(), cx));
-        }
+        self.parse_markdown_from_active_editor(false, cx);
     }
 
-    fn on_editor_edited(&mut self, cx: &mut ViewContext<Self>) {
+    fn parse_markdown_from_active_editor(
+        &mut self,
+        wait_for_debounce: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         if let Some(state) = &self.active_editor {
-            self.parsing_markdown_task =
-                Some(self.parse_markdown_in_background(true, state.editor.clone(), cx));
+            self.parsing_markdown_task = Some(self.parse_markdown_in_background(
+                wait_for_debounce,
+                state.editor.clone(),
+                cx,
+            ));
         }
     }
 
