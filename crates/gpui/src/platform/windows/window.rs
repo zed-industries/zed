@@ -42,8 +42,7 @@ pub(crate) struct WindowsWindowInner {
     hwnd: HWND,
     origin: Cell<Point<DevicePixels>>,
     physical_size: Cell<Size<DevicePixels>>,
-    fullscreen_restore_origin: Cell<Point<DevicePixels>>,
-    fullscreen_restore_size: Cell<Size<DevicePixels>>,
+    fullscreen_restore_bounds: Cell<Bounds<DevicePixels>>,
     scale_factor: Cell<f32>,
     input_handler: Cell<Option<PlatformInputHandler>>,
     renderer: RefCell<BladeRenderer>,
@@ -116,22 +115,17 @@ impl WindowsWindowInner {
         let display = RefCell::new(display);
         let click_state = RefCell::new(ClickState::new());
         let fullscreen = Cell::new(None);
-        let fullscreen_restore_origin;
-        let fullscreen_restore_size;
-        if let Some(bounds) = fullscreen_restore_bounds {
-            fullscreen_restore_origin = Cell::new(bounds.origin);
-            fullscreen_restore_size = Cell::new(bounds.size);
+        let fullscreen_restore_bounds = if let Some(bounds) = fullscreen_restore_bounds {
+            Cell::new(bounds)
         } else {
-            fullscreen_restore_origin = Cell::new(Point::default());
-            fullscreen_restore_size = Cell::new(Size::default());
-        }
+            Cell::new(Bounds::default())
+        };
 
         Self {
             hwnd,
             origin,
             physical_size,
-            fullscreen_restore_origin,
-            fullscreen_restore_size,
+            fullscreen_restore_bounds,
             scale_factor,
             input_handler,
             renderer,
@@ -174,10 +168,7 @@ impl WindowsWindowInner {
         };
 
         if self.is_fullscreen() {
-            WindowOpenStatus::FullScreen(Bounds {
-                origin: self.fullscreen_restore_origin.get(),
-                size: self.fullscreen_restore_size.get(),
-            })
+            WindowOpenStatus::FullScreen(self.fullscreen_restore_bounds.get())
         } else if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
             WindowOpenStatus::Maximized(bounds)
         } else {
@@ -193,8 +184,10 @@ impl WindowsWindowInner {
     }
 
     async fn toggle_fullscreen(self: Rc<Self>) {
-        self.fullscreen_restore_origin.set(self.origin.get());
-        self.fullscreen_restore_size.set(self.physical_size.get());
+        self.fullscreen_restore_bounds.set(Bounds {
+            origin: self.origin.get(),
+            size: self.physical_size.get(),
+        });
         let StyleAndBounds {
             style,
             x,
