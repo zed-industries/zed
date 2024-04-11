@@ -1,7 +1,7 @@
 use futures::FutureExt;
 use gpui::{
-    AnyElement, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText, IntoElement,
-    SharedString, StrikethroughStyle, StyledText, UnderlineStyle, WindowContext,
+    AnyElement, AnyView, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText,
+    IntoElement, SharedString, StrikethroughStyle, StyledText, UnderlineStyle, WindowContext,
 };
 use language::{HighlightId, Language, LanguageRegistry};
 use std::{ops::Range, sync::Arc};
@@ -31,12 +31,16 @@ impl From<HighlightId> for Highlight {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RichText {
     pub text: SharedString,
     pub highlights: Vec<(Range<usize>, Highlight)>,
     pub link_ranges: Vec<Range<usize>>,
     pub link_urls: Arc<[String]>,
+
+    pub custom_ranges: Vec<Range<usize>>,
+    custom_ranges_tooltip_fn:
+        Option<Arc<dyn Fn(usize, Range<usize>, &mut WindowContext) -> Option<AnyView>>>,
 }
 
 /// Allows one to specify extra links to the rendered markdown, which can be used
@@ -48,7 +52,14 @@ pub struct Mention {
 }
 
 impl RichText {
-    pub fn element(&self, id: ElementId, cx: &WindowContext) -> AnyElement {
+    pub fn set_tooltip_builder_for_custom_ranges(
+        &mut self,
+        f: impl Fn(usize, Range<usize>, &mut WindowContext) -> Option<AnyView> + 'static,
+    ) {
+        self.custom_ranges_tooltip_fn = Some(Arc::new(f));
+    }
+
+    pub fn element(&self, id: ElementId, cx: &mut WindowContext) -> AnyElement {
         let theme = cx.theme();
         let code_background = theme.colors().surface_background;
 
@@ -111,10 +122,19 @@ impl RichText {
         .tooltip({
             let link_ranges = self.link_ranges.clone();
             let link_urls = self.link_urls.clone();
+            let custom_tooltip_ranges = self.custom_ranges.clone();
+            let custom_tooltip_fn = self.custom_ranges_tooltip_fn.clone();
             move |idx, cx| {
                 for (ix, range) in link_ranges.iter().enumerate() {
                     if range.contains(&idx) {
                         return Some(LinkPreview::new(&link_urls[ix], cx));
+                    }
+                }
+                for range in &custom_tooltip_ranges {
+                    if range.contains(&idx) {
+                        if let Some(f) = &custom_tooltip_fn {
+                            return f(idx, range.clone(), cx);
+                        }
                     }
                 }
                 None
@@ -354,6 +374,8 @@ pub fn render_rich_text(
         link_urls: link_urls.into(),
         link_ranges,
         highlights,
+        custom_ranges: Vec::new(),
+        custom_ranges_tooltip_fn: None,
     }
 }
 
