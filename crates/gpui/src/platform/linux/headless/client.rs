@@ -49,7 +49,6 @@ impl HeadlessClient {
             common,
         })))
     }
-
 }
 
 impl LinuxClient for HeadlessClient {
@@ -80,8 +79,7 @@ impl LinuxClient for HeadlessClient {
     //todo(linux)
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
-    fn write_to_clipboard(&self, item: crate::ClipboardItem) {
-    }
+    fn write_to_clipboard(&self, item: crate::ClipboardItem) {}
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
         None
