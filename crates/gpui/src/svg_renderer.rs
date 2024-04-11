@@ -1,7 +1,7 @@
 use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
 use anyhow::anyhow;
+use resvg::tiny_skia::Pixmap;
 use std::{hash::Hash, sync::Arc};
-use tiny_skia::Pixmap;
 
 #[derive(Clone, PartialEq, Hash, Eq)]
 pub(crate) struct RenderSvgParams {
@@ -46,24 +46,23 @@ impl SvgRenderer {
     pub fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {
         let tree = usvg::Tree::from_data(&bytes, &usvg::Options::default())?;
 
-        let tree_size = tree.svg_node().size;
-
         let size = match size {
             SvgSize::Size(size) => size,
             SvgSize::ScaleFactor(scale) => crate::size(
-                DevicePixels((tree_size.width() * scale as f64) as i32),
-                DevicePixels((tree_size.height() * scale as f64) as i32),
+                DevicePixels((tree.size().width() * scale) as i32),
+                DevicePixels((tree.size().height() * scale) as i32),
             ),
         };
 
         // Render the SVG to a pixmap with the specified width and height.
-        let mut pixmap = tiny_skia::Pixmap::new(size.width.into(), size.height.into()).unwrap();
+        let mut pixmap =
+            resvg::tiny_skia::Pixmap::new(size.width.into(), size.height.into()).unwrap();
 
-        resvg::render(
-            &tree,
-            usvg::FitTo::Width(size.width.into()),
-            pixmap.as_mut(),
+        let transform = tree.view_box().to_transform(
+            resvg::tiny_skia::Size::from_wh(size.width.0 as f32, size.height.0 as f32).unwrap(),
         );
+
+        resvg::render(&tree, transform, &mut pixmap.as_mut());
 
         Ok(pixmap)
     }
