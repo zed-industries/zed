@@ -15,6 +15,34 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(NotificationTracker::new());
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct NotificationId {
+    /// A [`TypeId`] used to uniquely identify this notification.
+    type_id: TypeId,
+    /// A supplementary ID used to distinguish between multiple
+    /// notifications that have the same [`type_id`](Self::type_id);
+    id: Option<ElementId>,
+}
+
+impl NotificationId {
+    /// Returns a unique [`NotificationId`] for the given type.
+    pub fn unique<T: 'static>() -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            id: None,
+        }
+    }
+
+    /// Returns a [`NotificationId`] for the given type that is also identified
+    /// by the provided ID.
+    pub fn identified<T: 'static>(id: impl Into<ElementId>) -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            id: Some(id.into()),
+        }
+    }
+}
+
 pub trait Notification: EventEmitter<DismissEvent> + Render {}
 
 impl<V: EventEmitter<DismissEvent> + Render> Notification for V {}
@@ -41,13 +69,13 @@ impl From<&dyn NotificationHandle> for AnyView {
 }
 
 pub(crate) struct NotificationTracker {
-    notifications_sent: HashMap<TypeId, Vec<usize>>,
+    notifications_sent: HashMap<TypeId, Vec<NotificationId>>,
 }
 
 impl Global for NotificationTracker {}
 
 impl std::ops::Deref for NotificationTracker {
-    type Target = HashMap<TypeId, Vec<usize>>;
+    type Target = HashMap<TypeId, Vec<NotificationId>>;
 
     fn deref(&self) -> &Self::Target {
         &self.notifications_sent
@@ -71,45 +99,46 @@ impl NotificationTracker {
 impl Workspace {
     pub fn has_shown_notification_once<V: Notification>(
         &self,
-        id: usize,
+        id: &NotificationId,
         cx: &ViewContext<Self>,
     ) -> bool {
         cx.global::<NotificationTracker>()
             .get(&TypeId::of::<V>())
-            .map(|ids| ids.contains(&id))
+            .map(|ids| ids.contains(id))
             .unwrap_or(false)
     }
 
     pub fn show_notification_once<V: Notification>(
         &mut self,
-        id: usize,
+        id: NotificationId,
         cx: &mut ViewContext<Self>,
         build_notification: impl FnOnce(&mut ViewContext<Self>) -> View<V>,
     ) {
-        if !self.has_shown_notification_once::<V>(id, cx) {
+        if !self.has_shown_notification_once::<V>(&id, cx) {
             let tracker = cx.global_mut::<NotificationTracker>();
             let entry = tracker.entry(TypeId::of::<V>()).or_default();
-            entry.push(id);
+            entry.push(id.clone());
             self.show_notification::<V>(id, cx, build_notification)
         }
     }
 
     pub fn show_notification<V: Notification>(
         &mut self,
-        id: usize,
+        id: NotificationId,
         cx: &mut ViewContext<Self>,
         build_notification: impl FnOnce(&mut ViewContext<Self>) -> View<V>,
     ) {
-        let type_id = TypeId::of::<V>();
-        self.dismiss_notification_internal(type_id, id, cx);
+        self.dismiss_notification_internal(&id, cx);
 
         let notification = build_notification(cx);
-        cx.subscribe(&notification, move |this, _, _: &DismissEvent, cx| {
-            this.dismiss_notification_internal(type_id, id, cx);
+        cx.subscribe(&notification, {
+            let id = id.clone();
+            move |this, _, _: &DismissEvent, cx| {
+                this.dismiss_notification_internal(&id, cx);
+            }
         })
         .detach();
-        self.notifications
-            .push((type_id, id, Box::new(notification)));
+        self.notifications.push((id, Box::new(notification)));
         cx.notify();
     }
 
@@ -117,21 +146,25 @@ impl Workspace {
     where
         E: std::fmt::Debug,
     {
-        self.show_notification(0, cx, |cx| {
-            cx.new_view(|_cx| {
-                simple_message_notification::MessageNotification::new(format!("Error: {err:?}"))
-            })
-        });
+        struct WorkspaceErrorNotification;
+
+        self.show_notification(
+            NotificationId::unique::<WorkspaceErrorNotification>(),
+            cx,
+            |cx| {
+                cx.new_view(|_cx| {
+                    simple_message_notification::MessageNotification::new(format!("Error: {err:?}"))
+                })
+            },
+        );
     }
 
-    pub fn dismiss_notification<V: Notification>(&mut self, id: usize, cx: &mut ViewContext<Self>) {
-        let type_id = TypeId::of::<V>();
-
-        self.dismiss_notification_internal(type_id, id, cx)
+    pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+        self.dismiss_notification_internal(id, cx)
     }
 
     pub fn show_toast(&mut self, toast: Toast, cx: &mut ViewContext<Self>) {
-        self.dismiss_notification::<simple_message_notification::MessageNotification>(toast.id, cx);
+        self.dismiss_notification(&toast.id, cx);
         self.show_notification(toast.id, cx, |cx| {
             cx.new_view(|_cx| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
@@ -145,25 +178,19 @@ impl Workspace {
         })
     }
 
-    pub fn dismiss_toast(&mut self, id: usize, cx: &mut ViewContext<Self>) {
-        self.dismiss_notification::<simple_message_notification::MessageNotification>(id, cx);
+    pub fn dismiss_toast(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+        self.dismiss_notification(id, cx);
     }
 
-    fn dismiss_notification_internal(
-        &mut self,
-        type_id: TypeId,
-        id: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.notifications
-            .retain(|(existing_type_id, existing_id, _)| {
-                if (*existing_type_id, *existing_id) == (type_id, id) {
-                    cx.notify();
-                    false
-                } else {
-                    true
-                }
-            });
+    fn dismiss_notification_internal(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
+        self.notifications.retain(|(existing_id, _)| {
+            if existing_id == id {
+                cx.notify();
+                false
+            } else {
+                true
+            }
+        });
     }
 }
 

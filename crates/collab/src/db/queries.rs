@@ -12,6 +12,7 @@ pub mod messages;
 pub mod notifications;
 pub mod projects;
 pub mod rate_buckets;
+pub mod remote_projects;
 pub mod rooms;
 pub mod servers;
 pub mod users;

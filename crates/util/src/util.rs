@@ -641,6 +641,30 @@ mod tests {
             NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
             Some(NumericPrefixWithSuffix(1, "_2ab"))
         );
+
+        let target = "1.2";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, ".2"))
+        );
+
+        let target = "1.2_a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(1, ".2_a"))
+        );
+
+        let target = "12.2_a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, ".2_a"))
+        );
+
+        let target = "12a.2_a";
+        assert_eq!(
+            NumericPrefixWithSuffix::from_numeric_prefixed_str(target),
+            Some(NumericPrefixWithSuffix(12, "a.2_a"))
+        );
     }
 
     #[test]

@@ -213,7 +213,21 @@ message Envelope {
         UpdateNotification update_notification = 174;
 
         MultiLspQuery multi_lsp_query = 175;
-        MultiLspQueryResponse multi_lsp_query_response = 176; // current max
+        MultiLspQueryResponse multi_lsp_query_response = 176;
+
+        CreateRemoteProject create_remote_project = 177;
+        CreateRemoteProjectResponse create_remote_project_response = 188; // current max
+        CreateDevServer create_dev_server = 178;
+        CreateDevServerResponse create_dev_server_response = 179;
+        ShutdownDevServer shutdown_dev_server = 180;
+        DevServerInstructions dev_server_instructions = 181;
+        ReconnectDevServer reconnect_dev_server = 182;
+        ReconnectDevServerResponse reconnect_dev_server_response = 183;
+
+        ShareRemoteProject share_remote_project = 184;
+        JoinRemoteProject join_remote_project = 185;
+        RejoinRemoteProjects rejoin_remote_projects = 186;
+        RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
     }
 
     reserved 158 to 161;
@@ -249,6 +263,7 @@ enum ErrorCode {
     WrongMoveTarget = 11;
     UnsharedItem = 12;
     NoSuchProject = 13;
+    DevServerAlreadyOnline = 14;
     reserved 6;
 }
 
@@ -279,6 +294,13 @@ message RejoinRoom {
     uint64 id = 1;
     repeated UpdateProject reshared_projects = 2;
     repeated RejoinProject rejoined_projects = 3;
+}
+message RejoinRemoteProjects {
+    repeated RejoinProject rejoined_projects = 1;
+}
+
+message RejoinRemoteProjectsResponse {
+    repeated RejoinedProject rejoined_projects = 1;
 }
 
 message RejoinProject {
@@ -427,6 +449,52 @@ message JoinProject {
 
 message JoinHostedProject {
     uint64 project_id = 1;
+}
+
+message CreateRemoteProject {
+    uint64 channel_id = 1;
+    string name = 2;
+    uint64 dev_server_id = 3;
+    string path = 4;
+}
+message CreateRemoteProjectResponse {
+    RemoteProject remote_project = 1;
+}
+
+message CreateDevServer {
+    uint64 channel_id = 1;
+    string name = 2;
+}
+
+message CreateDevServerResponse {
+    uint64 dev_server_id = 1;
+    uint64 channel_id = 2;
+    string access_token = 3;
+    string name = 4;
+}
+
+message ShutdownDevServer {
+}
+
+message ReconnectDevServer {
+    repeated UpdateProject reshared_projects = 1;
+}
+
+message ReconnectDevServerResponse {
+    repeated ResharedProject reshared_projects = 1;
+}
+
+message DevServerInstructions {
+    repeated RemoteProject projects = 1;
+}
+
+message ShareRemoteProject {
+    uint64 remote_project_id = 1;
+    repeated WorktreeMetadata worktrees = 2;
+}
+
+message JoinRemoteProject {
+    uint64 remote_project_id = 1;
 }
 
 message JoinProjectResponse {
@@ -1057,6 +1125,12 @@ message UpdateChannels {
 
     repeated HostedProject hosted_projects = 10;
     repeated uint64 deleted_hosted_projects = 11;
+
+    repeated DevServer dev_servers = 12;
+    repeated uint64 deleted_dev_servers = 13;
+
+    repeated RemoteProject remote_projects = 14;
+    repeated uint64 deleted_remote_projects = 15;
 }
 
 message UpdateUserChannels {
@@ -1090,6 +1164,27 @@ message HostedProject {
     uint64 channel_id = 2;
     string name = 3;
     ChannelVisibility visibility = 4;
+}
+
+message RemoteProject {
+    uint64 id = 1;
+    optional uint64 project_id = 2;
+    uint64 channel_id = 3;
+    string name = 4;
+    uint64 dev_server_id = 5;
+    string path = 6;
+}
+
+message DevServer {
+    uint64 channel_id = 1;
+    uint64 dev_server_id = 2;
+    string name = 3;
+    DevServerStatus status = 4;
+}
+
+enum DevServerStatus {
+    Offline = 0;
+    Online = 1;
 }
 
 message JoinChannel {

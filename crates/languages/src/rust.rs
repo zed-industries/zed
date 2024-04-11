@@ -17,10 +17,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{
-    static_source::{Definition, TaskDefinitions},
-    TaskVariables, VariableName,
-};
+use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
@@ -355,20 +352,33 @@ impl ContextProvider for RustContextProvider {
         Ok(context)
     }
 
-    fn associated_tasks(&self) -> Option<TaskDefinitions> {
-        Some(TaskDefinitions(vec![
-            Definition {
-                label: "Rust: Test current crate".to_owned(),
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
+        Some(TaskTemplates(vec![
+            TaskTemplate {
+                label: format!(
+                    "cargo check -p {}",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
                 command: "cargo".into(),
                 args: vec![
-                    "test".into(),
+                    "check".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ],
-                ..Definition::default()
+                ..TaskTemplate::default()
             },
-            Definition {
-                label: "Rust: Test current function".to_owned(),
+            TaskTemplate {
+                label: "cargo check --workspace --all-targets".into(),
+                command: "cargo".into(),
+                args: vec!["check".into(), "--workspace".into(), "--all-targets".into()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "cargo test -p {} {} -- --nocapture",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                ),
                 command: "cargo".into(),
                 args: vec![
                     "test".into(),
@@ -378,29 +388,32 @@ impl ContextProvider for RustContextProvider {
                     "--".into(),
                     "--nocapture".into(),
                 ],
-                ..Definition::default()
+                ..TaskTemplate::default()
             },
-            Definition {
-                label: "Rust: cargo run".into(),
-                command: "cargo".into(),
-                args: vec!["run".into()],
-                ..Definition::default()
-            },
-            Definition {
-                label: "Rust: cargo check current crate".into(),
+            TaskTemplate {
+                label: format!(
+                    "cargo test -p {}",
+                    RUST_PACKAGE_TASK_VARIABLE.template_value()
+                ),
                 command: "cargo".into(),
                 args: vec![
-                    "check".into(),
+                    "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ],
-                ..Definition::default()
+                ..TaskTemplate::default()
             },
-            Definition {
-                label: "Rust: cargo check workspace".into(),
+            TaskTemplate {
+                label: "cargo run".into(),
                 command: "cargo".into(),
-                args: vec!["check".into(), "--workspace".into()],
-                ..Definition::default()
+                args: vec!["run".into()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "cargo clean".into(),
+                command: "cargo".into(),
+                args: vec!["clean".into()],
+                ..TaskTemplate::default()
             },
         ]))
     }
@@ -465,7 +478,6 @@ mod tests {
     use gpui::{BorrowAppContext, Context, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
-    use text::BufferId;
     use theme::SyntaxTheme;
 
     #[gpui::test]
@@ -682,8 +694,7 @@ mod tests {
         let language = crate::language("rust", tree_sitter_rust::language());
 
         cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
-                .with_language(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
             // indent between braces
             buffer.set_text("fn a() {}", cx);

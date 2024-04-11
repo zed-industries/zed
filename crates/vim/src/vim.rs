@@ -67,7 +67,15 @@ struct Number(usize);
 
 actions!(
     vim,
-    [Tab, Enter, Object, InnerObject, FindForward, FindBackward]
+    [
+        Tab,
+        Enter,
+        Object,
+        InnerObject,
+        FindForward,
+        FindBackward,
+        OpenDefaultKeymap
+    ]
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
@@ -131,6 +139,14 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         update_settings_file::<VimModeSetting>(fs, cx, move |setting| {
             *setting = Some(!currently_enabled)
         })
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &OpenDefaultKeymap, cx| {
+        cx.emit(workspace::Event::OpenBundledFile {
+            text: settings::vim_keymap(),
+            title: "Default Vim Bindings",
+            language: "JSON",
+        });
     });
 
     normal::register(workspace, cx);

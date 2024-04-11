@@ -150,9 +150,9 @@
 
 ;; Tables
 
-(field name: (identifier) @field)
+(field name: (identifier) @property)
 
-(dot_index_expression field: (identifier) @field)
+(dot_index_expression field: (identifier) @property)
 
 (table_constructor
 [
@@ -176,7 +176,7 @@
     (dot_index_expression field: (identifier) @function.definition)
   ])
 
-(method_index_expression method: (identifier) @method)
+(method_index_expression method: (identifier) @function.method)
 
 (function_call
   (identifier) @function.builtin

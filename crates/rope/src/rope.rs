@@ -12,6 +12,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
+use unicode_segmentation::GraphemeCursor;
 use util::debug_panic;
 
 pub use offset_utf16::OffsetUtf16;
@@ -923,14 +924,30 @@ impl Chunk {
     fn clip_point(&self, target: Point, bias: Bias) -> Point {
         for (row, line) in self.0.split('\n').enumerate() {
             if row == target.row as usize {
-                let mut column = target.column.min(line.len() as u32);
-                while !line.is_char_boundary(column as usize) {
+                let bytes = line.as_bytes();
+                let mut column = target.column.min(bytes.len() as u32) as usize;
+                if column == 0
+                    || column == bytes.len()
+                    || (bytes[column - 1] < 128 && bytes[column] < 128)
+                {
+                    return Point::new(row as u32, column as u32);
+                }
+
+                let mut grapheme_cursor = GraphemeCursor::new(column, bytes.len(), true);
+                loop {
+                    if line.is_char_boundary(column) {
+                        if grapheme_cursor.is_boundary(line, 0).unwrap_or(false) {
+                            break;
+                        }
+                    }
+
                     match bias {
                         Bias::Left => column -= 1,
                         Bias::Right => column += 1,
                     }
+                    grapheme_cursor.set_cursor(column);
                 }
-                return Point::new(row as u32, column);
+                return Point::new(row as u32, column as u32);
             }
         }
         unreachable!()

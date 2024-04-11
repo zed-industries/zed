@@ -129,6 +129,7 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use workspace::notifications::NotificationId;
 use workspace::Toast;
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
@@ -1328,37 +1329,19 @@ impl InlayHintRefreshReason {
 
 impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                String::new(),
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::SingleLine, buffer, None, cx)
     }
 
     pub fn multi_line(cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                String::new(),
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, None, cx)
     }
 
     pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                String::new(),
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::AutoHeight { max_lines }, buffer, None, cx)
     }
@@ -8850,16 +8833,16 @@ impl Editor {
     }
 
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
-        if !self.show_git_blame {
+        if self.show_git_blame {
+            self.blame_subscription.take();
+            self.blame.take();
+            self.show_git_blame = false
+        } else {
             if let Err(error) = self.show_git_blame_internal(cx) {
                 log::error!("failed to toggle on 'git blame': {}", error);
                 return;
             }
             self.show_git_blame = true
-        } else {
-            self.blame_subscription.take();
-            self.blame.take();
-            self.show_git_blame = false
         }
 
         cx.notify();
@@ -8940,7 +8923,12 @@ impl Editor {
 
                 if let Some(workspace) = self.workspace() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_toast(Toast::new(0x156a5f9ee, message), cx)
+                        struct CopyPermalinkToLine;
+
+                        workspace.show_toast(
+                            Toast::new(NotificationId::unique::<CopyPermalinkToLine>(), message),
+                            cx,
+                        )
                     })
                 }
             }
@@ -8961,7 +8949,12 @@ impl Editor {
 
                 if let Some(workspace) = self.workspace() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_toast(Toast::new(0x45a8978, message), cx)
+                        struct OpenPermalinkToLine;
+
+                        workspace.show_toast(
+                            Toast::new(NotificationId::unique::<OpenPermalinkToLine>(), message),
+                            cx,
+                        )
                     })
                 }
             }

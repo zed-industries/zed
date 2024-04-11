@@ -258,7 +258,9 @@ impl PickerDelegate for RecentProjectsDelegate {
             };
             workspace
                 .update(cx, |workspace, cx| {
-                    if workspace.database_id() != *candidate_workspace_id {
+                    if workspace.database_id() == *candidate_workspace_id {
+                        Task::ready(Ok(()))
+                    } else {
                         let candidate_paths = candidate_workspace_location.paths().as_ref().clone();
                         if replace_current_window {
                             cx.spawn(move |workspace, mut cx| async move {
@@ -284,8 +286,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                         } else {
                             workspace.open_workspace_for_paths(false, candidate_paths, cx)
                         }
-                    } else {
-                        Task::ready(Ok(()))
                     }
                 })
                 .detach_and_log_err(cx);

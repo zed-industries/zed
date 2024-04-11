@@ -165,6 +165,19 @@ pub trait Context {
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>>;
 
+    /// Reserve a slot for a model to be inserted later.
+    /// The returned [Reservation] allows you to obtain the [EntityId] for the future model.
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
+
+    /// Insert a new model in the app context based on a [Reservation] previously obtained from [`reserve_model`].
+    ///
+    /// [`reserve_model`]: Self::reserve_model
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>>;
+
     /// Update a model in the app context.
     fn update_model<T, R>(
         &mut self,
@@ -196,6 +209,17 @@ pub trait Context {
     ) -> Result<R>
     where
         T: 'static;
+}
+
+/// Returned by [Context::reserve_model] to later be passed to [Context::insert_model].
+/// Allows you to obtain the [EntityId] for a model before it is created.
+pub struct Reservation<T>(pub(crate) Slot<T>);
+
+impl<T: 'static> Reservation<T> {
+    /// Returns the [EntityId] that will be associated with the model once it is inserted.
+    pub fn entity_id(&self) -> EntityId {
+        self.0.entity_id()
+    }
 }
 
 /// This trait is used for the different visual contexts in GPUI that

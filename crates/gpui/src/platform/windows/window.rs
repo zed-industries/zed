@@ -1297,6 +1297,7 @@ impl Drop for WindowsWindow {
     fn drop(&mut self) {
         unsafe {
             let _ = RevokeDragDrop(self.inner.hwnd);
+            self.inner.renderer.borrow_mut().destroy();
         }
     }
 }

@@ -3,10 +3,7 @@ use collections::HashMap;
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::{
-    static_source::{Definition, TaskDefinitions},
-    VariableName,
-};
+use crate::{TaskTemplate, TaskTemplates, VariableName};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -87,7 +84,7 @@ impl EnvVariableReplacer {
 }
 
 impl VsCodeTaskDefinition {
-    fn to_zed_format(self, replacer: &EnvVariableReplacer) -> anyhow::Result<Definition> {
+    fn to_zed_format(self, replacer: &EnvVariableReplacer) -> anyhow::Result<TaskTemplate> {
         if self.other_attributes.contains_key("dependsOn") {
             bail!("Encountered unsupported `dependsOn` key during deserialization");
         }
@@ -107,7 +104,7 @@ impl VsCodeTaskDefinition {
         // Per VSC docs, only `command`, `args` and `options` support variable substitution.
         let command = replacer.replace(&command);
         let args = args.into_iter().map(|arg| replacer.replace(&arg)).collect();
-        let mut ret = Definition {
+        let mut ret = TaskTemplate {
             label: self.label,
             command,
             args,
@@ -127,7 +124,7 @@ pub struct VsCodeTaskFile {
     tasks: Vec<VsCodeTaskDefinition>,
 }
 
-impl TryFrom<VsCodeTaskFile> for TaskDefinitions {
+impl TryFrom<VsCodeTaskFile> for TaskTemplates {
     type Error = anyhow::Error;
 
     fn try_from(value: VsCodeTaskFile) -> Result<Self, Self::Error> {
@@ -143,12 +140,12 @@ impl TryFrom<VsCodeTaskFile> for TaskDefinitions {
                 VariableName::SelectedText.to_string(),
             ),
         ]));
-        let definitions = value
+        let templates = value
             .tasks
             .into_iter()
             .filter_map(|vscode_definition| vscode_definition.to_zed_format(&replacer).log_err())
             .collect();
-        Ok(Self(definitions))
+        Ok(Self(templates))
     }
 }
 
@@ -157,9 +154,8 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        static_source::{Definition, TaskDefinitions},
         vscode_format::{Command, VsCodeTaskDefinition},
-        VsCodeTaskFile,
+        TaskTemplate, TaskTemplates, VsCodeTaskFile,
     };
 
     use super::EnvVariableReplacer;
@@ -257,13 +253,13 @@ mod tests {
             .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
 
         let expected = vec![
-            Definition {
+            TaskTemplate {
                 label: "gulp: tests".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "build:tests:notypecheck".to_string()],
                 ..Default::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "tsc: watch ./src".to_string(),
                 command: "node".to_string(),
                 args: vec![
@@ -274,13 +270,13 @@ mod tests {
                 ],
                 ..Default::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "npm: build:compiler".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "build:compiler".to_string()],
                 ..Default::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "npm: build:tests".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "build:tests:notypecheck".to_string()],
@@ -288,7 +284,7 @@ mod tests {
             },
         ];
 
-        let tasks: TaskDefinitions = vscode_definitions.try_into().unwrap();
+        let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
     }
 
@@ -360,36 +356,36 @@ mod tests {
             .zip(expected)
             .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
         let expected = vec![
-            Definition {
+            TaskTemplate {
                 label: "Build Extension in Background".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "watch".to_string()],
                 ..Default::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "Build Extension".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "build".to_string()],
                 ..Default::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "Build Server".to_string(),
                 command: "cargo build --package rust-analyzer".to_string(),
                 ..Default::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "Build Server (Release)".to_string(),
                 command: "cargo build --release --package rust-analyzer".to_string(),
                 ..Default::default()
             },
-            Definition {
+            TaskTemplate {
                 label: "Pretest".to_string(),
                 command: "npm".to_string(),
                 args: vec!["run".to_string(), "pretest".to_string()],
                 ..Default::default()
             },
         ];
-        let tasks: TaskDefinitions = vscode_definitions.try_into().unwrap();
+        let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
     }
 }

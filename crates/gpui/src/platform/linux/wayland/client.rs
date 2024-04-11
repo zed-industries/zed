@@ -651,20 +651,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                 let keymap_state = state.keymap_state.as_mut().unwrap();
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
-
-                let shift =
-                    keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
-                let alt =
-                    keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
-                let control =
-                    keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
-                let command =
-                    keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
-
-                state.modifiers.shift = shift;
-                state.modifiers.alt = alt;
-                state.modifiers.control = control;
-                state.modifiers.platform = command;
+                state.modifiers = Modifiers::from_xkb(keymap_state);
 
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: state.modifiers,
@@ -778,6 +765,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
     ) {
         let mut client = this.get_client();
         let mut state = client.borrow_mut();
+        let cursor_icon_name = state.cursor_icon_name.clone();
 
         match event {
             wl_pointer::Event::Enter {
@@ -793,7 +781,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     state.enter_token = Some(());
                     state.mouse_focused_window = Some(window.clone());
                     state.cursor.set_serial_id(serial);
-                    state.cursor.set_icon(&wl_pointer, None);
+                    state
+                        .cursor
+                        .set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
                     drop(state);
                     window.set_focused(true);
                 }
@@ -824,7 +814,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     return;
                 }
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
-                state.cursor.set_icon(&wl_pointer, None);
+                state
+                    .cursor
+                    .set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
 
                 if let Some(window) = state.mouse_focused_window.clone() {
                     let input = PlatformInput::MouseMove(MouseMoveEvent {
