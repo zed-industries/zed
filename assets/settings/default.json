@@ -58,6 +58,8 @@
   "hover_popover_enabled": true,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
+  // Whether to restore last closed project when fresh Zed instance is opened.
+  "restore_on_startup": "last_workspace",
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // Whether to pop the completions menu while typing in an editor without
