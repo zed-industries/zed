@@ -62,7 +62,6 @@ pub fn init(
             "embedded_template",
             tree_sitter_embedded_template::language(),
         ),
-        ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
@@ -286,7 +285,6 @@ pub fn init(
         "yaml",
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
-    language!("glsl");
     language!("nix");
     language!("nu", vec![Arc::new(nu::NuLanguageServer {})]);
     language!("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
