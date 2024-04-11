@@ -846,11 +846,11 @@ impl Terminal {
                         Some(url_match) => {
                             // `]` is a valid symbol in the `file://` URL, so the regex match will include it
                             // consider that when ensuring that the URL match is the same as the original word
-                            if sanitized_match != original_match {
+                            if sanitized_match == original_match {
+                                url_match == sanitized_match
+                            } else {
                                 url_match.start() == sanitized_match.start()
                                     && url_match.end() == original_match.end()
-                            } else {
-                                url_match == sanitized_match
                             }
                         }
                         None => false,

@@ -295,10 +295,10 @@ fn labels_from_wit(
         .into_iter()
         .map(|label| {
             let label = label?;
-            let runs = if !label.code.is_empty() {
-                language.highlight_text(&label.code.as_str().into(), 0..label.code.len())
-            } else {
+            let runs = if label.code.is_empty() {
                 Vec::new()
+            } else {
+                language.highlight_text(&label.code.as_str().into(), 0..label.code.len())
             };
             build_code_label(&label, &runs, &language)
         })

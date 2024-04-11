@@ -233,11 +233,11 @@ impl FoldMap {
     }
 
     pub fn set_ellipses_color(&mut self, color: Hsla) -> bool {
-        if self.ellipses_color != Some(color) {
+        if self.ellipses_color == Some(color) {
+            false
+        } else {
             self.ellipses_color = Some(color);
             true
-        } else {
-            false
         }
     }
 

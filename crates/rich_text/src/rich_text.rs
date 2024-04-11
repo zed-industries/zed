@@ -69,18 +69,18 @@ impl RichText {
                                 ..id.style(theme.syntax()).unwrap_or_default()
                             },
                             Highlight::InlineCode(link) => {
-                                if !*link {
-                                    HighlightStyle {
-                                        background_color: Some(code_background),
-                                        ..Default::default()
-                                    }
-                                } else {
+                                if *link {
                                     HighlightStyle {
                                         background_color: Some(code_background),
                                         underline: Some(UnderlineStyle {
                                             thickness: 1.0.into(),
                                             ..Default::default()
                                         }),
+                                        ..Default::default()
+                                    }
+                                } else {
+                                    HighlightStyle {
+                                        background_color: Some(code_background),
                                         ..Default::default()
                                     }
                                 }
