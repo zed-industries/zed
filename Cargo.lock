@@ -3579,6 +3579,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "gpui",
+ "isahc",
  "language",
  "log",
  "lsp",
