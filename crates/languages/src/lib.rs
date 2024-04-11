@@ -69,7 +69,6 @@ pub fn init(
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("markdown", tree_sitter_markdown::language()),
-        ("nix", tree_sitter_nix::language()),
         ("nu", tree_sitter_nu::language()),
         ("ocaml", tree_sitter_ocaml::language_ocaml()),
         (
@@ -282,7 +281,6 @@ pub fn init(
         "yaml",
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
-    language!("nix");
     language!("nu", vec![Arc::new(nu::NuLanguageServer {})]);
     language!("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
     language!("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
