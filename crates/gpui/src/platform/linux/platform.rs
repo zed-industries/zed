@@ -45,63 +45,6 @@ pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
-pub struct RcRefCell<T>(Rc<RefCell<T>>);
-
-impl<T> RcRefCell<T> {
-    pub fn new(value: T) -> Self {
-        RcRefCell(Rc::new(RefCell::new(value)))
-    }
-
-    #[inline]
-    #[track_caller]
-    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, T> {
-        #[cfg(debug_assertions)]
-        {
-            if option_env!("TRACK_BORROW_MUT").is_some() {
-                eprintln!(
-                    "borrow_mut-ing {} at {}",
-                    type_name::<T>(),
-                    Location::caller()
-                );
-            }
-        }
-
-        self.0.borrow_mut()
-    }
-
-    #[inline]
-    #[track_caller]
-    pub fn borrow(&self) -> std::cell::Ref<'_, T> {
-        #[cfg(debug_assertions)]
-        {
-            if option_env!("TRACK_BORROW_MUT").is_some() {
-                eprintln!("borrow-ing {} at {}", type_name::<T>(), Location::caller());
-            }
-        }
-
-        self.0.borrow()
-    }
-}
-
-impl<T> Deref for RcRefCell<T> {
-    type Target = Rc<RefCell<T>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl<T> DerefMut for RcRefCell<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<T> Clone for RcRefCell<T> {
-    fn clone(&self) -> Self {
-        RcRefCell(self.0.clone())
-    }
-}
-
 pub trait LinuxClient {
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
