@@ -5,15 +5,18 @@ use crate::markdown_elements::{
 };
 use gpui::{
     div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, ParentElement, SharedString, Styled,
-    StyledText, TextStyle, WeakView, WindowContext,
+    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Modifiers, ParentElement,
+    SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
 use std::{
     ops::{Mul, Range},
     sync::Arc,
 };
 use theme::{ActiveTheme, SyntaxTheme};
-use ui::{h_flex, v_flex, Checkbox, FluentBuilder, LinkPreview, Selection};
+use ui::{
+    h_flex, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
+    StatefulInteractiveElement, Tooltip,
+};
 use workspace::Workspace;
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>;
@@ -154,6 +157,7 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
             Ordered(order) => format!("{}.", order).into_any_element(),
             Unordered => "•".into_any_element(),
             Task(checked, range) => div()
+                .id(cx.next_id(range))
                 .mt(px(3.))
                 .child(
                     Checkbox::new(
@@ -184,6 +188,21 @@ fn render_markdown_list(parsed: &ParsedMarkdownList, cx: &mut RenderContext) -> 
                         },
                     ),
                 )
+                .hover(|s| s.cursor_pointer())
+                .tooltip(|cx| {
+                    let secondary_modifier = Keystroke {
+                        key: "".to_string(),
+                        modifiers: Modifiers::secondary_key(),
+                        ime_key: None,
+                    };
+                    Tooltip::text(
+                        format!(
+                            "{}-click to toggle the checkbox",
+                            secondary_modifier.to_string()
+                        ),
+                        cx,
+                    )
+                })
                 .into_any_element(),
         };
         let bullet = div().mr_2().child(bullet);
