@@ -127,6 +127,8 @@ impl Render for TextField {
         };
 
         div()
+            .id(self.placeholder.clone())
+            .group("text-field")
             .w_full()
             .when(self.with_label == FieldLabelLayout::Stacked, |this| {
                 this.child(Label::new(self.label.clone()).size(LabelSize::Default))
