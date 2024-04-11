@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use collections::HashMap;
 use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
@@ -155,23 +155,42 @@ fn substitute_all_template_variables_in_str(
     template_str: &str,
     task_variables: &HashMap<String, String>,
 ) -> Option<String> {
-    let substituted_string = subst::substitute(&template_str, task_variables).ok()?;
-    if substituted_string.contains(ZED_VARIABLE_NAME_PREFIX) {
-        return None;
-    }
-    Some(substituted_string)
+    let substituted_string = shellexpand::env_with_context(&template_str, |var| {
+        // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
+        let colon_position = var.find(':').unwrap_or(var.len());
+        let (variable_name, default) = var.split_at(colon_position);
+        let append_previous_default = |ret: &mut String| {
+            if !default.is_empty() {
+                ret.push_str(default);
+            }
+        };
+        if let Some(mut name) = task_variables.get(variable_name).cloned() {
+            // Got a task variable hit
+            append_previous_default(&mut name);
+            return Ok(Some(name));
+        } else if variable_name.starts_with(ZED_VARIABLE_NAME_PREFIX) {
+            bail!("Unknown variable name: {}", variable_name);
+        }
+        // This is an unknown variable.
+        // We should not error out, as they may come from user environment (e.g. $PATH). That means that the variable substitution might not be perfect.
+        // If there's a default, we need to return the string verbatim as otherwise shellexpand will apply that default for us.
+        if !default.is_empty() {
+            return Ok(Some(format!("${{{var}}}")));
+        }
+        // Else we can just return None and that variable will be left as is.
+        Ok(None)
+    })
+    .ok()?;
+    Some(substituted_string.into_owned())
 }
 
 fn substitute_all_template_variables_in_vec(
     mut template_strs: Vec<String>,
     task_variables: &HashMap<String, String>,
 ) -> Option<Vec<String>> {
-    for template_str in &mut template_strs {
-        let substituted_string = subst::substitute(&template_str, task_variables).ok()?;
-        if substituted_string.contains(ZED_VARIABLE_NAME_PREFIX) {
-            return None;
-        }
-        *template_str = substituted_string
+    for variable in template_strs.iter_mut() {
+        let new_value = substitute_all_template_variables_in_str(&variable, task_variables)?;
+        *variable = new_value;
     }
     Some(template_strs)
 }
@@ -180,26 +199,13 @@ fn substitute_all_template_variables_in_map(
     keys_and_values: HashMap<String, String>,
     task_variables: &HashMap<String, String>,
 ) -> Option<HashMap<String, String>> {
-    keys_and_values
-        .into_iter()
-        .try_fold(HashMap::default(), |mut expanded_keys, (mut key, value)| {
-            match task_variables.get(&key) {
-                Some(variable_expansion) => key = variable_expansion.clone(),
-                None => {
-                    if key.starts_with(ZED_VARIABLE_NAME_PREFIX) {
-                        return Err(());
-                    }
-                }
-            }
-            expanded_keys.insert(
-                key,
-                subst::substitute(&value, task_variables)
-                    .map_err(|_| ())?
-                    .to_string(),
-            );
-            Ok(expanded_keys)
-        })
-        .ok()
+    let mut new_map: HashMap<String, String> = Default::default();
+    for (key, value) in keys_and_values {
+        let new_value = substitute_all_template_variables_in_str(&value, task_variables)?;
+        let new_key = substitute_all_template_variables_in_str(&key, task_variables)?;
+        new_map.insert(new_key, new_value);
+    }
+    Some(new_map)
 }
 
 #[cfg(test)]
@@ -477,5 +483,36 @@ mod tests {
             );
             assert_eq!(resolved_task_attempt, None, "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})");
         }
+    }
+
+    #[test]
+    fn test_can_resolve_free_variables() {
+        let task = TaskTemplate {
+            label: "My task".into(),
+            command: "echo".into(),
+            args: vec!["$PATH".into()],
+            ..Default::default()
+        };
+        let resolved = task
+            .resolve_task(TEST_ID_BASE, TaskContext::default())
+            .unwrap()
+            .resolved
+            .unwrap();
+        assert_eq!(resolved.label, task.label);
+        assert_eq!(resolved.command, task.command);
+        assert_eq!(resolved.args, task.args);
+    }
+
+    #[test]
+    fn test_errors_on_missing_zed_variable() {
+        let task = TaskTemplate {
+            label: "My task".into(),
+            command: "echo".into(),
+            args: vec!["$ZED_VARIABLE".into()],
+            ..Default::default()
+        };
+        assert!(task
+            .resolve_task(TEST_ID_BASE, TaskContext::default())
+            .is_none());
     }
 }
