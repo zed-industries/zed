@@ -5,7 +5,7 @@ use time::PrimitiveDateTime;
 #[sea_orm(table_name = "embeddings")]
 pub struct Model {
     #[sea_orm(primary_key)]
-    pub provider: String,
+    pub model: String,
     #[sea_orm(primary_key)]
     pub digest: Vec<u8>,
     pub dimensions: Vec<f32>,

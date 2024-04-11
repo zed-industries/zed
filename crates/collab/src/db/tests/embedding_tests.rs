@@ -11,7 +11,7 @@ async fn test_get_embeddings_postgres(cx: &mut gpui::TestAppContext) {
     let test_db = TestDb::postgres(cx.executor().clone());
     let db = test_db.db();
 
-    let provider = "test_provider";
+    let provider = "test_model";
     let digest1 = vec![1, 2, 3];
     let digest2 = vec![4, 5, 6];
     let embeddings = HashMap::from_iter([
@@ -41,12 +41,12 @@ async fn test_purge_old_embeddings(cx: &mut gpui::TestAppContext) {
     let test_db = TestDb::postgres(cx.executor().clone());
     let db = test_db.db();
 
-    let provider = "test_provider";
+    let model = "test_model";
     let digest = vec![7, 8, 9];
     let embeddings = HashMap::from_iter([(digest.clone(), vec![0.7, 0.8, 0.9])]);
 
     // Save old embeddings
-    db.save_embeddings(provider, &embeddings).await.unwrap();
+    db.save_embeddings(model, &embeddings).await.unwrap();
 
     // Reach into the DB and change the retrieved at to be > 60 days
     db.weak_transaction(|tx| {
@@ -57,8 +57,8 @@ async fn test_purge_old_embeddings(cx: &mut gpui::TestAppContext) {
 
             embedding::Entity::update_many()
                 .filter(
-                    embedding::Column::Provider
-                        .eq(provider)
+                    embedding::Column::Model
+                        .eq(model)
                         .and(embedding::Column::Digest.eq(digest)),
                 )
                 .col_expr(embedding::Column::RetrievedAt, Expr::value(retrieved_at))
@@ -76,10 +76,7 @@ async fn test_purge_old_embeddings(cx: &mut gpui::TestAppContext) {
     db.purge_old_embeddings().await.unwrap();
 
     // Try to retrieve the purged embeddings
-    let retrieved_embeddings = db
-        .get_embeddings(provider, &[digest.clone()])
-        .await
-        .unwrap();
+    let retrieved_embeddings = db.get_embeddings(model, &[digest.clone()]).await.unwrap();
     assert!(
         retrieved_embeddings.is_empty(),
         "Old embeddings should have been purged"

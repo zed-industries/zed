@@ -4325,7 +4325,7 @@ async fn compute_embeddings(
         .check::<ComputeEmbeddingsRateLimit>(session.user_id())
         .await?;
 
-    let embeddings = match request.provider.as_str() {
+    let embeddings = match request.model.as_str() {
         "openai/text-embedding-3-small" => {
             open_ai::embed(
                 &session.http_client,
@@ -4357,7 +4357,7 @@ async fn compute_embeddings(
         .collect::<HashMap<_, _>>();
 
     let db = session.db().await;
-    db.save_embeddings(&request.provider, &embeddings)
+    db.save_embeddings(&request.model, &embeddings)
         .await
         .context("failed to save embeddings")
         .trace_err();
@@ -4403,9 +4403,7 @@ async fn get_cached_embeddings(
         .await?;
 
     let db = session.db().await;
-    let embeddings = db
-        .get_embeddings(&request.provider, &request.digests)
-        .await?;
+    let embeddings = db.get_embeddings(&request.model, &request.digests).await?;
 
     response.send(proto::GetCachedEmbeddingsResponse {
         embeddings: embeddings

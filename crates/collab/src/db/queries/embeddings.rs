@@ -5,14 +5,14 @@ use time::OffsetDateTime;
 impl Database {
     pub async fn get_embeddings(
         &self,
-        provider: &str,
+        model: &str,
         digests: &[Vec<u8>],
     ) -> Result<HashMap<Vec<u8>, Vec<f32>>> {
         self.weak_transaction(|tx| async move {
             let embeddings = {
                 let mut db_embeddings = embedding::Entity::find()
                     .filter(
-                        embedding::Column::Provider.eq(provider).and(
+                        embedding::Column::Model.eq(model).and(
                             embedding::Column::Digest
                                 .is_in(digests.iter().map(|digest| digest.as_slice())),
                         ),
@@ -49,7 +49,7 @@ impl Database {
 
     pub async fn save_embeddings(
         &self,
-        provider: &str,
+        model: &str,
         embeddings: &HashMap<Vec<u8>, Vec<f32>>,
     ) -> Result<()> {
         self.weak_transaction(|tx| async move {
@@ -59,14 +59,14 @@ impl Database {
                     PrimitiveDateTime::new(now_offset_datetime.date(), now_offset_datetime.time());
 
                 embedding::ActiveModel {
-                    provider: ActiveValue::set(provider.to_string()),
+                    model: ActiveValue::set(model.to_string()),
                     digest: ActiveValue::set(digest.clone()),
                     dimensions: ActiveValue::set(dimensions.clone()),
                     retrieved_at: ActiveValue::set(retrieved_at),
                 }
             }))
             .on_conflict(
-                OnConflict::columns([embedding::Column::Provider, embedding::Column::Digest])
+                OnConflict::columns([embedding::Column::Model, embedding::Column::Digest])
                     .do_nothing()
                     .to_owned(),
             )

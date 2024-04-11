@@ -1898,7 +1898,7 @@ message CountTokensResponse {
 }
 
 message GetCachedEmbeddings {
-    string provider = 1;
+    string model = 1;
     repeated bytes digests = 2;
 }
 
@@ -1907,7 +1907,7 @@ message GetCachedEmbeddingsResponse {
 }
 
 message ComputeEmbeddings {
-    string provider = 1;
+    string model = 1;
     repeated string texts = 2;
 }
 

@@ -6,14 +6,14 @@ use futures::{future::BoxFuture, FutureExt};
 use std::sync::Arc;
 
 pub struct CloudEmbeddingProvider {
-    provider: String,
+    model: String,
     client: Arc<Client>,
 }
 
 impl CloudEmbeddingProvider {
     pub fn new(client: Arc<Client>) -> Self {
         Self {
-            provider: "openai/text-embedding-3-small".into(),
+            model: "openai/text-embedding-3-small".into(),
             client,
         }
     }
@@ -25,7 +25,7 @@ impl EmbeddingProvider for CloudEmbeddingProvider {
         // Then compute any embeddings that are missing.
         async move {
             let cached_embeddings = self.client.request(proto::GetCachedEmbeddings {
-                provider: self.provider.clone(),
+                model: self.model.clone(),
                 digests: texts
                     .iter()
                     .map(|to_embed| to_embed.digest.to_vec())
@@ -33,7 +33,7 @@ impl EmbeddingProvider for CloudEmbeddingProvider {
             });
             let mut embeddings = cached_embeddings
                 .await
-                .context("failed to fetch cached embeddings via cloud provider")?
+                .context("failed to fetch cached embeddings via cloud model")?
                 .embeddings
                 .into_iter()
                 .map(|embedding| {
@@ -46,7 +46,7 @@ impl EmbeddingProvider for CloudEmbeddingProvider {
                 .collect::<Result<HashMap<_, _>>>()?;
 
             let compute_embeddings_request = proto::ComputeEmbeddings {
-                provider: self.provider.clone(),
+                model: self.model.clone(),
                 texts: texts
                     .iter()
                     .filter_map(|to_embed| {
