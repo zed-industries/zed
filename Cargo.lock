@@ -5469,7 +5469,6 @@ dependencies = [
  "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",
  "tree-sitter-nu",
- "tree-sitter-ocaml",
  "tree-sitter-proto",
  "tree-sitter-python",
  "tree-sitter-regex",
@@ -10493,15 +10492,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-ocaml"
-version = "0.20.4"
-source = "git+https://github.com/tree-sitter/tree-sitter-ocaml?rev=4abfdc1c7af2c6c77a370aee974627be1c285b3b#4abfdc1c7af2c6c77a370aee974627be1c285b3b"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-proto"
 version = "0.0.2"
 source = "git+https://github.com/rewinfrey/tree-sitter-proto?rev=36d54f288aee112f13a67b550ad32634d0c2cb52#36d54f288aee112f13a67b550ad32634d0c2cb52"
@@ -12653,6 +12643,13 @@ dependencies = [
 
 [[package]]
 name = "zed_lua"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_ocaml"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",

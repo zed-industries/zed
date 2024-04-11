@@ -9904,16 +9904,27 @@ async fn populate_labels_for_symbols(
 ) {
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
+    let mut unknown_path = None;
     for symbol in symbols {
         let language = language_registry
             .language_for_file_path(&symbol.path.path)
             .await
-            .log_err()
-            .or_else(|| default_language.clone());
+            .ok()
+            .or_else(|| {
+                unknown_path.get_or_insert(symbol.path.path.clone());
+                default_language.clone()
+            });
         symbols_by_language
             .entry(language)
             .or_default()
             .push(symbol);
+    }
+
+    if let Some(unknown_path) = unknown_path {
+        log::info!(
+            "no language found for symbol path {}",
+            unknown_path.display()
+        );
     }
 
     let mut label_params = Vec::new();

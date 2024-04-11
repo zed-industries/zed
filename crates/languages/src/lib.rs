@@ -19,7 +19,6 @@ mod elixir;
 mod go;
 mod json;
 mod nu;
-mod ocaml;
 mod python;
 mod ruby;
 mod rust;
@@ -70,11 +69,6 @@ pub fn init(
         ("json", tree_sitter_json::language()),
         ("markdown", tree_sitter_markdown::language()),
         ("nu", tree_sitter_nu::language()),
-        ("ocaml", tree_sitter_ocaml::language_ocaml()),
-        (
-            "ocaml_interface",
-            tree_sitter_ocaml::language_ocaml_interface(),
-        ),
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("regex", tree_sitter_regex::language()),
@@ -278,8 +272,6 @@ pub fn init(
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
     language!("nu", vec![Arc::new(nu::NuLanguageServer {})]);
-    language!("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
-    language!("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
     language!(
         "vue",
         vec![
