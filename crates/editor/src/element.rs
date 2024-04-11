@@ -4,7 +4,10 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
+    git::{
+        blame::{CommitMessage, GitBlame},
+        diff_hunk_to_display, DisplayDiffHunk,
+    },
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -30,7 +33,7 @@ use gpui::{
     TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use language::{language_settings::ShowWhitespaceSetting, ParsedMarkdown};
+use language::language_settings::ShowWhitespaceSetting;
 use lsp::DiagnosticSeverity;
 use multi_buffer::Anchor;
 use project::{
@@ -2966,17 +2969,9 @@ fn render_inline_blame_entry(
 
     let permalink = blame.read(cx).permalink_for_entry(&blame_entry);
     let commit_message = blame.read(cx).message_for_entry(&blame_entry);
-    let parsed_message = blame.read(cx).parsed_message_for_entry(&blame_entry);
 
     let tooltip = cx.new_view(|_| {
-        InlineBlameTooltip::new(
-            blame_entry,
-            permalink,
-            commit_message,
-            parsed_message,
-            style,
-            workspace,
-        )
+        InlineBlameTooltip::new(blame_entry, permalink, commit_message, style, workspace)
     });
 
     h_flex()
@@ -3007,8 +3002,7 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) 
 struct InlineBlameTooltip {
     blame_entry: BlameEntry,
     permalink: Option<Url>,
-    commit_message: Option<String>,
-    parsed_message: Option<ParsedMarkdown>,
+    commit_message: Option<CommitMessage>,
     style: EditorStyle,
     workspace: Option<WeakView<Workspace>>,
     scroll_handle: ScrollHandle,
@@ -3018,8 +3012,7 @@ impl InlineBlameTooltip {
     fn new(
         blame_entry: BlameEntry,
         permalink: Option<Url>,
-        commit_message: Option<String>,
-        parsed_message: Option<ParsedMarkdown>,
+        commit_message: Option<CommitMessage>,
         style: &EditorStyle,
         workspace: Option<WeakView<Workspace>>,
     ) -> Self {
@@ -3028,7 +3021,6 @@ impl InlineBlameTooltip {
             blame_entry,
             permalink,
             commit_message,
-            parsed_message,
             workspace,
             scroll_handle: ScrollHandle::new(),
         }
@@ -3049,22 +3041,20 @@ impl Render for InlineBlameTooltip {
         let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
         let relative_timestamp = blame_entry_relative_timestamp(&self.blame_entry, cx);
 
-        let message = if let Some(parsed_message) = &self.parsed_message {
-            crate::render_parsed_markdown(
-                "blame-message",
-                &parsed_message,
-                &self.style,
-                self.workspace.clone(),
-                cx,
-            )
-            .into_any()
-        } else {
-            match &self.commit_message {
-                Some(message) => util::truncate_lines_and_trailoff(message, 15),
-                None => self.blame_entry.summary.clone().unwrap_or_default(),
-            }
-            .into_any_element()
-        };
+        let message = self
+            .commit_message
+            .as_ref()
+            .map(|message| {
+                crate::render_parsed_markdown(
+                    "blame-message",
+                    &message.parsed_message,
+                    &self.style,
+                    self.workspace.clone(),
+                    cx,
+                )
+                .into_any()
+            })
+            .unwrap_or("no commit message".into_any());
 
         tooltip_container(cx, move |this, cx| {
             this.occlude()
@@ -3226,14 +3216,14 @@ fn deploy_blame_entry_context_menu(
 
 struct BlameEntryTooltip {
     color: Hsla,
-    commit_message: Option<String>,
+    commit_message: Option<CommitMessage>,
     blame_entry: BlameEntry,
 }
 
 impl BlameEntryTooltip {
     fn new(
         color: Hsla,
-        commit_message: Option<String>,
+        commit_message: Option<CommitMessage>,
         blame_entry: BlameEntry,
         cx: &mut WindowContext,
     ) -> AnyView {
@@ -3265,7 +3255,7 @@ impl Render for BlameEntryTooltip {
         };
 
         let message = match &self.commit_message {
-            Some(message) => util::truncate_lines_and_trailoff(message, 15),
+            Some(message) => util::truncate_lines_and_trailoff(&message.message, 15),
             None => self.blame_entry.summary.clone().unwrap_or_default(),
         };
 

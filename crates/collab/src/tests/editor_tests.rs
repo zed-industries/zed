@@ -2105,7 +2105,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
                     format!("http://example.com/codehost/idx-{}", idx)
                 );
                 assert_eq!(
-                    blame.message_for_entry(entry).unwrap(),
+                    blame.message_for_entry(entry).unwrap().message,
                     format!("message for idx-{}", idx)
                 );
             }
