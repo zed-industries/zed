@@ -49,8 +49,8 @@ impl SvgRenderer {
         let size = match size {
             SvgSize::Size(size) => size,
             SvgSize::ScaleFactor(scale) => crate::size(
-                DevicePixels((tree.size().width() * scale as f32) as i32),
-                DevicePixels((tree.size().height() * scale as f32) as i32),
+                DevicePixels((tree.size().width() * scale) as i32),
+                DevicePixels((tree.size().height() * scale) as i32),
             ),
         };
 
