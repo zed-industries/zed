@@ -913,6 +913,10 @@ impl ChatPanel {
 
 impl Render for ChatPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let channel_id = self
+            .active_chat
+            .as_ref()
+            .map(|(c, _)| c.read(cx).channel_id);
         let message_editor = self.message_editor.read(cx);
 
         let reply_to_message_id = message_editor.reply_to_message_id();
@@ -1022,6 +1026,7 @@ impl Render for ChatPanel {
                             .child(
                                 div().flex_shrink().overflow_hidden().child(
                                     h_flex()
+                                        .id(("reply-preview", reply_to_message_id))
                                         .child(Label::new("Replying to ").size(LabelSize::Small))
                                         .child(
                                             div().font_weight(FontWeight::BOLD).child(
@@ -1031,7 +1036,20 @@ impl Render for ChatPanel {
                                                 ))
                                                 .size(LabelSize::Small),
                                             ),
-                                        ),
+                                        )
+                                        .when_some(channel_id, |this, channel_id| {
+                                            this.cursor_pointer().on_click(cx.listener(
+                                                move |chat_panel, _, cx| {
+                                                    chat_panel
+                                                        .select_channel(
+                                                            channel_id,
+                                                            reply_to_message_id.into(),
+                                                            cx,
+                                                        )
+                                                        .detach_and_log_err(cx)
+                                                },
+                                            ))
+                                        }),
                                 ),
                             )
                             .child(

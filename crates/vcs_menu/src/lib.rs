@@ -13,6 +13,7 @@ use ui::{
     LabelSize, ListItem, ListItemSpacing, Selectable,
 };
 use util::ResultExt;
+use workspace::notifications::NotificationId;
 use workspace::{ModalView, Toast, Workspace};
 
 actions!(branches, [OpenRecent]);
@@ -125,9 +126,11 @@ impl BranchListDelegate {
     }
 
     fn display_error_toast(&self, message: String, cx: &mut WindowContext<'_>) {
-        const GIT_CHECKOUT_FAILURE_ID: usize = 2048;
         self.workspace.update(cx, |model, ctx| {
-            model.show_toast(Toast::new(GIT_CHECKOUT_FAILURE_ID, message), ctx)
+            struct GitCheckoutFailure;
+            let id = NotificationId::unique::<GitCheckoutFailure>();
+
+            model.show_toast(Toast::new(id, message), ctx)
         });
     }
 }

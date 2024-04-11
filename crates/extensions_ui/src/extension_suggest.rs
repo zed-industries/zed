@@ -5,9 +5,10 @@ use std::sync::{Arc, OnceLock};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use extension::ExtensionStore;
-use gpui::{Entity, Model, VisualContext};
+use gpui::{Model, VisualContext};
 use language::Buffer;
-use ui::ViewContext;
+use ui::{SharedString, ViewContext};
+use workspace::notifications::NotificationId;
 use workspace::{notifications::simple_message_notification, Workspace};
 
 fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
@@ -140,7 +141,13 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
             return;
         }
 
-        workspace.show_notification(buffer.entity_id().as_u64() as usize, cx, |cx| {
+        struct ExtensionSuggestionNotification;
+
+        let notification_id = NotificationId::identified::<ExtensionSuggestionNotification>(
+            SharedString::from(extension_id.clone()),
+        );
+
+        workspace.show_notification(notification_id, cx, |cx| {
             cx.new_view(move |_cx| {
                 simple_message_notification::MessageNotification::new(format!(
                     "Do you want to install the recommended '{}' extension for '{}' files?",

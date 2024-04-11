@@ -32,6 +32,7 @@ use util::{
     http::{HttpClient, HttpClientWithUrl},
     ResultExt,
 };
+use workspace::notifications::NotificationId;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
@@ -262,9 +263,11 @@ pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
             workspace.update(&mut cx, |workspace, cx| {
-                workspace.show_notification(0, cx, |cx| {
-                    cx.new_view(|_| UpdateNotification::new(version))
-                });
+                workspace.show_notification(
+                    NotificationId::unique::<UpdateNotification>(),
+                    cx,
+                    |cx| cx.new_view(|_| UpdateNotification::new(version)),
+                );
                 updater
                     .read(cx)
                     .set_should_show_update_notification(false, cx)

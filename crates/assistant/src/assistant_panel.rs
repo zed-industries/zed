@@ -46,6 +46,7 @@ use ui::{
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
+use workspace::notifications::NotificationId;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     searchable::Direction,
@@ -418,10 +419,14 @@ impl AssistantPanel {
                                 if pending_assist.inline_assistant.is_none() {
                                     if let Some(workspace) = this.workspace.upgrade() {
                                         workspace.update(cx, |workspace, cx| {
-                                            workspace.show_toast(
-                                                Toast::new(inline_assist_id, error),
-                                                cx,
-                                            );
+                                            struct InlineAssistantError;
+
+                                            let id =
+                                                NotificationId::identified::<InlineAssistantError>(
+                                                    inline_assist_id,
+                                                );
+
+                                            workspace.show_toast(Toast::new(id, error), cx);
                                         })
                                     }
 
@@ -696,7 +701,7 @@ impl AssistantPanel {
             } else {
                 editor.highlight_background::<PendingInlineAssist>(
                     &background_ranges,
-                    |theme| theme.editor_active_line_background, // todo!("use the appropriate color")
+                    |theme| theme.editor_active_line_background, // TODO use the appropriate color
                     cx,
                 );
             }
