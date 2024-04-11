@@ -5438,7 +5438,6 @@ dependencies = [
  "tree-sitter-heex",
  "tree-sitter-jsdoc",
  "tree-sitter-json 0.20.0",
- "tree-sitter-lua",
  "tree-sitter-markdown",
  "tree-sitter-nix",
  "tree-sitter-nu",
@@ -10436,16 +10435,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-lua"
-version = "0.0.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d489873fd1a2fa6d5f04930bfc5c081c96f0c038c1437104518b5b842c69b282"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-markdown"
 version = "0.0.1"
 source = "git+https://github.com/MDeiml/tree-sitter-markdown?rev=330ecab87a3e3a7211ac69bbadc19eabecdb1cca#330ecab87a3e3a7211ac69bbadc19eabecdb1cca"
@@ -12646,6 +12635,13 @@ name = "zed_html"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4",
+]
+
+[[package]]
+name = "zed_lua"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

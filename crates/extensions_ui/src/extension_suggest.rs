@@ -8,67 +8,71 @@ use extension::ExtensionStore;
 use gpui::{Model, VisualContext};
 use language::Buffer;
 use ui::{SharedString, ViewContext};
-use workspace::notifications::NotificationId;
-use workspace::{notifications::simple_message_notification, Workspace};
+use workspace::{
+    notifications::{simple_message_notification, NotificationId},
+    Workspace,
+};
+
+const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
+    ("astro", &["astro"]),
+    ("beancount", &["beancount"]),
+    ("clojure", &["bb", "clj", "cljc", "cljs", "edn"]),
+    ("csharp", &["cs"]),
+    ("dart", &["dart"]),
+    ("dockerfile", &["Dockerfile"]),
+    ("elisp", &["el"]),
+    ("elm", &["elm"]),
+    ("erlang", &["erl", "hrl"]),
+    ("fish", &["fish"]),
+    (
+        "git-firefly",
+        &[
+            ".gitconfig",
+            ".gitignore",
+            "COMMIT_EDITMSG",
+            "EDIT_DESCRIPTION",
+            "MERGE_MSG",
+            "NOTES_EDITMSG",
+            "TAG_EDITMSG",
+            "git-rebase-todo",
+        ],
+    ),
+    ("gleam", &["gleam"]),
+    ("glsl", &["vert", "frag"]),
+    ("graphql", &["gql", "graphql"]),
+    ("haskell", &["hs"]),
+    ("html", &["htm", "html", "shtml"]),
+    ("java", &["java"]),
+    ("kotlin", &["kt"]),
+    ("latex", &["tex"]),
+    ("lua", &["lua"]),
+    ("make", &["Makefile"]),
+    ("nix", &["nix"]),
+    ("php", &["php"]),
+    ("prisma", &["prisma"]),
+    ("purescript", &["purs"]),
+    ("r", &["r", "R"]),
+    ("sql", &["sql"]),
+    ("svelte", &["svelte"]),
+    ("swift", &["swift"]),
+    ("templ", &["templ"]),
+    ("toml", &["Cargo.lock", "toml"]),
+    ("wgsl", &["wgsl"]),
+    ("zig", &["zig"]),
+];
 
 fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
-    static SUGGESTED: OnceLock<HashMap<&str, Arc<str>>> = OnceLock::new();
-    SUGGESTED.get_or_init(|| {
-        [
-            ("astro", "astro"),
-            ("beancount", "beancount"),
-            ("clojure", "bb"),
-            ("clojure", "clj"),
-            ("clojure", "cljc"),
-            ("clojure", "cljs"),
-            ("clojure", "edn"),
-            ("csharp", "cs"),
-            ("dart", "dart"),
-            ("dockerfile", "Dockerfile"),
-            ("elisp", "el"),
-            ("elm", "elm"),
-            ("erlang", "erl"),
-            ("erlang", "hrl"),
-            ("fish", "fish"),
-            ("git-firefly", ".gitconfig"),
-            ("git-firefly", ".gitignore"),
-            ("git-firefly", "COMMIT_EDITMSG"),
-            ("git-firefly", "EDIT_DESCRIPTION"),
-            ("git-firefly", "MERGE_MSG"),
-            ("git-firefly", "NOTES_EDITMSG"),
-            ("git-firefly", "TAG_EDITMSG"),
-            ("git-firefly", "git-rebase-todo"),
-            ("gleam", "gleam"),
-            ("glsl", "vert"),
-            ("glsl", "frag"),
-            ("graphql", "gql"),
-            ("graphql", "graphql"),
-            ("haskell", "hs"),
-            ("html", "htm"),
-            ("html", "html"),
-            ("html", "shtml"),
-            ("java", "java"),
-            ("kotlin", "kt"),
-            ("latex", "tex"),
-            ("make", "Makefile"),
-            ("nix", "nix"),
-            ("php", "php"),
-            ("prisma", "prisma"),
-            ("purescript", "purs"),
-            ("r", "r"),
-            ("r", "R"),
-            ("sql", "sql"),
-            ("svelte", "svelte"),
-            ("swift", "swift"),
-            ("templ", "templ"),
-            ("toml", "Cargo.lock"),
-            ("toml", "toml"),
-            ("wgsl", "wgsl"),
-            ("zig", "zig"),
-        ]
-        .into_iter()
-        .map(|(name, file)| (file, name.into()))
-        .collect()
+    static SUGGESTIONS_BY_PATH_SUFFIX: OnceLock<HashMap<&str, Arc<str>>> = OnceLock::new();
+    SUGGESTIONS_BY_PATH_SUFFIX.get_or_init(|| {
+        SUGGESTIONS_BY_EXTENSION_ID
+            .into_iter()
+            .flat_map(|(name, path_suffixes)| {
+                let name = Arc::<str>::from(*name);
+                path_suffixes
+                    .into_iter()
+                    .map(move |suffix| (*suffix, name.clone()))
+            })
+            .collect()
     })
 }
 
