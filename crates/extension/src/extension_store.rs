@@ -605,7 +605,23 @@ impl ExtensionStore {
             )
             .await?;
 
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let content_length = response
+                .headers()
+                .get(isahc::http::header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
+
+            let mut body = BufReader::new(response.body_mut());
+            let mut tgz_bytes = Vec::new();
+            body.read_to_end(&mut tgz_bytes).await?;
+
+            if let Some(content_length) = content_length {
+                let actual_len = tgz_bytes.len();
+                if content_length != actual_len {
+                    bail!("downloaded extension size {actual_len} does not match content length {content_length}");
+                }
+            }
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(tgz_bytes.as_slice()));
+            // let decompressed_bytes = GzipDecoder::new(BufReader::new(tgz_bytes));
             let archive = Archive::new(decompressed_bytes);
             archive.unpack(extension_dir).await?;
             this.update(&mut cx, |this, cx| {
