@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{active_item_selection_properties, schedule_task};
+use crate::{active_item_selection_properties, schedule_resolved_task};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, Global,
@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
-use task::{oneshot_source::OneshotSource, Task, TaskContext};
+use task::{ResolvedTask, TaskContext, TaskTemplate};
 use ui::{
     div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon, IconButton,
     IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
@@ -51,7 +51,8 @@ impl_actions!(task, [Rerun, Spawn]);
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
-    candidates: Option<Vec<(TaskSourceKind, Arc<dyn Task>)>>,
+    candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
+    last_used_candidate_index: Option<usize>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
@@ -71,6 +72,7 @@ impl TasksModalDelegate {
             workspace,
             candidates: None,
             matches: Vec::new(),
+            last_used_candidate_index: None,
             selected_index: 0,
             prompt: String::default(),
             task_context,
@@ -78,24 +80,25 @@ impl TasksModalDelegate {
         }
     }
 
-    fn spawn_oneshot(&mut self, cx: &mut AppContext) -> Option<Arc<dyn Task>> {
+    fn spawn_oneshot(&mut self) -> Option<(TaskSourceKind, ResolvedTask)> {
         if self.prompt.trim().is_empty() {
             return None;
         }
 
-        self.inventory
-            .update(cx, |inventory, _| inventory.source::<OneshotSource>())?
-            .update(cx, |oneshot_source, _| {
-                Some(
-                    oneshot_source
-                        .as_any()
-                        .downcast_mut::<OneshotSource>()?
-                        .spawn(self.prompt.clone()),
-                )
-            })
+        let source_kind = TaskSourceKind::UserInput;
+        let id_base = source_kind.to_id_base();
+        let new_oneshot = TaskTemplate {
+            label: self.prompt.clone(),
+            command: self.prompt.clone(),
+            ..TaskTemplate::default()
+        };
+        Some((
+            source_kind,
+            new_oneshot.resolve_task(&id_base, self.task_context.clone())?,
+        ))
     }
 
-    fn delete_oneshot(&mut self, ix: usize, cx: &mut AppContext) {
+    fn delete_previously_used(&mut self, ix: usize, cx: &mut AppContext) {
         let Some(candidates) = self.candidates.as_mut() else {
             return;
         };
@@ -106,16 +109,8 @@ impl TasksModalDelegate {
         // it doesn't make sense to requery the inventory for new candidates, as that's potentially costly and more often than not it should just return back
         // the original list without a removed entry.
         candidates.remove(ix);
-        self.inventory.update(cx, |inventory, cx| {
-            let oneshot_source = inventory.source::<OneshotSource>()?;
-            let task_id = task.id();
-
-            oneshot_source.update(cx, |this, _| {
-                let oneshot_source = this.as_any().downcast_mut::<OneshotSource>()?;
-                oneshot_source.remove(task_id);
-                Some(())
-            });
-            Some(())
+        self.inventory.update(cx, |inventory, _| {
+            inventory.delete_previously_used(&task.id);
         });
     }
 }
@@ -194,26 +189,47 @@ impl PickerDelegate for TasksModalDelegate {
         cx.spawn(move |picker, mut cx| async move {
             let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
-                    let candidates = picker.delegate.candidates.get_or_insert_with(|| {
-                        let Ok((worktree, language)) =
-                            picker.delegate.workspace.update(cx, |workspace, cx| {
-                                active_item_selection_properties(workspace, cx)
-                            })
-                        else {
-                            return Vec::new();
-                        };
-                        picker.delegate.inventory.update(cx, |inventory, cx| {
-                            inventory.list_tasks(language, worktree, true, cx)
-                        })
-                    });
+                    let candidates = match &mut picker.delegate.candidates {
+                        Some(candidates) => candidates,
+                        None => {
+                            let Ok((worktree, language)) =
+                                picker.delegate.workspace.update(cx, |workspace, cx| {
+                                    active_item_selection_properties(workspace, cx)
+                                })
+                            else {
+                                return Vec::new();
+                            };
+                            let (used, current) =
+                                picker.delegate.inventory.update(cx, |inventory, cx| {
+                                    inventory.used_and_current_resolved_tasks(
+                                        language,
+                                        worktree,
+                                        picker.delegate.task_context.clone(),
+                                        cx,
+                                    )
+                                });
+                            picker.delegate.last_used_candidate_index = if used.is_empty() {
+                                None
+                            } else {
+                                Some(used.len() - 1)
+                            };
 
+                            let mut new_candidates = used;
+                            new_candidates.extend(current);
+                            picker.delegate.candidates.insert(new_candidates)
+                        }
+                    };
                     candidates
                         .iter()
                         .enumerate()
                         .map(|(index, (_, candidate))| StringMatchCandidate {
                             id: index,
-                            char_bag: candidate.name().chars().collect(),
-                            string: candidate.name().into(),
+                            char_bag: candidate.resolved_label.chars().collect(),
+                            string: candidate
+                                .resolved
+                                .as_ref()
+                                .map(|resolved| resolved.label.clone())
+                                .unwrap_or_else(|| candidate.resolved_label.clone()),
                         })
                         .collect::<Vec<_>>()
                 })
@@ -256,21 +272,15 @@ impl PickerDelegate for TasksModalDelegate {
                 let ix = current_match.candidate_id;
                 self.candidates
                     .as_ref()
-                    .map(|candidates| candidates[ix].1.clone())
+                    .map(|candidates| candidates[ix].clone())
             });
-        let Some(task) = task else {
+        let Some((task_source_kind, task)) = task else {
             return;
         };
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_task(
-                    workspace,
-                    &task,
-                    self.task_context.clone(),
-                    omit_history_entry,
-                    cx,
-                );
+                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
             })
             .ok();
         cx.emit(DismissEvent);
@@ -288,16 +298,13 @@ impl PickerDelegate for TasksModalDelegate {
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
-        let (source_kind, _) = &candidates[hit.candidate_id];
+        let (source_kind, _) = &candidates.get(hit.candidate_id)?;
 
         let highlighted_location = HighlightedText {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
             char_count: hit.string.chars().count(),
         };
-        let base_item = ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
-            .inset(true)
-            .spacing(ListItemSpacing::Sparse);
         let icon = match source_kind {
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
             TaskSourceKind::AbsPath { .. } => Some(Icon::new(IconName::Settings)),
@@ -307,9 +314,13 @@ impl PickerDelegate for TasksModalDelegate {
                 .map(|icon_path| Icon::from_path(icon_path)),
         };
         Some(
-            base_item
+            ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
                 .map(|item| {
-                    let item = if matches!(source_kind, TaskSourceKind::UserInput) {
+                    let item = if matches!(source_kind, TaskSourceKind::UserInput)
+                        || Some(ix) <= self.last_used_candidate_index
+                    {
                         let task_index = hit.candidate_id;
                         let delete_button = div().child(
                             IconButton::new("delete", IconName::Close)
@@ -317,14 +328,21 @@ impl PickerDelegate for TasksModalDelegate {
                                 .icon_color(Color::Muted)
                                 .size(ButtonSize::None)
                                 .icon_size(IconSize::XSmall)
-                                .on_click(cx.listener(move |this, _event, cx| {
+                                .on_click(cx.listener(move |picker, _event, cx| {
                                     cx.stop_propagation();
                                     cx.prevent_default();
 
-                                    this.delegate.delete_oneshot(task_index, cx);
-                                    this.refresh(cx);
+                                    picker.delegate.delete_previously_used(task_index, cx);
+                                    picker.delegate.last_used_candidate_index = picker
+                                        .delegate
+                                        .last_used_candidate_index
+                                        .unwrap_or(0)
+                                        .checked_sub(1);
+                                    picker.refresh(cx);
                                 }))
-                                .tooltip(|cx| Tooltip::text("Delete an one-shot task", cx)),
+                                .tooltip(|cx| {
+                                    Tooltip::text("Delete previously scheduled task", cx)
+                                }),
                         );
                         item.end_hover_slot(delete_button)
                     } else {
@@ -346,35 +364,38 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        let mut spawn_prompt = task.prepare_exec(self.task_context.clone())?;
-        if !spawn_prompt.args.is_empty() {
-            spawn_prompt.command.push(' ');
-            spawn_prompt
-                .command
-                .extend(intersperse(spawn_prompt.args, " ".to_string()));
-        }
-        Some(spawn_prompt.command)
+        task.resolved.as_ref().map(|spawn_in_terminal| {
+            let mut command = spawn_in_terminal.command.clone();
+            if !spawn_in_terminal.args.is_empty() {
+                command.push(' ');
+                command.extend(intersperse(spawn_in_terminal.args.clone(), " ".to_string()));
+            }
+            command
+        })
     }
 
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
-        let Some(task) = self.spawn_oneshot(cx) else {
+        let Some((task_source_kind, task)) = self.spawn_oneshot() else {
             return;
         };
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_task(
-                    workspace,
-                    &task,
-                    self.task_context.clone(),
-                    omit_history_entry,
-                    cx,
-                );
+                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
             })
             .ok();
         cx.emit(DismissEvent);
     }
+
+    fn separators_after_indices(&self) -> Vec<usize> {
+        if let Some(i) = self.last_used_candidate_index {
+            vec![i]
+        } else {
+            Vec::new()
+        }
+    }
 }
 
+// TODO kb more tests on recent tasks from language templates
 #[cfg(test)]
 mod tests {
     use gpui::{TestAppContext, VisualTestContext};
@@ -412,12 +433,6 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        project.update(cx, |project, cx| {
-            project.task_inventory().update(cx, |inventory, cx| {
-                inventory.add_source(TaskSourceKind::UserInput, |cx| OneshotSource::new(cx), cx)
-            })
-        });
-
         let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
@@ -518,8 +533,8 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["echo 4", "another one", "example task", "echo 40"],
-            "Last recently used one show task should be listed last, as it is a fire-and-forget task"
+            vec!["echo 4", "another one", "example task"],
+            "No query should be added to the list, as it was submitted with secondary action (that maps to omit_history = true)"
         );
 
         cx.dispatch_action(Spawn {
@@ -535,7 +550,7 @@ mod tests {
         });
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["echo 4", "another one", "example task", "echo 40"],
+            vec!["echo 4", "another one", "example task"],
         );
     }
 

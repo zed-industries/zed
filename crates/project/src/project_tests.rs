@@ -159,12 +159,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         });
         let all_tasks = project
             .update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, cx| {
-                    inventory.list_tasks(None, None, false, cx)
-                })
+                project
+                    .task_inventory()
+                    .update(cx, |inventory, cx| inventory.list_tasks(None, None, cx))
             })
             .into_iter()
-            .map(|(source_kind, task)| (source_kind, task.name().to_string()))
+            .map(|(source_kind, task)| (source_kind, task.label))
             .collect::<Vec<_>>();
         assert_eq!(
             all_tasks,
@@ -172,14 +172,16 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 (
                     TaskSourceKind::Worktree {
                         id: workree_id,
-                        abs_path: PathBuf::from("/the-root/.zed/tasks.json")
+                        abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
+                        id_base: "local_tasks_for_worktree",
                     },
                     "cargo check".to_string()
                 ),
                 (
                     TaskSourceKind::Worktree {
                         id: workree_id,
-                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json")
+                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                        id_base: "local_tasks_for_worktree",
                     },
                     "cargo check".to_string()
                 ),

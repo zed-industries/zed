@@ -13,6 +13,7 @@ use ui::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FieldLabelLayout {
+    Hidden,
     Inline,
     Stacked,
 }
@@ -30,10 +31,8 @@ pub struct TextField {
     /// An optional label for the text field.
     ///
     /// Its position is determined by the [`FieldLabelLayout`].
-    label: Option<SharedString>,
+    label: SharedString,
     /// The placeholder text for the text field.
-    ///
-    /// All text fields must have placeholder text that is displayed when the field is empty.
     placeholder: SharedString,
     /// Exposes the underlying [`View<Editor>`] to allow for customizing the editor beyond the provided API.
     ///
@@ -44,7 +43,7 @@ pub struct TextField {
     /// For example, a magnifying glass icon in a search field.
     start_icon: Option<IconName>,
     /// The layout of the label relative to the text field.
-    label_layout: FieldLabelLayout,
+    with_label: FieldLabelLayout,
 }
 
 impl FocusableView for TextField {
@@ -54,7 +53,11 @@ impl FocusableView for TextField {
 }
 
 impl TextField {
-    pub fn new(placeholder: impl Into<SharedString>, cx: &mut WindowContext) -> Self {
+    pub fn new(
+        cx: &mut WindowContext,
+        label: impl Into<SharedString>,
+        placeholder: impl Into<SharedString>,
+    ) -> Self {
         let placeholder_text = placeholder.into();
 
         let editor = cx.new_view(|cx| {
@@ -64,22 +67,12 @@ impl TextField {
         });
 
         Self {
-            label: None,
+            label: label.into(),
             placeholder: placeholder_text,
             editor,
             start_icon: None,
-            label_layout: FieldLabelLayout::Stacked,
+            with_label: FieldLabelLayout::Hidden,
         }
-    }
-
-    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
-        self.label = Some(label.into());
-        self
-    }
-
-    pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
-        self.placeholder = placeholder.into();
-        self
     }
 
     pub fn start_icon(mut self, icon: IconName) -> Self {
@@ -87,8 +80,8 @@ impl TextField {
         self
     }
 
-    pub fn label_layout(mut self, layout: FieldLabelLayout) -> Self {
-        self.label_layout = layout;
+    pub fn with_label(mut self, layout: FieldLabelLayout) -> Self {
+        self.with_label = layout;
         self
     }
 }
@@ -133,52 +126,43 @@ impl Render for TextField {
             ..Default::default()
         };
 
-        let stacked_label: Option<Label> = if self.label_layout == FieldLabelLayout::Stacked {
-            self.label
-                .clone()
-                .map(|label| Label::new(label).size(LabelSize::Small))
-        } else {
-            None
-        };
-
-        let inline_label: Option<Label> = if self.label_layout == FieldLabelLayout::Inline {
-            self.label
-                .clone()
-                .map(|label| Label::new(label).size(LabelSize::Small))
-        } else {
-            None
-        };
-
         div()
-            .when_some(stacked_label, |this, label| this.child(label))
+            .id(self.placeholder.clone())
+            .group("text-field")
+            .w_full()
+            .when(self.with_label == FieldLabelLayout::Stacked, |this| {
+                this.child(Label::new(self.label.clone()).size(LabelSize::Default))
+            })
             .child(
-                v_flex()
-                    .w_full()
-                    .px_2()
-                    .py_1()
-                    .bg(style.background_color)
-                    .text_color(style.text_color)
-                    .rounded_lg()
-                    .border()
-                    .border_color(style.border_color)
-                    .w_48()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .when_some(inline_label, |this, label| this.child(label))
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .when_some(self.start_icon, |this, icon| {
-                                        this.child(
-                                            Icon::new(icon)
-                                                .size(IconSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                    })
-                                    .child(EditorElement::new(&self.editor, editor_style)),
-                            ),
-                    ),
+                v_flex().w_full().child(
+                    h_flex()
+                        .w_full()
+                        .flex_grow()
+                        .gap_2()
+                        .when(self.with_label == FieldLabelLayout::Inline, |this| {
+                            this.child(Label::new(self.label.clone()).size(LabelSize::Default))
+                        })
+                        .child(
+                            h_flex()
+                                .px_2()
+                                .py_1()
+                                .bg(style.background_color)
+                                .text_color(style.text_color)
+                                .rounded_lg()
+                                .border()
+                                .border_color(style.border_color)
+                                .min_w_48()
+                                .w_full()
+                                .flex_grow()
+                                .gap_1()
+                                .when_some(self.start_icon, |this, icon| {
+                                    this.child(
+                                        Icon::new(icon).size(IconSize::Small).color(Color::Muted),
+                                    )
+                                })
+                                .child(EditorElement::new(&self.editor, editor_style)),
+                        ),
+                ),
             )
     }
 }

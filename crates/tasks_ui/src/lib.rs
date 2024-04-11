@@ -5,8 +5,8 @@ use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
 use language::{Language, Point};
 use modal::{Spawn, TasksModal};
-use project::{Location, WorktreeId};
-use task::{Task, TaskContext, TaskVariables, VariableName};
+use project::{Location, TaskSourceKind, WorktreeId};
+use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables, VariableName};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -23,18 +23,32 @@ pub fn init(cx: &mut AppContext) {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, cx| {
-                    if let Some((task, old_context)) =
+                    if let Some((task_source_kind, last_scheduled_task)) =
                         workspace.project().update(cx, |project, cx| {
                             project.task_inventory().read(cx).last_scheduled_task()
                         })
                     {
-                        let task_context = if action.reevaluate_context {
+                        if action.reevaluate_context {
+                            let original_task = last_scheduled_task.original_task;
                             let cwd = task_cwd(workspace, cx).log_err().flatten();
-                            task_context(workspace, cwd, cx)
+                            let task_context = task_context(workspace, cwd, cx);
+                            schedule_task(
+                                workspace,
+                                task_source_kind,
+                                &original_task,
+                                task_context,
+                                false,
+                                cx,
+                            )
                         } else {
-                            old_context
-                        };
-                        schedule_task(workspace, &task, task_context, false, cx)
+                            schedule_resolved_task(
+                                workspace,
+                                task_source_kind,
+                                last_scheduled_task,
+                                false,
+                                cx,
+                            );
+                        }
                     };
                 });
         },
@@ -64,13 +78,21 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
                 let (worktree, language) = active_item_selection_properties(workspace, cx);
                 let tasks = workspace.project().update(cx, |project, cx| {
                     project.task_inventory().update(cx, |inventory, cx| {
-                        inventory.list_tasks(language, worktree, false, cx)
+                        inventory.list_tasks(language, worktree, cx)
                     })
                 });
-                let (_, target_task) = tasks.into_iter().find(|(_, task)| task.name() == name)?;
+                let (task_source_kind, target_task) =
+                    tasks.into_iter().find(|(_, task)| task.label == name)?;
                 let cwd = task_cwd(workspace, cx).log_err().flatten();
                 let task_context = task_context(workspace, cwd, cx);
-                schedule_task(workspace, &target_task, task_context, false, cx);
+                schedule_task(
+                    workspace,
+                    task_source_kind,
+                    &target_task,
+                    task_context,
+                    false,
+                    cx,
+                );
                 Some(())
             })
             .ok()
@@ -214,17 +236,38 @@ fn task_context(
 
 fn schedule_task(
     workspace: &Workspace,
-    task: &Arc<dyn Task>,
+    task_source_kind: TaskSourceKind,
+    task_to_resolve: &TaskTemplate,
     task_cx: TaskContext,
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
-    let spawn_in_terminal = task.prepare_exec(task_cx.clone());
-    if let Some(spawn_in_terminal) = spawn_in_terminal {
+    if let Some(spawn_in_terminal) =
+        task_to_resolve.resolve_task(&task_source_kind.to_id_base(), task_cx)
+    {
+        schedule_resolved_task(
+            workspace,
+            task_source_kind,
+            spawn_in_terminal,
+            omit_history,
+            cx,
+        );
+    }
+}
+
+fn schedule_resolved_task(
+    workspace: &Workspace,
+    task_source_kind: TaskSourceKind,
+    mut resolved_task: ResolvedTask,
+    omit_history: bool,
+    cx: &mut ViewContext<'_, Workspace>,
+) {
+    if let Some(spawn_in_terminal) = resolved_task.resolved.take() {
         if !omit_history {
+            resolved_task.resolved = Some(spawn_in_terminal.clone());
             workspace.project().update(cx, |project, cx| {
                 project.task_inventory().update(cx, |inventory, _| {
-                    inventory.task_scheduled(Arc::clone(task), task_cx);
+                    inventory.task_scheduled(task_source_kind, resolved_task);
                 })
             });
         }
@@ -274,9 +317,9 @@ mod tests {
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
     use language::{Language, LanguageConfig, SymbolContextProvider};
-    use project::{FakeFs, Project, TaskSourceKind};
+    use project::{FakeFs, Project};
     use serde_json::json;
-    use task::{oneshot_source::OneshotSource, TaskContext, TaskVariables, VariableName};
+    use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
     use workspace::{AppState, Workspace};
 
@@ -344,11 +387,6 @@ mod tests {
             .with_context_provider(Some(Arc::new(SymbolContextProvider))),
         );
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        project.update(cx, |project, cx| {
-            project.task_inventory().update(cx, |inventory, cx| {
-                inventory.add_source(TaskSourceKind::UserInput, |cx| OneshotSource::new(cx), cx)
-            })
-        });
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees().next().unwrap().read(cx).id()
         });

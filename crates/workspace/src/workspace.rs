@@ -81,7 +81,9 @@ use ui::{
 };
 use util::ResultExt;
 use uuid::Uuid;
-pub use workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings};
+pub use workspace_settings::{
+    AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
+};
 
 use crate::notifications::NotificationId;
 use crate::persistence::{
@@ -521,6 +523,11 @@ pub enum Event {
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakView<Workspace>),
     SpawnTask(SpawnInTerminal),
+    OpenBundledFile {
+        text: Cow<'static, str>,
+        title: &'static str,
+        language: &'static str,
+    },
     ZoomChanged,
 }
 
