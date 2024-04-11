@@ -16,7 +16,6 @@ mod c;
 mod css;
 mod deno;
 mod elixir;
-mod elm;
 mod go;
 mod json;
 mod lua;
@@ -59,7 +58,6 @@ pub fn init(
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
         ("elixir", tree_sitter_elixir::language()),
-        ("elm", tree_sitter_elm::language()),
         (
             "embedded_template",
             tree_sitter_embedded_template::language(),
@@ -287,10 +285,6 @@ pub fn init(
     language!(
         "yaml",
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
-    );
-    language!(
-        "elm",
-        vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))]
     );
     language!("glsl");
     language!("nix");
