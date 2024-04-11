@@ -28,13 +28,37 @@ impl RenderOnce for ModalHeader {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
             .id(self.id)
-            .flex_grow()
             .w_full()
             .px_2()
             .py_1p5()
             .child(div().flex_1().children(self.children))
             .justify_between()
             .child(IconButton::new("dismiss", IconName::Close).shape(IconButtonShape::Square))
+    }
+}
+
+#[derive(IntoElement)]
+pub struct ModalContent {
+    children: SmallVec<[AnyElement; 2]>,
+}
+
+impl ModalContent {
+    pub fn new() -> Self {
+        Self {
+            children: SmallVec::new(),
+        }
+    }
+}
+
+impl ParentElement for ModalContent {
+    fn extend(&mut self, elements: impl Iterator<Item = AnyElement>) {
+        self.children.extend(elements)
+    }
+}
+
+impl RenderOnce for ModalContent {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        h_flex().w_full().px_2().py_1p5().children(self.children)
     }
 }
 
@@ -59,12 +83,7 @@ impl ParentElement for ModalRow {
 
 impl RenderOnce for ModalRow {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        h_flex()
-            .flex_grow()
-            .w_full()
-            .px_2()
-            .py_1()
-            .children(self.children)
+        h_flex().w_full().px_2().py_1().children(self.children)
     }
 }
 
