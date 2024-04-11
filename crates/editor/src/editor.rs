@@ -8833,16 +8833,16 @@ impl Editor {
     }
 
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
-        if !self.show_git_blame {
+        if self.show_git_blame {
+            self.blame_subscription.take();
+            self.blame.take();
+            self.show_git_blame = false
+        } else {
             if let Err(error) = self.show_git_blame_internal(cx) {
                 log::error!("failed to toggle on 'git blame': {}", error);
                 return;
             }
             self.show_git_blame = true
-        } else {
-            self.blame_subscription.take();
-            self.blame.take();
-            self.show_git_blame = false
         }
 
         cx.notify();

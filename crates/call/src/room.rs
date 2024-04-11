@@ -1182,7 +1182,7 @@ impl Room {
         cx.emit(Event::RemoteProjectJoined { project_id: id });
         cx.spawn(move |this, mut cx| async move {
             let project =
-                Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
+                Project::in_room(id, client, user_store, language_registry, fs, cx.clone()).await?;
 
             this.update(&mut cx, |this, cx| {
                 this.joined_projects.retain(|project| {

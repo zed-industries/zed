@@ -50,9 +50,8 @@ profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 refineable.workspace = true
-resvg = "0.14"
-tiny-skia = "0.5"
-usvg = { version = "0.14", features = [] }
+resvg = { version = "0.41.0", default-features = false }
+usvg = { version = "0.41.0", default-features = false }
 schemars.workspace = true
 seahash = "4.1"
 semantic_version.workspace = true

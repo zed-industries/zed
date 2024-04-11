@@ -1,5 +1,5 @@
 use crate::{
-    item::{Item, ItemEvent},
+    item::{Item, ItemEvent, TabContentParams},
     ItemNavHistory, WorkspaceId,
 };
 use anyhow::Result;
@@ -93,21 +93,18 @@ impl Item for SharedScreen {
         }
     }
 
-    fn tab_content(
-        &self,
-        _: Option<usize>,
-        selected: bool,
-        _: &WindowContext<'_>,
-    ) -> gpui::AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> gpui::AnyElement {
         h_flex()
             .gap_1()
             .child(Icon::new(IconName::Screen))
             .child(
-                Label::new(format!("{}'s screen", self.user.github_login)).color(if selected {
-                    Color::Default
-                } else {
-                    Color::Muted
-                }),
+                Label::new(format!("{}'s screen", self.user.github_login)).color(
+                    if params.selected {
+                        Color::Default
+                    } else {
+                        Color::Muted
+                    },
+                ),
             )
             .into_any()
     }

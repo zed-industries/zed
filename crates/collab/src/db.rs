@@ -56,6 +56,7 @@ pub struct Database {
     options: ConnectOptions,
     pool: DatabaseConnection,
     rooms: DashMap<RoomId, Arc<Mutex<()>>>,
+    projects: DashMap<ProjectId, Arc<Mutex<()>>>,
     rng: Mutex<StdRng>,
     executor: Executor,
     notification_kinds_by_id: HashMap<NotificationKindId, &'static str>,
@@ -74,6 +75,7 @@ impl Database {
             options: options.clone(),
             pool: sea_orm::Database::connect(options).await?,
             rooms: DashMap::with_capacity(16384),
+            projects: DashMap::with_capacity(16384),
             rng: Mutex::new(StdRng::seed_from_u64(0)),
             notification_kinds_by_id: HashMap::default(),
             notification_kinds_by_name: HashMap::default(),
@@ -86,6 +88,7 @@ impl Database {
     #[cfg(test)]
     pub fn reset(&self) {
         self.rooms.clear();
+        self.projects.clear();
     }
 
     /// Runs the database migrations.
@@ -190,7 +193,10 @@ impl Database {
     }
 
     /// The same as room_transaction, but if you need to only optionally return a Room.
-    async fn optional_room_transaction<F, Fut, T>(&self, f: F) -> Result<Option<RoomGuard<T>>>
+    async fn optional_room_transaction<F, Fut, T>(
+        &self,
+        f: F,
+    ) -> Result<Option<TransactionGuard<T>>>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<Option<(RoomId, T)>>>,
@@ -205,7 +211,7 @@ impl Database {
                         let _guard = lock.lock_owned().await;
                         match tx.commit().await.map_err(Into::into) {
                             Ok(()) => {
-                                return Ok(Some(RoomGuard {
+                                return Ok(Some(TransactionGuard {
                                     data,
                                     _guard,
                                     _not_send: PhantomData,
@@ -240,10 +246,63 @@ impl Database {
         self.run(body).await
     }
 
+    async fn project_transaction<F, Fut, T>(
+        &self,
+        project_id: ProjectId,
+        f: F,
+    ) -> Result<TransactionGuard<T>>
+    where
+        F: Send + Fn(TransactionHandle) -> Fut,
+        Fut: Send + Future<Output = Result<T>>,
+    {
+        let room_id = Database::room_id_for_project(&self, project_id).await?;
+        let body = async {
+            let mut i = 0;
+            loop {
+                let lock = if let Some(room_id) = room_id {
+                    self.rooms.entry(room_id).or_default().clone()
+                } else {
+                    self.projects.entry(project_id).or_default().clone()
+                };
+                let _guard = lock.lock_owned().await;
+                let (tx, result) = self.with_transaction(&f).await?;
+                match result {
+                    Ok(data) => match tx.commit().await.map_err(Into::into) {
+                        Ok(()) => {
+                            return Ok(TransactionGuard {
+                                data,
+                                _guard,
+                                _not_send: PhantomData,
+                            });
+                        }
+                        Err(error) => {
+                            if !self.retry_on_serialization_error(&error, i).await {
+                                return Err(error);
+                            }
+                        }
+                    },
+                    Err(error) => {
+                        tx.rollback().await?;
+                        if !self.retry_on_serialization_error(&error, i).await {
+                            return Err(error);
+                        }
+                    }
+                }
+                i += 1;
+            }
+        };
+
+        self.run(body).await
+    }
+
     /// room_transaction runs the block in a transaction. It returns a RoomGuard, that keeps
     /// the database locked until it is dropped. This ensures that updates sent to clients are
     /// properly serialized with respect to database changes.
-    async fn room_transaction<F, Fut, T>(&self, room_id: RoomId, f: F) -> Result<RoomGuard<T>>
+    async fn room_transaction<F, Fut, T>(
+        &self,
+        room_id: RoomId,
+        f: F,
+    ) -> Result<TransactionGuard<T>>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
@@ -257,7 +316,7 @@ impl Database {
                 match result {
                     Ok(data) => match tx.commit().await.map_err(Into::into) {
                         Ok(()) => {
-                            return Ok(RoomGuard {
+                            return Ok(TransactionGuard {
                                 data,
                                 _guard,
                                 _not_send: PhantomData,
@@ -399,15 +458,16 @@ impl Deref for TransactionHandle {
     }
 }
 
-/// [`RoomGuard`] keeps a database transaction alive until it is dropped.
-/// so that updates to rooms are serialized.
-pub struct RoomGuard<T> {
+/// [`TransactionGuard`] keeps a database transaction alive until it is dropped.
+/// It wraps data that depends on the state of the database and prevents an additional
+/// transaction from starting that would invalidate that data.
+pub struct TransactionGuard<T> {
     data: T,
     _guard: OwnedMutexGuard<()>,
     _not_send: PhantomData<Rc<()>>,
 }
 
-impl<T> Deref for RoomGuard<T> {
+impl<T> Deref for TransactionGuard<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -415,13 +475,13 @@ impl<T> Deref for RoomGuard<T> {
     }
 }
 
-impl<T> DerefMut for RoomGuard<T> {
+impl<T> DerefMut for TransactionGuard<T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.data
     }
 }
 
-impl<T> RoomGuard<T> {
+impl<T> TransactionGuard<T> {
     /// Returns the inner value of the guard.
     pub fn into_inner(self) -> T {
         self.data
@@ -518,6 +578,7 @@ pub struct MembershipUpdated {
 
 /// The result of setting a member's role.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum SetMemberRoleResult {
     InviteUpdated(Channel),
     MembershipUpdated(MembershipUpdated),
@@ -594,6 +655,8 @@ pub struct ChannelsForUser {
     pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
     pub hosted_projects: Vec<proto::HostedProject>,
+    pub dev_servers: Vec<dev_server::Model>,
+    pub remote_projects: Vec<proto::RemoteProject>,
 
     pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
     pub observed_channel_messages: Vec<proto::ChannelMessageId>,
@@ -633,6 +696,30 @@ pub struct RejoinedProject {
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: Vec<RejoinedWorktree>,
     pub language_servers: Vec<proto::LanguageServer>,
+}
+
+impl RejoinedProject {
+    pub fn to_proto(&self) -> proto::RejoinedProject {
+        proto::RejoinedProject {
+            id: self.id.to_proto(),
+            worktrees: self
+                .worktrees
+                .iter()
+                .map(|worktree| proto::WorktreeMetadata {
+                    id: worktree.id,
+                    root_name: worktree.root_name.clone(),
+                    visible: worktree.visible,
+                    abs_path: worktree.abs_path.clone(),
+                })
+                .collect(),
+            collaborators: self
+                .collaborators
+                .iter()
+                .map(|collaborator| collaborator.to_proto())
+                .collect(),
+            language_servers: self.language_servers.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]

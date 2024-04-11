@@ -1,11 +1,14 @@
-use crate::language_settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 use crate::{
-    language_settings::all_language_settings, task_context::ContextProvider, CachedLspAdapter,
-    File, Language, LanguageConfig, LanguageId, LanguageMatcher, LanguageServerName, LspAdapter,
-    LspAdapterDelegate, PARSER, PLAIN_TEXT,
+    language_settings::{
+        all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
+    },
+    task_context::ContextProvider,
+    CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
+    LanguageServerName, LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
+use futures::TryFutureExt;
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
@@ -454,11 +457,12 @@ impl LanguageRegistry {
         )
     }
 
-    pub fn language_for_file_path(
+    pub fn language_for_file_path<'a>(
         self: &Arc<Self>,
-        path: &Path,
-    ) -> impl Future<Output = Result<Arc<Language>>> {
+        path: &'a Path,
+    ) -> impl Future<Output = Result<Arc<Language>>> + 'a {
         self.language_for_file_internal(path, None, None)
+            .map_err(|error| error.context(format!("language for file path {}", path.display())))
     }
 
     fn language_for_file_internal(

@@ -84,6 +84,7 @@ id_type!(NotificationId);
 id_type!(NotificationKindId);
 id_type!(ProjectCollaboratorId);
 id_type!(ProjectId);
+id_type!(RemoteProjectId);
 id_type!(ReplicaId);
 id_type!(RoomId);
 id_type!(RoomParticipantId);
@@ -269,4 +270,19 @@ impl Into<i32> for ChannelVisibility {
         let proto: proto::ChannelVisibility = self.into();
         proto.into()
     }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, PartialEq)]
+pub enum PrincipalId {
+    UserId(UserId),
+    DevServerId(DevServerId),
+}
+
+/// Indicate whether a [Buffer] has permissions to edit.
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum Capability {
+    /// The buffer is a mutable replica.
+    ReadWrite,
+    /// The buffer is a read-only replica.
+    ReadOnly,
 }

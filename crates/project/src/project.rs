@@ -1,3 +1,4 @@
+pub mod connection_manager;
 pub mod debounced_delay;
 pub mod lsp_command;
 pub mod lsp_ext_command;
@@ -112,8 +113,6 @@ pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
-#[cfg(feature = "test-support")]
-pub use task_inventory::test_inventory::*;
 pub use task_inventory::{Inventory, TaskSourceKind};
 pub use worktree::{
     DiagnosticSummary, Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId,
@@ -236,6 +235,7 @@ enum BufferOrderedMessage {
     Resync,
 }
 
+#[derive(Debug)]
 enum LocalProjectUpdate {
     WorktreesChanged,
     CreateBufferForPeer {
@@ -599,6 +599,7 @@ impl Project {
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+        connection_manager::init(client.clone(), cx);
         Self::init_settings(cx);
 
         client.add_model_message_handler(Self::handle_add_collaborator);
@@ -736,6 +737,24 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
+        let project =
+            Self::in_room(remote_id, client, user_store, languages, fs, cx.clone()).await?;
+        cx.update(|cx| {
+            connection_manager::Manager::global(cx).update(cx, |manager, cx| {
+                manager.maintain_project_connection(&project, cx)
+            })
+        })?;
+        Ok(project)
+    }
+
+    pub async fn in_room(
+        remote_id: u64,
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
         let subscription = client.subscribe_to_entity(remote_id)?;
@@ -755,6 +774,7 @@ impl Project {
         )
         .await
     }
+
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
         subscription: PendingEntitySubscription<Project>,
@@ -1611,7 +1631,7 @@ impl Project {
                                     })
                                 })?
                                 .await;
-                            if update_project.is_ok() {
+                            if update_project.log_err().is_some() {
                                 for worktree in worktrees {
                                     worktree.update(&mut cx, |worktree, cx| {
                                         let worktree = worktree.as_local_mut().unwrap();
@@ -2787,15 +2807,15 @@ impl Project {
             futures::future::join_all(tasks).await;
 
             this.update(&mut cx, |this, cx| {
-                if !this.buffers_needing_diff.is_empty() {
-                    this.recalculate_buffer_diffs(cx).detach();
-                } else {
+                if this.buffers_needing_diff.is_empty() {
                     // TODO: Would a `ModelContext<Project>.notify()` suffice here?
                     for buffer in buffers {
                         if let Some(buffer) = buffer.upgrade() {
                             buffer.update(cx, |_, cx| cx.notify());
                         }
                     }
+                } else {
+                    this.recalculate_buffer_diffs(cx).detach();
                 }
             })
             .ok();
@@ -7500,15 +7520,12 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
+                                id_base: "local_tasks_for_worktree",
                             },
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(
-                                    format!("local_tasks_for_workspace_{remote_worktree_id}"),
-                                    TrackedFile::new(tasks_file_rx, cx),
-                                    cx,
-                                )
+                                StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
                             },
                             cx,
                         );
@@ -7525,14 +7542,12 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
+                                id_base: "local_vscode_tasks_for_worktree",
                             },
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
                                 StaticSource::new(
-                                    format!(
-                                        "local_vscode_tasks_for_workspace_{remote_worktree_id}"
-                                    ),
                                     TrackedFile::new_convertible::<task::VsCodeTaskFile>(
                                         tasks_file_rx,
                                         cx,
@@ -9937,16 +9952,27 @@ async fn populate_labels_for_symbols(
 ) {
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
+    let mut unknown_path = None;
     for symbol in symbols {
         let language = language_registry
             .language_for_file_path(&symbol.path.path)
             .await
-            .log_err()
-            .or_else(|| default_language.clone());
+            .ok()
+            .or_else(|| {
+                unknown_path.get_or_insert(symbol.path.path.clone());
+                default_language.clone()
+            });
         symbols_by_language
             .entry(language)
             .or_default()
             .push(symbol);
+    }
+
+    if let Some(unknown_path) = unknown_path {
+        log::info!(
+            "no language found for symbol path {}",
+            unknown_path.display()
+        );
     }
 
     let mut label_params = Vec::new();

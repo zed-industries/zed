@@ -1,5 +1,8 @@
 use crate::{
-    item::{ClosePosition, Item, ItemHandle, ItemSettings, WeakItemHandle},
+    item::{
+        ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
+        WeakItemHandle,
+    },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
@@ -11,8 +14,8 @@ use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
     AppContext, AsyncWindowContext, ClickEvent, DismissEvent, Div, DragMoveEvent, EntityId,
     EventEmitter, ExternalPaths, FocusHandle, FocusableView, KeyContext, Model, MouseButton,
-    NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle, Subscription, Task,
-    View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
+    MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle,
+    Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -120,6 +123,7 @@ actions!(
         SplitUp,
         SplitRight,
         SplitDown,
+        TogglePreviewTab,
     ]
 );
 
@@ -184,6 +188,7 @@ pub struct Pane {
     zoomed: bool,
     was_focused: bool,
     active_item_index: usize,
+    preview_item_id: Option<EntityId>,
     last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
@@ -207,6 +212,7 @@ pub struct Pane {
 pub struct ItemNavHistory {
     history: NavHistory,
     item: Arc<dyn WeakItemHandle>,
+    is_preview: bool,
 }
 
 #[derive(Clone)]
@@ -242,6 +248,7 @@ pub struct NavigationEntry {
     pub item: Arc<dyn WeakItemHandle>,
     pub data: Option<Box<dyn Any + Send>>,
     pub timestamp: usize,
+    pub is_preview: bool,
 }
 
 #[derive(Clone)]
@@ -281,6 +288,7 @@ impl Pane {
             was_focused: false,
             zoomed: false,
             active_item_index: 0,
+            preview_item_id: None,
             last_focus_handle_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -435,6 +443,10 @@ impl Pane {
 
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         self.display_nav_history_buttons = TabBarSettings::get_global(cx).show_nav_history_buttons;
+
+        if !PreviewTabsSettings::get_global(cx).enabled {
+            self.preview_item_id = None;
+        }
         cx.notify();
     }
 
@@ -478,6 +490,7 @@ impl Pane {
         ItemNavHistory {
             history: self.nav_history.clone(),
             item: Arc::new(item.downgrade()),
+            is_preview: self.preview_item_id == Some(item.item_id()),
         }
     }
 
@@ -531,10 +544,45 @@ impl Pane {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
 
+    pub fn preview_item_id(&self) -> Option<EntityId> {
+        self.preview_item_id
+    }
+
+    fn preview_item_idx(&self) -> Option<usize> {
+        if let Some(preview_item_id) = self.preview_item_id {
+            self.items
+                .iter()
+                .position(|item| item.item_id() == preview_item_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn is_active_preview_item(&self, item_id: EntityId) -> bool {
+        self.preview_item_id == Some(item_id)
+    }
+
+    /// Marks the item with the given ID as the preview item.
+    /// This will be ignored if the global setting `preview_tabs` is disabled.
+    pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &AppContext) {
+        if PreviewTabsSettings::get_global(cx).enabled {
+            self.preview_item_id = item_id;
+        }
+    }
+
+    pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
+        if let Some(preview_item_id) = self.preview_item_id {
+            if preview_item_id == item_id {
+                self.set_preview_item_id(None, cx)
+            }
+        }
+    }
+
     pub(crate) fn open_item(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
         focus_item: bool,
+        allow_preview: bool,
         cx: &mut ViewContext<Self>,
         build_item: impl FnOnce(&mut ViewContext<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
@@ -552,11 +600,43 @@ impl Pane {
         }
 
         if let Some((index, existing_item)) = existing_item {
+            // If the item is already open, and the item is a preview item
+            // and we are not allowing items to open as preview, mark the item as persistent.
+            if let Some(preview_item_id) = self.preview_item_id {
+                if let Some(tab) = self.items.get(index) {
+                    if tab.item_id() == preview_item_id && !allow_preview {
+                        self.set_preview_item_id(None, cx);
+                    }
+                }
+            }
+
             self.activate_item(index, focus_item, focus_item, cx);
             existing_item
         } else {
+            let mut destination_index = None;
+            if allow_preview {
+                // If we are opening a new item as preview and we have an existing preview tab, remove it.
+                if let Some(item_idx) = self.preview_item_idx() {
+                    let prev_active_item_index = self.active_item_index;
+                    self.remove_item(item_idx, false, false, cx);
+                    self.active_item_index = prev_active_item_index;
+
+                    // If the item is being opened as preview and we have an existing preview tab,
+                    // open the new item in the position of the existing preview tab.
+                    if item_idx < self.items.len() {
+                        destination_index = Some(item_idx);
+                    }
+                }
+            }
+
             let new_item = build_item(cx);
-            self.add_item(new_item.clone(), true, focus_item, None, cx);
+
+            if allow_preview {
+                self.set_preview_item_id(Some(new_item.item_id()), cx);
+            }
+
+            self.add_item(new_item.clone(), true, focus_item, destination_index, cx);
+
             new_item
         }
     }
@@ -648,7 +728,10 @@ impl Pane {
             self.activate_item(insertion_index, activate_pane, focus_item, cx);
         } else {
             self.items.insert(insertion_index, item.clone());
-            if insertion_index <= self.active_item_index {
+
+            if insertion_index <= self.active_item_index
+                && self.preview_item_idx() != Some(self.active_item_index)
+            {
                 self.active_item_index += 1;
             }
 
@@ -1043,7 +1126,7 @@ impl Pane {
                         .iter()
                         .position(|i| i.item_id() == item.item_id())
                     {
-                        pane.remove_item(item_ix, false, cx);
+                        pane.remove_item(item_ix, false, true, cx);
                     }
                 })
                 .ok();
@@ -1058,6 +1141,7 @@ impl Pane {
         &mut self,
         item_index: usize,
         activate_pane: bool,
+        close_pane_if_empty: bool,
         cx: &mut ViewContext<Self>,
     ) {
         self.activation_history
@@ -1091,17 +1175,24 @@ impl Pane {
         });
         if self.items.is_empty() {
             item.deactivated(cx);
-            self.update_toolbar(cx);
-            cx.emit(Event::Remove);
+            if close_pane_if_empty {
+                self.update_toolbar(cx);
+                cx.emit(Event::Remove);
+            }
         }
 
         if item_index < self.active_item_index {
             self.active_item_index -= 1;
         }
 
+        let mode = self.nav_history.mode();
         self.nav_history.set_mode(NavigationMode::ClosingItem);
         item.deactivated(cx);
-        self.nav_history.set_mode(NavigationMode::Normal);
+        self.nav_history.set_mode(mode);
+
+        if self.is_active_preview_item(item.item_id()) {
+            self.set_preview_item_id(None, cx);
+        }
 
         if let Some(path) = item.project_path(cx) {
             let abs_path = self
@@ -1125,7 +1216,7 @@ impl Pane {
                 .remove(&item.item_id());
         }
 
-        if self.items.is_empty() && self.zoomed {
+        if self.items.is_empty() && close_pane_if_empty && self.zoomed {
             cx.emit(Event::ZoomOut);
         }
 
@@ -1290,7 +1381,7 @@ impl Pane {
             }
         })?;
 
-        self.remove_item(item_index_to_delete, false, cx);
+        self.remove_item(item_index_to_delete, false, true, cx);
         self.nav_history.remove_item(item_id);
 
         Some(())
@@ -1330,8 +1421,19 @@ impl Pane {
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
+        let is_preview = self
+            .preview_item_id
+            .map(|id| id == item.item_id())
+            .unwrap_or(false);
 
-        let label = item.tab_content(Some(detail), is_active, cx);
+        let label = item.tab_content(
+            TabContentParams {
+                detail: Some(detail),
+                selected: is_active,
+                preview: is_preview,
+            },
+            cx,
+        );
         let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
@@ -1361,6 +1463,16 @@ impl Pane {
                 cx.listener(move |pane, _event, cx| {
                     pane.close_item_by_id(item_id, SaveIntent::Close, cx)
                         .detach_and_log_err(cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |pane, event: &MouseDownEvent, cx| {
+                    if let Some(id) = pane.preview_item_id {
+                        if id == item_id && event.click_count > 1 {
+                            pane.set_preview_item_id(None, cx);
+                        }
+                    }
                 }),
             )
             .on_drag(
@@ -1639,6 +1751,12 @@ impl Pane {
         let mut to_pane = cx.view().clone();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
+        if let Some(preview_item_id) = self.preview_item_id {
+            if item_id == preview_item_id {
+                self.set_preview_item_id(None, cx);
+            }
+        }
+
         let from_pane = dragged_tab.pane.clone();
         self.workspace
             .update(cx, |_, cx| {
@@ -1786,6 +1904,17 @@ impl Render for Pane {
             .on_action(cx.listener(|pane: &mut Pane, _: &ActivateNextItem, cx| {
                 pane.activate_next_item(true, cx);
             }))
+            .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
+                this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, cx| {
+                    if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
+                        if pane.is_active_preview_item(active_item_id) {
+                            pane.set_preview_item_id(None, cx);
+                        } else {
+                            pane.set_preview_item_id(Some(active_item_id), cx);
+                        }
+                    }
+                }))
+            })
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, cx| {
                     if let Some(task) = pane.close_active_item(action, cx) {
@@ -1946,7 +2075,8 @@ impl Render for Pane {
 
 impl ItemNavHistory {
     pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
-        self.history.push(data, self.item.clone(), cx);
+        self.history
+            .push(data, self.item.clone(), self.is_preview, cx);
     }
 
     pub fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
@@ -2020,6 +2150,7 @@ impl NavHistory {
         &mut self,
         data: Option<D>,
         item: Arc<dyn WeakItemHandle>,
+        is_preview: bool,
         cx: &mut WindowContext,
     ) {
         let state = &mut *self.0.lock();
@@ -2033,6 +2164,7 @@ impl NavHistory {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                    is_preview,
                 });
                 state.forward_stack.clear();
             }
@@ -2044,6 +2176,7 @@ impl NavHistory {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                    is_preview,
                 });
             }
             NavigationMode::GoingForward => {
@@ -2054,6 +2187,7 @@ impl NavHistory {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                    is_preview,
                 });
             }
             NavigationMode::ClosingItem => {
@@ -2064,6 +2198,7 @@ impl NavHistory {
                     item,
                     data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                    is_preview,
                 });
             }
         }
@@ -2706,7 +2841,14 @@ mod tests {
 impl Render for DraggedTab {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
-        let label = self.item.tab_content(Some(self.detail), false, cx);
+        let label = self.item.tab_content(
+            TabContentParams {
+                detail: Some(self.detail),
+                selected: false,
+                preview: false,
+            },
+            cx,
+        );
         Tab::new("")
             .selected(self.is_active)
             .child(label)

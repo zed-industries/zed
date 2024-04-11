@@ -168,6 +168,7 @@ define_connection! {
     //     kind: String, // Indicates which view this connects to. This is the key in the item_deserializers global
     //     position: usize, // Position of the item in the parent pane. This is equivalent to panes' position column
     //     active: bool, // Indicates if this item is the active one in the pane
+    //     preview: bool // Indicates if this item is a preview item
     // )
     pub static ref DB: WorkspaceDb<()> =
     &[sql!(
@@ -278,6 +279,10 @@ define_connection! {
     // Add fullscreen field to workspace
     sql!(
         ALTER TABLE workspaces ADD COLUMN fullscreen INTEGER; //bool
+    ),
+    // Add preview field to items
+    sql!(
+        ALTER TABLE items ADD COLUMN preview INTEGER; //bool
     ),
     ];
 }
@@ -623,7 +628,7 @@ impl WorkspaceDb {
 
     fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
         self.select_bound(sql!(
-            SELECT kind, item_id, active FROM items
+            SELECT kind, item_id, active, preview FROM items
             WHERE pane_id = ?
                 ORDER BY position
         ))?(pane_id)
@@ -636,7 +641,7 @@ impl WorkspaceDb {
         items: &[SerializedItem],
     ) -> Result<()> {
         let mut insert = conn.exec_bound(sql!(
-            INSERT INTO items(workspace_id, pane_id, position, kind, item_id, active) VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO items(workspace_id, pane_id, position, kind, item_id, active, preview) VALUES (?, ?, ?, ?, ?, ?, ?)
         )).context("Preparing insertion")?;
         for (position, item) in items.iter().enumerate() {
             insert((workspace_id, pane_id, position, item))?;
@@ -836,15 +841,15 @@ mod tests {
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 5, false),
-                                SerializedItem::new("Terminal", 6, true),
+                                SerializedItem::new("Terminal", 5, false, false),
+                                SerializedItem::new("Terminal", 6, true, false),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 7, true),
-                                SerializedItem::new("Terminal", 8, false),
+                                SerializedItem::new("Terminal", 7, true, false),
+                                SerializedItem::new("Terminal", 8, false, false),
                             ],
                             false,
                         )),
@@ -852,8 +857,8 @@ mod tests {
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 9, false),
-                        SerializedItem::new("Terminal", 10, true),
+                        SerializedItem::new("Terminal", 9, false, false),
+                        SerializedItem::new("Terminal", 10, true, false),
                     ],
                     false,
                 )),
@@ -1000,15 +1005,15 @@ mod tests {
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 1, false),
-                                SerializedItem::new("Terminal", 2, true),
+                                SerializedItem::new("Terminal", 1, false, false),
+                                SerializedItem::new("Terminal", 2, true, false),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 4, false),
-                                SerializedItem::new("Terminal", 3, true),
+                                SerializedItem::new("Terminal", 4, false, false),
+                                SerializedItem::new("Terminal", 3, true, false),
                             ],
                             true,
                         )),
@@ -1016,8 +1021,8 @@ mod tests {
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 5, true),
-                        SerializedItem::new("Terminal", 6, false),
+                        SerializedItem::new("Terminal", 5, true, false),
+                        SerializedItem::new("Terminal", 6, false, false),
                     ],
                     false,
                 )),
@@ -1047,15 +1052,15 @@ mod tests {
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 1, false),
-                                SerializedItem::new("Terminal", 2, true),
+                                SerializedItem::new("Terminal", 1, false, false),
+                                SerializedItem::new("Terminal", 2, true, false),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 4, false),
-                                SerializedItem::new("Terminal", 3, true),
+                                SerializedItem::new("Terminal", 4, false, false),
+                                SerializedItem::new("Terminal", 3, true, false),
                             ],
                             true,
                         )),
@@ -1063,8 +1068,8 @@ mod tests {
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 5, false),
-                        SerializedItem::new("Terminal", 6, true),
+                        SerializedItem::new("Terminal", 5, false, false),
+                        SerializedItem::new("Terminal", 6, true, false),
                     ],
                     false,
                 )),
@@ -1082,15 +1087,15 @@ mod tests {
             vec![
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 1, false),
-                        SerializedItem::new("Terminal", 2, true),
+                        SerializedItem::new("Terminal", 1, false, false),
+                        SerializedItem::new("Terminal", 2, true, false),
                     ],
                     false,
                 )),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 4, true),
-                        SerializedItem::new("Terminal", 3, false),
+                        SerializedItem::new("Terminal", 4, true, false),
+                        SerializedItem::new("Terminal", 3, false, false),
                     ],
                     true,
                 )),

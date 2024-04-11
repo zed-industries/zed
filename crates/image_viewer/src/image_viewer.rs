@@ -11,7 +11,7 @@ use project::{Project, ProjectEntryId, ProjectPath};
 use std::{ffi::OsStr, path::PathBuf};
 use util::ResultExt;
 use workspace::{
-    item::{Item, ProjectItem},
+    item::{Item, ProjectItem, TabContentParams},
     ItemId, Pane, Workspace, WorkspaceId,
 };
 
@@ -37,7 +37,9 @@ impl project::Item for ImageItem {
             .and_then(OsStr::to_str)
             .unwrap_or_default();
 
-        if Img::extensions().contains(&ext) {
+        // Only open the item if it's a binary image (no SVGs, etc.)
+        // Since we do not have a way to toggle to an editor
+        if Img::extensions().contains(&ext) && !ext.contains("svg") {
             Some(cx.spawn(|mut cx| async move {
                 let abs_path = project
                     .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
@@ -70,12 +72,7 @@ pub struct ImageView {
 impl Item for ImageView {
     type Event = ();
 
-    fn tab_content(
-        &self,
-        _detail: Option<usize>,
-        selected: bool,
-        _cx: &WindowContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _cx: &WindowContext) -> AnyElement {
         let title = self
             .path
             .file_name()
@@ -84,11 +81,12 @@ impl Item for ImageView {
             .to_string();
         Label::new(title)
             .single_line()
-            .color(if selected {
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted
             })
+            .italic(params.preview)
             .into_any_element()
     }
 

@@ -1,17 +1,18 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
 #![deny(missing_docs)]
 
-pub mod oneshot_source;
 pub mod static_source;
+mod task_template;
 mod vscode_format;
 
 use collections::HashMap;
 use gpui::ModelContext;
-use static_source::RevealStrategy;
+use serde::Serialize;
 use std::any::Any;
 use std::borrow::Cow;
 use std::path::PathBuf;
-use std::sync::Arc;
+
+pub use task_template::{RevealStrategy, TaskTemplate, TaskTemplates};
 pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.
@@ -20,7 +21,7 @@ pub use vscode_format::VsCodeTaskFile;
 pub struct TaskId(pub String);
 
 /// Contains all information needed by Zed to spawn a new terminal tab for the given task.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnInTerminal {
     /// Id of the task to use when determining task tab affinity.
     pub id: TaskId,
@@ -42,8 +43,26 @@ pub struct SpawnInTerminal {
     pub reveal: RevealStrategy,
 }
 
-/// Variables, available for use in [`TaskContext`] when a Zed's task gets turned into real command.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedTask {
+    /// A way to distinguish tasks produced by the same template, but different contexts.
+    /// NOTE: Resolved tasks may have the same labels, commands and do the same things,
+    /// but still may have different ids if the context was different during the resolution.
+    /// Since the template has `env` field, for a generic task that may be a bash command,
+    /// so it's impossible to determine the id equality without more context in a generic case.
+    pub id: TaskId,
+    /// A template the task got resolved from.
+    pub original_task: TaskTemplate,
+    /// Full, unshortened label of the task after all resolutions are made.
+    pub resolved_label: String,
+    /// Further actions that need to take place after the resolved task is spawned,
+    /// with all task variables resolved.
+    pub resolved: Option<SpawnInTerminal>,
+}
+
+/// Variables, available for use in [`TaskContext`] when a Zed's [`TaskTemplate`] gets resolved into a [`ResolvedTask`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub enum VariableName {
     /// An absolute path of the currently opened file.
     File,
@@ -74,22 +93,25 @@ impl VariableName {
     }
 }
 
+/// A prefix that all [`VariableName`] variants are prefixed with when used in environment variables and similar template contexts.
+pub const ZED_VARIABLE_NAME_PREFIX: &str = "ZED_";
+
 impl std::fmt::Display for VariableName {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::File => write!(f, "ZED_FILE"),
-            Self::WorktreeRoot => write!(f, "ZED_WORKTREE_ROOT"),
-            Self::Symbol => write!(f, "ZED_SYMBOL"),
-            Self::Row => write!(f, "ZED_ROW"),
-            Self::Column => write!(f, "ZED_COLUMN"),
-            Self::SelectedText => write!(f, "ZED_SELECTED_TEXT"),
-            Self::Custom(s) => write!(f, "ZED_{s}"),
+            Self::File => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILE"),
+            Self::WorktreeRoot => write!(f, "{ZED_VARIABLE_NAME_PREFIX}WORKTREE_ROOT"),
+            Self::Symbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SYMBOL"),
+            Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
+            Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
+            Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
+            Self::Custom(s) => write!(f, "{ZED_VARIABLE_NAME_PREFIX}CUSTOM_{s}"),
         }
     }
 }
 
 /// Container for predefined environment variables that describe state of Zed at the time the task was spawned.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TaskVariables(HashMap<VariableName, String>);
 
 impl TaskVariables {
@@ -118,27 +140,14 @@ impl FromIterator<(VariableName, String)> for TaskVariables {
     }
 }
 
-/// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function)
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Keeps track of the file associated with a task and context of tasks execution (i.e. current file or current function).
+/// Keeps all Zed-related state inside, used to produce a resolved task out of its template.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct TaskContext {
     /// A path to a directory in which the task should be executed.
     pub cwd: Option<PathBuf>,
     /// Additional environment variables associated with a given task.
     pub task_variables: TaskVariables,
-}
-
-/// Represents a short lived recipe of a task, whose main purpose
-/// is to get spawned.
-pub trait Task {
-    /// Unique identifier of the task to spawn.
-    fn id(&self) -> &TaskId;
-    /// Human readable name of the task to display in the UI.
-    fn name(&self) -> &str;
-    /// Task's current working directory. If `None`, current project's root will be used.
-    fn cwd(&self) -> Option<&str>;
-    /// Sets up everything needed to spawn the task in the given directory (`cwd`).
-    /// If a task is intended to be spawned in the terminal, it should return the corresponding struct filled with the data necessary.
-    fn prepare_exec(&self, cx: TaskContext) -> Option<SpawnInTerminal>;
 }
 
 /// [`Source`] produces tasks that can be scheduled.
@@ -149,8 +158,5 @@ pub trait TaskSource: Any {
     /// A way to erase the type of the source, processing and storing them generically.
     fn as_any(&mut self) -> &mut dyn Any;
     /// Collects all tasks available for scheduling.
-    fn tasks_to_schedule(
-        &mut self,
-        cx: &mut ModelContext<Box<dyn TaskSource>>,
-    ) -> Vec<Arc<dyn Task>>;
+    fn tasks_to_schedule(&mut self, cx: &mut ModelContext<Box<dyn TaskSource>>) -> TaskTemplates;
 }
