@@ -37,7 +37,9 @@ impl project::Item for ImageItem {
             .and_then(OsStr::to_str)
             .unwrap_or_default();
 
-        if Img::extensions().contains(&ext) {
+        // Only open the item if it's a binary image (no SVGs, etc.)
+        // Since we do not have a way to toggle to an editor
+        if Img::extensions().contains(&ext) && !ext.contains("svg") {
             Some(cx.spawn(|mut cx| async move {
                 let abs_path = project
                     .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
