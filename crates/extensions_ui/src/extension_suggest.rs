@@ -48,6 +48,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("lua", &["lua"]),
     ("make", &["Makefile"]),
     ("nix", &["nix"]),
+    ("ocaml", &["ml", "mli"]),
     ("php", &["php"]),
     ("prisma", &["prisma"]),
     ("purescript", &["purs"]),
