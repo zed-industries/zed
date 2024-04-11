@@ -193,7 +193,6 @@ impl WindowsWindowInner {
     }
 
     async fn toggle_fullscreen(self: Rc<Self>) {
-        println!("toggle_fullscreen");
         self.fullscreen_restore_origin.set(self.origin.get());
         self.fullscreen_restore_size.set(self.physical_size.get());
         let StyleAndBounds {
@@ -346,7 +345,6 @@ impl WindowsWindowInner {
     }
 
     fn handle_move_msg(&self, lparam: LPARAM) -> Option<isize> {
-        println!("handle_move_msg");
         let x = lparam.signed_loword() as i32;
         let y = lparam.signed_hiword() as i32;
         let new_physical_point = Point {
@@ -378,7 +376,6 @@ impl WindowsWindowInner {
     }
 
     fn handle_size_msg(&self, lparam: LPARAM) -> Option<isize> {
-        println!("handle_size_msg");
         let width = lparam.loword().max(1) as i32;
         let height = lparam.hiword().max(1) as i32;
         let scale_factor = self.scale_factor.get();
@@ -1382,7 +1379,6 @@ impl WindowsWindow {
         }
         unsafe { ShowWindow(wnd.inner.hwnd, show_cmd) };
         if fullscreen {
-            println!("Toggle fullscreen");
             wnd.toggle_fullscreen();
         }
 
