@@ -7667,20 +7667,19 @@ impl Project {
     }
 
     pub fn blame_buffer(
-        this: &Model<Self>,
+        &self,
         buffer: &Model<Buffer>,
         version: Option<clock::Global>,
         cx: &AppContext,
     ) -> Task<Result<Blame>> {
-        let project = this.read(cx);
-        if project.is_local() {
+        if self.is_local() {
             let blame_params = maybe!({
                 let buffer = buffer.read(cx);
                 let buffer_project_path = buffer
                     .project_path(cx)
                     .context("failed to get buffer project path")?;
 
-                let worktree = project
+                let worktree = self
                     .worktree_for_id(buffer_project_path.worktree_id, cx)
                     .context("failed to get worktree")?
                     .read(cx)
@@ -7712,20 +7711,12 @@ impl Project {
             cx.background_executor().spawn(async move {
                 let (repo, relative_path, content) = blame_params?;
                 let lock = repo.lock();
-                let blame_res = lock
-                    .blame(&relative_path, content)
-                    .with_context(|| format!("Failed to git blame {relative_path:?}"));
-
-                if let Err(ref err) = blame_res {
-                    log::error!("{err:?}");
-                }
-
-                blame_res
+                lock.blame(&relative_path, content)
             })
         } else {
-            let project_id = project.remote_id();
+            let project_id = self.remote_id();
             let buffer_id = buffer.read(cx).remote_id();
-            let client = project.client.clone();
+            let client = self.client.clone();
             let version = buffer.read(cx).version();
 
             cx.spawn(|_| async move {
@@ -7767,8 +7758,10 @@ impl Project {
             })?
             .await?;
 
-        let blame = cx
-            .update(|cx| Self::blame_buffer(&this, &buffer, Some(version), &cx))?
+        let blame = this
+            .update(&mut cx, |this, cx| {
+                this.blame_buffer(&buffer, Some(version), cx)
+            })?
             .await?;
 
         Ok(serialize_blame_buffer_response(blame))

@@ -253,7 +253,7 @@ impl GitBlame {
     fn generate(&mut self, cx: &mut ModelContext<Self>) {
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
-        let blame = Project::blame_buffer(&self.project, &self.buffer, None, cx);
+        let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx
@@ -318,7 +318,10 @@ impl GitBlame {
                 }),
                 Err(error) => this.update(&mut cx, |this, cx| {
                     this.project.update(cx, |_, cx| {
-                        cx.emit(project::Event::Notification(format!("{:#}", error)));
+                        log::error!("{error:?}");
+                        cx.emit(project::Event::Notification(
+                            (&format!("{:#}", error)).trim().to_string(),
+                        ));
                     })
                 }),
             }
