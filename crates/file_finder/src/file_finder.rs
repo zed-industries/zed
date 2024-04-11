@@ -12,6 +12,7 @@ use gpui::{
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
+use settings::Settings;
 use std::{
     cmp,
     path::{Path, PathBuf},
@@ -23,7 +24,7 @@ use std::{
 use text::Point;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
-use workspace::{ModalView, Workspace};
+use workspace::{item::PreviewTabsSettings, ModalView, Workspace};
 
 actions!(file_finder, [Toggle, SelectPrev]);
 
@@ -782,13 +783,24 @@ impl PickerDelegate for FileFinderDelegate {
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade() {
                 let open_task = workspace.update(cx, move |workspace, cx| {
-                    let split_or_open = |workspace: &mut Workspace, project_path, cx| {
-                        if secondary {
-                            workspace.split_path(project_path, cx)
-                        } else {
-                            workspace.open_path(project_path, None, true, cx)
-                        }
-                    };
+                    let split_or_open =
+                        |workspace: &mut Workspace,
+                         project_path,
+                         cx: &mut ViewContext<Workspace>| {
+                            let allow_preview =
+                                PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
+                            if secondary {
+                                workspace.split_path_preview(project_path, allow_preview, cx)
+                            } else {
+                                workspace.open_path_preview(
+                                    project_path,
+                                    None,
+                                    true,
+                                    allow_preview,
+                                    cx,
+                                )
+                            }
+                        };
                     match m {
                         Match::History(history_match, _) => {
                             let worktree_id = history_match.project.worktree_id;

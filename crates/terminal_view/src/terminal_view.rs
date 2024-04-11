@@ -26,7 +26,7 @@ use terminal_element::TerminalElement;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent},
+    item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
@@ -783,12 +783,7 @@ impl Item for TerminalView {
         Some(self.terminal().read(cx).title(false).into())
     }
 
-    fn tab_content(
-        &self,
-        _detail: Option<usize>,
-        selected: bool,
-        cx: &WindowContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
         let icon = match terminal.task() {
@@ -808,7 +803,7 @@ impl Item for TerminalView {
         h_flex()
             .gap_2()
             .child(Icon::new(icon))
-            .child(Label::new(title).color(if selected {
+            .child(Label::new(title).color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted

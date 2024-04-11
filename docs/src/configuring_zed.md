@@ -613,6 +613,40 @@ The following settings can be overridden for each specific language:
 
 These values take in the same options as the root-level settings with the same name.
 
+## Preview tabs
+
+- Description:
+  Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
+   There are several ways to convert a preview tab into a regular tab:
+
+  - Double-clicking on the file
+  - Double-clicking on the tab header
+  - Using the 'project_panel::OpenPermanent' action
+  - Editing the file
+  - Dragging the file to a different pane
+
+- Setting: `preview_tabs`
+- Default:
+
+```json
+"preview_tabs": {
+  "enabled": true,
+  "enable_preview_from_file_finder": false
+}
+```
+
+**Options**
+
+### Enable preview from file finder
+
+- Description: Determines whether to open files in preview mode when selected from the file finder.
+- Setting: `enable_preview_from_file_finder`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Preferred Line Length
 
 - Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.

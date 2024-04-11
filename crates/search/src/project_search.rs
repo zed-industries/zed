@@ -36,12 +36,11 @@ use ui::{
 };
 use util::paths::PathMatcher;
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
-    ItemNavHistory, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
-    WorkspaceId,
+    DeploySearch, ItemNavHistory, NewSearch, Pane, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace, WorkspaceId,
 };
-use workspace::{DeploySearch, NewSearch};
 
 const MIN_INPUT_WIDTH_REMS: f32 = 15.;
 const MAX_INPUT_WIDTH_REMS: f32 = 30.;
@@ -379,7 +378,7 @@ impl Item for ProjectSearchView {
             .update(cx, |editor, cx| editor.deactivated(cx));
     }
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, cx: &WindowContext<'_>) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext<'_>) -> AnyElement {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)
@@ -395,12 +394,14 @@ impl Item for ProjectSearchView {
             .unwrap_or_else(|| "Project Search".into());
         h_flex()
             .gap_2()
-            .child(Icon::new(IconName::MagnifyingGlass).color(if selected {
-                Color::Default
-            } else {
-                Color::Muted
-            }))
-            .child(Label::new(tab_name).color(if selected {
+            .child(
+                Icon::new(IconName::MagnifyingGlass).color(if params.selected {
+                    Color::Default
+                } else {
+                    Color::Muted
+                }),
+            )
+            .child(Label::new(tab_name).color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted

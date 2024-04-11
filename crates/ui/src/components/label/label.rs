@@ -126,6 +126,20 @@ impl LabelCommon for Label {
         self.base = self.base.strikethrough(strikethrough);
         self
     }
+
+    /// Sets the italic property of the label.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ui::prelude::*;
+    ///
+    /// let my_label = Label::new("Hello, World!").italic(true);
+    /// ```
+    fn italic(mut self, italic: bool) -> Self {
+        self.base = self.base.italic(italic);
+        self
+    }
 }
 
 impl RenderOnce for Label {

@@ -42,6 +42,7 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
+use workspace::Pane;
 
 #[ctor::ctor]
 fn init_logger() {
@@ -6126,4 +6127,270 @@ async fn test_join_after_restart(cx1: &mut TestAppContext, cx2: &mut TestAppCont
 
     let client2 = server.create_client(cx2, "user_a").await;
     join_channel(channel2, &client2, cx2).await.unwrap();
+}
+
+#[gpui::test]
+async fn test_preview_tabs(cx: &mut TestAppContext) {
+    let (_server, client) = TestServer::start1(cx).await;
+    let (workspace, cx) = client.build_test_workspace(cx).await;
+    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let path_1 = ProjectPath {
+        worktree_id,
+        path: Path::new("1.txt").into(),
+    };
+    let path_2 = ProjectPath {
+        worktree_id,
+        path: Path::new("2.js").into(),
+    };
+    let path_3 = ProjectPath {
+        worktree_id,
+        path: Path::new("3.rs").into(),
+    };
+
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+    let get_path = |pane: &Pane, idx: usize, cx: &AppContext| {
+        pane.item_for_index(idx).unwrap().project_path(cx).unwrap()
+    };
+
+    // Opening item 3 as a "permanent" tab
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path(path_3.clone(), None, false, cx)
+        })
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(pane.preview_item_id(), None);
+
+        assert!(!pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Open item 1 as preview
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path_preview(path_1.clone(), None, true, true, cx)
+        })
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(get_path(pane, 1, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Open item 2 as preview
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        })
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(get_path(pane, 1, cx), path_2.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Going back should show item 1 as preview
+    workspace
+        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(get_path(pane, 1, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(pane.can_navigate_forward());
+    });
+
+    // Closing item 1
+    pane.update(cx, |pane, cx| {
+        pane.close_item_by_id(
+            pane.active_item().unwrap().item_id(),
+            workspace::SaveIntent::Skip,
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(pane.preview_item_id(), None);
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Going back should show item 1 as preview
+    workspace
+        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(get_path(pane, 1, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(pane.can_navigate_forward());
+    });
+
+    // Close permanent tab
+    pane.update(cx, |pane, cx| {
+        let id = pane.items().nth(0).unwrap().item_id();
+        pane.close_item_by_id(id, workspace::SaveIntent::Skip, cx)
+    })
+    .await
+    .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(0).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(pane.can_navigate_forward());
+    });
+
+    // Split pane to the right
+    pane.update(cx, |pane, cx| {
+        pane.split(workspace::SplitDirection::Right, cx);
+    });
+
+    let right_pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(0).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(pane.can_navigate_forward());
+    });
+
+    right_pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(pane.preview_item_id(), None);
+
+        assert!(!pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Open item 2 as preview in right pane
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        })
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(0).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(pane.can_navigate_forward());
+    });
+
+    right_pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(get_path(pane, 1, cx), path_2.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Focus left pane
+    workspace.update(cx, |workspace, cx| {
+        workspace.activate_pane_in_direction(workspace::SplitDirection::Left, cx)
+    });
+
+    // Open item 2 as preview in left pane
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        })
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_2.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(0).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    right_pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(get_path(pane, 1, cx), path_2.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
 }

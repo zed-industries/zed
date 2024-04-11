@@ -32,7 +32,10 @@ use gpui::{
     LayoutId, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render,
     Size, Subscription, Task, View, WeakView, WindowHandle, WindowOptions,
 };
-use item::{FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, ProjectItem};
+use item::{
+    FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
+    ProjectItem,
+};
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
 use lazy_static::lazy_static;
@@ -261,6 +264,7 @@ impl Column for WorkspaceId {
 pub fn init_settings(cx: &mut AppContext) {
     WorkspaceSettings::register(cx);
     ItemSettings::register(cx);
+    PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
 }
 
@@ -1142,7 +1146,13 @@ impl Workspace {
                     })?;
 
                     pane.update(&mut cx, |pane, cx| {
-                        let item = pane.open_item(project_entry_id, true, cx, build_item);
+                        let item = pane.open_item(
+                            project_entry_id,
+                            true,
+                            entry.is_preview,
+                            cx,
+                            build_item,
+                        );
                         navigated |= Some(item.item_id()) != prev_active_item_id;
                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
                         if let Some(data) = entry.data {
@@ -2067,6 +2077,17 @@ impl Workspace {
         focus_item: bool,
         cx: &mut WindowContext,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+        self.open_path_preview(path, pane, focus_item, false, cx)
+    }
+
+    pub fn open_path_preview(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        pane: Option<WeakView<Pane>>,
+        focus_item: bool,
+        allow_preview: bool,
+        cx: &mut WindowContext,
+    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = pane.unwrap_or_else(|| {
             self.last_active_center_pane.clone().unwrap_or_else(|| {
                 self.panes
@@ -2080,7 +2101,7 @@ impl Workspace {
         cx.spawn(move |mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
             pane.update(&mut cx, |pane, cx| {
-                pane.open_item(project_entry_id, focus_item, cx, build_item)
+                pane.open_item(project_entry_id, focus_item, allow_preview, cx, build_item)
             })
         })
     }
@@ -2088,6 +2109,15 @@ impl Workspace {
     pub fn split_path(
         &mut self,
         path: impl Into<ProjectPath>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+        self.split_path_preview(path, false, cx)
+    }
+
+    pub fn split_path_preview(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        allow_preview: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
@@ -2110,7 +2140,7 @@ impl Workspace {
                 let pane = pane.upgrade()?;
                 let new_pane = this.split_pane(pane, SplitDirection::Right, cx);
                 new_pane.update(cx, |new_pane, cx| {
-                    Some(new_pane.open_item(project_entry_id, true, cx, build_item))
+                    Some(new_pane.open_item(project_entry_id, true, allow_preview, cx, build_item))
                 })
             })
             .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
@@ -2155,6 +2185,9 @@ impl Workspace {
         }
 
         let item = cx.new_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+        pane.update(cx, |pane, cx| {
+            pane.set_preview_item_id(Some(item.item_id()), cx)
+        });
         self.add_item(pane, Box::new(item.clone()), cx);
         item
     }
@@ -2536,7 +2569,7 @@ impl Workspace {
         if source != destination {
             // Close item from previous pane
             source.update(cx, |source, cx| {
-                source.remove_item(item_ix, false, cx);
+                source.remove_item(item_ix, false, true, cx);
             });
         }
 
@@ -3408,6 +3441,7 @@ impl Workspace {
                                 kind: Arc::from(item_handle.serialized_item_kind()?),
                                 item_id: item_handle.item_id().as_u64(),
                                 active: Some(item_handle.item_id()) == active_item_id,
+                                preview: pane.is_active_preview_item(item_handle.item_id()),
                             })
                         })
                         .collect::<Vec<_>>(),

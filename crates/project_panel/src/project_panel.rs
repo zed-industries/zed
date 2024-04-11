@@ -130,6 +130,7 @@ actions!(
         Paste,
         Rename,
         Open,
+        OpenPermanent,
         ToggleFocus,
         NewSearchInDirectory,
     ]
@@ -156,6 +157,7 @@ pub enum Event {
     OpenedEntry {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
+        allow_preview: bool,
     },
     SplitEntry {
         entry_id: ProjectEntryId,
@@ -262,6 +264,7 @@ impl ProjectPanel {
                 &Event::OpenedEntry {
                     entry_id,
                     focus_opened_item,
+                    allow_preview,
                 } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
                         if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
@@ -270,13 +273,14 @@ impl ProjectPanel {
                             let entry_id = entry.id;
 
                             workspace
-                                .open_path(
+                                .open_path_preview(
                                     ProjectPath {
                                         worktree_id,
                                         path: file_path.clone(),
                                     },
                                     None,
                                     focus_opened_item,
+                                    allow_preview,
                                     cx,
                                 )
                                 .detach_and_prompt_err("Failed to open file", cx, move |e, _| {
@@ -592,9 +596,22 @@ impl ProjectPanel {
     }
 
     fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
+        self.open_internal(true, false, cx);
+    }
+
+    fn open_permanent(&mut self, _: &OpenPermanent, cx: &mut ViewContext<Self>) {
+        self.open_internal(false, true, cx);
+    }
+
+    fn open_internal(
+        &mut self,
+        allow_preview: bool,
+        focus_opened_item: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
-                self.open_entry(entry.id, true, cx);
+                self.open_entry(entry.id, focus_opened_item, allow_preview, cx);
             } else {
                 self.toggle_expanded(entry.id, cx);
             }
@@ -666,7 +683,7 @@ impl ProjectPanel {
                     }
                     this.update_visible_entries(None, cx);
                     if is_new_entry && !is_dir {
-                        this.open_entry(new_entry.id, true, cx);
+                        this.open_entry(new_entry.id, true, false, cx);
                     }
                     cx.notify();
                 })?;
@@ -686,11 +703,13 @@ impl ProjectPanel {
         &mut self,
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
+        allow_preview: bool,
         cx: &mut ViewContext<Self>,
     ) {
         cx.emit(Event::OpenedEntry {
             entry_id,
             focus_opened_item,
+            allow_preview,
         });
     }
 
@@ -1461,7 +1480,13 @@ impl ProjectPanel {
                                 if event.down.modifiers.secondary() {
                                     this.split_entry(entry_id, cx);
                                 } else {
-                                    this.open_entry(entry_id, event.up.click_count > 1, cx);
+                                    let click_count = event.up.click_count;
+                                    this.open_entry(
+                                        entry_id,
+                                        click_count > 1,
+                                        click_count == 1,
+                                        cx,
+                                    );
                                 }
                             }
                         }
@@ -1535,6 +1560,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
                 .on_action(cx.listener(Self::open))
+                .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))

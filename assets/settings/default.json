@@ -298,6 +298,16 @@
     // Position of the close button on the editor tabs.
     "close_position": "right"
   },
+  // Settings related to preview tabs.
+  "preview_tabs": {
+    // Whether preview tabs should be enabled.
+    // Preview tabs allow you to open files in preview mode, where they close automatically
+    // when you switch to another file unless you explicitly pin them.
+    // This is useful for quickly viewing files without cluttering your workspace.
+    "enabled": true,
+    // Whether to open files in preview mode when selected from the file finder.
+    "enable_preview_from_file_finder": false
+  },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
   "remove_trailing_whitespace_on_save": true,
