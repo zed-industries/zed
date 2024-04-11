@@ -7773,10 +7773,8 @@ impl Project {
             })?
             .await?;
 
-        let blame = this
-            .update(&mut cx, |_, cx| {
-                Self::blame_buffer(&this, &buffer, Some(version), cx)
-            })?
+        let blame = cx
+            .update(|cx| Self::blame_buffer(&this, &buffer, Some(version), &cx))?
             .await?;
 
         Ok(serialize_blame_buffer_response(blame))
