@@ -1326,14 +1326,7 @@ impl Buffer {
         current_size: IndentSize,
         new_size: IndentSize,
     ) -> Option<(Range<Point>, String)> {
-        if new_size.kind != current_size.kind {
-            Some((
-                Point::new(row, 0)..Point::new(row, current_size.len),
-                iter::repeat(new_size.char())
-                    .take(new_size.len as usize)
-                    .collect::<String>(),
-            ))
-        } else {
+        if new_size.kind == current_size.kind {
             match new_size.len.cmp(&current_size.len) {
                 Ordering::Greater => {
                     let point = Point::new(row, 0);
@@ -1352,6 +1345,13 @@ impl Buffer {
 
                 Ordering::Equal => None,
             }
+        } else {
+            Some((
+                Point::new(row, 0)..Point::new(row, current_size.len),
+                iter::repeat(new_size.char())
+                    .take(new_size.len as usize)
+                    .collect::<String>(),
+            ))
         }
     }
 

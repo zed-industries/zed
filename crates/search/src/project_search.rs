@@ -1244,10 +1244,10 @@ impl ProjectSearchBar {
         if let Some(search) = &self.active_project_search {
             search.update(cx, |this, cx| {
                 this.replace_enabled = !this.replace_enabled;
-                let editor_to_focus = if !this.replace_enabled {
-                    this.query_editor.focus_handle(cx)
-                } else {
+                let editor_to_focus = if this.replace_enabled {
                     this.replacement_editor.focus_handle(cx)
+                } else {
+                    this.query_editor.focus_handle(cx)
                 };
                 cx.focus(&editor_to_focus);
                 cx.notify();
