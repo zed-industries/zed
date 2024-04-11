@@ -1172,7 +1172,6 @@ impl EditorElement {
         let start_x = em_width * 1;
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
-        let text_style = &self.style.text;
 
         let shaped_lines = blamed_rows
             .into_iter()
@@ -1183,7 +1182,7 @@ impl EditorElement {
                         ix,
                         &blame,
                         blame_entry,
-                        text_style,
+                        &self.style,
                         &mut last_used_color,
                         self.editor.clone(),
                         cx,
@@ -3096,21 +3095,18 @@ impl Render for InlineBlameTooltip {
                                 .justify_between()
                                 .child(relative_timestamp)
                                 .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .id(SharedString::from(short_commit_id.clone()))
-                                        .child(Icon::new(IconName::FileGit).color(Color::Hint))
-                                        .child(short_commit_id.clone())
+                                    Button::new("commit-sha-button", short_commit_id.clone())
+                                        .style(ButtonStyle::Transparent)
+                                        .color(Color::Muted)
+                                        .icon(IconName::FileGit)
+                                        .icon_color(Color::Muted)
+                                        .icon_position(IconPosition::Start)
+                                        .disabled(self.permalink.is_none())
                                         .when_some(self.permalink.clone(), |this, url| {
-                                            let url = url.clone();
-                                            this.cursor_pointer()
-                                                .on_mouse_down(MouseButton::Left, |_, cx| {
-                                                    cx.stop_propagation()
-                                                })
-                                                .on_click(move |_, cx| {
-                                                    cx.stop_propagation();
-                                                    cx.open_url(url.as_str())
-                                                })
+                                            this.on_click(move |_, cx| {
+                                                cx.stop_propagation();
+                                                cx.open_url(url.as_str())
+                                            })
                                         }),
                                 ),
                         ),
@@ -3123,7 +3119,7 @@ fn render_blame_entry(
     ix: usize,
     blame: &gpui::Model<GitBlame>,
     blame_entry: BlameEntry,
-    text_style: &TextStyle,
+    style: &EditorStyle,
     last_used_color: &mut Option<(PlayerColor, Oid)>,
     editor: View<Editor>,
     cx: &mut ElementContext<'_>,
@@ -3154,10 +3150,22 @@ fn render_blame_entry(
     let permalink = blame.read(cx).permalink_for_entry(&blame_entry);
     let commit_message = blame.read(cx).message_for_entry(&blame_entry);
 
+    let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
+
+    let tooltip = cx.new_view(|_| {
+        InlineBlameTooltip::new(
+            blame_entry.clone(),
+            permalink.clone(),
+            commit_message,
+            style,
+            workspace,
+        )
+    });
+
     h_flex()
         .w_full()
-        .font(text_style.font().family)
-        .line_height(text_style.line_height)
+        .font(style.text.font().family)
+        .line_height(style.text.line_height)
         .id(("blame", ix))
         .children([
             div()
@@ -3186,14 +3194,7 @@ fn render_blame_entry(
                 cx.open_url(url.as_str())
             })
         })
-        .hoverable_tooltip(move |cx| {
-            BlameEntryTooltip::new(
-                sha_color.cursor,
-                commit_message.clone(),
-                blame_entry.clone(),
-                cx,
-            )
-        })
+        .hoverable_tooltip(move |_| tooltip.clone().into())
         .into_any()
 }
 
@@ -3214,84 +3215,6 @@ fn deploy_blame_entry_context_menu(
         editor.mouse_context_menu = Some(MouseContextMenu::new(position, context_menu, cx));
         cx.notify();
     });
-}
-
-struct BlameEntryTooltip {
-    color: Hsla,
-    commit_message: Option<CommitMessage>,
-    blame_entry: BlameEntry,
-}
-
-impl BlameEntryTooltip {
-    fn new(
-        color: Hsla,
-        commit_message: Option<CommitMessage>,
-        blame_entry: BlameEntry,
-        cx: &mut WindowContext,
-    ) -> AnyView {
-        cx.new_view(|_cx| Self {
-            color,
-            commit_message,
-            blame_entry,
-        })
-        .into()
-    }
-}
-
-impl Render for BlameEntryTooltip {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let author = self
-            .blame_entry
-            .author
-            .clone()
-            .unwrap_or("<no name>".to_string());
-        let author_email = self.blame_entry.author_mail.clone().unwrap_or_default();
-        let absolute_timestamp = match self.blame_entry.author_offset_date_time() {
-            Ok(timestamp) => time_format::format_localized_timestamp(
-                timestamp,
-                time::OffsetDateTime::now_utc(),
-                cx.local_timezone(),
-                time_format::TimestampFormat::Absolute,
-            ),
-            Err(_) => "Error parsing date".to_string(),
-        };
-
-        let message = match &self.commit_message {
-            Some(message) => util::truncate_lines_and_trailoff(&message.message, 15),
-            None => self.blame_entry.summary.clone().unwrap_or_default(),
-        };
-
-        let pretty_commit_id = format!("{}", self.blame_entry.sha);
-
-        tooltip_container(cx, move |this, cx| {
-            this.occlude()
-                .on_mouse_move(|_, cx| cx.stop_propagation())
-                .child(
-                    v_flex()
-                        .child(
-                            h_flex()
-                                .child(
-                                    div()
-                                        .text_color(cx.theme().colors().text_muted)
-                                        .child("Commit")
-                                        .pr_2(),
-                                )
-                                .child(
-                                    div().text_color(self.color).child(pretty_commit_id.clone()),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .child(format!(
-                                    "{} {} - {}",
-                                    author, author_email, absolute_timestamp
-                                ))
-                                .text_color(cx.theme().colors().text_muted),
-                        )
-                        .child(div().child(message)),
-                )
-        })
-    }
 }
 
 #[derive(Debug)]
