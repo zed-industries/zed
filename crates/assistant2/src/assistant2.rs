@@ -22,6 +22,7 @@ impl Render for AssistantPanel {
         div()
             .size_full()
             .v_flex()
+            .p_2()
             .bg(cx.theme().colors().background)
             .child(self.chat.clone())
     }
@@ -64,11 +65,9 @@ impl AssistantChat {
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         match &self.messages[ix] {
             AssistantMessage::User { body, contexts } => div()
-                .m_2()
                 .p_2()
                 .text_color(cx.theme().colors().editor_foreground)
                 .font(ThemeSettings::get_global(cx).buffer_font.clone())
-                .text_buffer(cx)
                 .bg(cx.theme().colors().editor_background)
                 .child(body.clone())
                 .into_any_element(),

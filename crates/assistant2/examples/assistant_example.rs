@@ -1,6 +1,7 @@
 use assets::Assets;
 use assistant2::AssistantPanel;
 use gpui::{App, View, WindowOptions};
+use settings::{KeymapFile, DEFAULT_KEYMAP_PATH};
 use theme::LoadThemes;
 use ui::{div, prelude::*, Render};
 
@@ -11,6 +12,7 @@ fn main() {
         editor::init(cx);
         theme::init(LoadThemes::JustBase, cx);
         Assets.load_fonts(cx).unwrap();
+        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
 
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|cx| Example::new(cx))
