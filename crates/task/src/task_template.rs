@@ -478,4 +478,35 @@ mod tests {
             assert_eq!(resolved_task_attempt, None, "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})");
         }
     }
+
+    #[test]
+    fn test_can_resolve_free_variables() {
+        let task = TaskTemplate {
+            label: "My task".into(),
+            command: "echo".into(),
+            args: vec!["$PATH".into()],
+            ..Default::default()
+        };
+        let resolved = task
+            .resolve_task(TEST_ID_BASE, TaskContext::default())
+            .unwrap()
+            .resolved
+            .unwrap();
+        assert_eq!(resolved.label, task.label);
+        assert_eq!(resolved.command, task.command);
+        assert_eq!(resolved.args, task.args);
+    }
+
+    #[test]
+    fn test_errors_on_missing_zed_variable() {
+        let task = TaskTemplate {
+            label: "My task".into(),
+            command: "echo".into(),
+            args: vec!["$ZED_VARIABLE".into()],
+            ..Default::default()
+        };
+        assert!(task
+            .resolve_task(TEST_ID_BASE, TaskContext::default())
+            .is_none());
+    }
 }
