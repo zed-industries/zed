@@ -196,6 +196,35 @@ impl AssistantChat {
         }
     }
 
+    fn render_error(
+        &self,
+        error: Option<SharedString>,
+        ix: usize,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement {
+        // can't reach openai
+        // couldn't parse text
+        // couldn't do an update
+
+        let theme = cx.theme();
+
+        if let Some(error) = error {
+            div()
+                .p_1()
+                .pl_4()
+                .neg_mx_2()
+                .rounded_md()
+                .border()
+                .border_color(theme.status().error_border)
+                // .bg(theme.status().error_background)
+                .text_color(theme.status().error)
+                .child(error.clone())
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        }
+    }
+
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         let is_last = ix == self.messages.len() - 1;
 
@@ -212,8 +241,8 @@ impl AssistantChat {
             AssistantMessage::Assistant { id, body, error } => div()
                 .p_2()
                 .when(!is_last, |element| element.mb_2())
-                .children(error.clone())
                 .child(body.element(ElementId::from(*id), cx))
+                .child(self.render_error(error.clone(), ix, cx))
                 .into_any(),
         }
     }
@@ -291,6 +320,7 @@ impl AssistantChat {
 impl Render for AssistantChat {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
+            .relative()
             .flex_1()
             .v_flex()
             .key_context("AssistantChat")
