@@ -8,15 +8,18 @@ use completion_provider::*;
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    list, prelude::*, AnyElement, AppContext, Global, ListAlignment, ListState, Render, Task, View,
+    list, prelude::*, AnyElement, AppContext, Global, ListAlignment, ListState, Model, Render,
+    Task, View,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use rich_text::RichText;
-use semantic_index::SearchResult;
+use semantic_index::{SearchResult, SemanticIndex};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip};
 use util::{post_inc, ResultExt, TryFutureExt};
+
+use semantic_index::ProjectIndex;
 
 gpui::actions!(assistant, [Submit]);
 
@@ -28,14 +31,22 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 
 pub struct AssistantPanel {
     language_registry: Arc<LanguageRegistry>,
+    project_index: Model<ProjectIndex>,
     chat: View<AssistantChat>,
 }
 
 impl AssistantPanel {
-    pub fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
-        let chat = cx.new_view(|cx| AssistantChat::new(language_registry.clone(), cx));
+    pub fn new(
+        language_registry: Arc<LanguageRegistry>,
+        project_index: Model<ProjectIndex>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let chat = cx.new_view(|cx| {
+            AssistantChat::new(language_registry.clone(), project_index.clone(), cx)
+        });
         Self {
             language_registry,
+            project_index,
             chat,
         }
     }
@@ -57,12 +68,17 @@ struct AssistantChat {
     messages: Vec<AssistantMessage>,
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
+    project_index: Model<ProjectIndex>,
     next_message_id: usize,
     pending_completion: Option<Task<()>>,
 }
 
 impl AssistantChat {
-    fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        language_registry: Arc<LanguageRegistry>,
+        project_index: Model<ProjectIndex>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let this = cx.view().downgrade();
         let list_state = ListState::new(0, ListAlignment::Bottom, px(1024.), move |ix, cx| {
             this.update(cx, |this, cx| this.render_message(ix, cx))
@@ -75,6 +91,7 @@ impl AssistantChat {
             messages: Vec::new(),
             list_state,
             language_registry,
+            project_index,
             next_message_id: 0,
             pending_completion: None,
         };
@@ -149,15 +166,6 @@ impl AssistantChat {
                     } else {
                         unreachable!()
                     }
-                } else {
-                    // Make a fake error for rendering
-                    if let Some(AssistantMessage::Assistant {
-                        error: message_error,
-                        ..
-                    }) = this.messages.last_mut()
-                    {
-                        message_error.replace(SharedString::from("Failed to initiate hyperdrive."));
-                    }
                 }
 
                 let focus = selected_message_focus_handle.contains_focused(cx);
@@ -213,17 +221,13 @@ impl AssistantChat {
         ix: usize,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement {
-        // can't reach openai
-        // couldn't parse text
-        // couldn't do an update
-
         let theme = cx.theme();
 
         if let Some(error) = error {
             div()
-                .p_1()
-                .pl_4()
-                .neg_mx_2()
+                .py_1()
+                .px_2()
+                .neg_mx_1()
                 .rounded_md()
                 .border()
                 .border_color(theme.status().error_border)
@@ -250,9 +254,8 @@ impl AssistantChat {
                 .child(body.clone())
                 .into_any(),
             AssistantMessage::Assistant { id, body, error } => div()
-                .p_2()
                 .when(!is_last, |element| element.mb_2())
-                .child(body.element(ElementId::from(*id), cx))
+                .child(div().p_2().child(body.element(ElementId::from(*id), cx)))
                 .child(self.render_error(error.clone(), ix, cx))
                 .into_any(),
         }

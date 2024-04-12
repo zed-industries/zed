@@ -1,19 +1,35 @@
-use std::sync::Arc;
-
 use assets::Assets;
 use assistant2::AssistantPanel;
 use client::Client;
-use gpui::{App, Task, View, WindowOptions};
+use gpui::{App, Model, Task, View, WindowOptions};
 use language::LanguageRegistry;
+use project::{project_settings, Project};
 use settings::{KeymapFile, DEFAULT_KEYMAP_PATH};
 use theme::LoadThemes;
 use ui::{div, prelude::*, Render};
 
+use util::http::HttpClientWithUrl;
+
+use std::{path::Path, sync::Arc};
+
+use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, ProjectIndex, SemanticIndex};
+
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
     env_logger::init();
     App::new().with_assets(Assets).run(|cx| {
+        if args.len() < 2 {
+            eprintln!(
+                "Usage: cargo run --example assistant_example -p assistant2 -- <project_path>"
+            );
+            cx.quit();
+            return;
+        }
+
         settings::init(cx);
         language::init(cx);
+        Project::init_settings(cx);
         editor::init(cx);
         theme::init(LoadThemes::JustBase, cx);
         Assets.load_fonts(cx).unwrap();
@@ -36,10 +52,36 @@ fn main() {
         let node_runtime = node_runtime::RealNodeRuntime::new(client.http_client());
         languages::init(language_registry.clone(), node_runtime, cx);
 
-        cx.open_window(WindowOptions::default(), |cx| {
-            cx.new_view(|cx| Example::new(language_registry, cx))
-        });
-        cx.activate(true);
+        let http = Arc::new(HttpClientWithUrl::new("http://localhost:11434"));
+
+        let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
+        let embedding_provider = OpenAiEmbeddingProvider::new(
+            http.clone(),
+            OpenAiEmbeddingModel::TextEmbedding3Small,
+            open_ai::OPEN_AI_API_URL.to_string(),
+            api_key,
+        );
+
+        let semantic_index = SemanticIndex::new(
+            Path::new("/tmp/semantic-index-db.mdb"),
+            Arc::new(embedding_provider),
+            cx,
+        );
+
+        cx.spawn(|mut cx| async move {
+            let project_path = Path::new(&args[1]);
+            let project = Project::example([project_path], &mut cx).await;
+            let mut semantic_index = semantic_index.await?;
+
+            cx.update(|cx| {
+                let project_index = semantic_index.project_index(project.clone(), cx);
+                cx.open_window(WindowOptions::default(), |cx| {
+                    cx.new_view(|cx| Example::new(language_registry, project_index, cx))
+                });
+                cx.activate(true);
+            })
+        })
+        .detach_and_log_err(cx);
     })
 }
 
@@ -48,9 +90,14 @@ struct Example {
 }
 
 impl Example {
-    fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        language_registry: Arc<LanguageRegistry>,
+        project_index: Model<ProjectIndex>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         Self {
-            assistant_panel: cx.new_view(|cx| AssistantPanel::new(language_registry, cx)),
+            assistant_panel: cx
+                .new_view(|cx| AssistantPanel::new(language_registry, project_index, cx)),
         }
     }
 }

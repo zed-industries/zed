@@ -386,6 +386,8 @@ dependencies = [
  "languages",
  "log",
  "node_runtime",
+ "open_ai",
+ "project",
  "release_channel",
  "rich_text",
  "semantic_index",
