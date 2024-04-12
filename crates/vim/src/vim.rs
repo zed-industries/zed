@@ -517,6 +517,17 @@ impl Vim {
         ) {
             self.start_recording(cx)
         };
+        // Since these operations can only be entered with pre-operators,
+        // we need to clear the previous operators when pushing,
+        // so that the current stack is the most correct
+        if matches!(
+            operator,
+            Operator::AddSurrounds { .. }
+                | Operator::ChangeSurrounds { .. }
+                | Operator::DeleteSurrounds
+        ) {
+            self.clear_operator(cx);
+        };
         self.update_state(|state| state.operator_stack.push(operator));
         self.sync_vim_settings(cx);
     }
