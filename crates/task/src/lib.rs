@@ -55,14 +55,21 @@ pub struct ResolvedTask {
     /// so it's impossible to determine the id equality without more context in a generic case.
     pub id: TaskId,
     /// A template the task got resolved from.
-    pub original_task: TaskTemplate,
+    original_task: TaskTemplate,
     /// Full, unshortened label of the task after all resolutions are made.
     pub resolved_label: String,
     /// Variables that were substituted during the task template resolution.
-    pub substituted_variables: HashSet<VariableName>,
+    substituted_variables: HashSet<VariableName>,
     /// Further actions that need to take place after the resolved task is spawned,
     /// with all task variables resolved.
     pub resolved: Option<SpawnInTerminal>,
+}
+
+impl ResolvedTask {
+    /// A task template before the resolution.
+    pub fn original_task(&self) -> &TaskTemplate {
+        &self.original_task
+    }
 }
 
 /// Variables, available for use in [`TaskContext`] when a Zed's [`TaskTemplate`] gets resolved into a [`ResolvedTask`].

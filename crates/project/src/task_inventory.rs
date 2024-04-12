@@ -426,7 +426,7 @@ mod test_inventory {
             );
             used.into_iter()
                 .chain(current)
-                .map(|(_, task)| task.original_task.label)
+                .map(|(_, task)| task.original_task().label.clone())
                 .collect()
         })
     }

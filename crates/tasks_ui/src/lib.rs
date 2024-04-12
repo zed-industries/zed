@@ -29,7 +29,7 @@ pub fn init(cx: &mut AppContext) {
                         })
                     {
                         if action.reevaluate_context {
-                            let mut original_task = last_scheduled_task.original_task;
+                            let mut original_task = last_scheduled_task.original_task();
                             if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
                                 original_task.allow_concurrent_runs = allow_concurrent_runs;
                             }
@@ -40,7 +40,7 @@ pub fn init(cx: &mut AppContext) {
                             schedule_task(
                                 workspace,
                                 task_source_kind,
-                                &original_task,
+                                original_task,
                                 &task_context,
                                 false,
                                 cx,
