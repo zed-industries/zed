@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Context;
 use collections::HashMap;
 use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
@@ -103,7 +103,9 @@ impl TaskTemplate {
         let command = substitute_all_template_variables_in_str(&self.command, &task_variables)?;
         let args = substitute_all_template_variables_in_vec(self.args.clone(), &task_variables)?;
 
-        let task_hash = self.task_hash().log_err()?;
+        let task_hash = to_hex_hash(&self)
+            .context("hashing task template")
+            .log_err()?;
         let variables_hash = to_hex_hash(&task_variables)
             .context("hashing task variables")
             .log_err()?;
@@ -126,30 +128,6 @@ impl TaskTemplate {
                 reveal: self.reveal,
             }),
         })
-    }
-
-    fn task_hash(&self) -> Result<String> {
-        /// Parts of TaskTemplate that should be used for identity matching.
-        /// Right now, we omit `allow_concurrent_runs` and `use_new_terminal`
-        #[derive(Serialize)]
-        struct HashableTaskTemplate<'a> {
-            pub label: &'a str,
-            pub command: &'a str,
-            pub args: &'a [String],
-            pub env: &'a HashMap<String, String>,
-            pub cwd: Option<&'a str>,
-            pub reveal: RevealStrategy,
-        }
-
-        let hashable = HashableTaskTemplate {
-            label: &self.label,
-            command: &self.command,
-            args: &self.args,
-            env: &self.env,
-            cwd: self.cwd.as_deref(),
-            reveal: self.reveal,
-        };
-        to_hex_hash(&hashable).context("hashing task template")
     }
 }
 

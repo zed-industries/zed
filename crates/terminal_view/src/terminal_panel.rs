@@ -334,7 +334,7 @@ impl TerminalPanel {
             return;
         }
 
-        let terminals_for_task = self.terminals_for_task(&spawn_in_terminal.id, cx);
+        let terminals_for_task = self.terminals_for_task(&spawn_in_terminal.label, cx);
         if terminals_for_task.is_empty() {
             self.spawn_in_new_terminal(spawn_task, working_directory, cx);
             return;
@@ -435,7 +435,7 @@ impl TerminalPanel {
 
     fn terminals_for_task(
         &self,
-        id: &TaskId,
+        label: &str,
         cx: &mut AppContext,
     ) -> Vec<(usize, View<TerminalView>)> {
         self.pane
@@ -445,7 +445,7 @@ impl TerminalPanel {
             .filter_map(|(index, item)| Some((index, item.act_as::<TerminalView>(cx)?)))
             .filter_map(|(index, terminal_view)| {
                 let task_state = terminal_view.read(cx).terminal().read(cx).task()?;
-                if &task_state.id == id {
+                if &task_state.label == label {
                     Some((index, terminal_view))
                 } else {
                     None
