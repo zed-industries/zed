@@ -1,7 +1,8 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::cell::{RefCell, RefMut};
+use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
+use async_task::Runnable;
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::{EventLoop, LoopHandle};
 use calloop_wayland_source::WaylandSource;
@@ -35,12 +36,13 @@ use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::super::DOUBLE_CLICK_INTERVAL;
+use super::window::{WaylandWindowState, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
-use crate::{point, px, MouseExitEvent};
+use crate::{point, px, ForegroundExecutor, MouseExitEvent};
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -52,9 +54,9 @@ use crate::{LinuxCommon, WindowParams};
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Globals {
-    pub qh: QueueHandle<WaylandClient>,
+    pub qh: QueueHandle<WaylandClientStatePtr>,
     pub compositor: wl_compositor::WlCompositor,
     pub wm_base: xdg_wm_base::XdgWmBase,
     pub shm: wl_shm::WlShm,
@@ -62,10 +64,15 @@ pub struct Globals {
     pub fractional_scale_manager:
         Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
+    pub executor: ForegroundExecutor,
 }
 
 impl Globals {
-    fn new(globals: GlobalList, qh: QueueHandle<WaylandClient>) -> Self {
+    fn new(
+        globals: GlobalList,
+        executor: ForegroundExecutor,
+        qh: QueueHandle<WaylandClientStatePtr>,
+    ) -> Self {
         Globals {
             compositor: globals
                 .bind(
@@ -80,6 +87,7 @@ impl Globals {
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            executor,
             qh,
         }
     }
@@ -88,7 +96,7 @@ impl Globals {
 pub(crate) struct WaylandClientState {
     globals: Globals,
     // Surface to Window mapping
-    windows: HashMap<ObjectId, WaylandWindow>,
+    windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
     output_scales: HashMap<ObjectId, i32>,
     keymap_state: Option<xkb::State>,
@@ -100,14 +108,14 @@ pub(crate) struct WaylandClientState {
     mouse_location: Option<Point<Pixels>>,
     enter_token: Option<()>,
     button_pressed: Option<MouseButton>,
-    mouse_focused_window: Option<WaylandWindow>,
-    keyboard_focused_window: Option<WaylandWindow>,
-    loop_handle: LoopHandle<'static, WaylandClient>,
+    mouse_focused_window: Option<WaylandWindowStatePtr>,
+    keyboard_focused_window: Option<WaylandWindowStatePtr>,
+    loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_icon_name: String,
     cursor: Cursor,
     clipboard: Clipboard,
     primary: Primary,
-    event_loop: Option<EventLoop<'static, WaylandClient>>,
+    event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
 }
 
@@ -122,6 +130,35 @@ pub(crate) struct KeyRepeat {
     delay: Duration,
     current_id: u64,
     current_keysym: Option<xkb::Keysym>,
+}
+
+/// This struct is required to conform to Rust's orphan rules, so we can dispatch on the state but hand the
+/// window to GPUI.
+#[derive(Clone)]
+pub struct WaylandClientStatePtr(Weak<RefCell<WaylandClientState>>);
+
+impl WaylandClientStatePtr {
+    fn get_client(&self) -> Rc<RefCell<WaylandClientState>> {
+        self.0
+            .upgrade()
+            .expect("The pointer should always be valid when dispatching in wayland")
+    }
+
+    pub fn drop_window(&self, surface_id: &ObjectId) {
+        let mut client = self.get_client();
+        let mut state = client.borrow_mut();
+        let closed_window = state.windows.remove(surface_id).unwrap();
+        if let Some(window) = state.mouse_focused_window.take() {
+            if !window.ptr_eq(&closed_window) {
+                state.mouse_focused_window = Some(window);
+            }
+        }
+        if let Some(window) = state.keyboard_focused_window.take() {
+            if !window.ptr_eq(&closed_window) {
+                state.mouse_focused_window = Some(window);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -147,7 +184,8 @@ impl WaylandClient {
     pub(crate) fn new() -> Self {
         let conn = Connection::connect_to_env().unwrap();
 
-        let (globals, mut event_queue) = registry_queue_init::<WaylandClient>(&conn).unwrap();
+        let (globals, mut event_queue) =
+            registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
         let mut outputs = HashMap::default();
 
@@ -179,19 +217,19 @@ impl WaylandClient {
         let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
         let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
-        let event_loop = EventLoop::try_new().unwrap();
+        let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
-        handle.insert_source(main_receiver, |event, _, _: &mut WaylandClient| {
+        handle.insert_source(main_receiver, |event, _, _: &mut WaylandClientStatePtr| {
             if let calloop::channel::Event::Msg(runnable) = event {
                 runnable.run();
             }
         });
 
-        let globals = Globals::new(globals, qh);
+        let globals = Globals::new(globals, common.foreground_executor.clone(), qh);
 
         let cursor = Cursor::new(&conn, &globals, 24);
 
@@ -260,8 +298,12 @@ impl LinuxClient for WaylandClient {
     ) -> Box<dyn PlatformWindow> {
         let mut state = self.0.borrow_mut();
 
-        let (window, surface_id) = WaylandWindow::new(state.globals.clone(), params);
-        state.windows.insert(surface_id, window.clone());
+        let (window, surface_id) = WaylandWindow::new(
+            state.globals.clone(),
+            WaylandClientStatePtr(Rc::downgrade(&self.0)),
+            params,
+        );
+        state.windows.insert(surface_id, window.0.clone());
 
         Box::new(window)
     }
@@ -307,7 +349,13 @@ impl LinuxClient for WaylandClient {
             .take()
             .expect("App is already running");
 
-        event_loop.run(None, &mut self.clone(), |_| {}).log_err();
+        event_loop
+            .run(
+                None,
+                &mut WaylandClientStatePtr(Rc::downgrade(&self.0)),
+                |_| {},
+            )
+            .log_err();
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
@@ -327,16 +375,18 @@ impl LinuxClient for WaylandClient {
     }
 }
 
-impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClient {
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStatePtr {
     fn event(
-        state: &mut Self,
+        this: &mut Self,
         registry: &wl_registry::WlRegistry,
         event: wl_registry::Event,
         _: &GlobalListContents,
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut client = this.get_client();
+        let mut state = client.borrow_mut();
+
         match event {
             wl_registry::Event::Global {
                 name,
@@ -360,50 +410,60 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClient {
     }
 }
 
-delegate_noop!(WaylandClient: ignore wl_compositor::WlCompositor);
-delegate_noop!(WaylandClient: ignore wl_shm::WlShm);
-delegate_noop!(WaylandClient: ignore wl_shm_pool::WlShmPool);
-delegate_noop!(WaylandClient: ignore wl_buffer::WlBuffer);
-delegate_noop!(WaylandClient: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
-delegate_noop!(WaylandClient: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
-delegate_noop!(WaylandClient: ignore wp_viewporter::WpViewporter);
-delegate_noop!(WaylandClient: ignore wp_viewport::WpViewport);
+delegate_noop!(WaylandClientStatePtr: ignore wl_compositor::WlCompositor);
+delegate_noop!(WaylandClientStatePtr: ignore wl_shm::WlShm);
+delegate_noop!(WaylandClientStatePtr: ignore wl_shm_pool::WlShmPool);
+delegate_noop!(WaylandClientStatePtr: ignore wl_buffer::WlBuffer);
+delegate_noop!(WaylandClientStatePtr: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
+delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
+delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
+delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
 
-impl Dispatch<WlCallback, ObjectId> for WaylandClient {
+impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
     fn event(
-        this: &mut WaylandClient,
+        state: &mut WaylandClientStatePtr,
         _: &wl_callback::WlCallback,
         event: wl_callback::Event,
         surface_id: &ObjectId,
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let state = this.0.borrow_mut();
-        let Some(window) = state.windows.get(surface_id).cloned() else {
+        let client = state.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
             return;
         };
-
         drop(state);
+
         match event {
             wl_callback::Event::Done { callback_data } => {
-                window.frame();
+                window.frame(true);
             }
             _ => {}
         }
     }
 }
 
-impl Dispatch<wl_surface::WlSurface, ()> for WaylandClient {
+fn get_window(
+    mut state: &mut RefMut<WaylandClientState>,
+    surface_id: &ObjectId,
+) -> Option<WaylandWindowStatePtr> {
+    state.windows.get(surface_id).cloned()
+}
+
+impl Dispatch<wl_surface::WlSurface, ()> for WaylandClientStatePtr {
     fn event(
-        state: &mut Self,
+        this: &mut Self,
         surface: &wl_surface::WlSurface,
         event: <wl_surface::WlSurface as Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
-        let Some(window) = state.windows.get(&surface.id()).cloned() else {
+        let mut client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        let Some(window) = get_window(&mut state, &surface.id()) else {
             return;
         };
         let scales = state.output_scales.clone();
@@ -413,16 +473,18 @@ impl Dispatch<wl_surface::WlSurface, ()> for WaylandClient {
     }
 }
 
-impl Dispatch<wl_output::WlOutput, ()> for WaylandClient {
+impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
     fn event(
-        state: &mut Self,
+        this: &mut Self,
         output: &wl_output::WlOutput,
         event: <wl_output::WlOutput as Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let mut client = this.get_client();
+        let mut state = client.borrow_mut();
+
         let Some(mut output_scale) = state.output_scales.get_mut(&output.id()) else {
             return;
         };
@@ -436,7 +498,7 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClient {
     }
 }
 
-impl Dispatch<xdg_surface::XdgSurface, ObjectId> for WaylandClient {
+impl Dispatch<xdg_surface::XdgSurface, ObjectId> for WaylandClientStatePtr {
     fn event(
         state: &mut Self,
         xdg_surface: &xdg_surface::XdgSurface,
@@ -445,17 +507,17 @@ impl Dispatch<xdg_surface::XdgSurface, ObjectId> for WaylandClient {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
-        let Some(window) = state.windows.get(surface_id).cloned() else {
+        let client = state.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
             return;
         };
-
         drop(state);
         window.handle_xdg_surface_event(event);
     }
 }
 
-impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClient {
+impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
         xdg_toplevel: &xdg_toplevel::XdgToplevel,
@@ -464,9 +526,9 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClient {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = this.0.borrow_mut();
-
-        let Some(window) = state.windows.get(surface_id).cloned() else {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
             return;
         };
 
@@ -474,13 +536,12 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClient {
         let should_close = window.handle_toplevel_event(event);
 
         if should_close {
-            let mut state = this.0.borrow_mut();
-            state.windows.remove(surface_id);
+            this.drop_window(surface_id);
         }
     }
 }
 
-impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClient {
+impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClientStatePtr {
     fn event(
         _: &mut Self,
         wm_base: &xdg_wm_base::XdgWmBase,
@@ -495,7 +556,7 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClient {
     }
 }
 
-impl Dispatch<wl_seat::WlSeat, ()> for WaylandClient {
+impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
     fn event(
         state: &mut Self,
         seat: &wl_seat::WlSeat,
@@ -518,7 +579,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClient {
     }
 }
 
-impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClient {
+impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
         keyboard: &wl_keyboard::WlKeyboard,
@@ -527,7 +588,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClient {
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = this.0.borrow_mut();
+        let mut client = this.get_client();
+        let mut state = client.borrow_mut();
         match event {
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
                 state.repeat.characters_per_second = rate as u32;
@@ -559,7 +621,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClient {
                 state.keymap_state = Some(xkb::State::new(&keymap));
             }
             wl_keyboard::Event::Enter { surface, .. } => {
-                state.keyboard_focused_window = state.windows.get(&surface.id()).cloned();
+                state.keyboard_focused_window = get_window(&mut state, &surface.id());
 
                 if let Some(window) = state.keyboard_focused_window.clone() {
                     drop(state);
@@ -567,7 +629,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClient {
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } => {
-                let keyboard_focused_window = state.windows.get(&surface.id()).cloned();
+                let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
 
                 if let Some(window) = keyboard_focused_window {
@@ -629,8 +691,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClient {
                             .loop_handle
                             .insert_source(Timer::from_duration(state.repeat.delay), {
                                 let input = input.clone();
-                                move |event, _metadata, client| {
-                                    let state = client.0.borrow_mut();
+                                move |event, _metadata, this| {
+                                    let mut client = this.get_client();
+                                    let mut state = client.borrow_mut();
                                     let is_repeating = id == state.repeat.current_id
                                         && state.repeat.current_keysym.is_some()
                                         && state.keyboard_focused_window.is_some();
@@ -691,16 +754,17 @@ fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
     })
 }
 
-impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClient {
+impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
     fn event(
-        client: &mut Self,
+        this: &mut Self,
         wl_pointer: &wl_pointer::WlPointer,
         event: wl_pointer::Event,
         data: &(),
         conn: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        let mut state = client.0.borrow_mut();
+        let mut client = this.get_client();
+        let mut state = client.borrow_mut();
         let cursor_icon_name = state.cursor_icon_name.clone();
 
         match event {
@@ -713,7 +777,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClient {
             } => {
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
 
-                if let Some(window) = state.windows.get(&surface.id()).cloned() {
+                if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.enter_token = Some(());
                     state.mouse_focused_window = Some(window.clone());
                     state.cursor.set_serial_id(serial);
@@ -901,18 +965,19 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClient {
     }
 }
 
-impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for WaylandClient {
+impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for WaylandClientStatePtr {
     fn event(
-        state: &mut Self,
+        this: &mut Self,
         _: &wp_fractional_scale_v1::WpFractionalScaleV1,
         event: <wp_fractional_scale_v1::WpFractionalScaleV1 as Proxy>::Event,
         surface_id: &ObjectId,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
 
-        let Some(window) = state.windows.get(surface_id).cloned() else {
+        let Some(window) = get_window(&mut state, surface_id) else {
             return;
         };
 
@@ -921,18 +986,20 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for Wayland
     }
 }
 
-impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId> for WaylandClient {
+impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
+    for WaylandClientStatePtr
+{
     fn event(
-        state: &mut Self,
+        this: &mut Self,
         _: &zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1,
         event: zxdg_toplevel_decoration_v1::Event,
         surface_id: &ObjectId,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let mut state = state.0.borrow_mut();
-
-        let Some(window) = state.windows.get(surface_id).cloned() else {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        let Some(window) = get_window(&mut state, surface_id) else {
             return;
         };
 

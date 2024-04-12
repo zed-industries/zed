@@ -102,7 +102,8 @@ impl TaskTemplate {
         let full_label = substitute_all_template_variables_in_str(&self.label, &task_variables)?;
         let command = substitute_all_template_variables_in_str(&self.command, &task_variables)?;
         let args = substitute_all_template_variables_in_vec(self.args.clone(), &task_variables)?;
-        let task_hash = to_hex_hash(self)
+
+        let task_hash = to_hex_hash(&self)
             .context("hashing task template")
             .log_err()?;
         let variables_hash = to_hex_hash(&task_variables)
@@ -114,10 +115,11 @@ impl TaskTemplate {
         Some(ResolvedTask {
             id: id.clone(),
             original_task: self.clone(),
-            resolved_label: full_label,
+            resolved_label: full_label.clone(),
             resolved: Some(SpawnInTerminal {
                 id,
                 cwd,
+                full_label,
                 label: shortened_label,
                 command,
                 args,

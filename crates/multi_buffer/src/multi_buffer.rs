@@ -418,6 +418,9 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
+        if self.read_only() {
+            return;
+        }
         if self.buffers.borrow().is_empty() {
             return;
         }

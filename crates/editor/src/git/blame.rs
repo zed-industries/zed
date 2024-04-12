@@ -256,7 +256,7 @@ impl GitBlame {
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
-            let (entries, permalinks, messages) = cx
+            let result = cx
                 .background_executor()
                 .spawn({
                     let snapshot = snapshot.clone();
@@ -304,16 +304,23 @@ impl GitBlame {
                         anyhow::Ok((entries, permalinks, messages))
                     }
                 })
-                .await?;
+                .await;
 
-            this.update(&mut cx, |this, cx| {
-                this.buffer_edits = buffer_edits;
-                this.buffer_snapshot = snapshot;
-                this.entries = entries;
-                this.permalinks = permalinks;
-                this.messages = messages;
-                this.generated = true;
-                cx.notify();
+            this.update(&mut cx, |this, cx| match result {
+                Ok((entries, permalinks, messages)) => {
+                    this.buffer_edits = buffer_edits;
+                    this.buffer_snapshot = snapshot;
+                    this.entries = entries;
+                    this.permalinks = permalinks;
+                    this.messages = messages;
+                    this.generated = true;
+                    cx.notify();
+                }
+                Err(error) => this.project.update(cx, |_, cx| {
+                    log::error!("failed to get git blame data: {error:?}");
+                    let notification = format!("{:#}", error).trim().to_string();
+                    cx.emit(project::Event::Notification(notification));
+                }),
             })
         });
     }
@@ -356,6 +363,54 @@ mod tests {
             Project::init_settings(cx);
 
             crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_blame_error_notifications(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/my-repo",
+            json!({
+                ".git": {},
+                "file.txt": r#"
+                    irrelevant contents
+                "#
+                .unindent()
+            }),
+        )
+        .await;
+
+        // Creating a GitBlame without a corresponding blame state
+        // will result in an error.
+
+        let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/my-repo/file.txt", cx)
+            })
+            .await
+            .unwrap();
+
+        let blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), cx));
+
+        let event = project.next_event(cx);
+        assert_eq!(
+            event,
+            project::Event::Notification(
+                "Failed to blame \"file.txt\": failed to get blame for \"file.txt\"".to_string()
+            )
+        );
+
+        blame.update(cx, |blame, cx| {
+            assert_eq!(
+                blame
+                    .blame_for_rows((0..1).map(Some), cx)
+                    .collect::<Vec<_>>(),
+                vec![None]
+            );
         });
     }
 

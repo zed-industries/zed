@@ -1,5 +1,5 @@
 use gpui::{actions, impl_actions, ViewContext};
-use search::{buffer_search, BufferSearchBar, SearchMode, SearchOptions};
+use search::{buffer_search, BufferSearchBar, SearchOptions};
 use serde_derive::Deserialize;
 use workspace::{searchable::Direction, Workspace};
 
@@ -115,7 +115,7 @@ fn search(workspace: &mut Workspace, action: &Search, cx: &mut ViewContext<Works
 
                     if query.is_empty() {
                         search_bar.set_replacement(None, cx);
-                        search_bar.activate_search_mode(SearchMode::Regex, cx);
+                        search_bar.set_search_options(SearchOptions::REGEX, cx);
                     }
                     vim.workspace_state.search = SearchState {
                         direction,
@@ -228,7 +228,7 @@ pub fn move_to_internal(
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 let search = search_bar.update(cx, |search_bar, cx| {
-                    let options = SearchOptions::CASE_SENSITIVE;
+                    let options = SearchOptions::CASE_SENSITIVE | SearchOptions::REGEX;
                     if !search_bar.show(cx) {
                         return None;
                     }
@@ -241,7 +241,6 @@ pub fn move_to_internal(
                     if whole_word {
                         query = format!(r"\b{}\b", query);
                     }
-                    search_bar.activate_search_mode(SearchMode::Regex, cx);
                     Some(search_bar.search(&query, Some(options), cx))
                 });
 
@@ -288,8 +287,11 @@ fn find_command(workspace: &mut Workspace, action: &FindCommand, cx: &mut ViewCo
                     query = search_bar.query(cx);
                 };
 
-                search_bar.activate_search_mode(SearchMode::Regex, cx);
-                Some(search_bar.search(&query, Some(SearchOptions::CASE_SENSITIVE), cx))
+                Some(search_bar.search(
+                    &query,
+                    Some(SearchOptions::CASE_SENSITIVE | SearchOptions::REGEX),
+                    cx,
+                ))
             });
             let Some(search) = search else { return };
             let search_bar = search_bar.downgrade();
@@ -326,7 +328,7 @@ fn replace_command(
                 return None;
             }
 
-            let mut options = SearchOptions::default();
+            let mut options = SearchOptions::REGEX;
             if replacement.is_case_sensitive {
                 options.set(SearchOptions::CASE_SENSITIVE, true)
             }
@@ -337,7 +339,6 @@ fn replace_command(
             };
 
             search_bar.set_replacement(Some(&replacement.replacement), cx);
-            search_bar.activate_search_mode(SearchMode::Regex, cx);
             Some(search_bar.search(&search, Some(options), cx))
         });
         let Some(search) = search else { return };
