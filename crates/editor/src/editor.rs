@@ -1105,17 +1105,10 @@ impl CompletionsMenu {
             // us into account when it's obviously a bad match.
 
             #[derive(PartialEq, Eq, PartialOrd, Ord)]
-            enum MatchScore<'a> {
-                Strong {
-                    sort_text: Option<&'a str>,
-                    score: Reverse<OrderedFloat<f64>>,
-                    sort_key: (usize, &'a str),
-                },
-                Weak {
-                    score: Reverse<OrderedFloat<f64>>,
-                    sort_text: Option<&'a str>,
-                    sort_key: (usize, &'a str),
-                },
+            struct MatchScore<'a> {
+                score: Reverse<OrderedFloat<f64>>,
+                sort_text: Option<&'a str>,
+                sort_key: (usize, &'a str),
             }
 
             let completion = &completions[mat.candidate_id];
@@ -1123,18 +1116,10 @@ impl CompletionsMenu {
             let sort_text = completion.lsp_completion.sort_text.as_deref();
             let score = Reverse(OrderedFloat(mat.score));
 
-            if mat.score >= 0.2 {
-                MatchScore::Strong {
-                    sort_text,
-                    score,
-                    sort_key,
-                }
-            } else {
-                MatchScore::Weak {
-                    score,
-                    sort_text,
-                    sort_key,
-                }
+            MatchScore {
+                sort_text,
+                score,
+                sort_key,
             }
         });
 
