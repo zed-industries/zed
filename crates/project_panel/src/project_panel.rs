@@ -2064,7 +2064,7 @@ mod tests {
             &[
                 "v root1",
                 "    > a",
-                "    > b/3",
+                "    > b",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
@@ -2073,14 +2073,14 @@ mod tests {
             ]
         );
 
-        toggle_expand_dir(&panel, "root1/b/3", cx);
+        toggle_expand_dir(&panel, "root1/b", cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 "v root1",
                 "    > a",
-                "    v b/3  <== selected",
-                "          Q",
+                "    v b  <== selected",
+                "        > 3",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
@@ -2095,8 +2095,8 @@ mod tests {
             &[
                 "v root1",
                 "    > a",
-                "    v b/3",
-                "          Q",
+                "    v b",
+                "        > 3",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
@@ -2111,8 +2111,8 @@ mod tests {
             &[
                 "v root1",
                 "    > a",
-                "    v b/3",
-                "          Q",
+                "    v b",
+                "        > 3",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
@@ -2162,6 +2162,16 @@ mod tests {
         let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        cx.update(|cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    auto_fold_dirs: true,
+                    ..settings
+                },
+                cx,
+            );
+        });
         let panel = workspace
             .update(cx, |workspace, cx| ProjectPanel::new(workspace, cx))
             .unwrap();
@@ -2709,8 +2719,9 @@ mod tests {
                 "    > .git",
                 "    > a",
                 "    > b",
-                "    v bdir1/dir2",
-                "          the-new-filename  <== selected",
+                "    v bdir1",
+                "        v dir2",
+                "              the-new-filename  <== selected",
                 "    > C",
                 "      .dockerignore",
                 "v root2",
@@ -2844,6 +2855,7 @@ mod tests {
             "Directories inside pasted directory should have an entry"
         );
 
+        toggle_expand_dir(&panel, "root/b", cx);
         toggle_expand_dir(&panel, "root/b/a", cx);
         toggle_expand_dir(&panel, "root/b/a/inner_dir", cx);
 
@@ -2853,12 +2865,13 @@ mod tests {
                 //
                 "v root",
                 "    > a",
-                "    v b/a",
-                "        v inner_dir  <== selected",
-                "              four.txt",
-                "              three.txt",
-                "          one.txt",
-                "          two.txt",
+                "    v b",
+                "        v a",
+                "            v inner_dir  <== selected",
+                "                  four.txt",
+                "                  three.txt",
+                "              one.txt",
+                "              two.txt",
             ]
         );
 
@@ -2875,12 +2888,13 @@ mod tests {
                 "    > a",
                 "    > a copy",
                 "    > a copy 1",
-                "    v b/a",
-                "        v inner_dir",
-                "              four.txt",
-                "              three.txt",
-                "          one.txt",
-                "          two.txt"
+                "    v b",
+                "        v a",
+                "            v inner_dir",
+                "                  four.txt",
+                "                  three.txt",
+                "              one.txt",
+                "              two.txt"
             ]
         );
     }
@@ -3172,15 +3186,18 @@ mod tests {
 
         panel.update(cx, |panel, cx| panel.open(&Open, cx));
         cx.executor().run_until_parked();
+        select_path(&panel, "project_root/dir_1", cx);
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
         select_path(&panel, "project_root/dir_1/nested_dir", cx);
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
         panel.update(cx, |panel, cx| panel.open(&Open, cx));
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v project_root",
-                "    v dir_1/nested_dir  <== selected",
-                "          file_a.py",
+                "    v dir_1",
+                "        > nested_dir  <== selected",
                 "      file_1.py",
             ]
         );

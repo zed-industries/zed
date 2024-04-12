@@ -4,14 +4,14 @@ use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::Settings;
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectPanelDockPosition {
     Left,
     Right,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, Copy)]
 pub struct ProjectPanelSettings {
     pub default_width: Pixels,
     pub dock: ProjectPanelDockPosition,
@@ -58,7 +58,7 @@ pub struct ProjectPanelSettingsContent {
     /// Whether to fold directories automatically
     /// when directory has only one directory inside.
     ///
-    /// Default: true
+    /// Default: false
     pub auto_fold_dirs: Option<bool>,
 }
 
