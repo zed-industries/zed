@@ -2982,7 +2982,7 @@ fn render_inline_blame_entry(
         .child(Icon::new(IconName::FileGit).color(Color::Hint))
         .child(text)
         .gap_2()
-        .tooltip(move |_| tooltip.clone().into())
+        .hoverable_tooltip(move |_| tooltip.clone().into())
         .into_any()
 }
 
