@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use text::{BufferId, Selection};
-use theme::Theme;
+use theme::{Theme, ThemeSettings};
 use ui::{h_flex, prelude::*, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent, FollowableItemHandle};
@@ -824,13 +824,18 @@ impl Item for Editor {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
 
+        let settings = ThemeSettings::get_global(cx);
+
         let mut breadcrumbs = vec![BreadcrumbText {
             text: filename,
             highlights: None,
+            font: Some(settings.buffer_font.clone()),
         }];
+
         breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
             text: symbol.text,
             highlights: Some(symbol.highlight_ranges),
+            font: Some(settings.buffer_font.clone()),
         }));
         Some(breadcrumbs)
     }

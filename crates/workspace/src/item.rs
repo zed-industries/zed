@@ -14,7 +14,7 @@ use client::{
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
+    Font, HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
     WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -93,6 +93,7 @@ pub enum ItemEvent {
 pub struct BreadcrumbText {
     pub text: String,
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
+    pub font: Option<Font>,
 }
 
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
