@@ -10568,6 +10568,11 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
 
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, true, cx.theme().status());
+        let theme_settings = ThemeSettings::get_global(cx);
+        text_style.font_family = theme_settings.buffer_font.family.clone();
+        text_style.font_style = theme_settings.buffer_font.style;
+        text_style.font_features = theme_settings.buffer_font.features;
+        text_style.font_weight = theme_settings.buffer_font.weight;
 
         let multi_line_diagnostic = diagnostic.message.contains('\n');
 
