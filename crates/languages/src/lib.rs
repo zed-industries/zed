@@ -74,7 +74,7 @@ pub fn init(
         ("rust", tree_sitter_rust::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
-        ("vue", tree_sitter_vue::language()),
+        // ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
     ]);
 
@@ -270,13 +270,13 @@ pub fn init(
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
     language!("nu", vec![Arc::new(nu::NuLanguageServer {})]);
-    language!(
-        "vue",
-        vec![
-            Arc::new(vue::VueLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
+    // language!(
+    //     "vue",
+    //     vec![
+    //         Arc::new(vue::VueLspAdapter::new(node_runtime.clone())),
+    //         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    //     ]
+    // );
     language!("proto");
 
     languages.register_secondary_lsp_adapter(
@@ -293,6 +293,10 @@ pub fn init(
     );
     languages.register_secondary_lsp_adapter(
         "Svelte".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
+    languages.register_secondary_lsp_adapter(
+        "Vue".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
     );
 
