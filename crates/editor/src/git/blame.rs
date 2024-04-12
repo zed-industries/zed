@@ -396,7 +396,7 @@ mod tests {
 
         let blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), cx));
 
-        let event = project.next_event(cx);
+        let event = project.next_event(cx).await;
         assert_eq!(
             event,
             project::Event::Notification(
