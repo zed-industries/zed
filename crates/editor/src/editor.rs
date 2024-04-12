@@ -91,7 +91,6 @@ pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
     ToPoint,
 };
-use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
