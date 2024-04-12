@@ -531,6 +531,7 @@ impl BufferSearchBar {
             }
         }
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
+            active_editor.search_bar_visibility_changed(false, cx);
             let handle = active_editor.focus_handle(cx);
             cx.focus(&handle);
         }
@@ -572,10 +573,12 @@ impl BufferSearchBar {
     }
 
     pub fn show(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        if self.active_searchable_item.is_none() {
+        let Some(handle) = self.active_searchable_item.as_ref() else {
             return false;
-        }
+        };
+
         self.dismissed = false;
+        handle.search_bar_visibility_changed(true, cx);
         cx.notify();
         cx.emit(Event::UpdateLocation);
         cx.emit(ToolbarItemEvent::ChangeLocation(

@@ -3371,6 +3371,7 @@ impl Element for EditorElement {
                 let overscroll = size(em_width, px(0.));
 
                 snapshot = self.editor.update(cx, |editor, cx| {
+                    editor.last_bounds = Some(bounds);
                     editor.gutter_width = gutter_dimensions.width;
                     editor.set_visible_line_count(bounds.size.height / line_height, cx);
 
@@ -3419,7 +3420,7 @@ impl Element for EditorElement {
 
                 let autoscroll_horizontally = self.editor.update(cx, |editor, cx| {
                     let autoscroll_horizontally =
-                        editor.autoscroll_vertically(bounds.size.height, line_height, cx);
+                        editor.autoscroll_vertically(bounds, line_height, cx);
                     snapshot = editor.snapshot(cx);
                     autoscroll_horizontally
                 });
