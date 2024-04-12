@@ -1,0 +1,15 @@
+id = "vue"
+name = "Vue"
+description = "Vue support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Piotr Osiewicz <piotr@zed.dev>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.gleam]
+name = "Gleam LSP"
+language = "Gleam"
+
+[grammars.vue]
+repository = "https://github.com/zed-industries/tree-sitter-vue"
+commit = "6608d9d60c386f19d80af7d8132322fa11199c42"

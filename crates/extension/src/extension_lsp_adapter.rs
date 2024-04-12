@@ -138,6 +138,16 @@ impl LspAdapter for ExtensionLspAdapter {
             return Some(vec![]);
         }
 
+        if self.extension.manifest.id.as_ref() == "vue" {
+            // REFACTOR is explicitly disabled, as vue-lsp does not adhere to LSP protocol for code actions with these - it
+            // sends back a CodeAction with neither `command` nor `edits` fields set, which is against the spec.
+            return Some(vec![
+                CodeActionKind::EMPTY,
+                CodeActionKind::QUICKFIX,
+                CodeActionKind::REFACTOR_REWRITE,
+            ]);
+        }
+
         Some(vec![
             CodeActionKind::EMPTY,
             CodeActionKind::QUICKFIX,

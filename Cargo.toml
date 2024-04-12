@@ -120,6 +120,7 @@ members = [
     "extensions/terraform",
     "extensions/toml",
     "extensions/uiua",
+    "extensions/vue",
     "extensions/zig",
 
     "tooling/xtask",
