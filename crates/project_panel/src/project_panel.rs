@@ -419,13 +419,39 @@ impl ProjectPanel {
                             })
                     },
                     |menu| {
-                        menu.when(is_local, |menu| {
-                            menu.action(
-                                "Add Folder to Project",
-                                Box::new(workspace::AddFolderToProject),
-                            )
-                            .when(is_root, |menu| {
-                                menu.entry(
+                        menu.action("New File", Box::new(NewFile))
+                            .action("New Folder", Box::new(NewDirectory))
+                            .action("Reveal in Finder", Box::new(RevealInFinder))
+                            .when(is_dir, |menu| {
+                                menu.action("Open in Terminal", Box::new(OpenInTerminal))
+                            })
+                            .separator()
+                            .when(is_dir, |menu| {
+                                menu.action("Search In Folder", Box::new(NewSearchInDirectory))
+                            })
+                            .action("Cut", Box::new(Cut))
+                            .action("Copy", Box::new(Copy))
+                            // TODO: Paste should always be visible, but disabled when clipboard is empty
+                            .when_some(self.clipboard_entry, |menu, entry| {
+                                menu.when(entry.worktree_id() == worktree_id, |menu| {
+                                    menu.action("Paste", Box::new(Paste))
+                                })
+                            })
+                            .separator()
+                            .action("Copy Path", Box::new(CopyPath))
+                            .action("Copy Relative Path", Box::new(CopyRelativePath))
+                            .separator()
+                            .action("Rename", Box::new(Rename))
+                            .when(!is_root, |menu| {
+                                menu.action("Delete", Box::new(Delete { skip_prompt: false }))
+                            })
+                            .separator()
+                            .when(is_local & is_root, |menu| {
+                                menu.action(
+                                    "Add Folder to Project",
+                                    Box::new(workspace::AddFolderToProject),
+                                )
+                                .entry(
                                     "Remove from Project",
                                     None,
                                     cx.handler_for(&this, move |this, cx| {
@@ -434,33 +460,11 @@ impl ProjectPanel {
                                         });
                                     }),
                                 )
-                                .action("Collapse All", Box::new(CollapseAllEntries))
                             })
-                        })
-                        .action("New File", Box::new(NewFile))
-                        .action("New Folder", Box::new(NewDirectory))
-                        .separator()
-                        .action("Cut", Box::new(Cut))
-                        .action("Copy", Box::new(Copy))
-                        .when_some(self.clipboard_entry, |menu, entry| {
-                            menu.when(entry.worktree_id() == worktree_id, |menu| {
-                                menu.action("Paste", Box::new(Paste))
+                            .when(is_local & is_root, |menu| {
+                                menu.separator()
+                                    .action("Collapse All", Box::new(CollapseAllEntries))
                             })
-                        })
-                        .separator()
-                        .action("Copy Path", Box::new(CopyPath))
-                        .action("Copy Relative Path", Box::new(CopyRelativePath))
-                        .separator()
-                        .action("Reveal in Finder", Box::new(RevealInFinder))
-                        .when(is_dir, |menu| {
-                            menu.action("Open in Terminal", Box::new(OpenInTerminal))
-                                .action("Search Inside", Box::new(NewSearchInDirectory))
-                        })
-                        .separator()
-                        .action("Rename", Box::new(Rename))
-                        .when(!is_root, |menu| {
-                            menu.action("Delete", Box::new(Delete { skip_prompt: false }))
-                        })
                     },
                 )
             });
