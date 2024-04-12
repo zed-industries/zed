@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{bail, Context};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -85,31 +85,59 @@ impl TaskTemplate {
             return None;
         }
 
-        let mut depends_on_symbol = false;
-        let task_variables = cx.task_variables.to_env_variables();
+        let mut variable_names = HashMap::default();
+        let mut substituted_variables = HashSet::default();
+        let task_variables = cx
+            .task_variables
+            .0
+            .iter()
+            .map(|(key, value)| {
+                let key_string = key.to_string();
+                if !variable_names.contains_key(&key_string) {
+                    variable_names.insert(key_string.clone(), key.clone());
+                }
+                (key_string, value.as_str())
+            })
+            .collect::<HashMap<_, _>>();
         let truncated_variables = truncate_variables(&task_variables);
         let cwd = match self.cwd.as_deref() {
             Some(cwd) => {
-                let (cwd_depends_on_symbol, substitured_cwd) =
-                    substitute_all_template_variables_in_str(cwd, &task_variables)?;
-                depends_on_symbol |= cwd_depends_on_symbol;
+                let substitured_cwd = substitute_all_template_variables_in_str(
+                    cwd,
+                    &task_variables,
+                    &variable_names,
+                    &mut substituted_variables,
+                )?;
                 Some(substitured_cwd)
             }
             None => None,
         }
         .map(PathBuf::from)
         .or(cx.cwd.clone());
-        let (_, shortened_label) =
-            substitute_all_template_variables_in_str(&self.label, &truncated_variables)?;
-        let (label_depends_on_symbol, full_label) =
-            substitute_all_template_variables_in_str(&self.label, &task_variables)?;
-        depends_on_symbol |= label_depends_on_symbol;
-        let (command_depends_on_symbol, command) =
-            substitute_all_template_variables_in_str(&self.command, &task_variables)?;
-        depends_on_symbol |= command_depends_on_symbol;
-        let (args_depends_on_symbol, args) =
-            substitute_all_template_variables_in_vec(self.args.clone(), &task_variables)?;
-        depends_on_symbol |= args_depends_on_symbol;
+        let shortened_label = substitute_all_template_variables_in_str(
+            &self.label,
+            &truncated_variables,
+            &variable_names,
+            &mut substituted_variables,
+        )?;
+        let full_label = substitute_all_template_variables_in_str(
+            &self.label,
+            &task_variables,
+            &variable_names,
+            &mut substituted_variables,
+        )?;
+        let command = substitute_all_template_variables_in_str(
+            &self.command,
+            &task_variables,
+            &variable_names,
+            &mut substituted_variables,
+        )?;
+        let args = substitute_all_template_variables_in_vec(
+            &self.args,
+            &task_variables,
+            &variable_names,
+            &mut substituted_variables,
+        )?;
 
         let task_hash = to_hex_hash(&self)
             .context("hashing task template")
@@ -118,13 +146,16 @@ impl TaskTemplate {
             .context("hashing task variables")
             .log_err()?;
         let id = TaskId(format!("{id_base}_{task_hash}_{variables_hash}"));
-        let (env_depends_on_symbol, mut env) =
-            substitute_all_template_variables_in_map(self.env.clone(), &task_variables)?;
-        depends_on_symbol |= env_depends_on_symbol;
+        let mut env = substitute_all_template_variables_in_map(
+            &self.env,
+            &task_variables,
+            &variable_names,
+            &mut substituted_variables,
+        )?;
         env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
         Some(ResolvedTask {
             id: id.clone(),
-            depends_on_symbol,
+            substituted_variables,
             original_task: self.clone(),
             resolved_label: full_label.clone(),
             resolved: Some(SpawnInTerminal {
@@ -167,14 +198,18 @@ fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
 fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
     task_variables: &HashMap<String, A>,
-) -> Option<(bool, String)> {
-    let mut depends_on_symbol = false;
+    variable_names: &HashMap<String, VariableName>,
+    substituted_variables: &mut HashSet<VariableName>,
+) -> Option<String> {
     let substituted_string = shellexpand::env_with_context(template_str, |var| {
         // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
         let colon_position = var.find(':').unwrap_or(var.len());
         let (variable_name, default) = var.split_at(colon_position);
         if let Some(name) = task_variables.get(variable_name) {
-            depends_on_symbol = variable_name == VariableName::Symbol.to_string();
+            if let Some(substituted_variable) = variable_names.get(variable_name) {
+                substituted_variables.insert(substituted_variable.clone());
+            }
+
             let mut name = name.as_ref().to_owned();
             // Got a task variable hit
             if !default.is_empty() {
@@ -194,39 +229,51 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
         Ok(None)
     })
     .ok()?;
-    Some((depends_on_symbol, substituted_string.into_owned()))
+    Some(substituted_string.into_owned())
 }
 
 fn substitute_all_template_variables_in_vec(
-    mut template_strs: Vec<String>,
+    template_strs: &[String],
     task_variables: &HashMap<String, &str>,
-) -> Option<(bool, Vec<String>)> {
-    let mut depends_on_symbol = false;
-    for variable in template_strs.iter_mut() {
-        let (new_depends_on_symbol, new_value) =
-            substitute_all_template_variables_in_str(&variable, task_variables)?;
-        depends_on_symbol |= new_depends_on_symbol;
-        *variable = new_value;
+    variable_names: &HashMap<String, VariableName>,
+    substituted_variables: &mut HashSet<VariableName>,
+) -> Option<Vec<String>> {
+    let mut expanded = Vec::with_capacity(template_strs.len());
+    for variable in template_strs {
+        let new_value = substitute_all_template_variables_in_str(
+            variable,
+            task_variables,
+            variable_names,
+            substituted_variables,
+        )?;
+        expanded.push(new_value);
     }
-    Some((depends_on_symbol, template_strs))
+    Some(expanded)
 }
 
 fn substitute_all_template_variables_in_map(
-    keys_and_values: HashMap<String, String>,
+    keys_and_values: &HashMap<String, String>,
     task_variables: &HashMap<String, &str>,
-) -> Option<(bool, HashMap<String, String>)> {
-    let mut depends_on_symbol = false;
+    variable_names: &HashMap<String, VariableName>,
+    substituted_variables: &mut HashSet<VariableName>,
+) -> Option<HashMap<String, String>> {
     let mut new_map: HashMap<String, String> = Default::default();
     for (key, value) in keys_and_values {
-        let (var_depends_on_symbol, new_value) =
-            substitute_all_template_variables_in_str(&value, task_variables)?;
-        depends_on_symbol |= var_depends_on_symbol;
-        let (key_depends_on_symbol, new_key) =
-            substitute_all_template_variables_in_str(&key, task_variables)?;
-        depends_on_symbol |= key_depends_on_symbol;
+        let new_value = substitute_all_template_variables_in_str(
+            &value,
+            task_variables,
+            variable_names,
+            substituted_variables,
+        )?;
+        let new_key = substitute_all_template_variables_in_str(
+            &key,
+            task_variables,
+            variable_names,
+            substituted_variables,
+        )?;
         new_map.insert(new_key, new_value);
     }
-    Some((depends_on_symbol, new_map))
+    Some(new_map)
 }
 
 #[cfg(test)]
@@ -285,6 +332,7 @@ mod tests {
             let resolved_task = task_template
                 .resolve_task(TEST_ID_BASE, task_cx)
                 .unwrap_or_else(|| panic!("failed to resolve task {task_without_cwd:?}"));
+            assert_substituted_variables(&resolved_task, Vec::new());
             resolved_task
                 .resolved
                 .clone()
@@ -427,9 +475,9 @@ mod tests {
                 format!("test label for 1234 and {long_value}"),
                 "Resolved task label should be substituted with variables and those should not be shortened"
             );
-            assert!(
-                resolved_task.depends_on_symbol,
-                "Task that depends on all vars, should depend on the Symbol one too, but got: {resolved_task:?}"
+            assert_substituted_variables(
+                &resolved_task,
+                all_variables.iter().map(|(name, _)| name.clone()).collect(),
             );
 
             let spawn_in_terminal = resolved_task
@@ -503,11 +551,11 @@ mod tests {
             args: vec!["$PATH".into()],
             ..Default::default()
         };
-        let resolved = task
+        let resolved_task = task
             .resolve_task(TEST_ID_BASE, &TaskContext::default())
-            .unwrap()
-            .resolved
             .unwrap();
+        assert_substituted_variables(&resolved_task, Vec::new());
+        let resolved = resolved_task.resolved.unwrap();
         assert_eq!(resolved.label, task.label);
         assert_eq!(resolved.command, task.command);
         assert_eq!(resolved.args, task.args);
@@ -573,10 +621,23 @@ mod tests {
             let resolved = symbol_dependent_task
                 .resolve_task(TEST_ID_BASE, &cx)
                 .unwrap_or_else(|| panic!("Failed to resolve task {symbol_dependent_task:?}"));
-            assert!(
-                resolved.depends_on_symbol,
+            assert_eq!(
+                resolved.substituted_variables,
+                HashSet::from_iter(Some(VariableName::Symbol)),
                 "(index {i}) Expected the task to depend on symbol task variable: {resolved:?}"
             )
         }
+    }
+
+    #[track_caller]
+    fn assert_substituted_variables(resolved_task: &ResolvedTask, mut expected: Vec<VariableName>) {
+        let mut resolved_variables = resolved_task
+            .substituted_variables
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        resolved_variables.sort_by_key(|var| var.to_string());
+        expected.sort_by_key(|var| var.to_string());
+        assert_eq!(resolved_variables, expected)
     }
 }

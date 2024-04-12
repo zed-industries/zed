@@ -5,7 +5,7 @@ pub mod static_source;
 mod task_template;
 mod vscode_format;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::ModelContext;
 use serde::Serialize;
 use std::any::Any;
@@ -58,8 +58,8 @@ pub struct ResolvedTask {
     pub original_task: TaskTemplate,
     /// Full, unshortened label of the task after all resolutions are made.
     pub resolved_label: String,
-    /// Whether the task template contained a substitution dependency for the [`VariableName::Symbol`] Zed task variable.
-    pub depends_on_symbol: bool,
+    /// Variables that were substituted during the task template resolution.
+    pub substituted_variables: HashSet<VariableName>,
     /// Further actions that need to take place after the resolved task is spawned,
     /// with all task variables resolved.
     pub resolved: Option<SpawnInTerminal>,
@@ -119,14 +119,6 @@ impl std::fmt::Display for VariableName {
 pub struct TaskVariables(HashMap<VariableName, String>);
 
 impl TaskVariables {
-    /// Converts the container into a map of environment variables and their values.
-    fn to_env_variables(&self) -> HashMap<String, &str> {
-        self.0
-            .iter()
-            .map(|(name, value)| (name.to_string(), value.as_str()))
-            .collect()
-    }
-
     /// Inserts another variable into the container, overwriting the existing one if it already exists — in this case, the old value is returned.
     pub fn insert(&mut self, variable: VariableName, value: String) -> Option<String> {
         self.0.insert(variable, value)
