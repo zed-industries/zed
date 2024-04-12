@@ -1421,8 +1421,8 @@ impl ProjectSearchBar {
             } else {
                 cx.theme().colors().text
             },
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features,
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
