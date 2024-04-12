@@ -1,14 +1,12 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use gpui::{actions, Action, AppContext, IntoElement};
-pub use mode::SearchMode;
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
 use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton};
 
 pub mod buffer_search;
-mod mode;
 pub mod project_search;
 pub(crate) mod search_bar;
 
@@ -21,19 +19,17 @@ pub fn init(cx: &mut AppContext) {
 actions!(
     search,
     [
-        CycleMode,
         FocusSearch,
         ToggleWholeWord,
         ToggleCaseSensitive,
         ToggleIncludeIgnored,
+        ToggleRegex,
         ToggleReplace,
         SelectNextMatch,
         SelectPrevMatch,
         SelectAllMatches,
         NextHistoryQuery,
         PreviousHistoryQuery,
-        ActivateTextMode,
-        ActivateRegexMode,
         ReplaceAll,
         ReplaceNext,
     ]
@@ -46,15 +42,17 @@ bitflags! {
         const WHOLE_WORD = 0b001;
         const CASE_SENSITIVE = 0b010;
         const INCLUDE_IGNORED = 0b100;
+        const REGEX = 0b1000;
     }
 }
 
 impl SearchOptions {
     pub fn label(&self) -> &'static str {
         match *self {
-            SearchOptions::WHOLE_WORD => "Match Whole Word",
-            SearchOptions::CASE_SENSITIVE => "Match Case",
-            SearchOptions::INCLUDE_IGNORED => "Include ignored",
+            SearchOptions::WHOLE_WORD => "whole word",
+            SearchOptions::CASE_SENSITIVE => "match case",
+            SearchOptions::INCLUDE_IGNORED => "include Ignored",
+            SearchOptions::REGEX => "regular expression",
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -64,6 +62,7 @@ impl SearchOptions {
             SearchOptions::WHOLE_WORD => ui::IconName::WholeWord,
             SearchOptions::CASE_SENSITIVE => ui::IconName::CaseSensitive,
             SearchOptions::INCLUDE_IGNORED => ui::IconName::FileGit,
+            SearchOptions::REGEX => ui::IconName::Regex,
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -73,6 +72,7 @@ impl SearchOptions {
             SearchOptions::WHOLE_WORD => Box::new(ToggleWholeWord),
             SearchOptions::CASE_SENSITIVE => Box::new(ToggleCaseSensitive),
             SearchOptions::INCLUDE_IGNORED => Box::new(ToggleIncludeIgnored),
+            SearchOptions::REGEX => Box::new(ToggleRegex),
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -86,6 +86,7 @@ impl SearchOptions {
         options.set(SearchOptions::WHOLE_WORD, query.whole_word());
         options.set(SearchOptions::CASE_SENSITIVE, query.case_sensitive());
         options.set(SearchOptions::INCLUDE_IGNORED, query.include_ignored());
+        options.set(SearchOptions::REGEX, query.is_regex());
         options
     }
 

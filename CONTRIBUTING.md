@@ -2,8 +2,6 @@
 
 Thanks for your interest in contributing to Zed, the collaborative platform that is also a code editor!
 
-We want to avoid anyone spending time on a pull request that may not be accepted, so we suggest you discuss your ideas with the team and community before starting on major changes. Bug fixes, however, are almost always welcome.
-
 All activity in Zed forums is subject to our [Code of Conduct](https://zed.dev/docs/code-of-conduct). Additionally, contributors must sign our [Contributor License Agreement](https://zed.dev/cla) before their contributions can be merged.
 
 ## Contribution ideas

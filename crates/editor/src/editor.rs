@@ -471,6 +471,8 @@ pub struct Editor {
                 + Fn(&mut Self, DisplayPoint, &mut ViewContext<Self>) -> Option<View<ui::ContextMenu>>,
         >,
     >,
+    last_bounds: Option<Bounds<Pixels>>,
+    expect_bounds_change: Option<Bounds<Pixels>>,
 }
 
 #[derive(Clone)]
@@ -1485,6 +1487,8 @@ impl Editor {
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            last_bounds: None,
+            expect_bounds_change: None,
             gutter_width: Default::default(),
             style: None,
             show_cursor_names: false,
