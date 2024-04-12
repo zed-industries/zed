@@ -42,7 +42,7 @@ pub fn init(cx: &mut AppContext) {
                                 workspace,
                                 task_source_kind,
                                 &original_task,
-                                task_context,
+                                &task_context,
                                 false,
                                 cx,
                             )
@@ -104,7 +104,7 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
                     workspace,
                     task_source_kind,
                     &target_task,
-                    task_context,
+                    &task_context,
                     false,
                     cx,
                 );
@@ -253,7 +253,7 @@ fn schedule_task(
     workspace: &Workspace,
     task_source_kind: TaskSourceKind,
     task_to_resolve: &TaskTemplate,
-    task_cx: TaskContext,
+    task_cx: &TaskContext,
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {

@@ -118,10 +118,10 @@ pub struct TaskVariables(HashMap<VariableName, String>);
 
 impl TaskVariables {
     /// Converts the container into a map of environment variables and their values.
-    fn into_env_variables(self) -> HashMap<String, String> {
+    fn to_env_variables(&self) -> HashMap<String, &str> {
         self.0
-            .into_iter()
-            .map(|(name, value)| (name.to_string(), value))
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.as_str()))
             .collect()
     }
 

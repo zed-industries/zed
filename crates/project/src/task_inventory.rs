@@ -198,7 +198,7 @@ impl Inventory {
         &self,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
-        task_context: TaskContext,
+        task_context: &TaskContext,
         cx: &mut AppContext,
     ) -> (
         Vec<(TaskSourceKind, ResolvedTask)>,
@@ -242,7 +242,7 @@ impl Inventory {
             .chain(language_tasks)
             .filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
-                Some((kind, task.resolve_task(&id_base, task_context.clone())?))
+                Some((kind, task.resolve_task(&id_base, task_context)?))
             })
             .map(|(kind, task)| {
                 let lru_score = task_usage
@@ -421,7 +421,7 @@ mod test_inventory {
             let (used, current) = inventory.used_and_current_resolved_tasks(
                 None,
                 worktree,
-                TaskContext::default(),
+                &TaskContext::default(),
                 cx,
             );
             used.into_iter()
@@ -445,7 +445,7 @@ mod test_inventory {
             let id_base = task_source_kind.to_id_base();
             inventory.task_scheduled(
                 task_source_kind.clone(),
-                task.resolve_task(&id_base, TaskContext::default())
+                task.resolve_task(&id_base, &TaskContext::default())
                     .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
             );
         });
@@ -460,7 +460,7 @@ mod test_inventory {
             let (used, current) = inventory.used_and_current_resolved_tasks(
                 None,
                 worktree,
-                TaskContext::default(),
+                &TaskContext::default(),
                 cx,
             );
             let mut all = used;

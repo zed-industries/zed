@@ -78,15 +78,12 @@ impl TaskTemplate {
     ///
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
     /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
-    pub fn resolve_task(&self, id_base: &str, cx: TaskContext) -> Option<ResolvedTask> {
+    pub fn resolve_task(&self, id_base: &str, cx: &TaskContext) -> Option<ResolvedTask> {
         if self.label.trim().is_empty() || self.command.trim().is_empty() {
             return None;
         }
-        let TaskContext {
-            cwd,
-            task_variables,
-        } = cx;
-        let task_variables = task_variables.into_env_variables();
+
+        let task_variables = cx.task_variables.to_env_variables();
         let truncated_variables = truncate_variables(&task_variables);
         let cwd = match self.cwd.as_deref() {
             Some(cwd) => Some(substitute_all_template_variables_in_str(
@@ -96,7 +93,7 @@ impl TaskTemplate {
             None => None,
         }
         .map(PathBuf::from)
-        .or(cwd);
+        .or(cx.cwd.clone());
         let shortened_label =
             substitute_all_template_variables_in_str(&self.label, &truncated_variables)?;
         let full_label = substitute_all_template_variables_in_str(&self.label, &task_variables)?;
@@ -111,7 +108,7 @@ impl TaskTemplate {
             .log_err()?;
         let id = TaskId(format!("{id_base}_{task_hash}_{variables_hash}"));
         let mut env = substitute_all_template_variables_in_map(self.env.clone(), &task_variables)?;
-        env.extend(task_variables);
+        env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
         Some(ResolvedTask {
             id: id.clone(),
             original_task: self.clone(),
@@ -134,7 +131,7 @@ impl TaskTemplate {
 
 const MAX_DISPLAY_VARIABLE_LENGTH: usize = 15;
 
-fn truncate_variables(task_variables: &HashMap<String, String>) -> HashMap<String, String> {
+fn truncate_variables(task_variables: &HashMap<String, &str>) -> HashMap<String, String> {
     task_variables
         .iter()
         .map(|(key, value)| {
@@ -153,25 +150,23 @@ fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn substitute_all_template_variables_in_str(
+fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
-    task_variables: &HashMap<String, String>,
+    task_variables: &HashMap<String, A>,
 ) -> Option<String> {
-    let substituted_string = shellexpand::env_with_context(&template_str, |var| {
+    let substituted_string = shellexpand::env_with_context(template_str, |var| {
         // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
         let colon_position = var.find(':').unwrap_or(var.len());
         let (variable_name, default) = var.split_at(colon_position);
-        let append_previous_default = |ret: &mut String| {
-            if !default.is_empty() {
-                ret.push_str(default);
-            }
-        };
-        if let Some(mut name) = task_variables.get(variable_name).cloned() {
+        if let Some(name) = task_variables.get(variable_name) {
+            let mut name = name.as_ref().to_owned();
             // Got a task variable hit
-            append_previous_default(&mut name);
+            if !default.is_empty() {
+                name.push_str(default);
+            }
             return Ok(Some(name));
         } else if variable_name.starts_with(ZED_VARIABLE_NAME_PREFIX) {
-            bail!("Unknown variable name: {}", variable_name);
+            bail!("Unknown variable name: {variable_name}");
         }
         // This is an unknown variable.
         // We should not error out, as they may come from user environment (e.g. $PATH). That means that the variable substitution might not be perfect.
@@ -188,7 +183,7 @@ fn substitute_all_template_variables_in_str(
 
 fn substitute_all_template_variables_in_vec(
     mut template_strs: Vec<String>,
-    task_variables: &HashMap<String, String>,
+    task_variables: &HashMap<String, &str>,
 ) -> Option<Vec<String>> {
     for variable in template_strs.iter_mut() {
         let new_value = substitute_all_template_variables_in_str(&variable, task_variables)?;
@@ -199,7 +194,7 @@ fn substitute_all_template_variables_in_vec(
 
 fn substitute_all_template_variables_in_map(
     keys_and_values: HashMap<String, String>,
-    task_variables: &HashMap<String, String>,
+    task_variables: &HashMap<String, &str>,
 ) -> Option<HashMap<String, String>> {
     let mut new_map: HashMap<String, String> = Default::default();
     for (key, value) in keys_and_values {
@@ -246,7 +241,7 @@ mod tests {
             },
         ] {
             assert_eq!(
-                task_with_blank_property.resolve_task(TEST_ID_BASE, TaskContext::default()),
+                task_with_blank_property.resolve_task(TEST_ID_BASE, &TaskContext::default()),
                 None,
                 "should not resolve task with blank label and/or command: {task_with_blank_property:?}"
             );
@@ -274,30 +269,23 @@ mod tests {
                 })
         };
 
+        let cx = TaskContext {
+            cwd: None,
+            task_variables: TaskVariables::default(),
+        };
         assert_eq!(
-            resolved_task(
-                &task_without_cwd,
-                TaskContext {
-                    cwd: None,
-                    task_variables: TaskVariables::default(),
-                }
-            )
-            .cwd,
+            resolved_task(&task_without_cwd, &cx).cwd,
             None,
             "When neither task nor task context have cwd, it should be None"
         );
 
         let context_cwd = Path::new("a").join("b").join("c");
+        let cx = TaskContext {
+            cwd: Some(context_cwd.clone()),
+            task_variables: TaskVariables::default(),
+        };
         assert_eq!(
-            resolved_task(
-                &task_without_cwd,
-                TaskContext {
-                    cwd: Some(context_cwd.clone()),
-                    task_variables: TaskVariables::default(),
-                }
-            )
-            .cwd
-            .as_deref(),
+            resolved_task(&task_without_cwd, &cx).cwd.as_deref(),
             Some(context_cwd.as_path()),
             "TaskContext's cwd should be taken on resolve if task's cwd is None"
         );
@@ -307,30 +295,22 @@ mod tests {
         task_with_cwd.cwd = Some(task_cwd.display().to_string());
         let task_with_cwd = task_with_cwd;
 
+        let cx = TaskContext {
+            cwd: None,
+            task_variables: TaskVariables::default(),
+        };
         assert_eq!(
-            resolved_task(
-                &task_with_cwd,
-                TaskContext {
-                    cwd: None,
-                    task_variables: TaskVariables::default(),
-                }
-            )
-            .cwd
-            .as_deref(),
+            resolved_task(&task_with_cwd, &cx).cwd.as_deref(),
             Some(task_cwd.as_path()),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is None"
         );
 
+        let cx = TaskContext {
+            cwd: Some(context_cwd.clone()),
+            task_variables: TaskVariables::default(),
+        };
         assert_eq!(
-            resolved_task(
-                &task_with_cwd,
-                TaskContext {
-                    cwd: Some(context_cwd.clone()),
-                    task_variables: TaskVariables::default(),
-                }
-            )
-            .cwd
-            .as_deref(),
+            resolved_task(&task_with_cwd, &cx).cwd.as_deref(),
             Some(task_cwd.as_path()),
             "TaskTemplate's cwd should be taken on resolve if TaskContext's cwd is not None"
         );
@@ -400,7 +380,7 @@ mod tests {
         for i in 0..15 {
             let resolved_task = task_with_all_variables.resolve_task(
                 TEST_ID_BASE,
-                TaskContext {
+                &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(all_variables.clone()),
                 },
@@ -478,7 +458,7 @@ mod tests {
             let removed_variable = not_all_variables.remove(i);
             let resolved_task_attempt = task_with_all_variables.resolve_task(
                 TEST_ID_BASE,
-                TaskContext {
+                &TaskContext {
                     cwd: None,
                     task_variables: TaskVariables::from_iter(not_all_variables),
                 },
@@ -496,7 +476,7 @@ mod tests {
             ..Default::default()
         };
         let resolved = task
-            .resolve_task(TEST_ID_BASE, TaskContext::default())
+            .resolve_task(TEST_ID_BASE, &TaskContext::default())
             .unwrap()
             .resolved
             .unwrap();
@@ -514,7 +494,7 @@ mod tests {
             ..Default::default()
         };
         assert!(task
-            .resolve_task(TEST_ID_BASE, TaskContext::default())
+            .resolve_task(TEST_ID_BASE, &TaskContext::default())
             .is_none());
     }
 }
