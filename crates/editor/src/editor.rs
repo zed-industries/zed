@@ -1098,25 +1098,29 @@ impl CompletionsMenu {
                     .map_or(true, |query| mat.string.eq_ignore_ascii_case(query)),
             );
 
-            let matching_index = matcher
+            let matched_index = matcher
                 .find(&mat.string)
                 .map_or(usize::MAX, |mat| mat.start());
-            let matching_case_count = Reverse(match matching_index {
+            let matched_cases_score = Reverse(match matched_index {
                 usize::MAX => 0,
-                _ => completion
-                    .new_text
-                    .chars()
-                    .skip(matching_index)
-                    .zip(query.unwrap().chars())
-                    .filter(|(mat, query)| mat == query)
-                    .count(),
+                _ => {
+                    let mut z = completion
+                        .new_text
+                        .chars()
+                        .skip(matched_index)
+                        .zip(query.unwrap().chars());
+
+                    z.clone().filter(|(mat, query)| mat == query).count()
+                        + z.position(|(mat, query)| mat != query)
+                            .unwrap_or(query.unwrap().len())
+                }
             });
             (
                 equals,
-                Reverse(matching_index != usize::MAX),
+                Reverse(matched_index != usize::MAX),
                 sort_text,
-                matching_index,
-                matching_case_count,
+                matched_index,
+                matched_cases_score,
             )
         });
 
