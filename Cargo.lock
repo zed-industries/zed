@@ -5426,7 +5426,6 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "parking_lot",
  "project",
  "regex",
  "rope",
