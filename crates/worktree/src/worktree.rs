@@ -2079,7 +2079,7 @@ impl Snapshot {
             .map(|entry| &entry.path)
     }
 
-    fn child_entries<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
+    pub fn child_entries<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
         let mut cursor = self.entries_by_path.cursor();
         cursor.seek(&TraversalTarget::Path(parent_path), Bias::Right, &());
         let traversal = Traversal {
@@ -4706,7 +4706,7 @@ impl<'a, 'b> SeekTarget<'a, EntrySummary, (TraversalProgress<'a>, GitStatuses)>
     }
 }
 
-struct ChildEntriesIter<'a> {
+pub struct ChildEntriesIter<'a> {
     parent_path: &'a Path,
     traversal: Traversal<'a>,
 }
