@@ -402,19 +402,32 @@ impl AssistantChat {
     }
 
     fn completion_messages(&self, cx: &WindowContext) -> Vec<CompletionMessage> {
-        self.messages
-            .iter()
-            .map(|message| match message {
-                ChatMessage::User(UserMessage { body, contexts, .. }) => CompletionMessage {
-                    role: CompletionRole::User,
-                    body: body.read(cx).text(cx),
-                },
-                ChatMessage::Assistant(AssistantMessage { body, .. }) => CompletionMessage {
-                    role: CompletionRole::Assistant,
-                    body: body.text.to_string(),
-                },
-            })
-            .collect()
+        let mut completion_messages = Vec::new();
+
+        for message in &self.messages {
+            match message {
+                ChatMessage::User(UserMessage { body, contexts, .. }) => {
+                    // setup context for model
+                    contexts.iter().for_each(|context| {
+                        completion_messages.extend(context.completion_messages())
+                    });
+
+                    // Show user's message last so that the assistant is grounded in the user's request
+                    completion_messages.push(CompletionMessage {
+                        role: CompletionRole::User,
+                        body: body.read(cx).text(cx),
+                    });
+                }
+                ChatMessage::Assistant(AssistantMessage { body, .. }) => {
+                    completion_messages.push(CompletionMessage {
+                        role: CompletionRole::Assistant,
+                        body: body.text.to_string(),
+                    });
+                }
+            }
+        }
+
+        completion_messages
     }
 
     fn render_model_dropdown(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -555,6 +568,12 @@ impl AssistantContext {
             AssistantContext::Codebase(context) => context.render(cx).into_any_element(),
         }
     }
+
+    fn completion_messages(&self) -> Vec<CompletionMessage> {
+        match self {
+            AssistantContext::Codebase(context) => context.completion_messages(),
+        }
+    }
 }
 
 impl CodebaseContext {
@@ -576,5 +595,38 @@ impl CodebaseContext {
     fn populate(&mut self, excerpts: Vec<CodebaseExcerpt>) {
         self.excerpts = excerpts;
         self.pending = false;
+    }
+
+    fn completion_messages(&self) -> Vec<CompletionMessage> {
+        // One system message for the whole batch of excerpts:
+
+        // Semantic search results for user query:
+        //
+        // Excerpt from $path:
+        // ~~~
+        // `text`
+        // ~~~
+        //
+        // Excerpt from $path:
+
+        if self.excerpts.is_empty() {
+            return Vec::new();
+        }
+
+        let mut body = "Semantic search reasults for user query:\n".to_string();
+
+        for excerpt in &self.excerpts {
+            body.push_str("Excerpt from ");
+            body.push_str(excerpt.path.as_ref());
+            body.push_str(":\n");
+            body.push_str("~~~\n");
+            body.push_str(excerpt.text.as_ref());
+            body.push_str("~~~\n");
+        }
+
+        vec![CompletionMessage {
+            role: CompletionRole::System,
+            body,
+        }]
     }
 }
