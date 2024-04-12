@@ -146,7 +146,7 @@ impl AssistantChat {
                             menu = menu.custom_entry(
                                 {
                                     let model = model.clone();
-                                    move |_| model.clone().into_any_element()
+                                    move |_| Label::new(model.clone()).into_any_element()
                                 },
                                 {
                                     let this = this.clone();
@@ -174,7 +174,7 @@ impl AssistantChat {
                                         .overflow_x_hidden()
                                         .flex_grow()
                                         .whitespace_nowrap()
-                                        .child(self.model.clone()),
+                                        .child(Label::new(self.model.clone())),
                                 )
                                 .child(
                                     div().child(
