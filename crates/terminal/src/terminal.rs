@@ -1365,7 +1365,7 @@ impl Terminal {
                 if truncate {
                     truncate_and_trailoff(&task_state.label, MAX_CHARS)
                 } else {
-                    task_state.label.clone()
+                    task_state.full_label.clone()
                 }
             }
             None => self
