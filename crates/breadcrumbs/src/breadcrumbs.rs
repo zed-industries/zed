@@ -52,12 +52,19 @@ impl Render for Breadcrumbs {
                 Some(BreadcrumbText {
                     text: "⋯".into(),
                     highlights: None,
+                    font: None,
                 }),
             );
         }
 
         let highlighted_segments = segments.into_iter().map(|segment| {
             let mut text_style = cx.text_style();
+            if let Some(font) = segment.font {
+                text_style.font_family = font.family;
+                text_style.font_features = font.features;
+                text_style.font_style = font.style;
+                text_style.font_weight = font.weight;
+            }
             text_style.color = Color::Muted.color(cx);
 
             StyledText::new(segment.text.replace('\n', "␤"))
