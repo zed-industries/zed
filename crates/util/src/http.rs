@@ -71,19 +71,28 @@ impl HttpClientWithUrl {
 }
 
 impl HttpClient for Arc<HttpClientWithUrl> {
-    fn send(&self, req: Request<AsyncBody>) -> BoxFuture<Result<Response<AsyncBody>, Error>> {
+    fn send(
+        &self,
+        req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
         self.client.send(req)
     }
 }
 
 impl HttpClient for HttpClientWithUrl {
-    fn send(&self, req: Request<AsyncBody>) -> BoxFuture<Result<Response<AsyncBody>, Error>> {
+    fn send(
+        &self,
+        req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
         self.client.send(req)
     }
 }
 
 pub trait HttpClient: Send + Sync {
-    fn send(&self, req: Request<AsyncBody>) -> BoxFuture<Result<Response<AsyncBody>, Error>>;
+    fn send(
+        &self,
+        req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>>;
 
     fn get<'a>(
         &'a self,
@@ -135,8 +144,12 @@ pub fn client() -> Arc<dyn HttpClient> {
 }
 
 impl HttpClient for isahc::HttpClient {
-    fn send(&self, req: Request<AsyncBody>) -> BoxFuture<Result<Response<AsyncBody>, Error>> {
-        Box::pin(async move { self.send_async(req).await })
+    fn send(
+        &self,
+        req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
+        let client = self.clone();
+        Box::pin(async move { client.send_async(req).await })
     }
 }
 
@@ -196,7 +209,10 @@ impl fmt::Debug for FakeHttpClient {
 
 #[cfg(feature = "test-support")]
 impl HttpClient for FakeHttpClient {
-    fn send(&self, req: Request<AsyncBody>) -> BoxFuture<Result<Response<AsyncBody>, Error>> {
+    fn send(
+        &self,
+        req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, Result<Response<AsyncBody>, Error>> {
         let future = (self.handler)(req);
         Box::pin(async move { future.await.map(Into::into) })
     }

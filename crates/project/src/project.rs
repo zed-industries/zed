@@ -979,6 +979,50 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub async fn example(
+        root_paths: impl IntoIterator<Item = &Path>,
+        cx: &mut AsyncAppContext,
+    ) -> Model<Project> {
+        use clock::FakeSystemClock;
+
+        let fs = Arc::new(RealFs::default());
+        let languages = LanguageRegistry::test(cx.background_executor().clone());
+        let clock = Arc::new(FakeSystemClock::default());
+        let http_client = util::http::FakeHttpClient::with_404_response();
+        let client = cx
+            .update(|cx| client::Client::new(clock, http_client.clone(), cx))
+            .unwrap();
+        let user_store = cx
+            .new_model(|cx| UserStore::new(client.clone(), cx))
+            .unwrap();
+        let project = cx
+            .update(|cx| {
+                Project::local(
+                    client,
+                    node_runtime::FakeNodeRuntime::new(),
+                    user_store,
+                    Arc::new(languages),
+                    fs,
+                    cx,
+                )
+            })
+            .unwrap();
+        for path in root_paths {
+            let (tree, _) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_local_worktree(path, true, cx)
+                })
+                .unwrap()
+                .await
+                .unwrap();
+            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+                .unwrap()
+                .await;
+        }
+        project
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn test(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1144,6 +1188,10 @@ impl Project {
 
     pub fn user_store(&self) -> Model<UserStore> {
         self.user_store.clone()
+    }
+
+    pub fn node_runtime(&self) -> Option<&Arc<dyn NodeRuntime>> {
+        self.node.as_ref()
     }
 
     pub fn opened_buffers(&self) -> Vec<Model<Buffer>> {

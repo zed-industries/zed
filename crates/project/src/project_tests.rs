@@ -2661,7 +2661,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     )
     .await
     .unwrap();
-    worktree.next_event(cx);
+    worktree.next_event(cx).await;
 
     // Change the buffer's file again. Depending on the random seed, the
     // previous file change may still be in progress.
@@ -2672,7 +2672,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     )
     .await
     .unwrap();
-    worktree.next_event(cx);
+    worktree.next_event(cx).await;
 
     cx.executor().run_until_parked();
     let on_disk_text = fs.load(Path::new("/dir/file1")).await.unwrap();
@@ -2716,7 +2716,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     )
     .await
     .unwrap();
-    worktree.next_event(cx);
+    worktree.next_event(cx).await;
 
     cx.executor()
         .spawn(cx.executor().simulate_random_delay())

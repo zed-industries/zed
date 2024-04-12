@@ -72,7 +72,7 @@ pub use lsp::LanguageServerId;
 pub use outline::{Outline, OutlineItem};
 pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::LineEnding;
-pub use tree_sitter::{Parser, Tree};
+pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 
 use crate::language_settings::SoftWrap;
 
@@ -89,6 +89,16 @@ thread_local! {
         parser.set_wasm_store(WasmStore::new(WASM_ENGINE.clone()).unwrap()).unwrap();
         RefCell::new(parser)
     };
+}
+
+pub fn with_parser<F, R>(func: F) -> R
+where
+    F: FnOnce(&mut Parser) -> R,
+{
+    PARSER.with(|parser| {
+        let mut parser = parser.borrow_mut();
+        func(&mut parser)
+    })
 }
 
 lazy_static! {
