@@ -750,7 +750,7 @@ message BufferSaved {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
-    string fingerprint = 5;
+    reserved 5;
 }
 
 message BufferReloaded {
@@ -758,7 +758,7 @@ message BufferReloaded {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
-    string fingerprint = 5;
+    reserved 5;
     LineEnding line_ending = 6;
 }
 
@@ -1605,7 +1605,7 @@ message BufferState {
     optional string diff_base = 4;
     LineEnding line_ending = 5;
     repeated VectorClockEntry saved_version = 6;
-    string saved_version_fingerprint = 7;
+    reserved 7;
     Timestamp saved_mtime = 8;
 }
 

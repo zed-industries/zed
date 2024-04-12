@@ -97,7 +97,7 @@ use std::{
 };
 use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
-use text::{Anchor, BufferId, RopeFingerprint};
+use text::{Anchor, BufferId};
 use util::{
     debug_panic, defer,
     http::{HttpClient, Url},
@@ -8526,7 +8526,6 @@ impl Project {
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: buffer.saved_mtime().map(|time| time.into()),
-            fingerprint: language::proto::serialize_fingerprint(buffer.saved_version_fingerprint()),
         })
     }
 
@@ -8619,9 +8618,6 @@ impl Project {
                             buffer_id: buffer_id.into(),
                             version: language::proto::serialize_version(buffer.saved_version()),
                             mtime: buffer.saved_mtime().map(|time| time.into()),
-                            fingerprint: language::proto::serialize_fingerprint(
-                                buffer.saved_version_fingerprint(),
-                            ),
                             line_ending: language::proto::serialize_line_ending(
                                 buffer.line_ending(),
                             ) as i32,
@@ -9610,7 +9606,6 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let fingerprint = Default::default();
         let version = deserialize_version(&envelope.payload.version);
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let mtime = envelope.payload.mtime.map(|time| time.into());
@@ -9623,7 +9618,7 @@ impl Project {
                 .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned());
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(version, fingerprint, mtime, cx);
+                    buffer.did_save(version, mtime, cx);
                 });
             }
             Ok(())
@@ -9638,7 +9633,6 @@ impl Project {
     ) -> Result<()> {
         let payload = envelope.payload;
         let version = deserialize_version(&payload.version);
-        let fingerprint = RopeFingerprint::default();
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(payload.line_ending)
                 .ok_or_else(|| anyhow!("missing line ending"))?,
@@ -9653,7 +9647,7 @@ impl Project {
                 .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned());
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
+                    buffer.did_reload(version, line_ending, mtime, cx);
                 });
             }
             Ok(())

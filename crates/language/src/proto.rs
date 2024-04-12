@@ -10,11 +10,6 @@ use text::*;
 
 pub use proto::{BufferState, Operation};
 
-/// Serializes a [`RopeFingerprint`] to be sent over RPC.
-pub fn serialize_fingerprint(fingerprint: RopeFingerprint) -> String {
-    fingerprint.to_hex()
-}
-
 /// Deserializes a `[text::LineEnding]` from the RPC representation.
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {
