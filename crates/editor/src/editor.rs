@@ -129,6 +129,7 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use workspace::item::ItemHandle;
 use workspace::notifications::NotificationId;
 use workspace::Toast;
 use workspace::{
@@ -8002,11 +8003,16 @@ impl Editor {
                 cx,
             );
         });
+        let item = Box::new(editor);
         if split {
-            workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
+            workspace.split_item(SplitDirection::Right, item.clone(), cx);
         } else {
-            workspace.add_item_to_active_pane(Box::new(editor), cx);
+            workspace.add_item_to_active_pane(item.clone(), cx);
         }
+        workspace.active_pane().clone().update(cx, |pane, cx| {
+            let item_id = item.item_id();
+            pane.set_preview_item_id(Some(item_id), cx);
+        });
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -9521,7 +9527,11 @@ impl Editor {
         cx.spawn(|_, mut cx| async move {
             let workspace = workspace.ok_or_else(|| anyhow!("cannot jump without workspace"))?;
             let editor = workspace.update(&mut cx, |workspace, cx| {
-                workspace.open_path(path, None, true, cx)
+                // Reset the preview item id before opening the new item
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.set_preview_item_id(None, cx);
+                });
+                workspace.open_path_preview(path, None, true, true, cx)
             })?;
             let editor = editor
                 .await?
