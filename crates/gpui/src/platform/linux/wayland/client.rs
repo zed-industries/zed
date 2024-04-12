@@ -267,8 +267,8 @@ impl WaylandClient {
             mouse_location: None,
             continuous_scroll_delta: None,
             discrete_scroll_delta: None,
-            vertical_modifier: 1.0,
-            horizontal_modifier: 1.0,
+            vertical_modifier: -1.0,
+            horizontal_modifier: -1.0,
             button_pressed: None,
             mouse_focused_window: None,
             keyboard_focused_window: None,
@@ -921,13 +921,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let scroll_delta = state
                     .continuous_scroll_delta
                     .get_or_insert(point(px(0.0), px(0.0)));
-                let modifier = match axis_source {
-                    // TODO: Make nice feeling kinetic scrolling instead of '2'
-                    AxisSource::Finger if supports_relative_direction => 2.0,
-                    AxisSource::Finger => -2.0,
-
-                    _ => 1.0,
-                };
+                // TODO: Make nice feeling kinetic scrolling instead of '2'
+                let modifier = 3.0;
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
                         scroll_delta.y += px(value as f32 * modifier * axis_modifier);
@@ -949,13 +944,16 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => 1.0,
                 };
 
+                // TODO: Make nice feeling kinetic scrolling instead of '2'
+                let modifier = 3.0;
+
                 let scroll_delta = state.discrete_scroll_delta.get_or_insert(point(0.0, 0.0));
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
-                        scroll_delta.y += discrete as f32 * axis_modifier;
+                        scroll_delta.y += discrete as f32 * axis_modifier * modifier;
                     }
                     wl_pointer::Axis::HorizontalScroll => {
-                        scroll_delta.x += discrete as f32 * axis_modifier;
+                        scroll_delta.x += discrete as f32 * axis_modifier * modifier;
                     }
                     _ => unreachable!(),
                 }
