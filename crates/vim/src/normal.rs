@@ -15,6 +15,7 @@ use crate::{
     motion::{self, first_non_whitespace, next_line_end, right, Motion},
     object::Object,
     state::{Mode, Operator},
+    surrounds::{check_and_move_to_valid_bracket_pair, SurroundsType},
     Vim,
 };
 use collections::BTreeSet;
@@ -178,6 +179,7 @@ pub fn normal_motion(
             Some(Operator::Change) => change_motion(vim, motion, times, cx),
             Some(Operator::Delete) => delete_motion(vim, motion, times, cx),
             Some(Operator::Yank) => yank_motion(vim, motion, times, cx),
+            Some(Operator::AddSurrounds { target: None }) => {}
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -188,21 +190,40 @@ pub fn normal_motion(
 
 pub fn normal_object(object: Object, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
+        let mut waiting_operator: Option<Operator> = None;
         match vim.maybe_pop_operator() {
             Some(Operator::Object { around }) => match vim.maybe_pop_operator() {
                 Some(Operator::Change) => change_object(vim, object, around, cx),
                 Some(Operator::Delete) => delete_object(vim, object, around, cx),
                 Some(Operator::Yank) => yank_object(vim, object, around, cx),
+                Some(Operator::AddSurrounds { target: None }) => {
+                    waiting_operator = Some(Operator::AddSurrounds {
+                        target: Some(SurroundsType::Object(object)),
+                    });
+                }
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
                 }
             },
+            Some(Operator::DeleteSurrounds) => {
+                waiting_operator = Some(Operator::DeleteSurrounds);
+            }
+            Some(Operator::ChangeSurrounds { target: None }) => {
+                if check_and_move_to_valid_bracket_pair(vim, object, cx) {
+                    waiting_operator = Some(Operator::ChangeSurrounds {
+                        target: Some(object),
+                    });
+                }
+            }
             _ => {
-                // Can't do anything with change/delete/yank and text objects. Ignoring
+                // Can't do anything with change/delete/yank/surrounds and text objects. Ignoring
             }
         }
         vim.clear_operator(cx);
-    })
+        if let Some(operator) = waiting_operator {
+            vim.push_operator(operator, cx);
+        }
+    });
 }
 
 pub(crate) fn move_cursor(

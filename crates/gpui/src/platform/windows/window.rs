@@ -501,6 +501,7 @@ impl WindowsWindowInner {
             VK_NEXT => Some("pagedown"),
             VK_ESCAPE => Some("escape"),
             VK_INSERT => Some("insert"),
+            VK_DELETE => Some("delete"),
             _ => None,
         };
 
@@ -1297,6 +1298,7 @@ impl Drop for WindowsWindow {
     fn drop(&mut self) {
         unsafe {
             let _ = RevokeDragDrop(self.inner.hwnd);
+            self.inner.renderer.borrow_mut().destroy();
         }
     }
 }

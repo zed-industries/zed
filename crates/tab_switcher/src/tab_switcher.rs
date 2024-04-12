@@ -13,7 +13,7 @@ use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing, Tooltip};
 use util::ResultExt;
 use workspace::{
-    item::ItemHandle,
+    item::{ItemHandle, TabContentParams},
     pane::{render_item_indicator, tab_details, Event as PaneEvent},
     ModalView, Pane, SaveIntent, Workspace,
 };
@@ -130,6 +130,7 @@ struct TabMatch {
     item_index: usize,
     item: Box<dyn ItemHandle>,
     detail: usize,
+    preview: bool,
 }
 
 pub struct TabSwitcherDelegate {
@@ -202,6 +203,7 @@ impl TabSwitcherDelegate {
                 item_index,
                 item: item.boxed_clone(),
                 detail,
+                preview: pane.is_active_preview_item(item.item_id()),
             })
             .for_each(|tab_match| self.matches.push(tab_match));
 
@@ -324,7 +326,12 @@ impl PickerDelegate for TabSwitcherDelegate {
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
 
-        let label = tab_match.item.tab_content(Some(tab_match.detail), true, cx);
+        let params = TabContentParams {
+            detail: Some(tab_match.detail),
+            selected: true,
+            preview: tab_match.preview,
+        };
+        let label = tab_match.item.tab_content(params, cx);
         let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
         let indicator_color = if let Some(ref indicator) = indicator {
             indicator.color

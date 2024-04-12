@@ -4,7 +4,6 @@ mod point_utf16;
 mod unclipped;
 
 use arrayvec::ArrayString;
-use bromberg_sl2::HashMatrix;
 use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
@@ -12,6 +11,7 @@ use std::{
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
+use unicode_segmentation::GraphemeCursor;
 use util::debug_panic;
 
 pub use offset_utf16::OffsetUtf16;
@@ -23,13 +23,7 @@ pub use unclipped::Unclipped;
 const CHUNK_BASE: usize = 6;
 
 #[cfg(not(test))]
-const CHUNK_BASE: usize = 16;
-
-/// Type alias to [`HashMatrix`], an implementation of a homomorphic hash function. Two [`Rope`] instances
-/// containing the same text will produce the same fingerprint. This hash function is special in that
-/// it allows us to hash individual chunks and aggregate them up the [`Rope`]'s tree, with the resulting
-/// hash being equivalent to hashing all the text contained in the [`Rope`] at once.
-pub type RopeFingerprint = HashMatrix;
+const CHUNK_BASE: usize = 64;
 
 #[derive(Clone, Default)]
 pub struct Rope {
@@ -39,10 +33,6 @@ pub struct Rope {
 impl Rope {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn text_fingerprint(text: &str) -> RopeFingerprint {
-        bromberg_sl2::hash_strict(text.as_bytes())
     }
 
     pub fn append(&mut self, rope: Rope) {
@@ -422,10 +412,6 @@ impl Rope {
     pub fn line_len(&self, row: u32) -> u32 {
         self.clip_point(Point::new(row, u32::MAX), Bias::Left)
             .column
-    }
-
-    pub fn fingerprint(&self) -> RopeFingerprint {
-        self.chunks.summary().fingerprint
     }
 }
 
@@ -923,14 +909,30 @@ impl Chunk {
     fn clip_point(&self, target: Point, bias: Bias) -> Point {
         for (row, line) in self.0.split('\n').enumerate() {
             if row == target.row as usize {
-                let mut column = target.column.min(line.len() as u32);
-                while !line.is_char_boundary(column as usize) {
+                let bytes = line.as_bytes();
+                let mut column = target.column.min(bytes.len() as u32) as usize;
+                if column == 0
+                    || column == bytes.len()
+                    || (bytes[column - 1] < 128 && bytes[column] < 128)
+                {
+                    return Point::new(row as u32, column as u32);
+                }
+
+                let mut grapheme_cursor = GraphemeCursor::new(column, bytes.len(), true);
+                loop {
+                    if line.is_char_boundary(column) {
+                        if grapheme_cursor.is_boundary(line, 0).unwrap_or(false) {
+                            break;
+                        }
+                    }
+
                     match bias {
                         Bias::Left => column -= 1,
                         Bias::Right => column += 1,
                     }
+                    grapheme_cursor.set_cursor(column);
                 }
-                return Point::new(row as u32, column);
+                return Point::new(row as u32, column as u32);
             }
         }
         unreachable!()
@@ -977,14 +979,12 @@ impl sum_tree::Item for Chunk {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ChunkSummary {
     text: TextSummary,
-    fingerprint: RopeFingerprint,
 }
 
 impl<'a> From<&'a str> for ChunkSummary {
     fn from(text: &'a str) -> Self {
         Self {
             text: TextSummary::from(text),
-            fingerprint: Rope::text_fingerprint(text),
         }
     }
 }
@@ -994,7 +994,6 @@ impl sum_tree::Summary for ChunkSummary {
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
         self.text += &summary.text;
-        self.fingerprint = self.fingerprint * summary.fingerprint;
     }
 }
 

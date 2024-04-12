@@ -264,7 +264,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     );
 
     assert_eq!(
-        channel.next_event(cx),
+        channel.next_event(cx).await,
         ChannelChatEvent::MessagesUpdated {
             old_range: 2..2,
             new_count: 1,
@@ -317,7 +317,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     );
 
     assert_eq!(
-        channel.next_event(cx),
+        channel.next_event(cx).await,
         ChannelChatEvent::MessagesUpdated {
             old_range: 0..0,
             new_count: 2,

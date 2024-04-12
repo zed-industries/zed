@@ -373,7 +373,10 @@ impl ActiveCall {
         self.report_call_event("hang up", cx);
 
         Audio::end_call(cx);
+
+        let channel_id = self.channel_id(cx);
         if let Some((room, _)) = self.room.take() {
+            cx.emit(Event::RoomLeft { channel_id });
             room.update(cx, |room, cx| room.leave(cx))
         } else {
             Task::ready(Ok(()))
@@ -429,7 +432,9 @@ impl ActiveCall {
         room: Option<Model<Room>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        if room.as_ref() != self.room.as_ref().map(|room| &room.0) {
+        if room.as_ref() == self.room.as_ref().map(|room| &room.0) {
+            Task::ready(Ok(()))
+        } else {
             cx.notify();
             if let Some(room) = room {
                 if room.read(cx).status().is_offline() {
@@ -459,8 +464,6 @@ impl ActiveCall {
                 self.room = None;
                 Task::ready(Ok(()))
             }
-        } else {
-            Task::ready(Ok(()))
         }
     }
 

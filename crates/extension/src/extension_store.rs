@@ -237,6 +237,7 @@ impl ExtensionStore {
                 node_runtime,
                 language_registry.clone(),
                 work_dir,
+                cx,
             ),
             wasm_extensions: Vec::new(),
             fs,
@@ -605,7 +606,22 @@ impl ExtensionStore {
             )
             .await?;
 
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let content_length = response
+                .headers()
+                .get(isahc::http::header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
+
+            let mut body = BufReader::new(response.body_mut());
+            let mut tar_gz_bytes = Vec::new();
+            body.read_to_end(&mut tar_gz_bytes).await?;
+
+            if let Some(content_length) = content_length {
+                let actual_len = tar_gz_bytes.len();
+                if content_length != actual_len {
+                    bail!("downloaded extension size {actual_len} does not match content length {content_length}");
+                }
+            }
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
             let archive = Archive::new(decompressed_bytes);
             archive.unpack(extension_dir).await?;
             this.update(&mut cx, |this, cx| {
@@ -961,8 +977,10 @@ impl ExtensionStore {
             };
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
             for (language_server_name, config) in extension.manifest.language_servers.iter() {
-                self.language_registry
-                    .remove_lsp_adapter(config.language.as_ref(), language_server_name);
+                for language in config.languages() {
+                    self.language_registry
+                        .remove_lsp_adapter(&language, language_server_name);
+                }
             }
         }
 
@@ -1101,19 +1119,21 @@ impl ExtensionStore {
                 this.reload_complete_senders.clear();
 
                 for (manifest, wasm_extension) in &wasm_extensions {
-                    for (language_server_name, language_server_config) in &manifest.language_servers
-                    {
-                        this.language_registry.register_lsp_adapter(
-                            language_server_config.language.clone(),
-                            Arc::new(ExtensionLspAdapter {
-                                extension: wasm_extension.clone(),
-                                host: this.wasm_host.clone(),
-                                config: wit::LanguageServerConfig {
-                                    name: language_server_name.0.to_string(),
-                                    language_name: language_server_config.language.to_string(),
-                                },
-                            }),
-                        );
+                    for (language_server_id, language_server_config) in &manifest.language_servers {
+                        for language in language_server_config.languages() {
+                            this.language_registry.register_lsp_adapter(
+                                language.clone(),
+                                Arc::new(ExtensionLspAdapter {
+                                    extension: wasm_extension.clone(),
+                                    host: this.wasm_host.clone(),
+                                    language_server_id: language_server_id.clone(),
+                                    config: wit::LanguageServerConfig {
+                                        name: language_server_id.0.to_string(),
+                                        language_name: language.to_string(),
+                                    },
+                                }),
+                            );
+                        }
                     }
                 }
                 this.wasm_extensions.extend(wasm_extensions);

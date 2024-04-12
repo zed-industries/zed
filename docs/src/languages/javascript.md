@@ -69,6 +69,23 @@ So if your language server or prettier configuration don't format according to
 ESLint's rules, then they will overwrite what ESLint fixed and you end up with
 errors.
 
+If you **only** want to run ESLint on save, you can configure code actions as
+the formatter (requires Zed `0.130.x`):
+
+```json
+{
+  "languages": {
+    "JavaScript": {
+      "formatter": {
+        "code_actions": {
+          "source.fixAll.eslint": true
+        }
+      }
+    }
+  }
+}
+```
+
 #### Configure ESLint's `nodePath`:
 
 You can configure ESLint's `nodePath` setting (requires Zed `0.127.0`):

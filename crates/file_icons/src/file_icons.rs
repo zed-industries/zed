@@ -54,18 +54,20 @@ impl FileIcons {
             let suffix = path.icon_stem_or_suffix()?;
 
             if let Some(type_str) = this.stems.get(suffix) {
-                return this
-                    .types
-                    .get(type_str)
-                    .map(|type_config| type_config.icon.clone());
+                return this.get_type_icon(type_str);
             }
 
             this.suffixes
                 .get(suffix)
-                .and_then(|type_str| this.types.get(type_str))
-                .map(|type_config| type_config.icon.clone())
+                .and_then(|type_str| this.get_type_icon(type_str))
         })
-        .or_else(|| this.types.get("default").map(|config| config.icon.clone()))
+        .or_else(|| this.get_type_icon("default"))
+    }
+
+    pub fn get_type_icon(&self, typ: &str) -> Option<Arc<str>> {
+        self.types
+            .get(typ)
+            .map(|type_config| type_config.icon.clone())
     }
 
     pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Option<Arc<str>> {
@@ -77,9 +79,7 @@ impl FileIcons {
             COLLAPSED_DIRECTORY_TYPE
         };
 
-        this.types
-            .get(key)
-            .map(|type_config| type_config.icon.clone())
+        this.get_type_icon(key)
     }
 
     pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Option<Arc<str>> {
@@ -91,8 +91,6 @@ impl FileIcons {
             COLLAPSED_CHEVRON_TYPE
         };
 
-        this.types
-            .get(key)
-            .map(|type_config| type_config.icon.clone())
+        this.get_type_icon(key)
     }
 }

@@ -137,12 +137,12 @@ fn expand_changed_word_selection(
             .unwrap_or_default();
 
         if in_word {
-            if !use_subword {
-                selection.end =
-                    motion::next_word_end(map, selection.end, ignore_punctuation, 1, false);
-            } else {
+            if use_subword {
                 selection.end =
                     motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
+            } else {
+                selection.end =
+                    motion::next_word_end(map, selection.end, ignore_punctuation, 1, false);
             }
             selection.end = motion::next_char(map, selection.end, false);
             true

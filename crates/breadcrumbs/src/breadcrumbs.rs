@@ -60,7 +60,7 @@ impl Render for Breadcrumbs {
             let mut text_style = cx.text_style();
             text_style.color = Color::Muted.color(cx);
 
-            StyledText::new(segment.text)
+            StyledText::new(segment.text.replace('\n', "␤"))
                 .with_highlights(&text_style, segment.highlights.unwrap_or_default())
                 .into_any()
         });

@@ -11,13 +11,13 @@ use gpui::{
 };
 use isahc::AsyncBody;
 
-use markdown_preview::markdown_preview_view::MarkdownPreviewView;
+use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
 use smol::io::AsyncReadExt;
 
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs::File, process::Command};
 
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
@@ -32,6 +32,7 @@ use util::{
     http::{HttpClient, HttpClientWithUrl},
     ResultExt,
 };
+use workspace::notifications::NotificationId;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
@@ -82,25 +83,22 @@ struct AutoUpdateSetting(bool);
 /// Whether or not to automatically check for updates.
 ///
 /// Default: true
-#[derive(Clone, Default, JsonSchema, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
 #[serde(transparent)]
-struct AutoUpdateSettingOverride(Option<bool>);
+struct AutoUpdateSettingContent(bool);
 
 impl Settings for AutoUpdateSetting {
     const KEY: Option<&'static str> = Some("auto_update");
 
-    type FileContent = AutoUpdateSettingOverride;
+    type FileContent = Option<AutoUpdateSettingContent>;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self> {
-        Ok(Self(
-            Self::json_merge(default_value, user_values)?
-                .0
-                .ok_or_else(Self::missing_default)?,
-        ))
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        let auto_update = [sources.release_channel, sources.user]
+            .into_iter()
+            .find_map(|value| value.copied().flatten())
+            .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
+
+        Ok(Self(auto_update.0))
     }
 }
 
@@ -238,10 +236,11 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                                 .new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx));
                             let workspace_handle = workspace.weak_handle();
                             let view: View<MarkdownPreviewView> = MarkdownPreviewView::new(
+                                MarkdownPreviewMode::Default,
                                 editor,
                                 workspace_handle,
-                                Some(tab_description),
                                 language_registry,
+                                Some(tab_description),
                                 cx,
                             );
                             workspace.add_item_to_active_pane(Box::new(view.clone()), cx);
@@ -264,9 +263,11 @@ pub fn notify_of_any_new_update(cx: &mut ViewContext<Workspace>) -> Option<()> {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
             workspace.update(&mut cx, |workspace, cx| {
-                workspace.show_notification(0, cx, |cx| {
-                    cx.new_view(|_| UpdateNotification::new(version))
-                });
+                workspace.show_notification(
+                    NotificationId::unique::<UpdateNotification>(),
+                    cx,
+                    |cx| cx.new_view(|_| UpdateNotification::new(version)),
+                );
                 updater
                     .read(cx)
                     .set_should_show_update_notification(false, cx)

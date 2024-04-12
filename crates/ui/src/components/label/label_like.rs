@@ -33,6 +33,9 @@ pub trait LabelCommon {
 
     /// Sets the strikethrough property of the label.
     fn strikethrough(self, strikethrough: bool) -> Self;
+
+    /// Sets the italic property of the label.
+    fn italic(self, italic: bool) -> Self;
 }
 
 #[derive(IntoElement)]
@@ -41,6 +44,7 @@ pub struct LabelLike {
     line_height_style: LineHeightStyle,
     pub(crate) color: Color,
     strikethrough: bool,
+    italic: bool,
     children: SmallVec<[AnyElement; 2]>,
 }
 
@@ -51,6 +55,7 @@ impl LabelLike {
             line_height_style: LineHeightStyle::default(),
             color: Color::Default,
             strikethrough: false,
+            italic: false,
             children: SmallVec::new(),
         }
     }
@@ -74,6 +79,11 @@ impl LabelCommon for LabelLike {
 
     fn strikethrough(mut self, strikethrough: bool) -> Self {
         self.strikethrough = strikethrough;
+        self
+    }
+
+    fn italic(mut self, italic: bool) -> Self {
+        self.italic = italic;
         self
     }
 }
@@ -106,6 +116,7 @@ impl RenderOnce for LabelLike {
             .when(self.line_height_style == LineHeightStyle::UiLabel, |this| {
                 this.line_height(relative(1.))
             })
+            .when(self.italic, |this| this.italic())
             .text_color(self.color.color(cx))
             .children(self.children)
     }

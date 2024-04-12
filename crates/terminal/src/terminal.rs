@@ -39,7 +39,7 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::{static_source::RevealStrategy, TaskId};
+use task::{RevealStrategy, TaskId};
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -288,6 +288,7 @@ impl Display for TerminalError {
 
 pub struct SpawnTask {
     pub id: TaskId,
+    pub full_label: String,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
@@ -594,6 +595,7 @@ pub struct Terminal {
 
 pub struct TaskState {
     pub id: TaskId,
+    pub full_label: String,
     pub label: String,
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
@@ -846,11 +848,11 @@ impl Terminal {
                         Some(url_match) => {
                             // `]` is a valid symbol in the `file://` URL, so the regex match will include it
                             // consider that when ensuring that the URL match is the same as the original word
-                            if sanitized_match != original_match {
+                            if sanitized_match == original_match {
+                                url_match == sanitized_match
+                            } else {
                                 url_match.start() == sanitized_match.start()
                                     && url_match.end() == original_match.end()
-                            } else {
-                                url_match == sanitized_match
                             }
                         }
                         None => false,
@@ -1363,7 +1365,7 @@ impl Terminal {
                 if truncate {
                     truncate_and_trailoff(&task_state.label, MAX_CHARS)
                 } else {
-                    task_state.label.clone()
+                    task_state.full_label.clone()
                 }
             }
             None => self

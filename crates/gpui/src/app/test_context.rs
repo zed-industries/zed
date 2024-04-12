@@ -7,7 +7,7 @@ use crate::{
     TextSystem, View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
-use futures::{Stream, StreamExt};
+use futures::{channel::oneshot, Stream, StreamExt};
 use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
@@ -40,6 +40,20 @@ impl Context for TestAppContext {
     {
         let mut app = self.app.borrow_mut();
         app.new_model(build_model)
+    }
+
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+        let mut app = self.app.borrow_mut();
+        app.reserve_model()
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: crate::Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        let mut app = self.app.borrow_mut();
+        app.insert_model(reservation, build_model)
     }
 
     fn update_model<T: 'static, R>(
@@ -463,33 +477,53 @@ impl TestAppContext {
     }
 }
 
-impl<T: Send> Model<T> {
+impl<T: 'static> Model<T> {
     /// Block until the next event is emitted by the model, then return it.
-    pub fn next_event<Evt>(&self, cx: &mut TestAppContext) -> Evt
+    pub fn next_event<Event>(&self, cx: &mut TestAppContext) -> impl Future<Output = Event>
     where
-        Evt: Send + Clone + 'static,
-        T: EventEmitter<Evt>,
+        Event: Send + Clone + 'static,
+        T: EventEmitter<Event>,
     {
-        let (tx, mut rx) = futures::channel::mpsc::unbounded();
-        let _subscription = self.update(cx, |_, cx| {
+        let (tx, mut rx) = oneshot::channel();
+        let mut tx = Some(tx);
+        let subscription = self.update(cx, |_, cx| {
             cx.subscribe(self, move |_, _, event, _| {
-                tx.unbounded_send(event.clone()).ok();
+                if let Some(tx) = tx.take() {
+                    _ = tx.send(event.clone());
+                }
             })
         });
 
-        // Run other tasks until the event is emitted.
-        loop {
-            match rx.try_next() {
-                Ok(Some(event)) => return event,
-                Ok(None) => panic!("model was dropped"),
-                Err(_) => {
-                    if !cx.executor().tick() {
-                        break;
-                    }
-                }
-            }
+        async move {
+            let event = rx.await.expect("no event emitted");
+            drop(subscription);
+            event
         }
-        panic!("no event received")
+    }
+
+    /// Returns a future that resolves when the model notifies.
+    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
+        let mut cx = cx.app.app.borrow_mut();
+        let subscription = cx.observe(self, move |_, _| {
+            tx.try_send(()).ok();
+        });
+
+        let duration = if std::env::var("CI").is_ok() {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_secs(1)
+        };
+
+        async move {
+            let notification = crate::util::timeout(duration, rx.recv())
+                .await
+                .expect("next notification timed out");
+            drop(subscription);
+            notification.expect("model dropped while test was waiting for its next notification")
+        }
     }
 }
 
@@ -776,6 +810,18 @@ impl Context for VisualTestContext {
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>> {
         self.cx.new_model(build_model)
+    }
+
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+        self.cx.reserve_model()
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: crate::Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        self.cx.insert_model(reservation, build_model)
     }
 
     fn update_model<T, R>(

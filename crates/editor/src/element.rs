@@ -884,13 +884,21 @@ impl EditorElement {
                                     SharedString::from(character.to_string())
                                 };
                                 let len = text.len();
+
+                                let font = cursor_row_layout
+                                    .font_id_for_index(cursor_column)
+                                    .and_then(|cursor_font_id| {
+                                        cx.text_system().get_font_for_id(cursor_font_id)
+                                    })
+                                    .unwrap_or(self.style.text.font());
+
                                 cx.text_system()
                                     .shape_line(
                                         text,
                                         cursor_row_layout.font_size,
                                         &[TextRun {
                                             len,
-                                            font: self.style.text.font(),
+                                            font: font,
                                             color: self.style.background,
                                             background_color: None,
                                             strikethrough: None,
@@ -2961,7 +2969,7 @@ fn render_blame_entry(
                 cx.open_url(url.as_str())
             })
         })
-        .tooltip(move |cx| {
+        .hoverable_tooltip(move |cx| {
             BlameEntryTooltip::new(
                 sha_color.cursor,
                 commit_message.clone(),
@@ -3363,6 +3371,7 @@ impl Element for EditorElement {
                 let overscroll = size(em_width, px(0.));
 
                 snapshot = self.editor.update(cx, |editor, cx| {
+                    editor.last_bounds = Some(bounds);
                     editor.gutter_width = gutter_dimensions.width;
                     editor.set_visible_line_count(bounds.size.height / line_height, cx);
 
@@ -3411,7 +3420,7 @@ impl Element for EditorElement {
 
                 let autoscroll_horizontally = self.editor.update(cx, |editor, cx| {
                     let autoscroll_horizontally =
-                        editor.autoscroll_vertically(bounds.size.height, line_height, cx);
+                        editor.autoscroll_vertically(bounds, line_height, cx);
                     snapshot = editor.snapshot(cx);
                     autoscroll_horizontally
                 });
@@ -3875,10 +3884,7 @@ impl ScrollbarLayout {
             .into_iter()
             .map(|range| {
                 let start_y = self.first_row_y_offset + range.start as f32 * self.row_height;
-                let mut end_y = self.first_row_y_offset + (range.end + 1) as f32 * self.row_height;
-                if end_y - start_y < Self::MIN_MARKER_HEIGHT {
-                    end_y = start_y + Self::MIN_MARKER_HEIGHT;
-                }
+                let end_y = self.first_row_y_offset + (range.end + 1) as f32 * self.row_height;
                 ColoredRange {
                     start: start_y,
                     end: end_y,
@@ -3889,11 +3895,14 @@ impl ScrollbarLayout {
 
         let mut quads = Vec::new();
         while let Some(mut pixel_range) = background_pixel_ranges.next() {
+            pixel_range.end = pixel_range
+                .end
+                .max(pixel_range.start + Self::MIN_MARKER_HEIGHT);
             while let Some(next_pixel_range) = background_pixel_ranges.peek() {
                 if pixel_range.end >= next_pixel_range.start
                     && pixel_range.color == next_pixel_range.color
                 {
-                    pixel_range.end = next_pixel_range.end;
+                    pixel_range.end = next_pixel_range.end.max(pixel_range.end);
                     background_pixel_ranges.next();
                 } else {
                     break;
