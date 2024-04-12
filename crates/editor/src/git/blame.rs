@@ -257,7 +257,7 @@ impl GitBlame {
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
-        let language_registry = self.project.read(cx).languages().clone();
+        let languages = self.project.read(cx).languages().clone();
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx
@@ -271,54 +271,9 @@ impl GitBlame {
                             messages,
                         } = blame.await?;
 
-                        let mut current_row = 0;
-                        let mut entries = SumTree::from_iter(
-                            entries.into_iter().flat_map(|entry| {
-                                let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
-
-                                if entry.range.start > current_row {
-                                    let skipped_rows = entry.range.start - current_row;
-                                    entries.push(GitBlameEntry {
-                                        rows: skipped_rows,
-                                        blame: None,
-                                    });
-                                }
-                                entries.push(GitBlameEntry {
-                                    rows: entry.range.len() as u32,
-                                    blame: Some(entry.clone()),
-                                });
-
-                                current_row = entry.range.end;
-                                entries
-                            }),
-                            &(),
-                        );
-
-                        let max_row = snapshot.max_point().row;
-                        if max_row >= current_row {
-                            entries.push(
-                                GitBlameEntry {
-                                    rows: (max_row + 1) - current_row,
-                                    blame: None,
-                                },
-                                &(),
-                            );
-                        }
-
-                        let mut commit_details = HashMap::default();
-                        for (oid, message) in messages.into_iter() {
-                            let parsed_message = parse_markdown(&message, &language_registry).await;
-                            let permalink = permalinks.get(&oid).cloned();
-
-                            commit_details.insert(
-                                oid,
-                                CommitDetails {
-                                    message,
-                                    parsed_message,
-                                    permalink,
-                                },
-                            );
-                        }
+                        let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
+                        let commit_details =
+                            parse_commit_messages(messages, &permalinks, &languages).await;
 
                         anyhow::Ok((entries, commit_details))
                     }
@@ -342,6 +297,66 @@ impl GitBlame {
             })
         });
     }
+}
+
+fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree<GitBlameEntry> {
+    let mut current_row = 0;
+    let mut entries = SumTree::from_iter(
+        entries.into_iter().flat_map(|entry| {
+            let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
+
+            if entry.range.start > current_row {
+                let skipped_rows = entry.range.start - current_row;
+                entries.push(GitBlameEntry {
+                    rows: skipped_rows,
+                    blame: None,
+                });
+            }
+            entries.push(GitBlameEntry {
+                rows: entry.range.len() as u32,
+                blame: Some(entry.clone()),
+            });
+
+            current_row = entry.range.end;
+            entries
+        }),
+        &(),
+    );
+
+    if max_row >= current_row {
+        entries.push(
+            GitBlameEntry {
+                rows: (max_row + 1) - current_row,
+                blame: None,
+            },
+            &(),
+        );
+    }
+
+    entries
+}
+
+async fn parse_commit_messages(
+    messages: impl IntoIterator<Item = (Oid, String)>,
+    permalinks: &HashMap<Oid, Url>,
+    languages: &Arc<LanguageRegistry>,
+) -> HashMap<Oid, CommitDetails> {
+    let mut commit_details = HashMap::default();
+    for (oid, message) in messages {
+        let parsed_message = parse_markdown(&message, &languages).await;
+        let permalink = permalinks.get(&oid).cloned();
+
+        commit_details.insert(
+            oid,
+            CommitDetails {
+                message,
+                parsed_message,
+                permalink,
+            },
+        );
+    }
+
+    commit_details
 }
 
 async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -> ParsedMarkdown {

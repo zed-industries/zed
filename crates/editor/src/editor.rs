@@ -464,6 +464,7 @@ pub struct Editor {
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
     show_git_blame_gutter: bool,
+    show_git_blame_inline: bool,
     blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
     custom_context_menu: Option<
@@ -1499,6 +1500,7 @@ impl Editor {
             show_inline_completions: mode == EditorMode::Full,
             custom_context_menu: None,
             show_git_blame_gutter: false,
+            show_git_blame_inline: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             blame: None,
             blame_subscription: None,
             _subscriptions: vec![
@@ -1532,7 +1534,9 @@ impl Editor {
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
         }
 
-        this.start_git_blame(cx);
+        if this.show_git_blame_inline {
+            this.start_git_blame(cx);
+        }
 
         this.report_editor_event("open", None, cx);
         this
@@ -8844,6 +8848,24 @@ impl Editor {
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
         self.show_git_blame_gutter = !self.show_git_blame_gutter;
 
+        if self.show_git_blame_gutter && !self.has_blame_entries(cx) {
+            self.start_git_blame(cx);
+        }
+
+        cx.notify();
+    }
+
+    pub fn toggle_git_blame_inline(
+        &mut self,
+        _: &ToggleGitBlameInline,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.show_git_blame_inline = !self.show_git_blame_inline;
+
+        if self.show_git_blame_inline && !self.has_blame_entries(cx) {
+            self.start_git_blame(cx);
+        }
+
         cx.notify();
     }
 
@@ -8853,11 +8875,23 @@ impl Editor {
                 return;
             };
 
-            let project = project.clone();
-            let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
-            self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
-            self.blame = Some(blame);
+            if self.can_show_git_blame_information(project, &buffer, cx) {
+                let project = project.clone();
+                let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
+                self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
+                self.blame = Some(blame);
+            };
         }
+    }
+
+    fn can_show_git_blame_information(
+        &self,
+        project: &Model<Project>,
+        buffer: &Model<Buffer>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let path = buffer.read(cx).project_path(cx);
+        path.map_or(false, |path| project.read(cx).get_repo(&path, cx).is_some())
     }
 
     pub fn blame(&self) -> Option<&Model<GitBlame>> {
@@ -8865,11 +8899,16 @@ impl Editor {
     }
 
     pub fn render_git_blame_gutter(&mut self, cx: &mut WindowContext) -> bool {
-        self.show_git_blame_gutter
-            && self
-                .blame
-                .as_ref()
-                .map_or(false, |blame| blame.read(cx).has_generated_entries())
+        self.show_git_blame_gutter && self.has_blame_entries(cx)
+    }
+
+    pub fn render_git_blame_inline(&mut self, cx: &mut WindowContext) -> bool {
+        self.show_git_blame_inline && self.has_blame_entries(cx)
+    }
+
+    fn has_blame_entries(&self, cx: &mut WindowContext) -> bool {
+        self.blame()
+            .map_or(false, |blame| blame.read(cx).has_generated_entries())
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
@@ -9441,6 +9480,12 @@ impl Editor {
         let editor_settings = EditorSettings::get_global(cx);
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
+
+        let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();
+        if self.show_git_blame_inline != inline_blame_enabled {
+            self.toggle_git_blame_inline(&ToggleGitBlameInline {}, cx);
+        }
+
         cx.notify();
     }
 

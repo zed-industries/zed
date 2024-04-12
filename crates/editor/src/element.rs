@@ -306,6 +306,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
         register_action(view, cx, Editor::toggle_git_blame);
+        register_action(view, cx, Editor::toggle_git_blame_inline);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -1107,6 +1108,13 @@ impl EditorElement {
         line_height: Pixels,
         cx: &mut ElementContext,
     ) -> Option<AnyElement> {
+        if !self
+            .editor
+            .update(cx, |editor, cx| editor.render_git_blame_inline(cx))
+        {
+            return None;
+        }
+
         let blame = self.editor.read(cx).blame.clone()?;
         let workspace = self
             .editor

@@ -390,7 +390,10 @@
     //      "git_gutter": "tracked_files"
     // 2. Hide the gutter
     //      "git_gutter": "hide"
-    "git_gutter": "tracked_files"
+    "git_gutter": "tracked_files",
+    // Control whether the git blame information is shown inline,
+    // in the currently focused line.
+    "inline_blame": "off"
   },
   "copilot": {
     // The set of glob patterns for which copilot should be disabled

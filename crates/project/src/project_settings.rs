@@ -29,6 +29,17 @@ pub struct GitSettings {
     /// Default: tracked_files
     pub git_gutter: Option<GitGutterSetting>,
     pub gutter_debounce: Option<u64>,
+    /// Whether or not to show git blame data inline in
+    /// the currently focused line.
+    ///
+    /// Default: off
+    pub inline_blame: Option<InlineBlameSetting>,
+}
+
+impl GitSettings {
+    pub fn inline_blame_enabled(&self) -> bool {
+        matches!(self.inline_blame, Some(InlineBlameSetting::On))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -39,6 +50,16 @@ pub enum GitGutterSetting {
     TrackedFiles,
     /// Hide git gutter
     Hide,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineBlameSetting {
+    /// Show git blame information inline.
+    On,
+    /// Do not show git blame information inline.
+    #[default]
+    Off,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
