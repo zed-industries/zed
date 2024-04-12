@@ -818,11 +818,10 @@ impl Pane {
                 if let Some(prev_item) = self.items.get(prev_active_item_ix) {
                     prev_item.deactivated(cx);
                 }
-
-                cx.emit(Event::ActivateItem {
-                    local: activate_pane,
-                });
             }
+            cx.emit(Event::ActivateItem {
+                local: activate_pane,
+            });
 
             if let Some(newly_active_item) = self.items.get(index) {
                 self.activation_history
