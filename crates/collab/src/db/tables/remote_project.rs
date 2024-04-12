@@ -1,5 +1,5 @@
 use super::project;
-use crate::db::{ChannelId, DevServerId, RemoteProjectId};
+use crate::db::{DevServerId, RemoteProjectId};
 use rpc::proto;
 use sea_orm::entity::prelude::*;
 
@@ -8,7 +8,6 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: RemoteProjectId,
-    pub channel_id: ChannelId,
     pub dev_server_id: DevServerId,
     pub name: String,
     pub path: String,
@@ -33,7 +32,6 @@ impl Model {
         proto::RemoteProject {
             id: self.id.to_proto(),
             project_id: project.map(|p| p.id.to_proto()),
-            channel_id: self.channel_id.to_proto(),
             dev_server_id: self.dev_server_id.to_proto(),
             name: self.name.clone(),
             path: self.path.clone(),

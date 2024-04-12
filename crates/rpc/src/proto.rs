@@ -313,6 +313,7 @@ messages!(
     (RejoinRemoteProjectsResponse, Foreground),
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
+    (RemoteProjects, Foreground),
 );
 
 request_messages!(

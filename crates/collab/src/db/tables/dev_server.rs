@@ -1,4 +1,4 @@
-use crate::db::{ChannelId, DevServerId};
+use crate::db::{DevServerId, UserId};
 use rpc::proto;
 use sea_orm::entity::prelude::*;
 
@@ -8,7 +8,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: DevServerId,
     pub name: String,
-    pub channel_id: ChannelId,
+    pub user_id: UserId,
     pub hashed_token: String,
 }
 
@@ -21,7 +21,6 @@ impl Model {
     pub fn to_proto(&self, status: proto::DevServerStatus) -> proto::DevServer {
         proto::DevServer {
             dev_server_id: self.id.to_proto(),
-            channel_id: self.channel_id.to_proto(),
             name: self.name.clone(),
             status: status as i32,
         }

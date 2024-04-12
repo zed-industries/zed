@@ -933,24 +933,24 @@ impl Database {
             PrincipalId::UserId(user_id) => user_id,
         };
 
-        let role = if let Some(remote_project) = remote_project {
-            let channel = channel::Entity::find_by_id(remote_project.channel_id)
+        let role = if let Some(room_id) = project.room_id {
+                // what's the users role?
+                let current_participant = room_participant::Entity::find()
+                    .filter(room_participant::Column::RoomId.eq(room_id))
+                    .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.id))
+                    .one(tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("no such room"))?;
+
+                current_participant.role.unwrap_or(ChannelRole::Guest)
+        } else if let Some(remote_project) = remote_project {
+            let dev_server = dev_server::Entity::find_by_id(remote_project.dev_server_id)
                 .one(tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such channel"))?;
-
-            self.check_user_is_channel_participant(&channel, user_id, &tx)
-                .await?
-        } else if let Some(room_id) = project.room_id {
-            // what's the users role?
-            let current_participant = room_participant::Entity::find()
-                .filter(room_participant::Column::RoomId.eq(room_id))
-                .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.id))
-                .one(tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such room"))?;
-
-            current_participant.role.unwrap_or(ChannelRole::Guest)
+            if user_id != dev_server.user_id {
+                return anyhow!("no permission to access dev server")?;
+            }
         } else {
             return Err(anyhow!("not authorized to read projects"))?;
         };

@@ -1,0 +1,30 @@
+[package]
+name = "remote_projects"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/remote_projects.rs"
+doctest = false
+
+[dependencies]
+fuzzy.workspace = true
+gpui.workspace = true
+menu.workspace = true
+ordered-float.workspace = true
+picker.workspace = true
+serde.workspace = true
+smol.workspace = true
+ui.workspace = true
+util.workspace = true
+client.workspace = true
+
+[dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true

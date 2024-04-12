@@ -8,8 +8,8 @@ use sea_orm::{
 use crate::db::ProjectId;
 
 use super::{
-    channel, project, project_collaborator, remote_project, worktree, ChannelId, Database,
-    DevServerId, RejoinedProject, RemoteProjectId, ResharedProject, ServerId, UserId,
+    channel, dev_server, project, project_collaborator, remote_project, worktree, ChannelId,
+    Database, DevServerId, RejoinedProject, RemoteProjectId, ResharedProject, ServerId, UserId,
 };
 
 impl Database {
@@ -24,29 +24,6 @@ impl Database {
                 .ok_or_else(|| anyhow!("no remote project with id {}", remote_project_id))?)
         })
         .await
-    }
-
-    pub async fn get_remote_projects(
-        &self,
-        channel_ids: &Vec<ChannelId>,
-        tx: &DatabaseTransaction,
-    ) -> crate::Result<Vec<proto::RemoteProject>> {
-        let servers = remote_project::Entity::find()
-            .filter(remote_project::Column::ChannelId.is_in(channel_ids.iter().map(|id| id.0)))
-            .find_also_related(project::Entity)
-            .all(tx)
-            .await?;
-        Ok(servers
-            .into_iter()
-            .map(|(remote_project, project)| proto::RemoteProject {
-                id: remote_project.id.to_proto(),
-                project_id: project.map(|p| p.id.to_proto()),
-                channel_id: remote_project.channel_id.to_proto(),
-                name: remote_project.name,
-                dev_server_id: remote_project.dev_server_id.to_proto(),
-                path: remote_project.path,
-            })
-            .collect())
     }
 
     pub async fn get_remote_projects_for_dev_server(
@@ -64,7 +41,6 @@ impl Database {
                 .map(|(remote_project, project)| proto::RemoteProject {
                     id: remote_project.id.to_proto(),
                     project_id: project.map(|p| p.id.to_proto()),
-                    channel_id: remote_project.channel_id.to_proto(),
                     name: remote_project.name,
                     dev_server_id: remote_project.dev_server_id.to_proto(),
                     path: remote_project.path,
@@ -95,28 +71,32 @@ impl Database {
 
     pub async fn create_remote_project(
         &self,
-        channel_id: ChannelId,
         dev_server_id: DevServerId,
         name: &str,
         path: &str,
         user_id: UserId,
-    ) -> crate::Result<(channel::Model, remote_project::Model)> {
+    ) -> crate::Result<(remote_project::Model, proto::RemoteProjects)> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &tx).await?;
-            self.check_user_is_channel_admin(&channel, user_id, &tx)
-                .await?;
+            let dev_server = dev_server::Entity::find_by_id(dev_server_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no dev server with id {}", dev_server_id))?;
+            if dev_server.user_id != user_id {
+                return anyhow!("not your dev server")?;
+            }
 
             let project = remote_project::Entity::insert(remote_project::ActiveModel {
                 name: ActiveValue::Set(name.to_string()),
                 id: ActiveValue::NotSet,
-                channel_id: ActiveValue::Set(channel_id),
                 dev_server_id: ActiveValue::Set(dev_server_id),
                 path: ActiveValue::Set(path.to_string()),
             })
             .exec_with_returning(&*tx)
             .await?;
 
-            Ok((channel, project))
+            let status = self.build_remote_projects(&*tx).await?;
+
+            Ok((project, status))
         })
         .await
     }
@@ -127,8 +107,13 @@ impl Database {
         dev_server_id: DevServerId,
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
-    ) -> crate::Result<proto::RemoteProject> {
+    ) -> crate::Result<(proto::RemoteProject, UserId, proto::RemoteProjects)> {
         self.transaction(|tx| async move {
+            let dev_server = dev_server::Entity::find_by_id(dev_server_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no dev server with id {}", dev_server_id))?;
+
             let remote_project = remote_project::Entity::find_by_id(remote_project_id)
                 .one(&*tx)
                 .await?
@@ -168,7 +153,9 @@ impl Database {
                 .await?;
             }
 
-            Ok(remote_project.to_proto(Some(project)))
+            let status = self.build_remote_projects(&*tx).await?;
+
+            Ok((remote_project.to_proto(Some(project)), dev_server.user_id, status))
         })
         .await
     }

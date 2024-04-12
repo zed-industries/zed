@@ -1069,8 +1069,7 @@ impl Server {
                     };
                     pool.add_dev_server(connection_id, dev_server.id, zed_version);
                 }
-                update_dev_server_status(dev_server, proto::DevServerStatus::Online, &session)
-                    .await;
+                update_remote_projects(dev_server, proto::DevServerStatus::Online, &session).await;
                 // todo!() allow only one connection.
 
                 let projects = self
@@ -1385,7 +1384,7 @@ async fn connection_lost(
                 },
             Principal::DevServer(dev_server) => {
                 lost_dev_server_connection(&session).await?;
-                update_dev_server_status(&dev_server, proto::DevServerStatus::Offline, &session)
+                update_remote_projects(&dev_server, proto::DevServerStatus::Offline, &session)
                     .await;
             },
         }
@@ -1962,13 +1961,13 @@ async fn unshare_project_internal(project_id: ProjectId, session: &Session) -> R
     Ok(())
 }
 
-/// Share a project into the room.
+/// DevServer makes a project available online
 async fn share_remote_project(
     request: proto::ShareRemoteProject,
     response: Response<proto::ShareRemoteProject>,
     session: DevServerSession,
 ) -> Result<()> {
-    let remote_project = session
+    let (remote_project, user_id, status) = session
         .db()
         .await
         .share_remote_project(
@@ -1982,22 +1981,7 @@ async fn share_remote_project(
         return Err(anyhow!("failed to share remote project"))?;
     };
 
-    for (connection_id, _) in session
-        .connection_pool()
-        .await
-        .channel_connection_ids(ChannelId::from_proto(remote_project.channel_id))
-    {
-        session
-            .peer
-            .send(
-                connection_id,
-                proto::UpdateChannels {
-                    remote_projects: vec![remote_project.clone()],
-                    ..Default::default()
-                },
-            )
-            .trace_err();
-    }
+    update_remote_projects(user_id, status, session).await;
 
     response.send(proto::ShareProjectResponse { project_id })?;
 
@@ -2206,11 +2190,10 @@ async fn create_remote_project(
     response: Response<proto::CreateRemoteProject>,
     session: UserSession,
 ) -> Result<()> {
-    let (channel, remote_project) = session
+    let (remote_project, status) = session
         .db()
         .await
         .create_remote_project(
-            ChannelId(request.channel_id as i32),
             DevServerId(request.dev_server_id as i32),
             &request.name,
             &request.path,
@@ -2224,16 +2207,7 @@ async fn create_remote_project(
         .get_remote_projects_for_dev_server(remote_project.dev_server_id)
         .await?;
 
-    let update = proto::UpdateChannels {
-        remote_projects: vec![remote_project.to_proto(None)],
-        ..Default::default()
-    };
-    let connection_pool = session.connection_pool().await;
-    for (connection_id, role) in connection_pool.channel_connection_ids(channel.root_id()) {
-        if role.can_see_all_descendants() {
-            session.peer.send(connection_id, update.clone())?;
-        }
-    }
+    update_remote_projects(status, session.user_id(), session).await;
 
     let dev_server_id = remote_project.dev_server_id;
     let dev_server_connection_id = connection_pool.dev_server_connection_id(dev_server_id);
@@ -2258,31 +2232,20 @@ async fn create_dev_server(
     let access_token = auth::random_token();
     let hashed_access_token = auth::hash_access_token(&access_token);
 
-    let (channel, dev_server) = session
+    let (dev_server, status) = session
         .db()
         .await
         .create_dev_server(
-            ChannelId(request.channel_id as i32),
             &request.name,
             &hashed_access_token,
             session.user_id(),
         )
         .await?;
 
-    let update = proto::UpdateChannels {
-        dev_servers: vec![dev_server.to_proto(proto::DevServerStatus::Offline)],
-        ..Default::default()
-    };
-    let connection_pool = session.connection_pool().await;
-    for (connection_id, role) in connection_pool.channel_connection_ids(channel.root_id()) {
-        if role.can_see_channel(channel.visibility) {
-            session.peer.send(connection_id, update.clone())?;
-        }
-    }
+    update_remote_projects(session.user_id(), status, &session);
 
     response.send(proto::CreateDevServerResponse {
         dev_server_id: dev_server.id.0 as u64,
-        channel_id: request.channel_id,
         access_token: auth::generate_dev_server_token(dev_server.id.0 as usize, access_token),
         name: request.name.clone(),
     })?;
@@ -2397,19 +2360,12 @@ async fn shutdown_dev_server(
         unshare_project_internal(ProjectId::from_proto(project_id), &session.0).await?;
     }
 
-    let update = proto::UpdateChannels {
-        remote_projects,
-        dev_servers: vec![dev_server.to_proto(proto::DevServerStatus::Offline)],
-        ..Default::default()
-    };
-
-    for (connection_id, _) in session
-        .connection_pool()
+    let status = session
+        .db()
         .await
-        .channel_connection_ids(dev_server.channel_id)
-    {
-        session.peer.send(connection_id, update.clone()).trace_err();
-    }
+        .build_remote_projects(dev_server.user_id)
+        .await?;
+    update_remote_projects(dev_server.user_id, status, &session).await;
 
     Ok(())
 }
@@ -4546,13 +4502,6 @@ fn build_channels_update(
     }
 
     update.hosted_projects = channels.hosted_projects;
-    update.dev_servers = channels
-        .dev_servers
-        .into_iter()
-        .map(|dev_server| dev_server.to_proto(pool.dev_server_status(dev_server.id)))
-        .collect();
-    update.remote_projects = channels.remote_projects;
-
     update
 }
 
@@ -4639,24 +4588,19 @@ fn channel_updated(
     );
 }
 
-async fn update_dev_server_status(
-    dev_server: &dev_server::Model,
-    status: proto::DevServerStatus,
+async fn update_remote_projects(
+    user_id: UserId,
+    mut status: proto::RemoteProjects,
     session: &Session,
 ) {
     let pool = session.connection_pool().await;
-    let connections = pool.channel_connection_ids(dev_server.channel_id);
-    for (connection_id, _) in connections {
-        session
-            .peer
-            .send(
-                connection_id,
-                proto::UpdateChannels {
-                    dev_servers: vec![dev_server.to_proto(status)],
-                    ..Default::default()
-                },
-            )
-            .trace_err();
+    for dev_server in &mut status.dev_servers {
+        dev_server.status =
+            pool.dev_server_status(DevServerId(dev_server.dev_server_id as i32)) as i32;
+    }
+    let connections = pool.user_connection_ids(user_id);
+    for connection_id in connections {
+        session.peer.send(connection_id, status.clone()).trace_err();
     }
 }
 
