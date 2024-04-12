@@ -1871,8 +1871,7 @@ mod tests {
         // Let's turn on regex mode.
         search_bar
             .update(cx, |search_bar, cx| {
-                search_bar.enable_search_option(SearchOptions::REGEX, cx);
-                search_bar.search("\\[([^\\]]+)\\]", None, cx)
+                search_bar.search("\\[([^\\]]+)\\]", Some(SearchOptions::REGEX), cx)
             })
             .await
             .unwrap();
@@ -1895,8 +1894,11 @@ mod tests {
         // Now with a whole-word twist.
         search_bar
             .update(cx, |search_bar, cx| {
-                search_bar.enable_search_option(SearchOptions::REGEX, cx);
-                search_bar.search("a\\w+s", Some(SearchOptions::WHOLE_WORD), cx)
+                search_bar.search(
+                    "a\\w+s",
+                    Some(SearchOptions::REGEX | SearchOptions::WHOLE_WORD),
+                    cx,
+                )
             })
             .await
             .unwrap();
