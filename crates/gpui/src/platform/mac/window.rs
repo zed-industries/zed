@@ -73,6 +73,8 @@ const NSTrackingActiveAlways: NSUInteger = 0x80;
 #[allow(non_upper_case_globals)]
 const NSTrackingInVisibleRect: NSUInteger = 0x200;
 #[allow(non_upper_case_globals)]
+const NSWindowAnimationBehaviorDocumentWindow: NSInteger = 3;
+#[allow(non_upper_case_globals)]
 const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
@@ -703,6 +705,13 @@ impl MacWindow {
                 WindowKind::Normal => {
                     native_window.setLevel_(NSNormalWindowLevel);
                     native_window.setAcceptsMouseMovedEvents_(YES);
+
+                    // Use the same animation when opening new windows as document windows do,
+                    // e.g. ⌘N in TextEdit or Xcode.
+                    let _: () = msg_send![
+                        native_window,
+                        setAnimationBehavior: NSWindowAnimationBehaviorDocumentWindow
+                    ];
                 }
                 WindowKind::PopUp => {
                     // Use a tracking area to allow receiving MouseMoved events even when
