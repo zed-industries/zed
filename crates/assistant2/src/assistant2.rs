@@ -63,7 +63,7 @@ struct AssistantChat {
 impl AssistantChat {
     fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
         let this = cx.view().downgrade();
-        let list_state = ListState::new(0, ListAlignment::Top, px(1024.), move |ix, cx| {
+        let list_state = ListState::new(0, ListAlignment::Bottom, px(1024.), move |ix, cx| {
             this.update(cx, |this, cx| this.render_message(ix, cx))
                 .unwrap()
         });
@@ -236,54 +236,54 @@ impl AssistantChat {
 
     fn render_model_dropdown(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let this = cx.view().downgrade();
-        div().w_32().child(
-            popover_menu("user-menu")
-                .menu(move |cx| {
-                    ContextMenu::build(cx, |mut menu, cx| {
-                        for model in CompletionProvider::get(cx).available_models() {
-                            menu = menu.custom_entry(
-                                {
-                                    let model = model.clone();
-                                    move |_| Label::new(model.clone()).into_any_element()
-                                },
-                                {
-                                    let this = this.clone();
-                                    move |cx| {
-                                        _ = this.update(cx, |this, cx| {
-                                            this.model = model.clone();
-                                            cx.notify();
-                                        });
-                                    }
-                                },
-                            );
-                        }
-                        menu
+        div().h_flex().justify_end().child(
+            div().w_32().child(
+                popover_menu("user-menu")
+                    .menu(move |cx| {
+                        ContextMenu::build(cx, |mut menu, cx| {
+                            for model in CompletionProvider::get(cx).available_models() {
+                                menu = menu.custom_entry(
+                                    {
+                                        let model = model.clone();
+                                        move |_| Label::new(model.clone()).into_any_element()
+                                    },
+                                    {
+                                        let this = this.clone();
+                                        move |cx| {
+                                            _ = this.update(cx, |this, cx| {
+                                                this.model = model.clone();
+                                                cx.notify();
+                                            });
+                                        }
+                                    },
+                                );
+                            }
+                            menu
+                        })
+                        .into()
                     })
-                    .into()
-                })
-                .trigger(
-                    ButtonLike::new("active-model")
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .gap_0p5()
-                                .child(
-                                    div()
-                                        .overflow_x_hidden()
-                                        .flex_grow()
-                                        .whitespace_nowrap()
-                                        .child(Label::new(self.model.clone())),
-                                )
-                                .child(
-                                    div().child(
+                    .trigger(
+                        ButtonLike::new("active-model")
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .overflow_x_hidden()
+                                            .flex_grow()
+                                            .whitespace_nowrap()
+                                            .child(Label::new(self.model.clone())),
+                                    )
+                                    .child(div().child(
                                         Icon::new(IconName::ChevronDown).color(Color::Muted),
-                                    ),
-                                ),
-                        )
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(move |cx| Tooltip::text("Change Model", cx)),
-                )
-                .anchor(gpui::AnchorCorner::TopRight),
+                                    )),
+                            )
+                            .style(ButtonStyle::Subtle)
+                            .tooltip(move |cx| Tooltip::text("Change Model", cx)),
+                    )
+                    .anchor(gpui::AnchorCorner::TopRight),
+            ),
         )
     }
 }
