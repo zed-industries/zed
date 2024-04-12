@@ -921,7 +921,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let scroll_delta = state
                     .continuous_scroll_delta
                     .get_or_insert(point(px(0.0), px(0.0)));
-                // TODO: Make nice feeling kinetic scrolling instead of '2'
+                // TODO: Make nice feeling kinetic scrolling that integrates with the platform's scroll settings
                 let modifier = 3.0;
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
@@ -944,7 +944,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => 1.0,
                 };
 
-                // TODO: Make nice feeling kinetic scrolling instead of '2'
+                // TODO: Make nice feeling kinetic scrolling that integrates with the platform's scroll settings
                 let modifier = 3.0;
 
                 let scroll_delta = state.discrete_scroll_delta.get_or_insert(point(0.0, 0.0));
