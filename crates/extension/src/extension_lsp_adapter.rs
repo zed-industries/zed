@@ -130,21 +130,20 @@ impl LspAdapter for ExtensionLspAdapter {
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        if self.extension.manifest.id.as_ref() == "terraform" {
-            // This is taken from the original Terraform implementation, including
-            // the TODOs:
-            // TODO: file issue for server supported code actions
-            // TODO: reenable default actions / delete override
-            return Some(vec![]);
-        }
+        let code_action_kinds = self
+            .extension
+            .manifest
+            .language_servers
+            .get(&self.language_server_id)
+            .and_then(|server| server.code_action_kinds.clone());
 
-        Some(vec![
+        code_action_kinds.or(Some(vec![
             CodeActionKind::EMPTY,
             CodeActionKind::QUICKFIX,
             CodeActionKind::REFACTOR,
             CodeActionKind::REFACTOR_EXTRACT,
             CodeActionKind::SOURCE,
-        ])
+        ]))
     }
 
     fn language_ids(&self) -> HashMap<String, String> {

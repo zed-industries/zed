@@ -5487,7 +5487,6 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "parking_lot",
  "project",
  "regex",
  "rope",
@@ -5524,7 +5523,6 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
- "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",
  "util",
@@ -10665,15 +10663,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-vue"
-version = "0.0.1"
-source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=6608d9d60c386f19d80af7d8132322fa11199c42#6608d9d60c386f19d80af7d8132322fa11199c42"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-yaml"
 version = "0.0.1"
 source = "git+https://github.com/zed-industries/tree-sitter-yaml?rev=f545a41f57502e1b5ddf2a6668896c1b0620f930#f545a41f57502e1b5ddf2a6668896c1b0620f930"
@@ -12808,6 +12797,13 @@ name = "zed_uiua"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.4",
+]
+
+[[package]]
+name = "zed_vue"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
