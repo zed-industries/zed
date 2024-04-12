@@ -31,12 +31,12 @@ use smallvec::SmallVec;
 use util::post_inc;
 
 use crate::{
-    hash, point, prelude::*, px, rems, size, AnyElement, AnyTooltip, AppContext, Asset,
-    AvailableSpace, Bounds, BoxShadow, ContentMask, Corners, CursorStyle, DevicePixels,
-    DispatchNodeId, DispatchPhase, DispatchTree, DrawPhase, ElementId, ElementStateBox, EntityId,
-    FocusHandle, FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero,
-    KeyContext, KeyEvent, LayoutId, LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite,
-    MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
+    hash, point, prelude::*, px, size, AnyElement, AnyTooltip, AppContext, Asset, AvailableSpace,
+    Bounds, BoxShadow, ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId,
+    DispatchPhase, DispatchTree, DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle,
+    FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext,
+    KeyEvent, LayoutId, LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent,
+    PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
     RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, Task, TextStyleRefinement, TransformationMatrix, Underline,
     UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
@@ -439,20 +439,13 @@ impl<'a> ElementContext<'a> {
     }
 
     fn layout_tooltip(&mut self) -> Option<AnyElement> {
-        let rem_size = self.rem_size();
         let tooltip_request = self.window.next_frame.tooltip_requests.last().cloned()?;
         let tooltip_request = tooltip_request.unwrap();
         let mut element = tooltip_request.tooltip.view.clone().into_any();
         let mouse_position = tooltip_request.tooltip.mouse_position;
+        let tooltip_size = element.measure(AvailableSpace::min_size(), self);
 
-        let size = element.measure(AvailableSpace::min_size(), self);
-
-        let cursor_offset = point(
-            rems(0.5).to_pixels(rem_size),
-            rems(0.625).to_pixels(rem_size),
-        );
-        let mut tooltip_bounds = Bounds::new(mouse_position + cursor_offset, size);
-
+        let mut tooltip_bounds = Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
         let window_bounds = Bounds {
             origin: Point::default(),
             size: self.viewport_size(),

@@ -483,7 +483,29 @@ impl Interactivity {
             self.tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
         );
-        self.tooltip_builder = Some(Rc::new(build_tooltip));
+        self.tooltip_builder = Some(TooltipBuilder {
+            build: Rc::new(build_tooltip),
+            hoverable: false,
+        });
+    }
+
+    /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
+    /// The tooltip itself is also hoverable and won't disapper when the user moves the mouse into
+    /// the tooltip. The imperative API equivalent to [`InteractiveElement::hoverable_tooltip`]
+    pub fn hoverable_tooltip(
+        &mut self,
+        build_tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static,
+    ) where
+        Self: Sized,
+    {
+        debug_assert!(
+            self.tooltip_builder.is_none(),
+            "calling tooltip more than once on the same element is not supported"
+        );
+        self.tooltip_builder = Some(TooltipBuilder {
+            build: Rc::new(build_tooltip),
+            hoverable: true,
+        });
     }
 
     /// Block the mouse from interacting with this element or any of its children
@@ -973,6 +995,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self.interactivity().tooltip(build_tooltip);
         self
     }
+
+    /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
+    /// The tooltip itself is also hoverable and won't disapper when the user moves the mouse into
+    /// the tooltip. The fluent API equivalent to [`Interactivity::hoverable_tooltip`]
+    fn hoverable_tooltip(
+        mut self,
+        build_tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().hoverable_tooltip(build_tooltip);
+        self
+    }
 }
 
 /// A trait for providing focus related APIs to interactive elements
@@ -1015,7 +1051,10 @@ type DropListener = Box<dyn Fn(&dyn Any, &mut WindowContext) + 'static>;
 
 type CanDropPredicate = Box<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>;
 
-pub(crate) type TooltipBuilder = Rc<dyn Fn(&mut WindowContext) -> AnyView + 'static>;
+pub(crate) struct TooltipBuilder {
+    build: Rc<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
+    hoverable: bool,
+}
 
 pub(crate) type KeyDownListener =
     Box<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + 'static>;
@@ -1807,6 +1846,7 @@ impl Interactivity {
             }
 
             if let Some(tooltip_builder) = self.tooltip_builder.take() {
+                let tooltip_is_hoverable = tooltip_builder.hoverable;
                 let active_tooltip = element_state
                     .active_tooltip
                     .get_or_insert_with(Default::default)
@@ -1823,29 +1863,30 @@ impl Interactivity {
                     move |_: &MouseMoveEvent, phase, cx| {
                         let is_hovered =
                             pending_mouse_down.borrow().is_none() && hitbox.is_hovered(cx);
-                        if !is_hovered
-                            && tooltip_id.map_or(true, |tooltip_id| !tooltip_id.is_hovered(cx))
-                            && active_tooltip.borrow_mut().take().is_some()
-                        {
-                            cx.refresh();
+                        let tooltip_is_hovered =
+                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
+                        if !is_hovered && (!tooltip_is_hoverable || !tooltip_is_hovered) {
+                            if active_tooltip.borrow_mut().take().is_some() {
+                                cx.refresh();
+                            }
+
                             return;
                         }
 
-                        if phase != DispatchPhase::Bubble || !is_hovered {
+                        if phase != DispatchPhase::Bubble {
                             return;
                         }
 
                         if active_tooltip.borrow().is_none() {
                             let task = cx.spawn({
                                 let active_tooltip = active_tooltip.clone();
-                                let tooltip_builder = tooltip_builder.clone();
-
+                                let build_tooltip = tooltip_builder.build.clone();
                                 move |mut cx| async move {
                                     cx.background_executor().timer(TOOLTIP_DELAY).await;
                                     cx.update(|cx| {
                                         active_tooltip.borrow_mut().replace(ActiveTooltip {
                                             tooltip: Some(AnyTooltip {
-                                                view: tooltip_builder(cx),
+                                                view: build_tooltip(cx),
                                                 mouse_position: cx.mouse_position(),
                                             }),
                                             _task: None,
@@ -1867,7 +1908,10 @@ impl Interactivity {
                     let active_tooltip = active_tooltip.clone();
                     let tooltip_id = self.tooltip_id;
                     move |_: &MouseDownEvent, _, cx| {
-                        if tooltip_id.map_or(true, |tooltip_id| !tooltip_id.is_hovered(cx)) {
+                        let tooltip_is_hovered =
+                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
+
+                        if !tooltip_is_hoverable || !tooltip_is_hovered {
                             if active_tooltip.borrow_mut().take().is_some() {
                                 cx.refresh();
                             }
@@ -1879,7 +1923,9 @@ impl Interactivity {
                     let active_tooltip = active_tooltip.clone();
                     let tooltip_id = self.tooltip_id;
                     move |_: &ScrollWheelEvent, _, cx| {
-                        if tooltip_id.map_or(true, |tooltip_id| !tooltip_id.is_hovered(cx)) {
+                        let tooltip_is_hovered =
+                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
+                        if !tooltip_is_hoverable || !tooltip_is_hovered {
                             if active_tooltip.borrow_mut().take().is_some() {
                                 cx.refresh();
                             }
