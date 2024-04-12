@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
-use gpui::AppContext;
+use gpui::{AppContext, AsyncAppContext};
 use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::{async_maybe, paths, ResultExt};
+use util::{maybe, paths, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/vscode-json-languageserver/bin/vscode-json-languageserver";
 
@@ -52,7 +52,7 @@ impl JsonLspAdapter {
             },
             cx,
         );
-        let tasks_schema = task::static_source::DefinitionProvider::generate_json_schema();
+        let tasks_schema = task::TaskTemplates::generate_json_schema();
         serde_json::json!({
             "json": {
                 "format": {
@@ -152,10 +152,16 @@ impl LspAdapter for JsonLspAdapter {
         })))
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, cx: &mut AppContext) -> Value {
-        self.workspace_config
-            .get_or_init(|| Self::get_workspace_config(self.languages.language_names(), cx))
-            .clone()
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        cx.update(|cx| {
+            self.workspace_config
+                .get_or_init(|| Self::get_workspace_config(self.languages.language_names(), cx))
+                .clone()
+        })
     }
 
     fn language_ids(&self) -> HashMap<String, String> {
@@ -167,7 +173,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

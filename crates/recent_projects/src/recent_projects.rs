@@ -1,10 +1,8 @@
-use collections::HashMap;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Result,
     Subscription, Task, View, ViewContext, WeakView,
 };
-use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
@@ -260,7 +258,9 @@ impl PickerDelegate for RecentProjectsDelegate {
             };
             workspace
                 .update(cx, |workspace, cx| {
-                    if workspace.database_id() != *candidate_workspace_id {
+                    if workspace.database_id() == *candidate_workspace_id {
+                        Task::ready(Ok(()))
+                    } else {
                         let candidate_paths = candidate_workspace_location.paths().as_ref().clone();
                         if replace_current_window {
                             cx.spawn(move |workspace, mut cx| async move {
@@ -286,8 +286,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                         } else {
                             workspace.open_workspace_for_paths(false, candidate_paths, cx)
                         }
-                    } else {
-                        Task::ready(Ok(()))
                     }
                 })
                 .detach_and_log_err(cx);
@@ -431,20 +429,7 @@ impl RecentProjectsDelegate {
                     .recent_workspaces_on_disk()
                     .await
                     .unwrap_or_default();
-                let mut unique_added_paths = HashMap::default();
-                for (id, workspace) in &workspaces {
-                    for path in workspace.paths().iter() {
-                        unique_added_paths.insert(path.clone(), id);
-                    }
-                }
-                let updated_paths = unique_added_paths
-                    .into_iter()
-                    .sorted_by_key(|(_, id)| *id)
-                    .map(|(path, _)| path)
-                    .collect::<Vec<_>>();
                 this.update(&mut cx, move |picker, cx| {
-                    cx.clear_recent_documents();
-                    cx.add_recent_documents(&updated_paths);
                     picker.delegate.workspaces = workspaces;
                     picker.delegate.set_selected_index(ix - 1, cx);
                     picker.delegate.reset_selected_match_index = false;

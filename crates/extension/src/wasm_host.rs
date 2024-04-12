@@ -1,53 +1,42 @@
+pub(crate) mod wit;
+
 use crate::ExtensionManifest;
 use anyhow::{anyhow, bail, Context as _, Result};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
-use async_trait::async_trait;
 use fs::{normalize_path, Fs};
+use futures::future::LocalBoxFuture;
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
         oneshot,
     },
     future::BoxFuture,
-    io::BufReader,
     Future, FutureExt, StreamExt as _,
 };
-use gpui::BackgroundExecutor;
-use language::{LanguageRegistry, LanguageServerBinaryStatus, LspAdapterDelegate};
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
+use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
+use semantic_version::SemanticVersion;
 use std::{
-    env,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::{http::HttpClient, SemanticVersion};
+use util::http::HttpClient;
 use wasmtime::{
-    component::{Component, Linker, Resource, ResourceTable},
+    component::{Component, ResourceTable},
     Engine, Store,
 };
-use wasmtime_wasi::preview2::{self as wasi, WasiCtx};
-
-pub mod wit {
-    wasmtime::component::bindgen!({
-        async: true,
-        path: "../extension_api/wit",
-        with: {
-             "worktree": super::ExtensionWorktree,
-        },
-    });
-}
-
-pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
+use wasmtime_wasi as wasi;
+use wit::Extension;
 
 pub(crate) struct WasmHost {
     engine: Engine,
-    linker: Arc<wasmtime::component::Linker<WasmState>>,
     http_client: Arc<dyn HttpClient>,
     node_runtime: Arc<dyn NodeRuntime>,
-    language_registry: Arc<LanguageRegistry>,
+    pub(crate) language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     pub(crate) work_dir: PathBuf,
+    _main_thread_message_task: Task<()>,
+    main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
 
 #[derive(Clone)]
@@ -55,22 +44,35 @@ pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
     pub(crate) manifest: Arc<ExtensionManifest>,
     #[allow(unused)]
-    zed_api_version: SemanticVersion,
+    pub zed_api_version: SemanticVersion,
 }
 
 pub(crate) struct WasmState {
     manifest: Arc<ExtensionManifest>,
-    table: ResourceTable,
+    pub(crate) table: ResourceTable,
     ctx: wasi::WasiCtx,
-    host: Arc<WasmHost>,
+    pub(crate) host: Arc<WasmHost>,
 }
 
+type MainThreadCall =
+    Box<dyn Send + for<'a> FnOnce(&'a mut AsyncAppContext) -> LocalBoxFuture<'a, ()>>;
+
 type ExtensionCall = Box<
-    dyn Send
-        + for<'a> FnOnce(&'a mut wit::Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, ()>,
+    dyn Send + for<'a> FnOnce(&'a mut Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, ()>,
 >;
 
-static WASM_ENGINE: OnceLock<wasmtime::Engine> = OnceLock::new();
+fn wasm_engine() -> wasmtime::Engine {
+    static WASM_ENGINE: OnceLock<wasmtime::Engine> = OnceLock::new();
+
+    WASM_ENGINE
+        .get_or_init(|| {
+            let mut config = wasmtime::Config::new();
+            config.wasm_component_model(true);
+            config.async_support(true);
+            wasmtime::Engine::new(&config).unwrap()
+        })
+        .clone()
+}
 
 impl WasmHost {
     pub fn new(
@@ -79,26 +81,23 @@ impl WasmHost {
         node_runtime: Arc<dyn NodeRuntime>,
         language_registry: Arc<LanguageRegistry>,
         work_dir: PathBuf,
+        cx: &mut AppContext,
     ) -> Arc<Self> {
-        let engine = WASM_ENGINE
-            .get_or_init(|| {
-                let mut config = wasmtime::Config::new();
-                config.wasm_component_model(true);
-                config.async_support(true);
-                wasmtime::Engine::new(&config).unwrap()
-            })
-            .clone();
-        let mut linker = Linker::new(&engine);
-        wasi::command::add_to_linker(&mut linker).unwrap();
-        wit::Extension::add_to_linker(&mut linker, wasi_view).unwrap();
+        let (tx, mut rx) = mpsc::unbounded::<MainThreadCall>();
+        let task = cx.spawn(|mut cx| async move {
+            while let Some(message) = rx.next().await {
+                message(&mut cx).await;
+            }
+        });
         Arc::new(Self {
-            engine,
-            linker: Arc::new(linker),
+            engine: wasm_engine(),
             fs,
             work_dir,
             http_client,
             node_runtime,
             language_registry,
+            _main_thread_message_task: task,
+            main_thread_message_tx: tx,
         })
     }
 
@@ -110,28 +109,10 @@ impl WasmHost {
     ) -> impl 'static + Future<Output = Result<WasmExtension>> {
         let this = self.clone();
         async move {
+            let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
+
             let component = Component::from_binary(&this.engine, &wasm_bytes)
                 .context("failed to compile wasm component")?;
-
-            let mut zed_api_version = None;
-            for part in wasmparser::Parser::new(0).parse_all(&wasm_bytes) {
-                if let wasmparser::Payload::CustomSection(s) = part? {
-                    if s.name() == "zed:api-version" {
-                        zed_api_version = parse_extension_version(s.data());
-                        if zed_api_version.is_none() {
-                            bail!(
-                                "extension {} has invalid zed:api-version section: {:?}",
-                                manifest.id,
-                                s.data()
-                            );
-                        }
-                    }
-                }
-            }
-
-            let Some(zed_api_version) = zed_api_version else {
-                bail!("extension {} has no zed:api-version section", manifest.id);
-            };
 
             let mut store = wasmtime::Store::new(
                 &this.engine,
@@ -144,9 +125,8 @@ impl WasmHost {
             );
 
             let (mut extension, instance) =
-                wit::Extension::instantiate_async(&mut store, &component, &this.linker)
-                    .await
-                    .context("failed to instantiate wasm extension")?;
+                Extension::instantiate_async(&mut store, zed_api_version, &component).await?;
+
             extension
                 .call_init_extension(&mut store)
                 .await
@@ -170,7 +150,7 @@ impl WasmHost {
         }
     }
 
-    async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<WasiCtx> {
+    async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<wasi::WasiCtx> {
         use cap_std::{ambient_authority, fs::Dir};
 
         let extension_work_dir = self.work_dir.join(manifest.id.as_ref());
@@ -214,13 +194,44 @@ impl WasmHost {
     }
 }
 
-fn parse_extension_version(data: &[u8]) -> Option<SemanticVersion> {
+pub fn parse_wasm_extension_version(
+    extension_id: &str,
+    wasm_bytes: &[u8],
+) -> Result<SemanticVersion> {
+    let mut version = None;
+
+    for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
+        if let wasmparser::Payload::CustomSection(s) =
+            part.context("error parsing wasm extension")?
+        {
+            if s.name() == "zed:api-version" {
+                version = parse_wasm_extension_version_custom_section(s.data());
+                if version.is_none() {
+                    bail!(
+                        "extension {} has invalid zed:api-version section: {:?}",
+                        extension_id,
+                        s.data()
+                    );
+                }
+            }
+        }
+    }
+
+    // The reason we wait until we're done parsing all of the Wasm bytes to return the version
+    // is to work around a panic that can happen inside of Wasmtime when the bytes are invalid.
+    //
+    // By parsing the entirety of the Wasm bytes before we return, we're able to detect this problem
+    // earlier as an `Err` rather than as a panic.
+    version.ok_or_else(|| anyhow!("extension {} has no zed:api-version section", extension_id))
+}
+
+fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {
     if data.len() == 6 {
-        Some(SemanticVersion {
-            major: u16::from_be_bytes([data[0], data[1]]) as _,
-            minor: u16::from_be_bytes([data[2], data[3]]) as _,
-            patch: u16::from_be_bytes([data[4], data[5]]) as _,
-        })
+        Some(SemanticVersion::new(
+            u16::from_be_bytes([data[0], data[1]]) as _,
+            u16::from_be_bytes([data[2], data[3]]) as _,
+            u16::from_be_bytes([data[4], data[5]]) as _,
+        ))
     } else {
         None
     }
@@ -232,7 +243,7 @@ impl WasmExtension {
         T: 'static + Send,
         Fn: 'static
             + Send
-            + for<'a> FnOnce(&'a mut wit::Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, T>,
+            + for<'a> FnOnce(&'a mut Extension, &'a mut Store<WasmState>) -> BoxFuture<'a, T>,
     {
         let (return_tx, return_rx) = oneshot::channel();
         self.tx
@@ -249,279 +260,30 @@ impl WasmExtension {
     }
 }
 
-#[async_trait]
-impl wit::HostWorktree for WasmState {
-    async fn read_text_file(
-        &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
-        path: String,
-    ) -> wasmtime::Result<Result<String, String>> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .read_text_file(path.into())
-            .await
-            .map_err(|error| error.to_string()))
-    }
-
-    async fn shell_env(
-        &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
-    ) -> wasmtime::Result<wit::EnvVars> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate.shell_env().await.into_iter().collect())
-    }
-
-    async fn which(
-        &mut self,
-        delegate: Resource<Arc<dyn LspAdapterDelegate>>,
-        binary_name: String,
-    ) -> wasmtime::Result<Option<String>> {
-        let delegate = self.table.get(&delegate)?;
-        Ok(delegate
-            .which(binary_name.as_ref())
-            .await
-            .map(|path| path.to_string_lossy().to_string()))
-    }
-
-    fn drop(&mut self, _worktree: Resource<wit::Worktree>) -> Result<()> {
-        // we only ever hand out borrows of worktrees
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl wit::ExtensionImports for WasmState {
-    async fn npm_package_latest_version(
-        &mut self,
-        package_name: String,
-    ) -> wasmtime::Result<Result<String, String>> {
-        async fn inner(this: &mut WasmState, package_name: String) -> anyhow::Result<String> {
-            this.host
-                .node_runtime
-                .npm_package_latest_version(&package_name)
-                .await
-        }
-
-        Ok(inner(self, package_name)
-            .await
-            .map_err(|err| err.to_string()))
-    }
-
-    async fn npm_package_installed_version(
-        &mut self,
-        package_name: String,
-    ) -> wasmtime::Result<Result<Option<String>, String>> {
-        async fn inner(
-            this: &mut WasmState,
-            package_name: String,
-        ) -> anyhow::Result<Option<String>> {
-            this.host
-                .node_runtime
-                .npm_package_installed_version(&this.host.work_dir, &package_name)
-                .await
-        }
-
-        Ok(inner(self, package_name)
-            .await
-            .map_err(|err| err.to_string()))
-    }
-
-    async fn npm_install_package(
-        &mut self,
-        package_name: String,
-        version: String,
-    ) -> wasmtime::Result<Result<(), String>> {
-        async fn inner(
-            this: &mut WasmState,
-            package_name: String,
-            version: String,
-        ) -> anyhow::Result<()> {
-            this.host
-                .node_runtime
-                .npm_install_packages(&this.host.work_dir, &[(&package_name, &version)])
-                .await
-        }
-
-        Ok(inner(self, package_name, version)
-            .await
-            .map_err(|err| err.to_string()))
-    }
-
-    async fn latest_github_release(
-        &mut self,
-        repo: String,
-        options: wit::GithubReleaseOptions,
-    ) -> wasmtime::Result<Result<wit::GithubRelease, String>> {
-        async fn inner(
-            this: &mut WasmState,
-            repo: String,
-            options: wit::GithubReleaseOptions,
-        ) -> anyhow::Result<wit::GithubRelease> {
-            let release = util::github::latest_github_release(
-                &repo,
-                options.require_assets,
-                options.pre_release,
-                this.host.http_client.clone(),
-            )
-            .await?;
-            Ok(wit::GithubRelease {
-                version: release.tag_name,
-                assets: release
-                    .assets
-                    .into_iter()
-                    .map(|asset| wit::GithubReleaseAsset {
-                        name: asset.name,
-                        download_url: asset.browser_download_url,
-                    })
-                    .collect(),
-            })
-        }
-
-        Ok(inner(self, repo, options)
-            .await
-            .map_err(|err| err.to_string()))
-    }
-
-    async fn current_platform(&mut self) -> Result<(wit::Os, wit::Architecture)> {
-        Ok((
-            match env::consts::OS {
-                "macos" => wit::Os::Mac,
-                "linux" => wit::Os::Linux,
-                "windows" => wit::Os::Windows,
-                _ => panic!("unsupported os"),
-            },
-            match env::consts::ARCH {
-                "aarch64" => wit::Architecture::Aarch64,
-                "x86" => wit::Architecture::X86,
-                "x86_64" => wit::Architecture::X8664,
-                _ => panic!("unsupported architecture"),
-            },
-        ))
-    }
-
-    async fn set_language_server_installation_status(
-        &mut self,
-        server_name: String,
-        status: wit::LanguageServerInstallationStatus,
-    ) -> wasmtime::Result<()> {
-        let status = match status {
-            wit::LanguageServerInstallationStatus::CheckingForUpdate => {
-                LanguageServerBinaryStatus::CheckingForUpdate
-            }
-            wit::LanguageServerInstallationStatus::Downloading => {
-                LanguageServerBinaryStatus::Downloading
-            }
-            wit::LanguageServerInstallationStatus::Downloaded => {
-                LanguageServerBinaryStatus::Downloaded
-            }
-            wit::LanguageServerInstallationStatus::Cached => LanguageServerBinaryStatus::Cached,
-            wit::LanguageServerInstallationStatus::Failed(error) => {
-                LanguageServerBinaryStatus::Failed { error }
-            }
-        };
-
+impl WasmState {
+    fn on_main_thread<T, Fn>(&self, f: Fn) -> impl 'static + Future<Output = T>
+    where
+        T: 'static + Send,
+        Fn: 'static + Send + for<'a> FnOnce(&'a mut AsyncAppContext) -> LocalBoxFuture<'a, T>,
+    {
+        let (return_tx, return_rx) = oneshot::channel();
         self.host
-            .language_registry
-            .update_lsp_status(language::LanguageServerName(server_name.into()), status);
-        Ok(())
+            .main_thread_message_tx
+            .clone()
+            .unbounded_send(Box::new(move |cx| {
+                async {
+                    let result = f(cx).await;
+                    return_tx.send(result).ok();
+                }
+                .boxed_local()
+            }))
+            .expect("main thread message channel should not be closed yet");
+        async move { return_rx.await.expect("main thread message channel") }
     }
 
-    async fn download_file(
-        &mut self,
-        url: String,
-        path: String,
-        file_type: wit::DownloadedFileType,
-    ) -> wasmtime::Result<Result<(), String>> {
-        let path = PathBuf::from(path);
-
-        async fn inner(
-            this: &mut WasmState,
-            url: String,
-            path: PathBuf,
-            file_type: wit::DownloadedFileType,
-        ) -> anyhow::Result<()> {
-            let extension_work_dir = this.host.work_dir.join(this.manifest.id.as_ref());
-
-            this.host.fs.create_dir(&extension_work_dir).await?;
-
-            let destination_path = this
-                .host
-                .writeable_path_from_extension(&this.manifest.id, &path)?;
-
-            let mut response = this
-                .host
-                .http_client
-                .get(&url, Default::default(), true)
-                .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
-
-            if !response.status().is_success() {
-                Err(anyhow!(
-                    "download failed with status {}",
-                    response.status().to_string()
-                ))?;
-            }
-            let body = BufReader::new(response.body_mut());
-
-            match file_type {
-                wit::DownloadedFileType::Uncompressed => {
-                    futures::pin_mut!(body);
-                    this.host
-                        .fs
-                        .create_file_with(&destination_path, body)
-                        .await?;
-                }
-                wit::DownloadedFileType::Gzip => {
-                    let body = GzipDecoder::new(body);
-                    futures::pin_mut!(body);
-                    this.host
-                        .fs
-                        .create_file_with(&destination_path, body)
-                        .await?;
-                }
-                wit::DownloadedFileType::GzipTar => {
-                    let body = GzipDecoder::new(body);
-                    futures::pin_mut!(body);
-                    this.host
-                        .fs
-                        .extract_tar_file(&destination_path, Archive::new(body))
-                        .await?;
-                }
-                wit::DownloadedFileType::Zip => {
-                    let file_name = destination_path
-                        .file_name()
-                        .ok_or_else(|| anyhow!("invalid download path"))?
-                        .to_string_lossy();
-                    let zip_filename = format!("{file_name}.zip");
-                    let mut zip_path = destination_path.clone();
-                    zip_path.set_file_name(zip_filename);
-
-                    futures::pin_mut!(body);
-                    this.host.fs.create_file_with(&zip_path, body).await?;
-
-                    let unzip_status = std::process::Command::new("unzip")
-                        .current_dir(&extension_work_dir)
-                        .arg(&zip_path)
-                        .output()?
-                        .status;
-                    if !unzip_status.success() {
-                        Err(anyhow!("failed to unzip {} archive", path.display()))?;
-                    }
-                }
-            }
-
-            Ok(())
-        }
-
-        Ok(inner(self, url, path, file_type)
-            .await
-            .map(|_| ())
-            .map_err(|err| err.to_string()))
+    fn work_dir(&self) -> PathBuf {
+        self.host.work_dir.join(self.manifest.id.as_ref())
     }
-}
-
-fn wasi_view(state: &mut WasmState) -> &mut WasmState {
-    state
 }
 
 impl wasi::WasiView for WasmState {

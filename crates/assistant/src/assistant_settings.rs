@@ -10,14 +10,17 @@ use serde::{
     de::{self, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
 };
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum ZedDotDevModel {
-    GptThreePointFiveTurbo,
-    GptFour,
+    Gpt3Point5Turbo,
+    Gpt4,
     #[default]
-    GptFourTurbo,
+    Gpt4Turbo,
+    Claude3Opus,
+    Claude3Sonnet,
+    Claude3Haiku,
     Custom(String),
 }
 
@@ -49,9 +52,9 @@ impl<'de> Deserialize<'de> for ZedDotDevModel {
                 E: de::Error,
             {
                 match value {
-                    "gpt-3.5-turbo" => Ok(ZedDotDevModel::GptThreePointFiveTurbo),
-                    "gpt-4" => Ok(ZedDotDevModel::GptFour),
-                    "gpt-4-turbo-preview" => Ok(ZedDotDevModel::GptFourTurbo),
+                    "gpt-3.5-turbo" => Ok(ZedDotDevModel::Gpt3Point5Turbo),
+                    "gpt-4" => Ok(ZedDotDevModel::Gpt4),
+                    "gpt-4-turbo-preview" => Ok(ZedDotDevModel::Gpt4Turbo),
                     _ => Ok(ZedDotDevModel::Custom(value.to_owned())),
                 }
             }
@@ -94,19 +97,35 @@ impl JsonSchema for ZedDotDevModel {
 impl ZedDotDevModel {
     pub fn id(&self) -> &str {
         match self {
-            Self::GptThreePointFiveTurbo => "gpt-3.5-turbo",
-            Self::GptFour => "gpt-4",
-            Self::GptFourTurbo => "gpt-4-turbo-preview",
+            Self::Gpt3Point5Turbo => "gpt-3.5-turbo",
+            Self::Gpt4 => "gpt-4",
+            Self::Gpt4Turbo => "gpt-4-turbo-preview",
+            Self::Claude3Opus => "claude-3-opus",
+            Self::Claude3Sonnet => "claude-3-sonnet",
+            Self::Claude3Haiku => "claude-3-haiku",
             Self::Custom(id) => id,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::GptThreePointFiveTurbo => "gpt-3.5-turbo",
-            Self::GptFour => "gpt-4",
-            Self::GptFourTurbo => "gpt-4-turbo",
+            Self::Gpt3Point5Turbo => "GPT 3.5 Turbo",
+            Self::Gpt4 => "GPT 4",
+            Self::Gpt4Turbo => "GPT 4 Turbo",
+            Self::Claude3Opus => "Claude 3 Opus",
+            Self::Claude3Sonnet => "Claude 3 Sonnet",
+            Self::Claude3Haiku => "Claude 3 Haiku",
             Self::Custom(id) => id.as_str(),
+        }
+    }
+
+    pub fn max_token_count(&self) -> usize {
+        match self {
+            Self::Gpt3Point5Turbo => 2048,
+            Self::Gpt4 => 4096,
+            Self::Gpt4Turbo => 128000,
+            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 200000,
+            Self::Custom(_) => 4096, // TODO: Make this configurable
         }
     }
 }
@@ -151,6 +170,7 @@ fn open_ai_url() -> String {
 
 #[derive(Default, Debug, Deserialize, Serialize)]
 pub struct AssistantSettings {
+    pub enabled: bool,
     pub button: bool,
     pub dock: AssistantDockPosition,
     pub default_width: Pixels,
@@ -192,42 +212,26 @@ impl AssistantSettingsContent {
             AssistantSettingsContent::Versioned(settings) => match settings {
                 VersionedAssistantSettingsContent::V1(settings) => settings.clone(),
             },
-            AssistantSettingsContent::Legacy(settings) => {
-                if let Some(open_ai_api_url) = settings.openai_api_url.as_ref() {
-                    AssistantSettingsContentV1 {
-                        button: settings.button,
-                        dock: settings.dock,
-                        default_width: settings.default_width,
-                        default_height: settings.default_height,
-                        provider: Some(AssistantProvider::OpenAi {
-                            default_model: settings
-                                .default_open_ai_model
-                                .clone()
-                                .unwrap_or_default(),
-                            api_url: open_ai_api_url.clone(),
-                        }),
-                    }
-                } else if let Some(open_ai_model) = settings.default_open_ai_model.clone() {
-                    AssistantSettingsContentV1 {
-                        button: settings.button,
-                        dock: settings.dock,
-                        default_width: settings.default_width,
-                        default_height: settings.default_height,
-                        provider: Some(AssistantProvider::OpenAi {
+            AssistantSettingsContent::Legacy(settings) => AssistantSettingsContentV1 {
+                enabled: None,
+                button: settings.button,
+                dock: settings.dock,
+                default_width: settings.default_width,
+                default_height: settings.default_height,
+                provider: if let Some(open_ai_api_url) = settings.openai_api_url.as_ref() {
+                    Some(AssistantProvider::OpenAi {
+                        default_model: settings.default_open_ai_model.clone().unwrap_or_default(),
+                        api_url: open_ai_api_url.clone(),
+                    })
+                } else {
+                    settings.default_open_ai_model.clone().map(|open_ai_model| {
+                        AssistantProvider::OpenAi {
                             default_model: open_ai_model,
                             api_url: open_ai_url(),
-                        }),
-                    }
-                } else {
-                    AssistantSettingsContentV1 {
-                        button: settings.button,
-                        dock: settings.dock,
-                        default_width: settings.default_width,
-                        default_height: settings.default_height,
-                        provider: None,
-                    }
-                }
-            }
+                        }
+                    })
+                },
+            },
         }
     }
 
@@ -255,6 +259,7 @@ pub enum VersionedAssistantSettingsContent {
 impl Default for VersionedAssistantSettingsContent {
     fn default() -> Self {
         Self::V1(AssistantSettingsContentV1 {
+            enabled: None,
             button: None,
             dock: None,
             default_width: None,
@@ -266,6 +271,10 @@ impl Default for VersionedAssistantSettingsContent {
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct AssistantSettingsContentV1 {
+    /// Whether the Assistant is enabled.
+    ///
+    /// Default: true
+    enabled: Option<bool>,
     /// Whether to show the assistant panel button in the status bar.
     ///
     /// Default: true
@@ -323,14 +332,14 @@ impl Settings for AssistantSettings {
     type FileContent = AssistantSettingsContent;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
         let mut settings = AssistantSettings::default();
 
-        for value in [default_value].iter().chain(user_values) {
+        for value in sources.defaults_and_customizations() {
             let value = value.upgrade();
+            merge(&mut settings.enabled, value.enabled);
             merge(&mut settings.button, value.button);
             merge(&mut settings.dock, value.dock);
             merge(
@@ -383,7 +392,7 @@ fn merge<T: Copy>(target: &mut T, value: Option<T>) {
 
 #[cfg(test)]
 mod tests {
-    use gpui::AppContext;
+    use gpui::{AppContext, BorrowAppContext};
     use settings::SettingsStore;
 
     use super::*;

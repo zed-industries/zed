@@ -120,7 +120,7 @@ impl NeovimConnection {
         let special = keystroke.modifiers.shift
             || keystroke.modifiers.control
             || keystroke.modifiers.alt
-            || keystroke.modifiers.command
+            || keystroke.modifiers.platform
             || keystroke.key.len() > 1;
         let start = if special { "<" } else { "" };
         let shift = if keystroke.modifiers.shift { "S-" } else { "" };
@@ -130,7 +130,7 @@ impl NeovimConnection {
             ""
         };
         let alt = if keystroke.modifiers.alt { "M-" } else { "" };
-        let cmd = if keystroke.modifiers.command {
+        let cmd = if keystroke.modifiers.platform {
             "D-"
         } else {
             ""

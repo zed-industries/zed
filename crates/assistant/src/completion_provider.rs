@@ -15,7 +15,7 @@ use crate::{
 use anyhow::Result;
 use client::Client;
 use futures::{future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, AppContext, Task, WindowContext};
+use gpui::{AnyView, AppContext, BorrowAppContext, Task, WindowContext};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 

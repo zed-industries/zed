@@ -14,7 +14,7 @@ pub struct TitleBar {
 impl TitleBar {
     #[cfg(not(target_os = "windows"))]
     pub fn height(cx: &mut WindowContext) -> Pixels {
-        (1.75 * cx.rem_size()).max(px(32.))
+        (1.75 * cx.rem_size()).max(px(34.))
     }
 
     #[cfg(target_os = "windows")]
@@ -104,8 +104,9 @@ impl RenderOnce for TitleBar {
                     .w_full()
                     .children(self.children),
             )
-            .when(self.platform_style == PlatformStyle::Windows, |title_bar| {
-                title_bar.child(WindowsWindowControls::new(height))
-            })
+            .when(
+                self.platform_style == PlatformStyle::Windows && !cx.is_fullscreen(),
+                |title_bar| title_bar.child(WindowsWindowControls::new(height)),
+            )
     }
 }

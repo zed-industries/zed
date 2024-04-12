@@ -1,6 +1,6 @@
 # Zed
 
-[![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)
+[![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/ze34actions/workflows/ci.yml)
 
 Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
 
@@ -17,7 +17,7 @@ Support for additional platforms is on our [roadmap](https://zed.dev/roadmap):
 For macOS users, you can also install Zed using [Homebrew](https://brew.sh/):
 
 ```sh
-brew install zed
+brew install --cask zed
 ```
 
 Alternatively, to install the Preview release:

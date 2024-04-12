@@ -13,7 +13,7 @@ pub enum IndicatorStyle {
 pub struct Indicator {
     position: Position,
     style: IndicatorStyle,
-    color: Color,
+    pub color: Color,
 }
 
 impl Indicator {

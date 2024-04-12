@@ -634,6 +634,25 @@ async fn test_folds_panic(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes(["g", "g"]).await;
     cx.simulate_shared_keystrokes(["5", "d", "j"]).await;
     cx.assert_shared_state(indoc! { "ˇ"}).await;
+
+    cx.set_shared_state(indoc! { "
+            fn boop() {
+              ˇbarp()
+              bazp()
+            }
+        "})
+        .await;
+    cx.simulate_shared_keystrokes(["shift-v", "j", "j", "z", "f"])
+        .await;
+    cx.simulate_shared_keystrokes(["escape"]).await;
+    cx.simulate_shared_keystrokes(["shift-g", "shift-v"]).await;
+    cx.assert_shared_state(indoc! { "
+            fn boop() {
+              barp()
+              bazp()
+            }
+            ˇ"})
+        .await;
 }
 
 #[gpui::test]

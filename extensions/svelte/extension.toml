@@ -1,0 +1,15 @@
+id = "svelte"
+name = "Svelte"
+description = "Svelte support"
+version = "0.0.1"
+schema_version = 1
+authors = []
+repository = "https://github.com/zed-extensions/svelte"
+
+[language_servers.svelte-language-server]
+name = "Svelte Language Server"
+language = "Svelte"
+
+[grammars.svelte]
+repository = "https://github.com/Himujjal/tree-sitter-svelte"
+commit = "ea528fc9985aed8d93c9f438c185644a33d011af"

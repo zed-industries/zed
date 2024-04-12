@@ -48,7 +48,6 @@ where
         interactivity: Interactivity {
             element_id: Some(id),
             base_style: Box::new(base_style),
-            occlude_mouse: true,
 
             #[cfg(debug_assertions)]
             location: Some(*core::panic::Location::caller()),

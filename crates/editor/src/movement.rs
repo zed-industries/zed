@@ -6,13 +6,14 @@ use crate::{char_kind, scroll::ScrollAnchor, CharKind, EditorStyle, ToOffset, To
 use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::MultiBufferSnapshot;
+use serde::Deserialize;
 
 use std::{ops::Range, sync::Arc};
 
 /// Defines search strategy for items in `movement` module.
 /// `FindRange::SingeLine` only looks for a match on a single line at a time, whereas
 /// `FindRange::MultiLine` keeps going until the end of a string.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 pub enum FindRange {
     SingleLine,
     MultiLine,
@@ -569,7 +570,6 @@ mod tests {
     use language::Capability;
     use project::Project;
     use settings::SettingsStore;
-    use text::BufferId;
     use util::post_inc;
 
     #[gpui::test]
@@ -869,13 +869,7 @@ mod tests {
 
             let font = font("Helvetica");
 
-            let buffer = cx.new_model(|cx| {
-                Buffer::new(
-                    0,
-                    BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                    "abc\ndefg\nhijkl\nmn",
-                )
-            });
+            let buffer = cx.new_model(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
             let multibuffer = cx.new_model(|cx| {
                 let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
                 multibuffer.push_excerpts(

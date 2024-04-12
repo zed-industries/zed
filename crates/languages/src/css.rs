@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{async_maybe, ResultExt};
+use util::{maybe, ResultExt};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-css-language-server";
@@ -105,7 +105,7 @@ async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &dyn NodeRuntime,
 ) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last_version_dir = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
@@ -136,7 +136,6 @@ async fn get_cached_server_binary(
 #[cfg(test)]
 mod tests {
     use gpui::{Context, TestAppContext};
-    use text::BufferId;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -168,10 +167,8 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.new_model(|cx| {
-            language::Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
-                .with_language(language, cx)
-        });
+        let buffer =
+            cx.new_model(|cx| language::Buffer::local(text, cx).with_language(language, cx));
         let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline

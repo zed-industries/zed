@@ -94,12 +94,6 @@ pub struct SelectDownByLines {
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct DuplicateLine {
-    #[serde(default)]
-    pub move_upwards: bool,
-}
-
 impl_actions!(
     editor,
     [
@@ -119,7 +113,6 @@ impl_actions!(
         MoveDownByLines,
         SelectUpByLines,
         SelectDownByLines,
-        DuplicateLine
     ]
 );
 
@@ -127,6 +120,7 @@ gpui::actions!(
     editor,
     [
         AcceptPartialCopilotSuggestion,
+        AcceptPartialInlineCompletion,
         AddSelectionAbove,
         AddSelectionBelow,
         Backspace,
@@ -159,6 +153,8 @@ gpui::actions!(
         DeleteToPreviousSubwordStart,
         DeleteToPreviousWordStart,
         DisplayCursorNames,
+        DuplicateLineUp,
+        DuplicateLineDown,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
@@ -168,13 +164,12 @@ gpui::actions!(
         GoToDefinitionSplit,
         GoToDiagnostic,
         GoToHunk,
+        GoToImplementation,
+        GoToImplementationSplit,
         GoToPrevDiagnostic,
         GoToPrevHunk,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
-        GoToImplementation,
-        GoToImplementationSplit,
-        OpenUrl,
         HalfPageDown,
         HalfPageUp,
         Hover,
@@ -202,21 +197,24 @@ gpui::actions!(
         Newline,
         NewlineAbove,
         NewlineBelow,
+        NextInlineCompletion,
         NextScreen,
         OpenExcerpts,
         OpenExcerptsSplit,
         OpenPermalinkToLine,
+        OpenUrl,
         Outdent,
         PageDown,
         PageUp,
         Paste,
-        RevertSelectedHunks,
+        PreviousInlineCompletion,
         Redo,
         RedoSelection,
         Rename,
         RestartLanguageServer,
         RevealInFinder,
         ReverseLines,
+        RevertSelectedHunks,
         ScrollCursorBottom,
         ScrollCursorCenter,
         ScrollCursorTop,
@@ -239,15 +237,17 @@ gpui::actions!(
         SelectUp,
         ShowCharacterPalette,
         ShowCompletions,
+        ShowInlineCompletion,
         ShuffleLines,
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
         Tab,
         TabPrev,
+        ToggleGitBlame,
         ToggleInlayHints,
-        ToggleSoftWrap,
         ToggleLineNumbers,
+        ToggleSoftWrap,
         Transpose,
         Undo,
         UndoSelection,

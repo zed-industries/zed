@@ -2,19 +2,19 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
+use gpui::AppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::json;
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 use smol::{fs, fs::File};
 use std::{any::Any, env::consts, ffi::OsString, path::PathBuf, sync::Arc};
 use util::{
-    async_maybe,
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
-    ResultExt,
+    maybe, ResultExt,
 };
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
@@ -32,15 +32,8 @@ impl Settings for DenoSettings {
 
     type FileContent = DenoSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut gpui::AppContext,
-    ) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        Self::load_via_json_merge(default_value, user_values)
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
     }
 }
 
@@ -207,7 +200,7 @@ impl LspAdapter for DenoLspAdapter {
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    async_maybe!({
+    maybe!(async {
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {

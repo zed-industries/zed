@@ -1,20 +1,19 @@
-pub mod file_associations;
 mod project_panel_settings;
 use client::{ErrorCode, ErrorExt};
 use settings::Settings;
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{actions::Cancel, items::entry_git_aware_label_color, scroll::Autoscroll, Editor};
-use file_associations::FileAssociations;
+use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
 use gpui::{
-    actions, div, impl_actions, overlay, px, uniform_list, Action, AppContext, AssetSource,
-    AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
-    Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
-    View, ViewContext, VisualContext as _, WeakView, WindowContext,
+    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
+    AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
+    FocusableView, InteractiveElement, KeyContext, Model, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
@@ -131,6 +130,7 @@ actions!(
         Paste,
         Rename,
         Open,
+        OpenPermanent,
         ToggleFocus,
         NewSearchInDirectory,
     ]
@@ -142,7 +142,7 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
-    file_associations::init(assets, cx);
+    file_icons::init(assets, cx);
 
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, cx| {
@@ -157,6 +157,7 @@ pub enum Event {
     OpenedEntry {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
+        allow_preview: bool,
     },
     SplitEntry {
         entry_id: ProjectEntryId,
@@ -229,7 +230,7 @@ impl ProjectPanel {
             })
             .detach();
 
-            cx.observe_global::<FileAssociations>(|_, cx| {
+            cx.observe_global::<FileIcons>(|_, cx| {
                 cx.notify();
             })
             .detach();
@@ -263,6 +264,7 @@ impl ProjectPanel {
                 &Event::OpenedEntry {
                     entry_id,
                     focus_opened_item,
+                    allow_preview,
                 } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
                         if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
@@ -271,13 +273,14 @@ impl ProjectPanel {
                             let entry_id = entry.id;
 
                             workspace
-                                .open_path(
+                                .open_path_preview(
                                     ProjectPath {
                                         worktree_id,
                                         path: file_path.clone(),
                                     },
                                     None,
                                     focus_opened_item,
+                                    allow_preview,
                                     cx,
                                 )
                                 .detach_and_prompt_err("Failed to open file", cx, move |e, _| {
@@ -416,48 +419,54 @@ impl ProjectPanel {
                             })
                     },
                     |menu| {
-                        menu.when(is_local, |menu| {
-                            menu.action(
-                                "Add Folder to Project",
-                                Box::new(workspace::AddFolderToProject),
-                            )
-                            .when(is_root, |menu| {
-                                menu.entry(
-                                    "Remove from Project",
-                                    None,
-                                    cx.handler_for(&this, move |this, cx| {
-                                        this.project.update(cx, |project, cx| {
-                                            project.remove_worktree(worktree_id, cx)
-                                        });
-                                    }),
-                                )
-                                .action("Collapse All", Box::new(CollapseAllEntries))
+                        menu.action("New File", Box::new(NewFile))
+                            .action("New Folder", Box::new(NewDirectory))
+                            .separator()
+                            .action("Reveal in Finder", Box::new(RevealInFinder))
+                            .when(is_dir, |menu| {
+                                menu.action("Open in Terminal…", Box::new(OpenInTerminal))
                             })
-                        })
-                        .action("New File", Box::new(NewFile))
-                        .action("New Folder", Box::new(NewDirectory))
-                        .separator()
-                        .action("Cut", Box::new(Cut))
-                        .action("Copy", Box::new(Copy))
-                        .when_some(self.clipboard_entry, |menu, entry| {
-                            menu.when(entry.worktree_id() == worktree_id, |menu| {
-                                menu.action("Paste", Box::new(Paste))
+                            .when(is_dir, |menu| {
+                                menu.separator()
+                                    .action("Find in Folder…", Box::new(NewSearchInDirectory))
                             })
-                        })
-                        .separator()
-                        .action("Copy Path", Box::new(CopyPath))
-                        .action("Copy Relative Path", Box::new(CopyRelativePath))
-                        .separator()
-                        .action("Reveal in Finder", Box::new(RevealInFinder))
-                        .when(is_dir, |menu| {
-                            menu.action("Open in Terminal", Box::new(OpenInTerminal))
-                                .action("Search Inside", Box::new(NewSearchInDirectory))
-                        })
-                        .separator()
-                        .action("Rename", Box::new(Rename))
-                        .when(!is_root, |menu| {
-                            menu.action("Delete", Box::new(Delete { skip_prompt: false }))
-                        })
+                            .separator()
+                            .action("Cut", Box::new(Cut))
+                            .action("Copy", Box::new(Copy))
+                            // TODO: Paste should always be visible, but disabled when clipboard is empty
+                            .when_some(self.clipboard_entry, |menu, entry| {
+                                menu.when(entry.worktree_id() == worktree_id, |menu| {
+                                    menu.action("Paste", Box::new(Paste))
+                                })
+                            })
+                            .separator()
+                            .action("Copy Path", Box::new(CopyPath))
+                            .action("Copy Relative Path", Box::new(CopyRelativePath))
+                            .separator()
+                            .action("Rename", Box::new(Rename))
+                            .when(!is_root, |menu| {
+                                menu.action("Delete", Box::new(Delete { skip_prompt: false }))
+                            })
+                            .when(is_local & is_root, |menu| {
+                                menu.separator()
+                                    .action(
+                                        "Add Folder to Project…",
+                                        Box::new(workspace::AddFolderToProject),
+                                    )
+                                    .entry(
+                                        "Remove from Project",
+                                        None,
+                                        cx.handler_for(&this, move |this, cx| {
+                                            this.project.update(cx, |project, cx| {
+                                                project.remove_worktree(worktree_id, cx)
+                                            });
+                                        }),
+                                    )
+                            })
+                            .when(is_local & is_root, |menu| {
+                                menu.separator()
+                                    .action("Collapse All", Box::new(CollapseAllEntries))
+                            })
                     },
                 )
             });
@@ -593,9 +602,22 @@ impl ProjectPanel {
     }
 
     fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
+        self.open_internal(true, false, cx);
+    }
+
+    fn open_permanent(&mut self, _: &OpenPermanent, cx: &mut ViewContext<Self>) {
+        self.open_internal(false, true, cx);
+    }
+
+    fn open_internal(
+        &mut self,
+        allow_preview: bool,
+        focus_opened_item: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
-                self.open_entry(entry.id, true, cx);
+                self.open_entry(entry.id, focus_opened_item, allow_preview, cx);
             } else {
                 self.toggle_expanded(entry.id, cx);
             }
@@ -667,7 +689,7 @@ impl ProjectPanel {
                     }
                     this.update_visible_entries(None, cx);
                     if is_new_entry && !is_dir {
-                        this.open_entry(new_entry.id, true, cx);
+                        this.open_entry(new_entry.id, true, false, cx);
                     }
                     cx.notify();
                 })?;
@@ -687,11 +709,13 @@ impl ProjectPanel {
         &mut self,
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
+        allow_preview: bool,
         cx: &mut ViewContext<Self>,
     ) {
         cx.emit(Event::OpenedEntry {
             entry_id,
             focus_opened_item,
+            allow_preview,
         });
     }
 
@@ -1329,16 +1353,16 @@ impl ProjectPanel {
                     let icon = match entry.kind {
                         EntryKind::File(_) => {
                             if show_file_icons {
-                                FileAssociations::get_icon(&entry.path, cx)
+                                FileIcons::get_icon(&entry.path, cx)
                             } else {
                                 None
                             }
                         }
                         _ => {
                             if show_folder_icons {
-                                FileAssociations::get_folder_icon(is_expanded, cx)
+                                FileIcons::get_folder_icon(is_expanded, cx)
                             } else {
-                                FileAssociations::get_chevron_icon(is_expanded, cx)
+                                FileIcons::get_chevron_icon(is_expanded, cx)
                             }
                         }
                     };
@@ -1435,32 +1459,40 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_selected)
                     .child(if let Some(icon) = &icon {
-                        div().child(Icon::from_path(icon.to_string()).color(filename_text_color))
+                        h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
-                        div().size(IconSize::default().rems()).invisible()
+                        h_flex().size(IconSize::default().rems()).invisible()
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            div()
-                                .h_6()
-                                .child(Label::new(file_name).color(filename_text_color))
+                            h_flex().h_6().child(
+                                Label::new(file_name)
+                                    .single_line()
+                                    .color(filename_text_color),
+                            )
                         }
                         .ml_1(),
                     )
                     .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
-                        if event.down.button == MouseButton::Right {
+                        if event.down.button == MouseButton::Right || event.down.first_mouse {
                             return;
                         }
                         if !show_editor {
                             if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
                             } else {
-                                if event.down.modifiers.command {
+                                if event.down.modifiers.secondary() {
                                     this.split_entry(entry_id, cx);
                                 } else {
-                                    this.open_entry(entry_id, event.up.click_count > 1, cx);
+                                    let click_count = event.up.click_count;
+                                    this.open_entry(
+                                        entry_id,
+                                        click_count > 1,
+                                        click_count == 1,
+                                        cx,
+                                    );
                                 }
                             }
                         }
@@ -1534,6 +1566,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
                 .on_action(cx.listener(Self::open))
+                .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
@@ -1585,10 +1618,13 @@ impl Render for ProjectPanel {
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
-                    overlay()
-                        .position(*position)
-                        .anchor(gpui::AnchorCorner::TopLeft)
-                        .child(menu.clone())
+                    deferred(
+                        anchored()
+                            .position(*position)
+                            .anchor(gpui::AnchorCorner::TopLeft)
+                            .child(menu.clone()),
+                    )
+                    .with_priority(1)
                 }))
         } else {
             v_flex()

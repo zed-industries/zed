@@ -36,6 +36,7 @@ struct TestDispatcherState {
     is_main_thread: bool,
     next_id: TestDispatcherId,
     allow_parking: bool,
+    waiting_hint: Option<String>,
     waiting_backtrace: Option<Backtrace>,
     deprioritized_task_labels: HashSet<TaskLabel>,
     block_on_ticks: RangeInclusive<usize>,
@@ -54,6 +55,7 @@ impl TestDispatcher {
             is_main_thread: true,
             next_id: TestDispatcherId(1),
             allow_parking: false,
+            waiting_hint: None,
             waiting_backtrace: None,
             deprioritized_task_labels: Default::default(),
             block_on_ticks: 0..=1000,
@@ -130,6 +132,14 @@ impl TestDispatcher {
 
     pub fn forbid_parking(&self) {
         self.state.lock().allow_parking = false
+    }
+
+    pub fn set_waiting_hint(&self, msg: Option<String>) {
+        self.state.lock().waiting_hint = msg
+    }
+
+    pub fn waiting_hint(&self) -> Option<String> {
+        self.state.lock().waiting_hint.clone()
     }
 
     pub fn start_waiting(&self) {

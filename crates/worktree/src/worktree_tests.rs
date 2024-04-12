@@ -7,7 +7,7 @@ use client::Client;
 use clock::FakeSystemClock;
 use fs::{repository::GitFileStatus, FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
-use gpui::{ModelContext, Task, TestAppContext};
+use gpui::{BorrowAppContext, ModelContext, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -21,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use text::BufferId;
 use util::{http::FakeHttpClient, test::temp_tree, ResultExt};
 
 #[gpui::test]
@@ -459,7 +458,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     const OLD_NAME: &str = "aaa.rs";
     const NEW_NAME: &str = "AAA.rs";
 
-    let fs = Arc::new(RealFs);
+    let fs = Arc::new(RealFs::default());
     let temp_root = temp_tree(json!({
         OLD_NAME: "",
     }));
@@ -577,11 +576,9 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let buffer = tree
         .update(cx, |tree, cx| {
-            tree.as_local_mut().unwrap().load_buffer(
-                BufferId::new(1).unwrap(),
-                "one/node_modules/b/b1.js".as_ref(),
-                cx,
-            )
+            tree.as_local_mut()
+                .unwrap()
+                .load_buffer("one/node_modules/b/b1.js".as_ref(), cx)
         })
         .await
         .unwrap();
@@ -621,11 +618,9 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let buffer = tree
         .update(cx, |tree, cx| {
-            tree.as_local_mut().unwrap().load_buffer(
-                BufferId::new(1).unwrap(),
-                "one/node_modules/a/a2.js".as_ref(),
-                cx,
-            )
+            tree.as_local_mut()
+                .unwrap()
+                .load_buffer("one/node_modules/a/a2.js".as_ref(), cx)
         })
         .await
         .unwrap();
@@ -969,7 +964,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         build_client(cx),
         dir.path(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1049,7 +1044,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         build_client(cx),
         dir.path(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1153,7 +1148,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
         build_client(cx),
         dir.path(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1263,7 +1258,7 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
         build_client(cx),
         dot_git_worktree_dir.clone(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1404,7 +1399,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         )
     });
 
-    let fs_real = Arc::new(RealFs);
+    let fs_real = Arc::new(RealFs::default());
     let temp_root = temp_tree(json!({
         "a": {}
     }));
@@ -2008,7 +2003,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         build_client(cx),
         root_path,
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -2087,7 +2082,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
         build_client(cx),
         root.path(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -2228,7 +2223,7 @@ async fn test_git_status(cx: &mut TestAppContext) {
         build_client(cx),
         root.path(),
         true,
-        Arc::new(RealFs),
+        Arc::new(RealFs::default()),
         Default::default(),
         &mut cx.to_async(),
     )

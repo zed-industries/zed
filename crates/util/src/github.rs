@@ -76,78 +76,33 @@ pub async fn latest_github_release(
         .ok_or(anyhow!("Failed to find a release"))
 }
 
-pub async fn github_release_with_tag(
-    repo_name_with_owner: &str,
-    tag: &str,
-    http: Arc<dyn HttpClient>,
-) -> Result<GithubRelease, anyhow::Error> {
-    let url = build_tagged_release_url(repo_name_with_owner, tag)?;
-    let mut response = http
-        .get(&url, Default::default(), true)
-        .await
-        .with_context(|| format!("error fetching release {} of {}", tag, repo_name_with_owner))?;
-
-    let mut body = Vec::new();
-    response
-        .body_mut()
-        .read_to_end(&mut body)
-        .await
-        .with_context(|| {
-            format!(
-                "error reading response body for release {} of {}",
-                tag, repo_name_with_owner
-            )
-        })?;
-
-    if response.status().is_client_error() {
-        let text = String::from_utf8_lossy(body.as_slice());
-        bail!(
-            "status error {}, response: {text:?}",
-            response.status().as_u16()
-        );
-    }
-
-    match serde_json::from_slice::<GithubRelease>(body.as_slice()) {
-        Ok(release) => Ok(release),
-
-        Err(err) => {
-            log::error!("Error deserializing: {:?}", err);
-            log::error!(
-                "GitHub API response text: {:?}",
-                String::from_utf8_lossy(body.as_slice())
-            );
-            Err(anyhow!(
-                "error deserializing release {} of {}",
-                tag,
-                repo_name_with_owner
-            ))
-        }
-    }
-}
-
-fn build_tagged_release_url(repo_name_with_owner: &str, tag: &str) -> Result<String> {
+pub fn build_tarball_url(repo_name_with_owner: &str, tag: &str) -> Result<String> {
     let mut url = Url::parse(&format!(
-        "https://api.github.com/repos/{repo_name_with_owner}/releases/tags"
+        "https://github.com/{repo_name_with_owner}/archive/refs/tags",
     ))?;
     // We're pushing this here, because tags may contain `/` and other characters
     // that need to be escaped.
+    let tarball_filename = format!("{}.tar.gz", tag);
     url.path_segments_mut()
         .map_err(|_| anyhow!("cannot modify url path segments"))?
-        .push(tag);
+        .push(&tarball_filename);
     Ok(url.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::build_tagged_release_url;
+    use crate::github::build_tarball_url;
 
     #[test]
-    fn test_build_tagged_release_url() {
-        let tag = "release/2.2.20-Insider";
+    fn test_build_tarball_url() {
+        let tag = "release/2.3.5";
         let repo_name_with_owner = "microsoft/vscode-eslint";
 
-        let have = build_tagged_release_url(repo_name_with_owner, tag).unwrap();
+        let have = build_tarball_url(repo_name_with_owner, tag).unwrap();
 
-        assert_eq!(have, "https://api.github.com/repos/microsoft/vscode-eslint/releases/tags/release%2F2.2.20-Insider");
+        assert_eq!(
+            have,
+            "https://github.com/microsoft/vscode-eslint/archive/refs/tags/release%2F2.3.5.tar.gz"
+        );
     }
 }

@@ -14,6 +14,7 @@ pub mod language_settings;
 mod outline;
 pub mod proto;
 mod syntax_map;
+mod task_context;
 
 #[cfg(test)]
 mod buffer_tests;
@@ -37,6 +38,7 @@ use schemars::{
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use smol::future::FutureExt as _;
+use std::num::NonZeroU32;
 use std::{
     any::Any,
     cell::RefCell,
@@ -54,6 +56,7 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
+pub use task_context::{ContextProvider, ContextProviderWithTasks, SymbolContextProvider};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, WasmStore};
 use util::http::HttpClient;
@@ -70,6 +73,8 @@ pub use outline::{Outline, OutlineItem};
 pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::LineEnding;
 pub use tree_sitter::{Parser, Tree};
+
+use crate::language_settings::SoftWrap;
 
 /// Initializes the `language` crate.
 ///
@@ -97,6 +102,7 @@ lazy_static! {
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
         LanguageConfig {
             name: "Plain Text".into(),
+            soft_wrap: Some(SoftWrap::PreferredLineLength),
             ..Default::default()
         },
         None,
@@ -120,46 +126,6 @@ pub struct Location {
     pub range: Range<Anchor>,
 }
 
-pub struct LanguageContext {
-    pub package: Option<String>,
-    pub symbol: Option<String>,
-}
-
-pub trait LanguageContextProvider: Send + Sync {
-    fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<LanguageContext>;
-}
-
-/// A context provider that fills out LanguageContext without inspecting the contents.
-pub struct DefaultContextProvider;
-
-impl LanguageContextProvider for DefaultContextProvider {
-    fn build_context(
-        &self,
-        location: Location,
-        cx: &mut AppContext,
-    ) -> gpui::Result<LanguageContext> {
-        let symbols = location
-            .buffer
-            .read(cx)
-            .snapshot()
-            .symbols_containing(location.range.start, None);
-        let symbol = symbols.and_then(|symbols| {
-            symbols.last().map(|symbol| {
-                let range = symbol
-                    .name_ranges
-                    .last()
-                    .cloned()
-                    .unwrap_or(0..symbol.text.len());
-                symbol.text[range].to_string()
-            })
-        });
-        Ok(LanguageContext {
-            package: None,
-            symbol,
-        })
-    }
-}
-
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
 /// once at startup, and caches the results.
@@ -170,11 +136,15 @@ pub struct CachedLspAdapter {
     pub language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
+    /// Indicates whether this language server is the primary language server
+    /// for a given language. Currently, most LSP-backed features only work
+    /// with one language server, so one server needs to be primary.
+    pub is_primary: bool,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
 }
 
 impl CachedLspAdapter {
-    pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
+    pub fn new(adapter: Arc<dyn LspAdapter>, is_primary: bool) -> Arc<Self> {
         let name = adapter.name();
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
@@ -186,6 +156,7 @@ impl CachedLspAdapter {
             disk_based_diagnostics_progress_token,
             language_ids,
             adapter,
+            is_primary,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
         })
@@ -228,35 +199,34 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
-        self.adapter.workspace_configuration(workspace_root, cx)
-    }
-
     pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         self.adapter.process_diagnostics(params)
     }
 
-    pub async fn process_completion(&self, completion_item: &mut lsp::CompletionItem) {
-        self.adapter.process_completion(completion_item).await
+    pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
+        self.adapter.process_completions(completion_items).await
     }
 
-    pub async fn label_for_completion(
+    pub async fn labels_for_completions(
         &self,
-        completion_item: &lsp::CompletionItem,
+        completion_items: &[lsp::CompletionItem],
         language: &Arc<Language>,
-    ) -> Option<CodeLabel> {
+    ) -> Result<Vec<Option<CodeLabel>>> {
         self.adapter
-            .label_for_completion(completion_item, language)
+            .clone()
+            .labels_for_completions(completion_items, language)
             .await
     }
 
-    pub async fn label_for_symbol(
+    pub async fn labels_for_symbols(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbols: &[(String, lsp::SymbolKind)],
         language: &Arc<Language>,
-    ) -> Option<CodeLabel> {
-        self.adapter.label_for_symbol(name, kind, language).await
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        self.adapter
+            .clone()
+            .labels_for_symbols(symbols, language)
+            .await
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -271,6 +241,8 @@ impl CachedLspAdapter {
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut AppContext);
     fn http_client(&self) -> Arc<dyn HttpClient>;
+    fn worktree_id(&self) -> u64;
+    fn worktree_root_path(&self) -> &Path;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
 
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
@@ -329,7 +301,6 @@ pub trait LspAdapter: 'static + Send + Sync {
                     .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
                     .await
                 {
-                    delegate.update_status(self.name(), LanguageServerBinaryStatus::Cached);
                     log::info!(
                         "failed to fetch newest version of language server {:?}. falling back to using {:?}",
                         self.name(),
@@ -414,10 +385,24 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
-    /// A callback called for each [`lsp::CompletionItem`] obtained from LSP server.
-    /// Some LspAdapter implementations might want to modify the obtained item to
-    /// change how it's displayed.
-    async fn process_completion(&self, _: &mut lsp::CompletionItem) {}
+    /// Post-processes completions provided by the language server.
+    async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
+
+    async fn labels_for_completions(
+        self: Arc<Self>,
+        completions: &[lsp::CompletionItem],
+        language: &Arc<Language>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        let mut labels = Vec::new();
+        for (ix, completion) in completions.into_iter().enumerate() {
+            let label = self.label_for_completion(completion, language).await;
+            if let Some(label) = label {
+                labels.resize(ix + 1, None);
+                *labels.last_mut().unwrap() = Some(label);
+            }
+        }
+        Ok(labels)
+    }
 
     async fn label_for_completion(
         &self,
@@ -425,6 +410,22 @@ pub trait LspAdapter: 'static + Send + Sync {
         _: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
+    }
+
+    async fn labels_for_symbols(
+        self: Arc<Self>,
+        symbols: &[(String, lsp::SymbolKind)],
+        language: &Arc<Language>,
+    ) -> Result<Vec<Option<CodeLabel>>> {
+        let mut labels = Vec::new();
+        for (ix, (name, kind)) in symbols.into_iter().enumerate() {
+            let label = self.label_for_symbol(name, *kind, language).await;
+            if let Some(label) = label {
+                labels.resize(ix + 1, None);
+                *labels.last_mut().unwrap() = Some(label);
+            }
+        }
+        Ok(labels)
     }
 
     async fn label_for_symbol(
@@ -444,8 +445,12 @@ pub trait LspAdapter: 'static + Send + Sync {
         Ok(None)
     }
 
-    fn workspace_configuration(&self, _workspace_root: &Path, _cx: &mut AppContext) -> Value {
-        serde_json::json!({})
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        Ok(serde_json::json!({}))
     }
 
     /// Returns a list of code actions supported by a given LspAdapter
@@ -500,7 +505,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
         .await;
 
-    delegate.update_status(name.clone(), LanguageServerBinaryStatus::Downloaded);
+    delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
     binary
 }
 
@@ -518,6 +523,8 @@ pub struct CodeLabel {
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: Arc<str>,
+    /// The name of this language for a Markdown code fence block
+    pub code_fence_block_name: Option<Arc<str>>,
     // The name of the grammar in a WASM bundle (experimental).
     pub grammar: Option<Arc<str>>,
     /// The criteria for matching this language to a given file.
@@ -573,6 +580,17 @@ pub struct LanguageConfig {
     /// The names of any Prettier plugins that should be used for this language.
     #[serde(default)]
     pub prettier_plugins: Vec<Arc<str>>,
+
+    /// Whether to indent lines using tab characters, as opposed to multiple
+    /// spaces.
+    #[serde(default)]
+    pub hard_tabs: Option<bool>,
+    /// How many columns a tab should occupy.
+    #[serde(default)]
+    pub tab_size: Option<NonZeroU32>,
+    /// How to soft-wrap long lines of text.
+    #[serde(default)]
+    pub soft_wrap: Option<SoftWrap>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -641,6 +659,7 @@ impl Default for LanguageConfig {
     fn default() -> Self {
         Self {
             name: "".into(),
+            code_fence_block_name: None,
             grammar: None,
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
@@ -656,6 +675,9 @@ impl Default for LanguageConfig {
             prettier_parser_name: None,
             prettier_plugins: Default::default(),
             collapsed_placeholder: Default::default(),
+            hard_tabs: Default::default(),
+            tab_size: Default::default(),
+            soft_wrap: Default::default(),
         }
     }
 }
@@ -777,7 +799,7 @@ pub struct Language {
     pub(crate) id: LanguageId,
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) context_provider: Option<Arc<dyn LanguageContextProvider>>,
+    pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -892,10 +914,7 @@ impl Language {
         }
     }
 
-    pub fn with_context_provider(
-        mut self,
-        provider: Option<Arc<dyn LanguageContextProvider>>,
-    ) -> Self {
+    pub fn with_context_provider(mut self, provider: Option<Arc<dyn ContextProvider>>) -> Self {
         self.context_provider = provider;
         self
     }
@@ -1220,7 +1239,14 @@ impl Language {
         self.config.name.clone()
     }
 
-    pub fn context_provider(&self) -> Option<Arc<dyn LanguageContextProvider>> {
+    pub fn code_fence_block_name(&self) -> Arc<str> {
+        self.config
+            .code_fence_block_name
+            .clone()
+            .unwrap_or_else(|| self.config.name.to_lowercase().into())
+    }
+
+    pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
         self.context_provider.clone()
     }
 

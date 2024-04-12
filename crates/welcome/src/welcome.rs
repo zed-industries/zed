@@ -15,7 +15,7 @@ use ui::{prelude::*, CheckboxWithLabel};
 use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
-    item::{Item, ItemEvent},
+    item::{Item, ItemEvent, TabContentParams},
     open_new, AppState, Welcome, Workspace, WorkspaceId,
 };
 
@@ -284,9 +284,9 @@ impl FocusableView for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
         Label::new("Welcome to Zed!")
-            .color(if selected {
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted

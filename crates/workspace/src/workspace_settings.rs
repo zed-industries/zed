@@ -1,6 +1,8 @@
+use anyhow::Result;
+use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
@@ -8,6 +10,17 @@ pub struct WorkspaceSettings {
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
+    pub restore_on_startup: RestoreOnStartupBehaviour,
+}
+
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RestoreOnStartupBehaviour {
+    /// Always start with an empty editor
+    None,
+    /// Restore the workspace that was closed last.
+    #[default]
+    LastWorkspace,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -30,6 +43,23 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: off
     pub autosave: Option<AutosaveSetting>,
+    /// Controls previous session restoration in freshly launched Zed instance.
+    /// Values: none, last_workspace
+    /// Default: last_workspace
+    pub restore_on_startup: Option<RestoreOnStartupBehaviour>,
+}
+
+#[derive(Deserialize)]
+pub struct TabBarSettings {
+    pub show_nav_history_buttons: bool,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct TabBarSettingsContent {
+    /// Whether or not to show the navigation history buttons in the tab bar.
+    ///
+    /// Default: true
+    pub show_nav_history_buttons: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -50,11 +80,17 @@ impl Settings for WorkspaceSettings {
 
     type FileContent = WorkspaceSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut gpui::AppContext,
-    ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
+    }
+}
+
+impl Settings for TabBarSettings {
+    const KEY: Option<&'static str> = Some("tab_bar");
+
+    type FileContent = TabBarSettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
     }
 }

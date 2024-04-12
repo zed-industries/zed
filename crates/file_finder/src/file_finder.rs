@@ -12,6 +12,7 @@ use gpui::{
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
+use settings::Settings;
 use std::{
     cmp,
     path::{Path, PathBuf},
@@ -23,9 +24,9 @@ use std::{
 use text::Point;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::{paths::PathLikeWithPosition, post_inc, ResultExt};
-use workspace::{ModalView, Workspace};
+use workspace::{item::PreviewTabsSettings, ModalView, Workspace};
 
-actions!(file_finder, [Toggle]);
+actions!(file_finder, [Toggle, SelectPrev]);
 
 impl ModalView for FileFinder {}
 
@@ -47,9 +48,10 @@ impl FileFinder {
             };
 
             file_finder.update(cx, |file_finder, cx| {
-                file_finder
-                    .picker
-                    .update(cx, |picker, cx| picker.cycle_selection(cx))
+                file_finder.init_modifiers = Some(cx.modifiers());
+                file_finder.picker.update(cx, |picker, cx| {
+                    picker.cycle_selection(cx);
+                });
             });
         });
     }
@@ -105,7 +107,7 @@ impl FileFinder {
         event: &ModifiersChangedEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(init_modifiers) = self.init_modifiers else {
+        let Some(init_modifiers) = self.init_modifiers.take() else {
             return;
         };
         if self.picker.read(cx).delegate.has_changed_selected_index {
@@ -114,6 +116,11 @@ impl FileFinder {
                 cx.dispatch_action(menu::Confirm.boxed_clone());
             }
         }
+    }
+
+    fn handle_select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+        self.init_modifiers = Some(cx.modifiers());
+        cx.dispatch_action(Box::new(menu::SelectPrev));
     }
 }
 
@@ -131,6 +138,7 @@ impl Render for FileFinder {
             .key_context("FileFinder")
             .w(rems(34.))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .on_action(cx.listener(Self::handle_select_prev))
             .child(self.picker.clone())
     }
 }
@@ -775,13 +783,24 @@ impl PickerDelegate for FileFinderDelegate {
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade() {
                 let open_task = workspace.update(cx, move |workspace, cx| {
-                    let split_or_open = |workspace: &mut Workspace, project_path, cx| {
-                        if secondary {
-                            workspace.split_path(project_path, cx)
-                        } else {
-                            workspace.open_path(project_path, None, true, cx)
-                        }
-                    };
+                    let split_or_open =
+                        |workspace: &mut Workspace,
+                         project_path,
+                         cx: &mut ViewContext<Workspace>| {
+                            let allow_preview =
+                                PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
+                            if secondary {
+                                workspace.split_path_preview(project_path, allow_preview, cx)
+                            } else {
+                                workspace.open_path_preview(
+                                    project_path,
+                                    None,
+                                    true,
+                                    allow_preview,
+                                    cx,
+                                )
+                            }
+                        };
                     match m {
                         Match::History(history_match, _) => {
                             let worktree_id = history_match.project.worktree_id;

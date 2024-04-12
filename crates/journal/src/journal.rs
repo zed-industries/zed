@@ -5,7 +5,7 @@ use editor::Editor;
 use gpui::{actions, AppContext, ViewContext, WindowContext};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -50,12 +50,8 @@ impl settings::Settings for JournalSettings {
 
     type FileContent = Self;
 
-    fn load(
-        defaults: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self> {
-        Self::load_via_json_merge(defaults, user_values)
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
     }
 }
 
@@ -94,6 +90,7 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut WindowContext) {
         std::fs::create_dir_all(month_dir)?;
         OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(&entry_path)?;
         Ok::<_, std::io::Error>((journal_dir, entry_path))

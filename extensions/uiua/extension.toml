@@ -1,6 +1,6 @@
 id = "uiua"
 name = "Uiua"
-description = "Uiua support for Zed"
+description = "Uiua support."
 version = "0.0.1"
 schema_version = 1
 authors = ["Max Brunsfeld <max@zed.dev>"]

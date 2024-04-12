@@ -29,7 +29,7 @@ You can tell what is currently deployed with `./script/what-is-deployed`.
 To create a new migration:
 
 ```
-./script/sqlx migrate add <name>
+./script/create-migration <name>
 ```
 
 Migrations are run automatically on service start, so run `foreman start` again. The service will crash if the migrations fail.

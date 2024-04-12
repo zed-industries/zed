@@ -12,26 +12,25 @@ workspace = true
 path = "src/extension_store.rs"
 doctest = false
 
-[[bin]]
-name = "extension_json_schemas"
-path = "src/extension_json_schemas.rs"
-
 [dependencies]
 anyhow.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 cap-std.workspace = true
+client.workspace = true
 collections.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+isahc.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
 project.workspace = true
 schemars.workspace = true
+semantic_version.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -44,6 +43,8 @@ wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 wasmparser.workspace = true
 wit-component.workspace = true
+task.workspace = true
+serde_json_lenient.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

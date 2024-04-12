@@ -1,6 +1,7 @@
+use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
@@ -92,7 +93,8 @@ pub enum ShowScrollbar {
 #[serde(rename_all = "snake_case")]
 pub enum MultiCursorModifier {
     Alt,
-    Cmd,
+    #[serde(alias = "cmd", alias = "ctrl")]
+    CmdOrCtrl,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -223,10 +225,9 @@ impl Settings for EditorSettings {
     type FileContent = EditorSettingsContent;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut gpui::AppContext,
+        sources: SettingsSources<Self::FileContent>,
+        _: &mut AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
 }
