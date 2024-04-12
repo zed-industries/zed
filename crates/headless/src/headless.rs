@@ -1,5 +1,5 @@
 use anyhow::Result;
-use client::{user::UserStore, Client, ClientSettings, RemoteProjectId};
+use client::{user::UserStore, Client, ClientSettings};
 use fs::Fs;
 use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
@@ -15,7 +15,7 @@ use util::{ResultExt, TryFutureExt};
 pub struct DevServer {
     client: Arc<Client>,
     app_state: AppState,
-    projects: HashMap<RemoteProjectId, Model<Project>>,
+    projects: HashMap<remote_projects::RemoteProjectId, Model<Project>>,
     _subscriptions: Vec<client::Subscription>,
     _maintain_connection: Task<Option<()>>,
 }

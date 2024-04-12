@@ -254,8 +254,11 @@ impl DevServerSession {
         self.0.dev_server_id().unwrap()
     }
 
-    fn dev_server(&self) -> &DevServer {
-        &self.0.dev_server
+    fn dev_server(&self) -> &dev_server::Model {
+        match &self.0.principal {
+            Principal::DevServer(dev_server) => dev_server,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -1053,7 +1056,7 @@ impl Server {
                     )?;
                     self.peer.send(
                         connection_id,
-                        build_channels_update(channels_for_user, channel_invites, &pool),
+                        build_channels_update(channels_for_user, channel_invites),
                     )?;
                 }
 
@@ -1085,7 +1088,7 @@ impl Server {
                 let status = self
                     .app_state
                     .db
-                    .build_remote_projects(dev_server.user_id)
+                    .remote_projects_update(dev_server.user_id)
                     .await?;
                 send_remote_projects_update(dev_server.user_id, status, &session).await;
             }
@@ -1391,8 +1394,8 @@ async fn connection_lost(
 
                     update_user_contacts(session.user_id(), &session).await?;
                 },
-            Principal::DevServer(dev_server) => {
-                lost_dev_server_connection(&session).await?;
+            Principal::DevServer(_) => {
+                lost_dev_server_connection(&session.for_dev_server().unwrap()).await?;
             },
         }
         },
@@ -2197,7 +2200,7 @@ async fn create_remote_project(
     response: Response<proto::CreateRemoteProject>,
     session: UserSession,
 ) -> Result<()> {
-    let (remote_project, status) = session
+    let (remote_project, update) = session
         .db()
         .await
         .create_remote_project(
@@ -2214,16 +2217,19 @@ async fn create_remote_project(
         .get_remote_projects_for_dev_server(remote_project.dev_server_id)
         .await?;
 
-    send_remote_projects_update(status, session.user_id(), session).await;
-
     let dev_server_id = remote_project.dev_server_id;
-    let dev_server_connection_id = connection_pool.dev_server_connection_id(dev_server_id);
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
     if let Some(dev_server_connection_id) = dev_server_connection_id {
         session.peer.send(
             dev_server_connection_id,
             proto::DevServerInstructions { projects },
         )?;
     }
+
+    send_remote_projects_update(session.user_id(), update, &session).await;
 
     response.send(proto::CreateRemoteProjectResponse {
         remote_project: Some(remote_project.to_proto(None)),
@@ -2245,7 +2251,7 @@ async fn create_dev_server(
         .create_dev_server(&request.name, &hashed_access_token, session.user_id())
         .await?;
 
-    send_remote_projects_update(session.user_id(), status, &session);
+    send_remote_projects_update(session.user_id(), status, &session).await;
 
     response.send(proto::CreateDevServerResponse {
         dev_server_id: dev_server.id.0 as u64,
@@ -2366,7 +2372,7 @@ async fn shutdown_dev_server(
     let status = session
         .db()
         .await
-        .build_remote_projects(dev_server.user_id)
+        .remote_projects_update(dev_server.user_id)
         .await?;
     send_remote_projects_update(dev_server.user_id, status, &session).await;
 
@@ -4447,7 +4453,7 @@ fn notify_membership_updated(
         ..Default::default()
     };
 
-    let mut update = build_channels_update(result.new_channels, vec![], connection_pool);
+    let mut update = build_channels_update(result.new_channels, vec![]);
     update.delete_channels = result
         .removed_channels
         .into_iter()
@@ -4480,7 +4486,6 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
 fn build_channels_update(
     channels: ChannelsForUser,
     channel_invites: Vec<db::Channel>,
-    pool: &ConnectionPool,
 ) -> proto::UpdateChannels {
     let mut update = proto::UpdateChannels::default();
 
@@ -4593,7 +4598,7 @@ fn channel_updated(
 
 async fn send_remote_projects_update(
     user_id: UserId,
-    mut status: proto::RemoteProjects,
+    mut status: proto::RemoteProjectsUpdate,
     session: &Session,
 ) {
     let pool = session.connection_pool().await;
@@ -4655,7 +4660,10 @@ async fn lost_dev_server_connection(session: &DevServerSession) -> Result<()> {
         unshare_project_internal(project_id, &session).await?;
     }
 
-    let status = session.db().await.build_remote_projects(session.dev_server)
+    let user_id = session.dev_server().user_id;
+    let update = session.db().await.remote_projects_update(user_id).await?;
+
+    send_remote_projects_update(user_id, update, session).await;
 
     Ok(())
 }

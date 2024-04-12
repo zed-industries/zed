@@ -3,10 +3,7 @@ mod channel_index;
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
 use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
-use client::{
-    ChannelId, Client, ClientSettings, DevServerId, ProjectId, Subscription, User, UserId,
-    UserStore,
-};
+use client::{ChannelId, Client, ClientSettings, ProjectId, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
@@ -818,46 +815,6 @@ impl ChannelStore {
             Ok(())
         })
     }
-
-    pub fn create_remote_project(
-        &mut self,
-        channel_id: ChannelId,
-        dev_server_id: DevServerId,
-        name: String,
-        path: String,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<proto::CreateRemoteProjectResponse>> {
-        let client = self.client.clone();
-        cx.background_executor().spawn(async move {
-            client
-                .request(proto::CreateRemoteProject {
-                    channel_id: channel_id.0,
-                    dev_server_id: dev_server_id.0,
-                    name,
-                    path,
-                })
-                .await
-        })
-    }
-
-    pub fn create_dev_server(
-        &mut self,
-        channel_id: ChannelId,
-        name: String,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<proto::CreateDevServerResponse>> {
-        let client = self.client.clone();
-        cx.background_executor().spawn(async move {
-            let result = client
-                .request(proto::CreateDevServer {
-                    channel_id: channel_id.0,
-                    name,
-                })
-                .await?;
-            Ok(result)
-        })
-    }
-
     pub fn get_channel_member_details(
         &self,
         channel_id: ChannelId,

@@ -13,6 +13,7 @@ path = "src/remote_projects.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
@@ -23,6 +24,9 @@ smol.workspace = true
 ui.workspace = true
 util.workspace = true
 client.workspace = true
+editor.workspace = true
+rpc.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

@@ -1,8 +1,7 @@
-use channel::{ChannelStore, DevServer, RemoteProject};
-use client::{ChannelId, DevServerId, RemoteProjectId};
+use crate::{DevServer, DevServerId, RemoteProjectId};
 use editor::Editor;
 use gpui::{
-    AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     ScrollHandle, Task, View, ViewContext,
 };
 use rpc::proto::{self, CreateDevServerResponse, DevServerStatus};
@@ -14,8 +13,6 @@ pub struct DevServerModal {
     mode: Mode,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
-    channel_store: Model<ChannelStore>,
-    channel_id: ChannelId,
     remote_project_name_editor: View<Editor>,
     remote_project_path_editor: View<Editor>,
     dev_server_name_editor: View<Editor>,
@@ -41,11 +38,7 @@ enum Mode {
 }
 
 impl DevServerModal {
-    pub fn new(
-        channel_store: Model<ChannelStore>,
-        channel_id: ChannelId,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let name_editor = cx.new_view(|cx| Editor::single_line(cx));
         let path_editor = cx.new_view(|cx| Editor::single_line(cx));
         let dev_server_name_editor = cx.new_view(|cx| {
@@ -55,9 +48,10 @@ impl DevServerModal {
         });
 
         let focus_handle = cx.focus_handle();
+        let remote_project_store = crate::Store::global(cx);
 
         let subscriptions = [
-            cx.observe(&channel_store, |_, _, cx| {
+            cx.observe(&remote_project_store, |_, _, cx| {
                 cx.notify();
             }),
             cx.on_focus_out(&focus_handle, |_, _cx| { /* cx.emit(DismissEvent) */ }),
@@ -67,8 +61,6 @@ impl DevServerModal {
             mode: Mode::Default,
             focus_handle,
             scroll_handle: ScrollHandle::new(),
-            channel_store,
-            channel_id,
             remote_project_name_editor: name_editor,
             remote_project_path_editor: path_editor,
             dev_server_name_editor,
@@ -81,7 +73,6 @@ impl DevServerModal {
         dev_server_id: DevServerId,
         cx: &mut ViewContext<Self>,
     ) {
-        let channel_id = self.channel_id;
         let name = self
             .remote_project_name_editor
             .read(cx)
@@ -102,8 +93,8 @@ impl DevServerModal {
             return;
         }
 
-        let create = self.channel_store.update(cx, |store, cx| {
-            store.create_remote_project(channel_id, dev_server_id, name, path, cx)
+        let create = crate::Store::global(cx).update(cx, |store, cx| {
+            store.create_remote_project(dev_server_id, name, path, cx)
         });
 
         let task = cx.spawn(|this, mut cx| async move {
@@ -147,9 +138,8 @@ impl DevServerModal {
             return;
         }
 
-        let dev_server = self.channel_store.update(cx, |store, cx| {
-            store.create_dev_server(self.channel_id, name.clone(), cx)
-        });
+        let dev_server = crate::Store::global(cx)
+            .update(cx, |store, cx| store.create_dev_server(name.clone(), cx));
 
         let task = cx.spawn(|this, mut cx| async move {
             match dev_server.await {
@@ -201,7 +191,6 @@ impl DevServerModal {
         dev_server: &DevServer,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let channel_store = self.channel_store.read(cx);
         let dev_server_id = dev_server.id;
         let status = dev_server.status;
 
@@ -285,16 +274,9 @@ impl DevServerModal {
                     .px_3()
                     .child(
                         List::new().empty_message("No projects.").children(
-                            channel_store
-                                .remote_projects_for_id(dev_server.channel_id)
-                                .iter()
-                                .filter_map(|remote_project| {
-                                    if remote_project.dev_server_id == dev_server.id {
-                                        Some(self.render_remote_project(remote_project, cx))
-                                    } else {
-                                        None
-                                    }
-                                }),
+                            crate::Store::global(cx)
+                                .read(cx)
+                                .remote_projects_for_server(dev_server.id),
                         ),
                     ),
             )

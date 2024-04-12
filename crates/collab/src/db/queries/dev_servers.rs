@@ -27,21 +27,21 @@ impl Database {
         .await
     }
 
-    pub async fn build_remote_projects(
+    pub async fn remote_projects_update(
         &self,
         user_id: UserId,
-    ) -> crate::Result<proto::RemoteProjects> {
+    ) -> crate::Result<proto::RemoteProjectsUpdate> {
         self.transaction(
-            |tx| async move { self.build_remote_projects_internal(user_id, &*tx).await },
+            |tx| async move { self.remote_projects_update_internal(user_id, &*tx).await },
         )
         .await
     }
 
-    pub async fn build_remote_projects_internal(
+    pub async fn remote_projects_update_internal(
         &self,
         user_id: UserId,
         tx: &DatabaseTransaction,
-    ) -> crate::Result<proto::RemoteProjects> {
+    ) -> crate::Result<proto::RemoteProjectsUpdate> {
         let dev_servers = dev_server::Entity::find()
             .filter(dev_server::Column::UserId.eq(user_id))
             .all(tx)
@@ -56,7 +56,7 @@ impl Database {
             .all(tx)
             .await?;
 
-        Ok(proto::RemoteProjects {
+        Ok(proto::RemoteProjectsUpdate {
             dev_servers: dev_servers
                 .into_iter()
                 .map(|d| d.to_proto(proto::DevServerStatus::Offline))
@@ -73,7 +73,7 @@ impl Database {
         name: &str,
         hashed_access_token: &str,
         user_id: UserId,
-    ) -> crate::Result<(dev_server::Model, proto::RemoteProjects)> {
+    ) -> crate::Result<(dev_server::Model, proto::RemoteProjectsUpdate)> {
         self.transaction(|tx| async move {
             let dev_server = dev_server::Entity::insert(dev_server::ActiveModel {
                 id: ActiveValue::NotSet,
@@ -84,7 +84,7 @@ impl Database {
             .exec_with_returning(&*tx)
             .await?;
 
-            let remote_projects = self.build_remote_projects_internal(user_id, &*tx).await?;
+            let remote_projects = self.remote_projects_update_internal(user_id, &*tx).await?;
 
             Ok((dev_server, remote_projects))
         })

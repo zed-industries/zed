@@ -229,7 +229,7 @@ message Envelope {
         RejoinRemoteProjects rejoin_remote_projects = 186;
         RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
 
-        RemoteProjects remote_projects = 189; // current max
+        RemoteProjectsUpdate remote_projects_update = 189; // current max
     }
 
     reserved 158 to 161;
@@ -454,7 +454,6 @@ message JoinHostedProject {
 }
 
 message CreateRemoteProject {
-    uint64 channel_id = 1;
     string name = 2;
     uint64 dev_server_id = 3;
     string path = 4;
@@ -464,7 +463,6 @@ message CreateRemoteProjectResponse {
 }
 
 message CreateDevServer {
-    uint64 channel_id = 1;
     string name = 2;
 }
 
@@ -489,7 +487,7 @@ message DevServerInstructions {
     repeated RemoteProject projects = 1;
 }
 
-message RemoteProjects {
+message RemoteProjectsUpdate {
     repeated DevServer dev_servers = 1;
     repeated RemoteProject remote_projects = 2;
 }

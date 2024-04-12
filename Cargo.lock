@@ -4647,6 +4647,7 @@ dependencies = [
  "node_runtime",
  "postage",
  "project",
+ "remote_projects",
  "rpc",
  "settings",
  "util",
@@ -7760,6 +7761,7 @@ dependencies = [
 name = "remote_projects"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "client",
  "editor",
  "fuzzy",
@@ -7768,11 +7770,13 @@ dependencies = [
  "menu",
  "ordered-float 2.10.0",
  "picker",
+ "rpc",
  "serde",
  "serde_json",
  "smol",
  "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]

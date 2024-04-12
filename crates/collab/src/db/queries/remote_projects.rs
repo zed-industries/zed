@@ -1,15 +1,14 @@
 use anyhow::anyhow;
 use rpc::{proto, ConnectionId};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait,
-    ModelTrait, QueryFilter,
+    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter,
 };
 
 use crate::db::ProjectId;
 
 use super::{
-    dev_server, project, project_collaborator, remote_project, worktree,
-    Database, DevServerId, RejoinedProject, RemoteProjectId, ResharedProject, ServerId, UserId,
+    dev_server, project, project_collaborator, remote_project, worktree, Database, DevServerId,
+    RejoinedProject, RemoteProjectId, ResharedProject, ServerId, UserId,
 };
 
 impl Database {
@@ -75,7 +74,7 @@ impl Database {
         name: &str,
         path: &str,
         user_id: UserId,
-    ) -> crate::Result<(remote_project::Model, proto::RemoteProjects)> {
+    ) -> crate::Result<(remote_project::Model, proto::RemoteProjectsUpdate)> {
         self.transaction(|tx| async move {
             let dev_server = dev_server::Entity::find_by_id(dev_server_id)
                 .one(&*tx)
@@ -94,7 +93,7 @@ impl Database {
             .exec_with_returning(&*tx)
             .await?;
 
-            let status = self.build_remote_projects_internal(user_id, &*tx).await?;
+            let status = self.remote_projects_update_internal(user_id, &*tx).await?;
 
             Ok((project, status))
         })
@@ -107,7 +106,7 @@ impl Database {
         dev_server_id: DevServerId,
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
-    ) -> crate::Result<(proto::RemoteProject, UserId, proto::RemoteProjects)> {
+    ) -> crate::Result<(proto::RemoteProject, UserId, proto::RemoteProjectsUpdate)> {
         self.transaction(|tx| async move {
             let dev_server = dev_server::Entity::find_by_id(dev_server_id)
                 .one(&*tx)
@@ -153,9 +152,15 @@ impl Database {
                 .await?;
             }
 
-            let status = self.build_remote_projects_internal(user_id, &*tx).await?;
+            let status = self
+                .remote_projects_update_internal(dev_server.user_id, &*tx)
+                .await?;
 
-            Ok((remote_project.to_proto(Some(project)), dev_server.user_id, status))
+            Ok((
+                remote_project.to_proto(Some(project)),
+                dev_server.user_id,
+                status,
+            ))
         })
         .await
     }
