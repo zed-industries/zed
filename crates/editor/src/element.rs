@@ -5,7 +5,7 @@ use crate::{
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
     git::{
-        blame::{CommitMessage, GitBlame},
+        blame::{CommitDetails, GitBlame},
         diff_hunk_to_display, DisplayDiffHunk,
     },
     hover_popover::{
@@ -55,7 +55,6 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor, ThemeSettings};
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
-use url::Url;
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
 
@@ -2966,12 +2965,9 @@ fn render_inline_blame_entry(
     let author = blame_entry.author.as_deref().unwrap_or_default();
     let text = format!("{}, {}", author, relative_timestamp);
 
-    let permalink = blame.read(cx).permalink_for_entry(&blame_entry);
-    let commit_message = blame.read(cx).message_for_entry(&blame_entry);
+    let details = blame.read(cx).details_for_entry(&blame_entry);
 
-    let tooltip = cx.new_view(|_| {
-        BlameEntryTooltip::new(blame_entry, permalink, commit_message, style, workspace)
-    });
+    let tooltip = cx.new_view(|_| BlameEntryTooltip::new(blame_entry, details, style, workspace));
 
     h_flex()
         .id("inline-blame")
@@ -3016,8 +3012,7 @@ fn blame_entry_absolute_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) 
 
 struct BlameEntryTooltip {
     blame_entry: BlameEntry,
-    permalink: Option<Url>,
-    commit_message: Option<CommitMessage>,
+    details: Option<CommitDetails>,
     style: EditorStyle,
     workspace: Option<WeakView<Workspace>>,
     scroll_handle: ScrollHandle,
@@ -3026,16 +3021,14 @@ struct BlameEntryTooltip {
 impl BlameEntryTooltip {
     fn new(
         blame_entry: BlameEntry,
-        permalink: Option<Url>,
-        commit_message: Option<CommitMessage>,
+        details: Option<CommitDetails>,
         style: &EditorStyle,
         workspace: Option<WeakView<Workspace>>,
     ) -> Self {
         Self {
             style: style.clone(),
             blame_entry,
-            permalink,
-            commit_message,
+            details,
             workspace,
             scroll_handle: ScrollHandle::new(),
         }
@@ -3057,12 +3050,12 @@ impl Render for BlameEntryTooltip {
         let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry, cx);
 
         let message = self
-            .commit_message
+            .details
             .as_ref()
-            .map(|message| {
+            .map(|details| {
                 crate::render_parsed_markdown(
                     "blame-message",
-                    &message.parsed_message,
+                    &details.parsed_message,
                     &self.style,
                     self.workspace.clone(),
                     cx,
@@ -3119,13 +3112,22 @@ impl Render for BlameEntryTooltip {
                                         .icon(IconName::FileGit)
                                         .icon_color(Color::Muted)
                                         .icon_position(IconPosition::Start)
-                                        .disabled(self.permalink.is_none())
-                                        .when_some(self.permalink.clone(), |this, url| {
-                                            this.on_click(move |_, cx| {
-                                                cx.stop_propagation();
-                                                cx.open_url(url.as_str())
-                                            })
-                                        }),
+                                        .disabled(
+                                            self.details.as_ref().map_or(true, |details| {
+                                                details.permalink.is_none()
+                                            }),
+                                        )
+                                        .when_some(
+                                            self.details
+                                                .as_ref()
+                                                .and_then(|details| details.permalink.clone()),
+                                            |this, url| {
+                                                this.on_click(move |_, cx| {
+                                                    cx.stop_propagation();
+                                                    cx.open_url(url.as_str())
+                                                })
+                                            },
+                                        ),
                                 ),
                         ),
                 )
@@ -3165,19 +3167,12 @@ fn render_blame_entry(
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
     let name = util::truncate_and_trailoff(author_name, 20);
 
-    let permalink = blame.read(cx).permalink_for_entry(&blame_entry);
-    let commit_message = blame.read(cx).message_for_entry(&blame_entry);
+    let details = blame.read(cx).details_for_entry(&blame_entry);
 
     let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
 
     let tooltip = cx.new_view(|_| {
-        BlameEntryTooltip::new(
-            blame_entry.clone(),
-            permalink.clone(),
-            commit_message,
-            style,
-            workspace,
-        )
+        BlameEntryTooltip::new(blame_entry.clone(), details.clone(), style, workspace)
     });
 
     h_flex()
@@ -3205,13 +3200,16 @@ fn render_blame_entry(
             }
         })
         .hover(|style| style.bg(cx.theme().colors().element_hover))
-        .when_some(permalink, |this, url| {
-            let url = url.clone();
-            this.cursor_pointer().on_click(move |_, cx| {
-                cx.stop_propagation();
-                cx.open_url(url.as_str())
-            })
-        })
+        .when_some(
+            details.and_then(|details| details.permalink),
+            |this, url| {
+                let url = url.clone();
+                this.cursor_pointer().on_click(move |_, cx| {
+                    cx.stop_propagation();
+                    cx.open_url(url.as_str())
+                })
+            },
+        )
         .hoverable_tooltip(move |_| tooltip.clone().into())
         .into_any()
 }

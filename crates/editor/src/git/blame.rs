@@ -47,17 +47,17 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
 }
 
 #[derive(Clone, Debug)]
-pub struct CommitMessage {
+pub struct CommitDetails {
     pub message: String,
     pub parsed_message: ParsedMarkdown,
+    pub permalink: Option<Url>,
 }
 
 pub struct GitBlame {
     project: Model<Project>,
     buffer: Model<Buffer>,
     entries: SumTree<GitBlameEntry>,
-    permalinks: HashMap<Oid, Url>,
-    messages: HashMap<Oid, CommitMessage>,
+    commit_details: HashMap<Oid, CommitDetails>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
@@ -110,8 +110,7 @@ impl GitBlame {
             buffer_snapshot,
             entries,
             buffer_edits,
-            permalinks: HashMap::default(),
-            messages: HashMap::default(),
+            commit_details: HashMap::default(),
             task: Task::ready(Ok(())),
             generated: false,
             _refresh_subscription: refresh_subscription,
@@ -124,12 +123,8 @@ impl GitBlame {
         self.generated
     }
 
-    pub fn permalink_for_entry(&self, entry: &BlameEntry) -> Option<Url> {
-        self.permalinks.get(&entry.sha).cloned()
-    }
-
-    pub fn message_for_entry(&self, entry: &BlameEntry) -> Option<CommitMessage> {
-        self.messages.get(&entry.sha).cloned()
+    pub fn details_for_entry(&self, entry: &BlameEntry) -> Option<CommitDetails> {
+        self.commit_details.get(&entry.sha).cloned()
     }
 
     pub fn blame_for_rows<'a>(
@@ -310,31 +305,32 @@ impl GitBlame {
                             );
                         }
 
-                        let mut commit_messages = HashMap::default();
+                        let mut commit_details = HashMap::default();
                         for (oid, message) in messages.into_iter() {
                             let parsed_message = parse_markdown(&message, &language_registry).await;
+                            let permalink = permalinks.get(&oid).cloned();
 
-                            commit_messages.insert(
+                            commit_details.insert(
                                 oid,
-                                CommitMessage {
+                                CommitDetails {
                                     message,
                                     parsed_message,
+                                    permalink,
                                 },
                             );
                         }
 
-                        anyhow::Ok((entries, permalinks, commit_messages))
+                        anyhow::Ok((entries, commit_details))
                     }
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| match result {
-                Ok((entries, permalinks, messages)) => {
+                Ok((entries, commit_details)) => {
                     this.buffer_edits = buffer_edits;
                     this.buffer_snapshot = snapshot;
                     this.entries = entries;
-                    this.messages = messages;
-                    this.permalinks = permalinks;
+                    this.commit_details = commit_details;
                     this.generated = true;
                     cx.notify();
                 }
