@@ -997,7 +997,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     }
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
-    /// The tooltip itself is also hoverable and won't disapper when the user moves the mouse into
+    /// The tooltip itself is also hoverable and won't disappear when the user moves the mouse into
     /// the tooltip. The fluent API equivalent to [`Interactivity::hoverable_tooltip`]
     fn hoverable_tooltip(
         mut self,
