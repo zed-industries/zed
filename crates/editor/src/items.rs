@@ -735,9 +735,8 @@ impl Item for Editor {
                     buffer
                         .update(&mut cx, |buffer, cx| {
                             let version = buffer.saved_version().clone();
-                            let fingerprint = buffer.saved_version_fingerprint();
                             let mtime = buffer.saved_mtime();
-                            buffer.did_save(version, fingerprint, mtime, cx);
+                            buffer.did_save(version, mtime, cx);
                         })
                         .ok();
                 }
