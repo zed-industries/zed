@@ -531,6 +531,8 @@ impl ChatPanel {
                                 &self.languages,
                                 self.client.id(),
                                 &message,
+                                self.local_timezone,
+                                cx,
                             )
                         });
                         el.child(
@@ -744,6 +746,8 @@ impl ChatPanel {
         language_registry: &Arc<LanguageRegistry>,
         current_user_id: u64,
         message: &channel::ChannelMessage,
+        local_timezone: UtcOffset,
+        cx: &AppContext,
     ) -> RichText {
         let mentions = message
             .mentions
@@ -754,24 +758,39 @@ impl ChatPanel {
             })
             .collect::<Vec<_>>();
 
-        const MESSAGE_UPDATED: &str = " (edited)";
+        const MESSAGE_EDITED: &str = " (edited)";
 
         let mut body = message.body.clone();
 
         if message.edited_at.is_some() {
-            body.push_str(MESSAGE_UPDATED);
+            body.push_str(MESSAGE_EDITED);
         }
 
         let mut rich_text = rich_text::render_rich_text(body, &mentions, language_registry, None);
 
         if message.edited_at.is_some() {
+            let range = (rich_text.text.len() - MESSAGE_EDITED.len())..rich_text.text.len();
             rich_text.highlights.push((
-                (rich_text.text.len() - MESSAGE_UPDATED.len())..rich_text.text.len(),
+                range.clone(),
                 Highlight::Highlight(HighlightStyle {
-                    fade_out: Some(0.8),
+                    color: Some(cx.theme().colors().text_muted),
                     ..Default::default()
                 }),
             ));
+
+            if let Some(edit_timestamp) = message.edited_at {
+                let edit_timestamp_text = time_format::format_localized_timestamp(
+                    edit_timestamp,
+                    OffsetDateTime::now_utc(),
+                    local_timezone,
+                    time_format::TimestampFormat::Absolute,
+                );
+
+                rich_text.custom_ranges.push(range);
+                rich_text.set_tooltip_builder_for_custom_ranges(move |_, _, cx| {
+                    Some(Tooltip::text(edit_timestamp_text.clone(), cx))
+                })
+            }
         }
         rich_text
     }
@@ -1176,7 +1195,13 @@ mod tests {
             edited_at: None,
         };
 
-        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+        let message = ChatPanel::render_markdown_with_mentions(
+            &language_registry,
+            102,
+            &message,
+            UtcOffset::UTC,
+            cx,
+        );
 
         // Note that the "'" was replaced with ’ due to smart punctuation.
         let (body, ranges) = marked_text_ranges("«hi», «@abc», let’s «call» «@fgh»", false);
@@ -1224,7 +1249,13 @@ mod tests {
             edited_at: None,
         };
 
-        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+        let message = ChatPanel::render_markdown_with_mentions(
+            &language_registry,
+            102,
+            &message,
+            UtcOffset::UTC,
+            cx,
+        );
 
         // Note that the "'" was replaced with ’ due to smart punctuation.
         let (body, ranges) =
@@ -1265,7 +1296,13 @@ mod tests {
             edited_at: None,
         };
 
-        let message = ChatPanel::render_markdown_with_mentions(&language_registry, 102, &message);
+        let message = ChatPanel::render_markdown_with_mentions(
+            &language_registry,
+            102,
+            &message,
+            UtcOffset::UTC,
+            cx,
+        );
 
         // Note that the "'" was replaced with ’ due to smart punctuation.
         let (body, ranges) = marked_text_ranges(
