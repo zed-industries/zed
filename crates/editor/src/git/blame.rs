@@ -334,6 +334,7 @@ impl GitBlame {
                     this.buffer_snapshot = snapshot;
                     this.entries = entries;
                     this.messages = messages;
+                    this.permalinks = permalinks;
                     this.generated = true;
                     cx.notify();
                 }
