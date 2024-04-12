@@ -1,9 +1,12 @@
 id = "lua"
 name = "Lua"
 description = "Lua support."
-version = "0.0.1"
+version = "0.0.2"
 schema_version = 1
-authors = ["Kaylee Simmons <kay@the-simmons.net>"]
+authors = [
+  "Max Brunsfeld <max@zed.dev>",
+  "Marshall Bowers <elliott.codes@gmail.com>"
+]
 repository = "https://github.com/zed-industries/zed"
 
 [language_servers.lua-language-server]
