@@ -186,7 +186,7 @@ impl Project {
         }
     }
 
-    // TOFIX: This function does not work properly when Nushell is set as default shell
+    // TOFIX: This function does not work properly when Nushell is set as default shell (see #8970)
     fn activate_python_virtual_environment(
         &mut self,
         activate_command: &'static str,
