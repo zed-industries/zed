@@ -1438,20 +1438,6 @@ impl Render for ProjectSearchBar {
                     }),
             )
             .child(
-                h_flex()
-                    .mx(rems_from_px(-4.0))
-                    .min_w(rems_from_px(40.))
-                    .justify_center()
-                    .items_center()
-                    .child(
-                        Label::new(match_text).color(if search.active_match_index.is_some() {
-                            Color::Default
-                        } else {
-                            Color::Disabled
-                        }),
-                    ),
-            )
-            .child(
                 IconButton::new("project-search-next-match", IconName::ChevronRight)
                     .disabled(search.active_match_index.is_none())
                     .on_click(cx.listener(|this, _, cx| {
@@ -1462,6 +1448,17 @@ impl Render for ProjectSearchBar {
                         }
                     }))
                     .tooltip(|cx| Tooltip::for_action("Go to next match", &SelectNextMatch, cx)),
+            )
+            .child(
+                h_flex()
+                    .min_w(rems_from_px(40.))
+                    .child(
+                        Label::new(match_text).color(if search.active_match_index.is_some() {
+                            Color::Default
+                        } else {
+                            Color::Disabled
+                        }),
+                    ),
             )
             .when(limit_reached, |this| {
                 this.child(
