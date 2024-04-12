@@ -8,18 +8,6 @@ use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
 use util::http::HttpClientWithUrl;
 
-pub fn init_test(cx: &mut TestAppContext) {
-    _ = cx.update(|cx| {
-        let store = SettingsStore::test(cx);
-        cx.set_global(store);
-        language::init(cx);
-        Project::init_settings(cx);
-        SettingsStore::update(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
-        });
-    });
-}
-
 fn main() {
     env_logger::init();
 
