@@ -5463,7 +5463,6 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
- "tree-sitter-vue",
  "tree-sitter-yaml",
  "unindent",
  "util",
@@ -10516,15 +10515,6 @@ dependencies = [
 name = "tree-sitter-typescript"
 version = "0.20.2"
 source = "git+https://github.com/tree-sitter/tree-sitter-typescript?rev=5d20856f34315b068c41edaee2ac8a100081d259#5d20856f34315b068c41edaee2ac8a100081d259"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
-name = "tree-sitter-vue"
-version = "0.0.1"
-source = "git+https://github.com/zed-industries/tree-sitter-vue?rev=6608d9d60c386f19d80af7d8132322fa11199c42#6608d9d60c386f19d80af7d8132322fa11199c42"
 dependencies = [
  "cc",
  "tree-sitter",

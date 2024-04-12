@@ -10,6 +10,9 @@ repository = "https://github.com/zed-industries/zed"
 name = "Terraform Language Server"
 languages = ["Terraform", "Terraform Vars"]
 language_ids = { Terraform = "terraform", "Terraform Vars" = "terraform-vars" }
+# TODO: file issue for server supported code actions
+# TODO: reenable default actions / delete override
+code_action_kinds = []
 
 [grammars.hcl]
 repository = "https://github.com/MichaHoffmann/tree-sitter-hcl"
