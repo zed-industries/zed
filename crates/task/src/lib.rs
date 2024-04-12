@@ -25,6 +25,8 @@ pub struct TaskId(pub String);
 pub struct SpawnInTerminal {
     /// Id of the task to use when determining task tab affinity.
     pub id: TaskId,
+    /// Full unshortened form of `label` field.
+    pub full_label: String,
     /// Human readable name of the terminal tab.
     pub label: String,
     /// Executable command to spawn.

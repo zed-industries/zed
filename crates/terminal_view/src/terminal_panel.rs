@@ -296,9 +296,10 @@ impl TerminalPanel {
         })
     }
 
-    pub fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
+    fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
         let mut spawn_task = SpawnTask {
             id: spawn_in_terminal.id.clone(),
+            full_label: spawn_in_terminal.full_label.clone(),
             label: spawn_in_terminal.label.clone(),
             command: spawn_in_terminal.command.clone(),
             args: spawn_in_terminal.args.clone(),
@@ -334,7 +335,7 @@ impl TerminalPanel {
             return;
         }
 
-        let terminals_for_task = self.terminals_for_task(&spawn_in_terminal.label, cx);
+        let terminals_for_task = self.terminals_for_task(&spawn_in_terminal.full_label, cx);
         if terminals_for_task.is_empty() {
             self.spawn_in_new_terminal(spawn_task, working_directory, cx);
             return;
@@ -445,7 +446,7 @@ impl TerminalPanel {
             .filter_map(|(index, item)| Some((index, item.act_as::<TerminalView>(cx)?)))
             .filter_map(|(index, terminal_view)| {
                 let task_state = terminal_view.read(cx).terminal().read(cx).task()?;
-                if &task_state.label == label {
+                if &task_state.full_label == label {
                     Some((index, terminal_view))
                 } else {
                     None

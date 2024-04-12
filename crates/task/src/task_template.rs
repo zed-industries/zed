@@ -115,10 +115,11 @@ impl TaskTemplate {
         Some(ResolvedTask {
             id: id.clone(),
             original_task: self.clone(),
-            resolved_label: full_label,
+            resolved_label: full_label.clone(),
             resolved: Some(SpawnInTerminal {
                 id,
                 cwd,
+                full_label,
                 label: shortened_label,
                 command,
                 args,
