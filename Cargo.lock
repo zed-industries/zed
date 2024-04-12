@@ -384,6 +384,7 @@ dependencies = [
  "gpui",
  "language",
  "languages",
+ "log",
  "node_runtime",
  "release_channel",
  "rich_text",
@@ -391,6 +392,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 

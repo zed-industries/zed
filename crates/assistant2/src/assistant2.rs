@@ -7,7 +7,7 @@ use completion_provider::*;
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    list, prelude::*, AnyElement, AppContext, Global, ListAlignment, ListState, Render, View,
+    list, prelude::*, AnyElement, AppContext, Global, ListAlignment, ListState, Render, Task, View,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use rich_text::RichText;
@@ -15,6 +15,7 @@ use semantic_index::SearchResult;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip};
+use util::{post_inc, ResultExt, TryFutureExt};
 
 gpui::actions!(assistant, [Submit]);
 
@@ -56,85 +57,128 @@ struct AssistantChat {
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
     next_message_id: usize,
+    pending_completion: Option<Task<()>>,
 }
 
 impl AssistantChat {
     fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
-        let messages = vec![AssistantMessage::User {
-            id: 0,
-            body: cx.new_view(|cx| {
-                let mut editor = Editor::auto_height(80, cx);
-                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-                editor.set_text("Hello, I'm trying to understand how to optimize a piece of Rust code for better performance. Could you provide some insights or guidelines on how to profile and identify bottlenecks in a Rust application?", cx);
-                editor
-            }),
-            contexts: Vec::new(),
-        }];
-
         let this = cx.view().downgrade();
-        let list_state = ListState::new(
-            messages.len(),
-            ListAlignment::Top,
-            px(1024.),
-            move |ix, cx| {
-                this.update(cx, |this, cx| this.render_message(ix, cx))
-                    .unwrap()
-            },
-        );
-
+        let list_state = ListState::new(0, ListAlignment::Top, px(1024.), move |ix, cx| {
+            this.update(cx, |this, cx| this.render_message(ix, cx))
+                .unwrap()
+        });
         let model = CompletionProvider::get(cx).default_model();
 
-        Self {
+        let mut this = Self {
             model,
-            messages,
+            messages: Vec::new(),
             list_state,
             language_registry,
-            next_message_id: 1,
-        }
+            next_message_id: 0,
+            pending_completion: None,
+        };
+        this.push_user_message(true, cx);
+        this
     }
 
     fn submit(&mut self, _: &Submit, cx: &mut ViewContext<Self>) {
-        // todo!(Detect which message is focused and send the ones above it)
+        let Some((selected_message_ix, selected_message_focus_handle)) =
+            self.messages.iter().enumerate().find_map(|(ix, message)| {
+                if let AssistantMessage::User { body, .. } = message {
+                    let focus_handle = body.focus_handle(cx);
+                    if focus_handle.contains_focused(cx) {
+                        Some((ix, focus_handle))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+        else {
+            log::error!("unexpected state: no user message editor is focused.");
+            return;
+        };
+
+        self.truncate_messages(selected_message_ix + 1, cx);
+        self.push_assistant_message(cx);
+
         let completion = CompletionProvider::get(cx).complete(
             self.model.clone(),
             self.messages(cx),
             Vec::new(),
             1.0,
         );
+        self.pending_completion = Some(cx.spawn(|this, mut cx| async move {
+            let complete = async {
+                let mut stream = completion.await?;
 
-        let message_id = self.next_message_id;
-        self.next_message_id += 1;
-        self.push_message(
-            AssistantMessage::Assistant {
-                id: message_id,
-                body: RichText::new(String::new(), &[], &self.language_registry),
-            },
-            cx,
-        );
+                let mut body = String::new();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk?;
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(AssistantMessage::Assistant {
+                            body: message_body, ..
+                        }) = this.messages.last_mut()
+                        {
+                            body.push_str(&chunk);
+                            *message_body =
+                                RichText::new(body.clone(), &[], &this.language_registry);
+                            cx.notify();
+                        } else {
+                            unreachable!()
+                        }
+                    })?;
+                }
 
-        cx.spawn(|this, mut cx| async move {
-            let mut stream = completion.await?;
+                anyhow::Ok(())
+            }
+            .await;
 
-            let mut body = String::new();
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, cx| {
+                if let Err(error) = complete {
                     if let Some(AssistantMessage::Assistant {
-                        body: message_body, ..
+                        error: message_error,
+                        ..
                     }) = this.messages.last_mut()
                     {
-                        body.push_str(&chunk);
-                        *message_body = RichText::new(body.clone(), &[], &this.language_registry);
+                        message_error.replace(SharedString::from(error.to_string()));
                         cx.notify();
                     } else {
                         unreachable!()
                     }
-                })?;
-            }
+                }
 
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+                let focus = selected_message_focus_handle.contains_focused(cx);
+                this.push_user_message(focus, cx);
+            })
+            .log_err();
+        }));
+    }
+
+    fn push_user_message(&mut self, focus: bool, cx: &mut ViewContext<Self>) {
+        let message = AssistantMessage::User {
+            id: post_inc(&mut self.next_message_id),
+            body: cx.new_view(|cx| {
+                let mut editor = Editor::auto_height(80, cx);
+                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                if focus {
+                    cx.focus_self();
+                }
+                editor
+            }),
+            contexts: Vec::new(),
+        };
+        self.push_message(message, cx);
+    }
+
+    fn push_assistant_message(&mut self, cx: &mut ViewContext<Self>) {
+        let message = AssistantMessage::Assistant {
+            id: post_inc(&mut self.next_message_id),
+            body: RichText::default(),
+            error: None,
+        };
+        self.push_message(message, cx);
     }
 
     fn push_message(&mut self, message: AssistantMessage, cx: &mut ViewContext<Self>) {
@@ -142,6 +186,14 @@ impl AssistantChat {
         self.messages.push(message);
         self.list_state.splice(old_len..old_len, 1);
         cx.notify();
+    }
+
+    fn truncate_messages(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+        if index < self.messages.len() {
+            self.list_state.splice(index..self.messages.len(), 0);
+            self.messages.truncate(index);
+            cx.notify();
+        }
     }
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
@@ -157,9 +209,10 @@ impl AssistantChat {
                 .bg(cx.theme().colors().editor_background)
                 .child(body.clone())
                 .into_any(),
-            AssistantMessage::Assistant { id, body } => div()
+            AssistantMessage::Assistant { id, body, error } => div()
                 .p_2()
                 .when(!is_last, |element| element.mb_2())
+                .children(error.clone())
                 .child(body.element(ElementId::from(*id), cx))
                 .into_any(),
         }
@@ -256,6 +309,7 @@ enum AssistantMessage {
     Assistant {
         id: usize,
         body: RichText,
+        error: Option<SharedString>,
     },
 }
 

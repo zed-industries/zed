@@ -39,6 +39,17 @@ pub struct RichText {
     pub link_urls: Arc<[String]>,
 }
 
+impl Default for RichText {
+    fn default() -> Self {
+        Self {
+            text: SharedString::default(),
+            highlights: Vec::new(),
+            link_ranges: Vec::new(),
+            link_urls: Arc::from([]),
+        }
+    }
+}
+
 /// Allows one to specify extra links to the rendered markdown, which can be used
 /// for e.g. mentions.
 #[derive(Debug)]
