@@ -66,7 +66,7 @@ taffy = { git = "https://github.com/DioxusLabs/taffy", rev = "1876f72bee5e376023
 thiserror.workspace = true
 time.workspace = true
 util.workspace = true
-uuid = { version = "1.1.2", features = ["v4", "v5"] }
+uuid.workspace = true
 waker-fn = "1.1.0"
 
 [dev-dependencies]
