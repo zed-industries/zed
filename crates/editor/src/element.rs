@@ -2986,16 +2986,32 @@ fn render_inline_blame_entry(
         .into_any()
 }
 
-fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) -> String {
+fn blame_entry_timestamp(
+    blame_entry: &BlameEntry,
+    format: time_format::TimestampFormat,
+    cx: &WindowContext,
+) -> String {
     match blame_entry.author_offset_date_time() {
         Ok(timestamp) => time_format::format_localized_timestamp(
             timestamp,
             time::OffsetDateTime::now_utc(),
             cx.local_timezone(),
-            time_format::TimestampFormat::Relative,
+            format,
         ),
         Err(_) => "Error parsing date".to_string(),
     }
+}
+
+fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) -> String {
+    blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative, cx)
+}
+
+fn blame_entry_absolute_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) -> String {
+    blame_entry_timestamp(
+        blame_entry,
+        time_format::TimestampFormat::MediumAbsolute,
+        cx,
+    )
 }
 
 struct BlameEntryTooltip {
@@ -3038,7 +3054,7 @@ impl Render for BlameEntryTooltip {
 
         let pretty_commit_id = format!("{}", self.blame_entry.sha);
         let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
-        let relative_timestamp = blame_entry_relative_timestamp(&self.blame_entry, cx);
+        let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry, cx);
 
         let message = self
             .commit_message
@@ -3095,7 +3111,7 @@ impl Render for BlameEntryTooltip {
                                 .text_color(cx.theme().colors().text_muted)
                                 .w_full()
                                 .justify_between()
-                                .child(relative_timestamp)
+                                .child(absolute_timestamp)
                                 .child(
                                     Button::new("commit-sha-button", short_commit_id.clone())
                                         .style(ButtonStyle::Transparent)
