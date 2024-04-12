@@ -9527,6 +9527,10 @@ impl Editor {
         cx.spawn(|_, mut cx| async move {
             let workspace = workspace.ok_or_else(|| anyhow!("cannot jump without workspace"))?;
             let editor = workspace.update(&mut cx, |workspace, cx| {
+                // Reset the preview item id before opening the new item
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.set_preview_item_id(None, cx);
+                });
                 workspace.open_path_preview(path, None, true, true, cx)
             })?;
             let editor = editor
