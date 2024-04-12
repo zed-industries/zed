@@ -4215,6 +4215,7 @@ dependencies = [
 name = "fuzzy"
 version = "0.1.0"
 dependencies = [
+ "fuzzy-matcher",
  "gpui",
  "util",
 ]

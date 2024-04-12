@@ -13,5 +13,6 @@ path = "src/fuzzy.rs"
 doctest = false
 
 [dependencies]
+fuzzy-matcher = "0.3.7"
 gpui.workspace = true
 util.workspace = true

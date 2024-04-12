@@ -116,7 +116,7 @@ pub async fn match_strings(
     if candidates.is_empty() || max_results == 0 {
         return Default::default();
     }
-
+    let og_query = query;
     if query.is_empty() {
         return candidates
             .iter()
@@ -141,35 +141,28 @@ pub async fn match_strings(
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
-
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default().ignore_case();
     executor
         .scoped(|scope| {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
                 let cancel_flag = &cancel_flag;
+                let matcher = &matcher;
                 scope.spawn(async move {
                     let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
                     let segment_end = cmp::min(segment_start + segment_size, candidates.len());
-                    let mut matcher = Matcher::new(
-                        query,
-                        lowercase_query,
-                        query_char_bag,
-                        smart_case,
-                        max_results,
-                    );
 
-                    matcher.match_candidates(
-                        &[],
-                        &[],
-                        candidates[segment_start..segment_end].iter(),
-                        results,
-                        cancel_flag,
-                        |candidate, score| StringMatch {
-                            candidate_id: candidate.id,
-                            score,
-                            positions: Vec::new(),
-                            string: candidate.string.to_string(),
-                        },
-                    );
+                    for candidate in &candidates[segment_start..segment_end] {
+                        use fuzzy_matcher::FuzzyMatcher;
+                        let score = matcher.fuzzy_match(&candidate.string, &og_query);
+                        if let Some(score) = score {
+                            results.push(StringMatch {
+                                candidate_id: candidate.id,
+                                score: score as f64,
+                                positions: vec![],
+                                string: candidate.string.to_owned(),
+                            })
+                        }
+                    }
                 });
             }
         })
