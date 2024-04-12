@@ -1,6 +1,6 @@
 mod project_panel_settings;
 use client::{ErrorCode, ErrorExt};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{actions::Cancel, items::entry_git_aware_label_color, scroll::Autoscroll, Editor};
@@ -236,6 +236,16 @@ impl ProjectPanel {
 
             cx.observe_global::<FileIcons>(|_, cx| {
                 cx.notify();
+            })
+            .detach();
+
+            let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
+            cx.observe_global::<SettingsStore>(move |_, cx| {
+                let new_settings = *ProjectPanelSettings::get_global(cx);
+                if project_panel_settings != new_settings {
+                    project_panel_settings = new_settings;
+                    cx.notify();
+                }
             })
             .detach();
 

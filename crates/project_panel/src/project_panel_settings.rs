@@ -4,14 +4,14 @@ use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectPanelDockPosition {
     Left,
     Right,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ProjectPanelSettings {
     pub default_width: Pixels,
     pub dock: ProjectPanelDockPosition,
