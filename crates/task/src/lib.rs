@@ -5,7 +5,7 @@ pub mod static_source;
 mod task_template;
 mod vscode_format;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::ModelContext;
 use serde::Serialize;
 use std::any::Any;
@@ -55,12 +55,26 @@ pub struct ResolvedTask {
     /// so it's impossible to determine the id equality without more context in a generic case.
     pub id: TaskId,
     /// A template the task got resolved from.
-    pub original_task: TaskTemplate,
+    original_task: TaskTemplate,
     /// Full, unshortened label of the task after all resolutions are made.
     pub resolved_label: String,
+    /// Variables that were substituted during the task template resolution.
+    substituted_variables: HashSet<VariableName>,
     /// Further actions that need to take place after the resolved task is spawned,
     /// with all task variables resolved.
     pub resolved: Option<SpawnInTerminal>,
+}
+
+impl ResolvedTask {
+    /// A task template before the resolution.
+    pub fn original_task(&self) -> &TaskTemplate {
+        &self.original_task
+    }
+
+    /// Variables that were substituted during the task template resolution.
+    pub fn substituted_variables(&self) -> &HashSet<VariableName> {
+        &self.substituted_variables
+    }
 }
 
 /// Variables, available for use in [`TaskContext`] when a Zed's [`TaskTemplate`] gets resolved into a [`ResolvedTask`].
@@ -117,14 +131,6 @@ impl std::fmt::Display for VariableName {
 pub struct TaskVariables(HashMap<VariableName, String>);
 
 impl TaskVariables {
-    /// Converts the container into a map of environment variables and their values.
-    fn into_env_variables(self) -> HashMap<String, String> {
-        self.0
-            .into_iter()
-            .map(|(name, value)| (name.to_string(), value))
-            .collect()
-    }
-
     /// Inserts another variable into the container, overwriting the existing one if it already exists — in this case, the old value is returned.
     pub fn insert(&mut self, variable: VariableName, value: String) -> Option<String> {
         self.0.insert(variable, value)

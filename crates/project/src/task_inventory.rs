@@ -2,7 +2,7 @@
 
 use std::{
     any::TypeId,
-    cmp,
+    cmp::{self, Reverse},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -11,7 +11,7 @@ use collections::{HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use itertools::{Either, Itertools};
 use language::Language;
-use task::{ResolvedTask, TaskContext, TaskId, TaskSource, TaskTemplate};
+use task::{ResolvedTask, TaskContext, TaskId, TaskSource, TaskTemplate, VariableName};
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
@@ -198,7 +198,7 @@ impl Inventory {
         &self,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
-        task_context: TaskContext,
+        task_context: &TaskContext,
         cx: &mut AppContext,
     ) -> (
         Vec<(TaskSourceKind, ResolvedTask)>,
@@ -242,7 +242,7 @@ impl Inventory {
             .chain(language_tasks)
             .filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
-                Some((kind, task.resolve_task(&id_base, task_context.clone())?))
+                Some((kind, task.resolve_task(&id_base, task_context)?))
             })
             .map(|(kind, task)| {
                 let lru_score = task_usage
@@ -299,22 +299,14 @@ fn task_lru_comparator(
     (kind_b, task_b, lru_score_b): &(TaskSourceKind, ResolvedTask, u32),
 ) -> cmp::Ordering {
     lru_score_a
+        // First, display recently used templates above all.
         .cmp(&lru_score_b)
+        // Then, ensure more specific sources are displayed first.
         .then(task_source_kind_preference(kind_a).cmp(&task_source_kind_preference(kind_b)))
-        .then(
-            kind_a
-                .worktree()
-                .is_none()
-                .cmp(&kind_b.worktree().is_none()),
-        )
-        .then(kind_a.worktree().cmp(&kind_b.worktree()))
-        .then(
-            kind_a
-                .abs_path()
-                .is_none()
-                .cmp(&kind_b.abs_path().is_none()),
-        )
-        .then(kind_a.abs_path().cmp(&kind_b.abs_path()))
+        // After that, display first more specific tasks, using more template variables.
+        // Bonus points for tasks with symbol variables.
+        .then(task_variables_preference(task_a).cmp(&task_variables_preference(task_b)))
+        // Finally, sort by the resolved label, but a bit more specifically, to avoid mixing letters and digits.
         .then({
             NumericPrefixWithSuffix::from_numeric_prefixed_str(&task_a.resolved_label)
                 .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
@@ -331,6 +323,15 @@ fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
         TaskSourceKind::Worktree { .. } => 3,
         TaskSourceKind::AbsPath { .. } => 4,
     }
+}
+
+fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
+    let task_variables = task.substituted_variables();
+    Reverse(if task_variables.contains(&VariableName::Symbol) {
+        task_variables.len() + 1
+    } else {
+        task_variables.len()
+    })
 }
 
 #[cfg(test)]
@@ -421,12 +422,12 @@ mod test_inventory {
             let (used, current) = inventory.used_and_current_resolved_tasks(
                 None,
                 worktree,
-                TaskContext::default(),
+                &TaskContext::default(),
                 cx,
             );
             used.into_iter()
                 .chain(current)
-                .map(|(_, task)| task.original_task.label)
+                .map(|(_, task)| task.original_task().label.clone())
                 .collect()
         })
     }
@@ -445,7 +446,7 @@ mod test_inventory {
             let id_base = task_source_kind.to_id_base();
             inventory.task_scheduled(
                 task_source_kind.clone(),
-                task.resolve_task(&id_base, TaskContext::default())
+                task.resolve_task(&id_base, &TaskContext::default())
                     .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
             );
         });
@@ -460,7 +461,7 @@ mod test_inventory {
             let (used, current) = inventory.used_and_current_resolved_tasks(
                 None,
                 worktree,
-                TaskContext::default(),
+                &TaskContext::default(),
                 cx,
             );
             let mut all = used;

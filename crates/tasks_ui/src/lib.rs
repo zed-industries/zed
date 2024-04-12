@@ -29,20 +29,19 @@ pub fn init(cx: &mut AppContext) {
                         })
                     {
                         if action.reevaluate_context {
-                            let mut original_task = last_scheduled_task.original_task;
+                            let mut original_task = last_scheduled_task.original_task().clone();
                             if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
                                 original_task.allow_concurrent_runs = allow_concurrent_runs;
                             }
                             if let Some(use_new_terminal) = action.use_new_terminal {
                                 original_task.use_new_terminal = use_new_terminal;
                             }
-                            let cwd = task_cwd(workspace, cx).log_err().flatten();
-                            let task_context = task_context(workspace, cwd, cx);
+                            let task_context = task_context(workspace, cx);
                             schedule_task(
                                 workspace,
                                 task_source_kind,
                                 &original_task,
-                                task_context,
+                                &task_context,
                                 false,
                                 cx,
                             )
@@ -77,8 +76,7 @@ fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewC
         None => {
             let inventory = workspace.project().read(cx).task_inventory().clone();
             let workspace_handle = workspace.weak_handle();
-            let cwd = task_cwd(workspace, cx).log_err().flatten();
-            let task_context = task_context(workspace, cwd, cx);
+            let task_context = task_context(workspace, cx);
             workspace.toggle_modal(cx, |cx| {
                 TasksModal::new(inventory, task_context, workspace_handle, cx)
             })
@@ -98,13 +96,12 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
                 });
                 let (task_source_kind, target_task) =
                     tasks.into_iter().find(|(_, task)| task.label == name)?;
-                let cwd = task_cwd(workspace, cx).log_err().flatten();
-                let task_context = task_context(workspace, cwd, cx);
+                let task_context = task_context(workspace, cx);
                 schedule_task(
                     workspace,
                     task_source_kind,
                     &target_task,
-                    task_context,
+                    &task_context,
                     false,
                     cx,
                 );
@@ -148,11 +145,8 @@ fn active_item_selection_properties(
     (worktree_id, language)
 }
 
-fn task_context(
-    workspace: &Workspace,
-    cwd: Option<PathBuf>,
-    cx: &mut WindowContext<'_>,
-) -> TaskContext {
+fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskContext {
+    let cwd = task_cwd(workspace, cx).log_err().flatten();
     let current_editor = workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx));
@@ -253,7 +247,7 @@ fn schedule_task(
     workspace: &Workspace,
     task_source_kind: TaskSourceKind,
     task_to_resolve: &TaskTemplate,
-    task_cx: TaskContext,
+    task_cx: &TaskContext,
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
@@ -338,7 +332,7 @@ mod tests {
     use ui::VisualContext;
     use workspace::{AppState, Workspace};
 
-    use crate::{task_context, task_cwd};
+    use crate::task_context;
 
     #[gpui::test]
     async fn test_default_language_context(cx: &mut TestAppContext) {
@@ -433,7 +427,7 @@ mod tests {
             this.add_item_to_center(Box::new(editor2.clone()), cx);
             assert_eq!(this.active_item(cx).unwrap().item_id(), editor2.entity_id());
             assert_eq!(
-                task_context(this, task_cwd(this, cx).unwrap(), cx),
+                task_context(this, cx),
                 TaskContext {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
@@ -450,7 +444,7 @@ mod tests {
                 this.change_selections(None, cx, |selections| selections.select_ranges([14..18]))
             });
             assert_eq!(
-                task_context(this, task_cwd(this, cx).unwrap(), cx),
+                task_context(this, cx),
                 TaskContext {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
@@ -467,7 +461,7 @@ mod tests {
             // Now, let's switch the active item to .ts file.
             this.activate_item(&editor1, cx);
             assert_eq!(
-                task_context(this, task_cwd(this, cx).unwrap(), cx),
+                task_context(this, cx),
                 TaskContext {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([

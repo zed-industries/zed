@@ -102,7 +102,7 @@ impl TasksModalDelegate {
         };
         Some((
             source_kind,
-            new_oneshot.resolve_task(&id_base, self.task_context.clone())?,
+            new_oneshot.resolve_task(&id_base, &self.task_context)?,
         ))
     }
 
@@ -212,7 +212,7 @@ impl PickerDelegate for TasksModalDelegate {
                                     inventory.used_and_current_resolved_tasks(
                                         language,
                                         worktree,
-                                        picker.delegate.task_context.clone(),
+                                        &picker.delegate.task_context,
                                         cx,
                                     )
                                 });
@@ -403,7 +403,6 @@ impl PickerDelegate for TasksModalDelegate {
     }
 }
 
-// TODO kb more tests on recent tasks from language templates
 #[cfg(test)]
 mod tests {
     use gpui::{TestAppContext, VisualTestContext};
