@@ -70,6 +70,11 @@ impl ResolvedTask {
     pub fn original_task(&self) -> &TaskTemplate {
         &self.original_task
     }
+
+    /// Variables that were substituted during the task template resolution.
+    pub fn substituted_variables(&self) -> &HashSet<VariableName> {
+        &self.substituted_variables
+    }
 }
 
 /// Variables, available for use in [`TaskContext`] when a Zed's [`TaskTemplate`] gets resolved into a [`ResolvedTask`].
