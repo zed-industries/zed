@@ -2969,7 +2969,7 @@ fn render_blame_entry(
                 cx.open_url(url.as_str())
             })
         })
-        .tooltip(move |cx| {
+        .hoverable_tooltip(move |cx| {
             BlameEntryTooltip::new(
                 sha_color.cursor,
                 commit_message.clone(),

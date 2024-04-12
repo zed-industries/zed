@@ -21,7 +21,7 @@ use crate::{
     HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, View, Visibility, WindowContext,
+    StyleRefinement, Styled, Task, TooltipId, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -483,7 +483,29 @@ impl Interactivity {
             self.tooltip_builder.is_none(),
             "calling tooltip more than once on the same element is not supported"
         );
-        self.tooltip_builder = Some(Rc::new(build_tooltip));
+        self.tooltip_builder = Some(TooltipBuilder {
+            build: Rc::new(build_tooltip),
+            hoverable: false,
+        });
+    }
+
+    /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
+    /// The tooltip itself is also hoverable and won't disappear when the user moves the mouse into
+    /// the tooltip. The imperative API equivalent to [`InteractiveElement::hoverable_tooltip`]
+    pub fn hoverable_tooltip(
+        &mut self,
+        build_tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static,
+    ) where
+        Self: Sized,
+    {
+        debug_assert!(
+            self.tooltip_builder.is_none(),
+            "calling tooltip more than once on the same element is not supported"
+        );
+        self.tooltip_builder = Some(TooltipBuilder {
+            build: Rc::new(build_tooltip),
+            hoverable: true,
+        });
     }
 
     /// Block the mouse from interacting with this element or any of its children
@@ -973,6 +995,20 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self.interactivity().tooltip(build_tooltip);
         self
     }
+
+    /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
+    /// The tooltip itself is also hoverable and won't disappear when the user moves the mouse into
+    /// the tooltip. The fluent API equivalent to [`Interactivity::hoverable_tooltip`]
+    fn hoverable_tooltip(
+        mut self,
+        build_tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().hoverable_tooltip(build_tooltip);
+        self
+    }
 }
 
 /// A trait for providing focus related APIs to interactive elements
@@ -1015,7 +1051,10 @@ type DropListener = Box<dyn Fn(&dyn Any, &mut WindowContext) + 'static>;
 
 type CanDropPredicate = Box<dyn Fn(&dyn Any, &mut WindowContext) -> bool + 'static>;
 
-pub(crate) type TooltipBuilder = Rc<dyn Fn(&mut WindowContext) -> AnyView + 'static>;
+pub(crate) struct TooltipBuilder {
+    build: Rc<dyn Fn(&mut WindowContext) -> AnyView + 'static>,
+    hoverable: bool,
+}
 
 pub(crate) type KeyDownListener =
     Box<dyn Fn(&KeyDownEvent, DispatchPhase, &mut WindowContext) + 'static>;
@@ -1188,6 +1227,7 @@ pub struct Interactivity {
     /// Whether the element was hovered. This will only be present after paint if an hitbox
     /// was created for the interactive element.
     pub hovered: Option<bool>,
+    pub(crate) tooltip_id: Option<TooltipId>,
     pub(crate) content_size: Size<Pixels>,
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
@@ -1321,7 +1361,7 @@ impl Interactivity {
                     if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
                         if let Some(active_tooltip) = active_tooltip.borrow().as_ref() {
                             if let Some(tooltip) = active_tooltip.tooltip.clone() {
-                                cx.set_tooltip(tooltip);
+                                self.tooltip_id = Some(cx.set_tooltip(tooltip));
                             }
                         }
                     }
@@ -1806,6 +1846,7 @@ impl Interactivity {
             }
 
             if let Some(tooltip_builder) = self.tooltip_builder.take() {
+                let tooltip_is_hoverable = tooltip_builder.hoverable;
                 let active_tooltip = element_state
                     .active_tooltip
                     .get_or_insert_with(Default::default)
@@ -1818,11 +1859,17 @@ impl Interactivity {
                 cx.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
                     let hitbox = hitbox.clone();
+                    let tooltip_id = self.tooltip_id;
                     move |_: &MouseMoveEvent, phase, cx| {
                         let is_hovered =
                             pending_mouse_down.borrow().is_none() && hitbox.is_hovered(cx);
-                        if !is_hovered {
-                            active_tooltip.borrow_mut().take();
+                        let tooltip_is_hovered =
+                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
+                        if !is_hovered && (!tooltip_is_hoverable || !tooltip_is_hovered) {
+                            if active_tooltip.borrow_mut().take().is_some() {
+                                cx.refresh();
+                            }
+
                             return;
                         }
 
@@ -1833,15 +1880,14 @@ impl Interactivity {
                         if active_tooltip.borrow().is_none() {
                             let task = cx.spawn({
                                 let active_tooltip = active_tooltip.clone();
-                                let tooltip_builder = tooltip_builder.clone();
-
+                                let build_tooltip = tooltip_builder.build.clone();
                                 move |mut cx| async move {
                                     cx.background_executor().timer(TOOLTIP_DELAY).await;
                                     cx.update(|cx| {
                                         active_tooltip.borrow_mut().replace(ActiveTooltip {
                                             tooltip: Some(AnyTooltip {
-                                                view: tooltip_builder(cx),
-                                                cursor_offset: cx.mouse_position(),
+                                                view: build_tooltip(cx),
+                                                mouse_position: cx.mouse_position(),
                                             }),
                                             _task: None,
                                         });
@@ -1860,15 +1906,30 @@ impl Interactivity {
 
                 cx.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
-                    move |_: &MouseDownEvent, _, _| {
-                        active_tooltip.borrow_mut().take();
+                    let tooltip_id = self.tooltip_id;
+                    move |_: &MouseDownEvent, _, cx| {
+                        let tooltip_is_hovered =
+                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
+
+                        if !tooltip_is_hoverable || !tooltip_is_hovered {
+                            if active_tooltip.borrow_mut().take().is_some() {
+                                cx.refresh();
+                            }
+                        }
                     }
                 });
 
                 cx.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
-                    move |_: &ScrollWheelEvent, _, _| {
-                        active_tooltip.borrow_mut().take();
+                    let tooltip_id = self.tooltip_id;
+                    move |_: &ScrollWheelEvent, _, cx| {
+                        let tooltip_is_hovered =
+                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
+                        if !tooltip_is_hoverable || !tooltip_is_hovered {
+                            if active_tooltip.borrow_mut().take().is_some() {
+                                cx.refresh();
+                            }
+                        }
                     }
                 })
             }
