@@ -234,6 +234,8 @@
           "displayLines": true
         }
       ],
+      "g ]": "editor::GoToDiagnostic",
+      "g [": "editor::GoToPrevDiagnostic",
       "shift-h": "vim::WindowTop",
       "shift-m": "vim::WindowMiddle",
       "shift-l": "vim::WindowBottom",
@@ -257,6 +259,9 @@
           "saveIntent": "saveAll"
         }
       ],
+      // tree-sitter related commands
+      "[ x": "editor::SelectLargerSyntaxNode",
+      "] x": "editor::SelectSmallerSyntaxNode",
       // Count support
       "1": ["vim::Number", 1],
       "2": ["vim::Number", 2],
@@ -366,9 +371,7 @@
       "> >": "vim::Indent",
       "< <": "vim::Outdent",
       "ctrl-pagedown": "pane::ActivateNextItem",
-      "ctrl-pageup": "pane::ActivatePrevItem",
-      "[ x": "editor::SelectLargerSyntaxNode",
-      "] x": "editor::SelectSmallerSyntaxNode"
+      "ctrl-pageup": "pane::ActivatePrevItem"
     }
   },
   {
@@ -530,6 +533,19 @@
           }
         }
       ]
+    }
+  },
+
+  {
+    "context": "Editor && vim_mode == normal",
+    "bindings": {
+      "g c c": "editor::ToggleComments"
+    }
+  },
+  {
+    "context": "Editor && vim_mode == visual",
+    "bindings": {
+      "g c": "editor::ToggleComments"
     }
   },
   {
