@@ -9,11 +9,12 @@ use futures::StreamExt;
 use gpui::{
     list, prelude::*, AnyElement, AppContext, Global, ListAlignment, ListState, Render, View,
 };
-use language::language_settings::SoftWrap;
+use language::{language_settings::SoftWrap, LanguageRegistry};
+use rich_text::RichText;
 use semantic_index::SearchResult;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Tooltip};
+use ui::{popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip};
 
 gpui::actions!(assistant, [Submit]);
 
@@ -24,13 +25,17 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 }
 
 pub struct AssistantPanel {
+    language_registry: Arc<LanguageRegistry>,
     chat: View<AssistantChat>,
 }
 
 impl AssistantPanel {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let chat = cx.new_view(AssistantChat::new);
-        Self { chat }
+    pub fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
+        let chat = cx.new_view(|cx| AssistantChat::new(language_registry.clone(), cx));
+        Self {
+            language_registry,
+            chat,
+        }
     }
 }
 
@@ -49,11 +54,14 @@ struct AssistantChat {
     model: String,
     messages: Vec<AssistantMessage>,
     list_state: ListState,
+    language_registry: Arc<LanguageRegistry>,
+    next_message_id: usize,
 }
 
 impl AssistantChat {
-    fn new(cx: &mut ViewContext<Self>) -> Self {
+    fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
         let messages = vec![AssistantMessage::User {
+            id: 0,
             body: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(80, cx);
                 editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
@@ -80,12 +88,13 @@ impl AssistantChat {
             model,
             messages,
             list_state,
+            language_registry,
+            next_message_id: 1,
         }
     }
 
     fn submit(&mut self, _: &Submit, cx: &mut ViewContext<Self>) {
-        // Detect which message is focused and send the ones above it
-        //
+        // todo!(Detect which message is focused and send the ones above it)
         let completion = CompletionProvider::get(cx).complete(
             self.model.clone(),
             self.messages(cx),
@@ -93,12 +102,34 @@ impl AssistantChat {
             1.0,
         );
 
-        cx.spawn(|this, cx| async move {
+        let message_id = self.next_message_id;
+        self.next_message_id += 1;
+        self.push_message(
+            AssistantMessage::Assistant {
+                id: message_id,
+                body: RichText::new(String::new(), &[], &self.language_registry),
+            },
+            cx,
+        );
+
+        cx.spawn(|this, mut cx| async move {
             let mut stream = completion.await?;
 
+            let mut body = String::new();
             while let Some(chunk) = stream.next().await {
-                let text = chunk?;
-                dbg!(text);
+                let chunk = chunk?;
+                this.update(&mut cx, |this, cx| {
+                    if let Some(AssistantMessage::Assistant {
+                        body: message_body, ..
+                    }) = this.messages.last_mut()
+                    {
+                        body.push_str(&chunk);
+                        *message_body = RichText::new(body.clone(), &[], &this.language_registry);
+                        cx.notify();
+                    } else {
+                        unreachable!()
+                    }
+                })?;
             }
 
             anyhow::Ok(())
@@ -106,17 +137,31 @@ impl AssistantChat {
         .detach_and_log_err(cx);
     }
 
+    fn push_message(&mut self, message: AssistantMessage, cx: &mut ViewContext<Self>) {
+        let old_len = self.messages.len();
+        self.messages.push(message);
+        self.list_state.splice(old_len..old_len, 1);
+        cx.notify();
+    }
+
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+        let is_last = ix == self.messages.len() - 1;
+
         match &self.messages[ix] {
-            AssistantMessage::User { body, contexts } => div()
+            AssistantMessage::User { body, .. } => div()
                 .on_action(cx.listener(Self::submit))
                 .p_2()
+                .when(!is_last, |element| element.mb_2())
                 .text_color(cx.theme().colors().editor_foreground)
                 .font(ThemeSettings::get_global(cx).buffer_font.clone())
                 .bg(cx.theme().colors().editor_background)
                 .child(body.clone())
-                .into_any_element(),
-            AssistantMessage::Assistant { body } => body.clone().into_any_element(),
+                .into_any(),
+            AssistantMessage::Assistant { id, body } => div()
+                .p_2()
+                .when(!is_last, |element| element.mb_2())
+                .child(body.element(ElementId::from(*id), cx))
+                .into_any(),
         }
     }
 
@@ -124,13 +169,13 @@ impl AssistantChat {
         self.messages
             .iter()
             .map(|message| match message {
-                AssistantMessage::User { body, contexts } => CompletionMessage {
+                AssistantMessage::User { body, contexts, .. } => CompletionMessage {
                     role: CompletionRole::User,
                     body: body.read(cx).text(cx),
                 },
-                AssistantMessage::Assistant { body } => CompletionMessage {
+                AssistantMessage::Assistant { body, .. } => CompletionMessage {
                     role: CompletionRole::Assistant,
-                    body: body.to_string(),
+                    body: body.text.to_string(),
                 },
             })
             .collect()
@@ -196,6 +241,7 @@ impl Render for AssistantChat {
             .flex_1()
             .v_flex()
             .key_context("AssistantChat")
+            .text_color(Color::Default.color(cx))
             .child(self.render_model_dropdown(cx))
             .child(list(self.list_state.clone()).flex_1())
     }
@@ -203,11 +249,13 @@ impl Render for AssistantChat {
 
 enum AssistantMessage {
     User {
+        id: usize,
         body: View<Editor>,
         contexts: Vec<AssistantContext>,
     },
     Assistant {
-        body: SharedString,
+        id: usize,
+        body: RichText,
     },
 }
 

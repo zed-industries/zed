@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use assets::Assets;
 use assistant2::AssistantPanel;
 use client::Client;
-use gpui::{App, View, WindowOptions};
+use gpui::{App, Task, View, WindowOptions};
+use language::LanguageRegistry;
 use settings::{KeymapFile, DEFAULT_KEYMAP_PATH};
 use theme::LoadThemes;
 use ui::{div, prelude::*, Render};
@@ -24,10 +27,17 @@ fn main() {
             cx.spawn(|cx| async move { client.authenticate_and_connect(false, &cx).await })
                 .detach_and_log_err(cx);
         }
-        assistant2::init(client, cx);
+        assistant2::init(client.clone(), cx);
+
+        let language_registry = Arc::new(LanguageRegistry::new(
+            Task::ready(()),
+            cx.background_executor().clone(),
+        ));
+        let node_runtime = node_runtime::RealNodeRuntime::new(client.http_client());
+        languages::init(language_registry.clone(), node_runtime, cx);
 
         cx.open_window(WindowOptions::default(), |cx| {
-            cx.new_view(|cx| Example::new(cx))
+            cx.new_view(|cx| Example::new(language_registry, cx))
         });
         cx.activate(true);
     })
@@ -38,9 +48,9 @@ struct Example {
 }
 
 impl Example {
-    fn new(cx: &mut ViewContext<Self>) -> Self {
+    fn new(language_registry: Arc<LanguageRegistry>, cx: &mut ViewContext<Self>) -> Self {
         Self {
-            assistant_panel: cx.new_view(|cx| AssistantPanel::new(cx)),
+            assistant_panel: cx.new_view(|cx| AssistantPanel::new(language_registry, cx)),
         }
     }
 }

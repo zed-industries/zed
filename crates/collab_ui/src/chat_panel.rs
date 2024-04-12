@@ -762,7 +762,7 @@ impl ChatPanel {
             body.push_str(MESSAGE_UPDATED);
         }
 
-        let mut rich_text = rich_text::render_rich_text(body, &mentions, language_registry, None);
+        let mut rich_text = RichText::new(body, &mentions, language_registry);
 
         if message.edited_at.is_some() {
             rich_text.highlights.push((

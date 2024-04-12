@@ -48,6 +48,35 @@ pub struct Mention {
 }
 
 impl RichText {
+    pub fn new(
+        block: String,
+        mentions: &[Mention],
+        language_registry: &Arc<LanguageRegistry>,
+    ) -> Self {
+        let mut text = String::new();
+        let mut highlights = Vec::new();
+        let mut link_ranges = Vec::new();
+        let mut link_urls = Vec::new();
+        render_markdown_mut(
+            &block,
+            mentions,
+            language_registry,
+            None,
+            &mut text,
+            &mut highlights,
+            &mut link_ranges,
+            &mut link_urls,
+        );
+        text.truncate(text.trim_end().len());
+
+        Self {
+            text: SharedString::from(text),
+            link_urls: link_urls.into(),
+            link_ranges,
+            highlights,
+        }
+    }
+
     pub fn element(&self, id: ElementId, cx: &WindowContext) -> AnyElement {
         let theme = cx.theme();
         let code_background = theme.colors().surface_background;
@@ -324,36 +353,6 @@ pub fn render_markdown_mut(
             Event::SoftBreak => text.push('\n'),
             _ => {}
         }
-    }
-}
-
-pub fn render_rich_text(
-    block: String,
-    mentions: &[Mention],
-    language_registry: &Arc<LanguageRegistry>,
-    language: Option<&Arc<Language>>,
-) -> RichText {
-    let mut text = String::new();
-    let mut highlights = Vec::new();
-    let mut link_ranges = Vec::new();
-    let mut link_urls = Vec::new();
-    render_markdown_mut(
-        &block,
-        mentions,
-        language_registry,
-        language,
-        &mut text,
-        &mut highlights,
-        &mut link_ranges,
-        &mut link_urls,
-    );
-    text.truncate(text.trim_end().len());
-
-    RichText {
-        text: SharedString::from(text),
-        link_urls: link_urls.into(),
-        link_ranges,
-        highlights,
     }
 }
 

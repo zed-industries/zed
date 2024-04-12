@@ -15,6 +15,7 @@ editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
+rich_text.workspace = true
 semantic_index.workspace = true
 settings.workspace = true
 theme.workspace = true
@@ -27,6 +28,8 @@ editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+languages.workspace = true
+node_runtime.workspace = true
 release_channel.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
