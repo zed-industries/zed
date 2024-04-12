@@ -306,8 +306,8 @@ impl GitBlame {
                 })
                 .await;
 
-            match result {
-                Ok((entries, permalinks, messages)) => this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, cx| match result {
+                Ok((entries, permalinks, messages)) => {
                     this.buffer_edits = buffer_edits;
                     this.buffer_snapshot = snapshot;
                     this.entries = entries;
@@ -315,16 +315,13 @@ impl GitBlame {
                     this.messages = messages;
                     this.generated = true;
                     cx.notify();
+                }
+                Err(error) => this.project.update(cx, |_, cx| {
+                    log::error!("failed to get git blame data: {error:?}");
+                    let notification = format!("{:#}", error).trim().to_string();
+                    cx.emit(project::Event::Notification(notification));
                 }),
-                Err(error) => this.update(&mut cx, |this, cx| {
-                    this.project.update(cx, |_, cx| {
-                        log::error!("{error:?}");
-                        cx.emit(project::Event::Notification(
-                            (&format!("{:#}", error)).trim().to_string(),
-                        ));
-                    })
-                }),
-            }
+            })
         });
     }
 }
@@ -370,7 +367,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_blame_errors_are_reported(cx: &mut gpui::TestAppContext) {
+    async fn test_blame_error_notifications(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -400,17 +397,21 @@ mod tests {
         let blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), cx));
 
         let event = project.next_event(cx);
-
-        let project::Event::Notification(message) = event else {
-            panic!("Expected Notification, received {event:?}");
-        };
-
         assert_eq!(
-            message.as_str(),
-            // we want the notification to be from the git blame
-            "Failed to blame \"file.txt\": failed to get blame for \"file.txt\""
+            event,
+            project::Event::Notification(
+                "Failed to blame \"file.txt\": failed to get blame for \"file.txt\"".to_string()
+            )
         );
-        drop(blame); // the blame has to live long enough
+
+        blame.update(cx, |blame, cx| {
+            assert_eq!(
+                blame
+                    .blame_for_rows((0..1).map(Some), cx)
+                    .collect::<Vec<_>>(),
+                vec![None]
+            );
+        });
     }
 
     #[gpui::test]
