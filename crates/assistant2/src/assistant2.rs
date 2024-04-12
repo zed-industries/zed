@@ -10,9 +10,9 @@ use gpui::{
     Task, View,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
+use project::Fs;
 use rich_text::RichText;
 use semantic_index::ProjectIndex;
-use semantic_index::SearchResult;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -47,6 +47,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 pub struct AssistantPanel {
     language_registry: Arc<LanguageRegistry>,
     project_index: Model<ProjectIndex>,
+    fs: Arc<dyn Fs>,
     chat: View<AssistantChat>,
 }
 
@@ -54,14 +55,21 @@ impl AssistantPanel {
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
         project_index: Model<ProjectIndex>,
+        fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let chat = cx.new_view(|cx| {
-            AssistantChat::new(language_registry.clone(), project_index.clone(), cx)
+            AssistantChat::new(
+                language_registry.clone(),
+                project_index.clone(),
+                fs.clone(),
+                cx,
+            )
         });
         Self {
             language_registry,
             project_index,
+            fs,
             chat,
         }
     }
@@ -84,6 +92,7 @@ struct AssistantChat {
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
     project_index: Model<ProjectIndex>,
+    fs: Arc<dyn Fs>,
     next_message_id: MessageId,
     next_context_id: ContextId,
     pending_completion: Option<Task<()>>,
@@ -93,6 +102,7 @@ impl AssistantChat {
     fn new(
         language_registry: Arc<LanguageRegistry>,
         project_index: Model<ProjectIndex>,
+        fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let this = cx.view().downgrade();
@@ -108,6 +118,7 @@ impl AssistantChat {
             list_state,
             language_registry,
             project_index,
+            fs,
             next_message_id: MessageId(0),
             next_context_id: ContextId(0),
             pending_completion: None,
@@ -128,21 +139,6 @@ impl AssistantChat {
     }
 
     fn submit(&mut self, Submit(mode): &Submit, cx: &mut ViewContext<Self>) {
-        // Behind the scenes crafting of the system and user message
-        //
-        // SimpleStrategy:
-        //  - IF the user wants to chat with codebase
-        //   -> Send user's message to the semantic index
-        //   -> Await results
-        //   -> Append the search results to the "user message"
-        //   -> Craft
-        //
-        // Actual messages:
-        //      User message as is
-        //      System message with search results
-        //
-        //
-
         let Some(focused_message_id) = self.focused_message_id(cx) else {
             log::error!("unexpected state: no user message editor is focused.");
             return;
@@ -151,15 +147,11 @@ impl AssistantChat {
         self.truncate_messages(focused_message_id, cx);
         self.push_new_assistant_message(cx);
 
-        // USER
-        // SPECIAL MESSAGE (SYSTEM)
-        // ASSISTANT
-
         let populate = self.populate_context_on_submit(focused_message_id, mode, cx);
 
         self.pending_completion = Some(cx.spawn(|this, mut cx| async move {
             let complete = async {
-                populate.await;
+                populate.await?;
 
                 let completion = this.update(&mut cx, |this, cx| {
                     CompletionProvider::get(cx).complete(
@@ -242,13 +234,39 @@ impl AssistantChat {
 
         let query = self.user_message(submitted_id).body.read(cx).text(cx);
         let results = self.project_index.read(cx).search(&query, 4, cx);
+        let fs = self.fs.clone();
 
         cx.spawn(|this, mut cx| async move {
             let results = results.await;
 
+            let excerpts = results.into_iter().map(|result| {
+                let abs_path = result
+                    .worktree
+                    .read_with(&cx, |worktree, _| worktree.abs_path().join(&result.path));
+                let fs = fs.clone();
+
+                async move {
+                    let path = result.path.clone();
+                    let text = fs.load(&abs_path?).await?;
+                    let text = SharedString::from(text[result.range].to_string());
+
+                    anyhow::Ok(CodebaseExcerpt {
+                        path: path.to_string_lossy().to_string().into(),
+                        text,
+                        score: result.score,
+                    })
+                }
+            });
+
+            let excerpts = futures::future::join_all(excerpts).await;
+
             this.update(&mut cx, |this, cx| {
-                this.codebase_context(submitted_id, context_id)
-                    .populate(results);
+                this.codebase_context(submitted_id, context_id).populate(
+                    excerpts
+                        .into_iter()
+                        .filter_map(|result| result.log_err())
+                        .collect(),
+                );
                 cx.notify();
             })?;
 
@@ -513,15 +531,21 @@ impl ContextId {
 
 struct CodebaseContext {
     id: ContextId,
-    results: Vec<SearchResult>,
+    excerpts: Vec<CodebaseExcerpt>,
     pending: bool,
+}
+
+struct CodebaseExcerpt {
+    path: SharedString,
+    text: SharedString,
+    score: f32,
 }
 
 impl AssistantContext {
     fn codebase(id: ContextId) -> Self {
         Self::Codebase(CodebaseContext {
             id,
-            results: Vec::new(),
+            excerpts: Vec::new(),
             pending: true,
         })
     }
@@ -538,19 +562,19 @@ impl CodebaseContext {
         if self.pending {
             div().child("⏳")
         } else {
-            div().children(self.results.iter().map(|result| {
-                let path = result.path.to_string_lossy().to_string();
+            div().children(self.excerpts.iter().map(|result| {
                 div()
                     .p_2()
                     .rounded_md()
                     .bg(cx.theme().colors().editor_background)
-                    .child(path)
+                    .child(result.path.clone())
+                    .child(result.text.clone())
             }))
         }
     }
 
-    fn populate(&mut self, results: Vec<SearchResult>) {
-        self.results = results;
+    fn populate(&mut self, excerpts: Vec<CodebaseExcerpt>) {
+        self.excerpts = excerpts;
         self.pending = false;
     }
 }

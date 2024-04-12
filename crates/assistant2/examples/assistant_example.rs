@@ -1,24 +1,28 @@
 use assets::Assets;
 use assistant2::AssistantPanel;
 use client::Client;
-use gpui::{App, Model, Task, View, WindowOptions};
+use gpui::{actions, App, AppContext, KeyBinding, Model, Task, View, WindowOptions};
 use language::LanguageRegistry;
-use project::{project_settings, Project};
+use project::{Fs, Project};
+use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, ProjectIndex, SemanticIndex};
 use settings::{KeymapFile, DEFAULT_KEYMAP_PATH};
+use std::{path::Path, sync::Arc};
 use theme::LoadThemes;
 use ui::{div, prelude::*, Render};
-
 use util::http::HttpClientWithUrl;
 
-use std::{path::Path, sync::Arc};
-
-use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, ProjectIndex, SemanticIndex};
+actions!(example, [Quit]);
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     env_logger::init();
     App::new().with_assets(Assets).run(|cx| {
+        cx.bind_keys(Some(KeyBinding::new("cmd-q", Quit, None)));
+        cx.on_action(|_: &Quit, cx: &mut AppContext| {
+            cx.quit();
+        });
+
         if args.len() < 2 {
             eprintln!(
                 "Usage: cargo run --example assistant_example -p assistant2 -- <project_path>"
@@ -74,9 +78,11 @@ fn main() {
             let mut semantic_index = semantic_index.await?;
 
             cx.update(|cx| {
+                let fs = project.read(cx).fs().clone();
+
                 let project_index = semantic_index.project_index(project.clone(), cx);
                 cx.open_window(WindowOptions::default(), |cx| {
-                    cx.new_view(|cx| Example::new(language_registry, project_index, cx))
+                    cx.new_view(|cx| Example::new(language_registry, project_index, fs, cx))
                 });
                 cx.activate(true);
             })
@@ -93,11 +99,12 @@ impl Example {
     fn new(
         language_registry: Arc<LanguageRegistry>,
         project_index: Model<ProjectIndex>,
+        fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
             assistant_panel: cx
-                .new_view(|cx| AssistantPanel::new(language_registry, project_index, cx)),
+                .new_view(|cx| AssistantPanel::new(language_registry, project_index, fs, cx)),
         }
     }
 }
