@@ -45,7 +45,6 @@ tree-sitter-embedded-template.workspace = true
 tree-sitter-go.workspace = true
 tree-sitter-gomod.workspace = true
 tree-sitter-gowork.workspace = true
-tree-sitter-hcl.workspace = true
 tree-sitter-heex.workspace = true
 tree-sitter-jsdoc.workspace = true
 tree-sitter-json.workspace = true

@@ -23,7 +23,6 @@ mod python;
 mod ruby;
 mod rust;
 mod tailwind;
-mod terraform;
 mod typescript;
 mod vue;
 mod yaml;
@@ -63,7 +62,6 @@ pub fn init(
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
-        ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
@@ -280,12 +278,6 @@ pub fn init(
         ]
     );
     language!("proto");
-    language!("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
-    language!(
-        "terraform-vars",
-        vec![Arc::new(terraform::TerraformLspAdapter)]
-    );
-    language!("hcl", vec![]);
 
     languages.register_secondary_lsp_adapter(
         "Astro".into(),
