@@ -129,6 +129,7 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use workspace::item::ItemHandle;
 use workspace::notifications::NotificationId;
 use workspace::Toast;
 use workspace::{
@@ -8002,11 +8003,16 @@ impl Editor {
                 cx,
             );
         });
+        let item = Box::new(editor);
         if split {
-            workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
+            workspace.split_item(SplitDirection::Right, item.clone(), cx);
         } else {
-            workspace.add_item_to_active_pane(Box::new(editor), cx);
+            workspace.add_item_to_active_pane(item.clone(), cx);
         }
+        workspace.active_pane().clone().update(cx, |pane, cx| {
+            let item_id = item.item_id();
+            pane.set_preview_item_id(Some(item_id), cx);
+        });
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
