@@ -288,6 +288,7 @@ impl Display for TerminalError {
 
 pub struct SpawnTask {
     pub id: TaskId,
+    pub full_label: String,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
@@ -594,6 +595,7 @@ pub struct Terminal {
 
 pub struct TaskState {
     pub id: TaskId,
+    pub full_label: String,
     pub label: String,
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
