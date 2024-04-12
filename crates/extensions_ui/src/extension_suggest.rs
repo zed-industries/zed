@@ -59,6 +59,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("svelte", &["svelte"]),
     ("swift", &["swift"]),
     ("templ", &["templ"]),
+    ("terraform", &["tf", "tfvars", "hcl"]),
     ("toml", &["Cargo.lock", "toml"]),
     ("wgsl", &["wgsl"]),
     ("zig", &["zig"]),

@@ -5463,7 +5463,6 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
- "tree-sitter-hcl",
  "tree-sitter-heex",
  "tree-sitter-jsdoc",
  "tree-sitter-json 0.20.0",
@@ -10418,15 +10417,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-hcl"
-version = "0.0.1"
-source = "git+https://github.com/MichaHoffmann/tree-sitter-hcl?rev=v1.1.0#636dbe70301ecbab8f353c8c78b3406fe4f185f5"
-dependencies = [
- "cc",
- "tree-sitter",
-]
-
-[[package]]
 name = "tree-sitter-heex"
 version = "0.0.1"
 source = "git+https://github.com/phoenixframework/tree-sitter-heex?rev=2e1348c3cf2c9323e87c2744796cf3f3868aa82a#2e1348c3cf2c9323e87c2744796cf3f3868aa82a"
@@ -12678,6 +12668,13 @@ dependencies = [
 
 [[package]]
 name = "zed_svelte"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_terraform"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
