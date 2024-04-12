@@ -553,7 +553,7 @@ impl Element for InteractiveText {
                                                 ActiveTooltip {
                                                     tooltip: Some(AnyTooltip {
                                                         view: tooltip,
-                                                        cursor_offset: cx.mouse_position(),
+                                                        mouse_position: cx.mouse_position(),
                                                     }),
                                                     _task: None,
                                                 }

@@ -21,7 +21,7 @@ use crate::{
     HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, View, Visibility, WindowContext,
+    StyleRefinement, Styled, Task, TooltipId, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1188,6 +1188,7 @@ pub struct Interactivity {
     /// Whether the element was hovered. This will only be present after paint if an hitbox
     /// was created for the interactive element.
     pub hovered: Option<bool>,
+    pub(crate) tooltip_id: Option<TooltipId>,
     pub(crate) content_size: Size<Pixels>,
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
@@ -1321,7 +1322,7 @@ impl Interactivity {
                     if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
                         if let Some(active_tooltip) = active_tooltip.borrow().as_ref() {
                             if let Some(tooltip) = active_tooltip.tooltip.clone() {
-                                cx.set_tooltip(tooltip);
+                                self.tooltip_id = Some(cx.set_tooltip(tooltip));
                             }
                         }
                     }
@@ -1818,15 +1819,19 @@ impl Interactivity {
                 cx.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
                     let hitbox = hitbox.clone();
+                    let tooltip_id = self.tooltip_id;
                     move |_: &MouseMoveEvent, phase, cx| {
                         let is_hovered =
                             pending_mouse_down.borrow().is_none() && hitbox.is_hovered(cx);
-                        if !is_hovered {
-                            active_tooltip.borrow_mut().take();
+                        if !is_hovered
+                            && tooltip_id.map_or(true, |tooltip_id| !tooltip_id.is_hovered(cx))
+                            && active_tooltip.borrow_mut().take().is_some()
+                        {
+                            cx.refresh();
                             return;
                         }
 
-                        if phase != DispatchPhase::Bubble {
+                        if phase != DispatchPhase::Bubble || !is_hovered {
                             return;
                         }
 
@@ -1841,7 +1846,7 @@ impl Interactivity {
                                         active_tooltip.borrow_mut().replace(ActiveTooltip {
                                             tooltip: Some(AnyTooltip {
                                                 view: tooltip_builder(cx),
-                                                cursor_offset: cx.mouse_position(),
+                                                mouse_position: cx.mouse_position(),
                                             }),
                                             _task: None,
                                         });
@@ -1860,15 +1865,25 @@ impl Interactivity {
 
                 cx.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
-                    move |_: &MouseDownEvent, _, _| {
-                        active_tooltip.borrow_mut().take();
+                    let tooltip_id = self.tooltip_id;
+                    move |_: &MouseDownEvent, _, cx| {
+                        if tooltip_id.map_or(true, |tooltip_id| !tooltip_id.is_hovered(cx)) {
+                            if active_tooltip.borrow_mut().take().is_some() {
+                                cx.refresh();
+                            }
+                        }
                     }
                 });
 
                 cx.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
-                    move |_: &ScrollWheelEvent, _, _| {
-                        active_tooltip.borrow_mut().take();
+                    let tooltip_id = self.tooltip_id;
+                    move |_: &ScrollWheelEvent, _, cx| {
+                        if tooltip_id.map_or(true, |tooltip_id| !tooltip_id.is_hovered(cx)) {
+                            if active_tooltip.borrow_mut().take().is_some() {
+                                cx.refresh();
+                            }
+                        }
                     }
                 })
             }

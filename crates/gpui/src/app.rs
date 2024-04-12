@@ -1416,8 +1416,8 @@ pub struct AnyTooltip {
     /// The view used to display the tooltip
     pub view: AnyView,
 
-    /// The offset from the cursor to use, relative to the parent view
-    pub cursor_offset: Point<Pixels>,
+    /// The absolute position of the mouse when the tooltip was deployed.
+    pub mouse_position: Point<Pixels>,
 }
 
 /// A keystroke event, and potentially the associated action
