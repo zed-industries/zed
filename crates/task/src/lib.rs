@@ -58,6 +58,8 @@ pub struct ResolvedTask {
     pub original_task: TaskTemplate,
     /// Full, unshortened label of the task after all resolutions are made.
     pub resolved_label: String,
+    /// Whether the task template contained a substitution dependency for the [`VariableName::Symbol`] Zed task variable.
+    pub depends_on_symbol: bool,
     /// Further actions that need to take place after the resolved task is spawned,
     /// with all task variables resolved.
     pub resolved: Option<SpawnInTerminal>,

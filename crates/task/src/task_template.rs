@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
-use crate::{ResolvedTask, SpawnInTerminal, TaskContext, TaskId, ZED_VARIABLE_NAME_PREFIX};
+use crate::{
+    ResolvedTask, SpawnInTerminal, TaskContext, TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
+};
 
 /// A template definition of a Zed task to run.
 /// May use the [`VariableName`] to get the corresponding substitutions into its fields.
@@ -83,22 +85,31 @@ impl TaskTemplate {
             return None;
         }
 
+        let mut depends_on_symbol = false;
         let task_variables = cx.task_variables.to_env_variables();
         let truncated_variables = truncate_variables(&task_variables);
         let cwd = match self.cwd.as_deref() {
-            Some(cwd) => Some(substitute_all_template_variables_in_str(
-                cwd,
-                &task_variables,
-            )?),
+            Some(cwd) => {
+                let (cwd_depends_on_symbol, substitured_cwd) =
+                    substitute_all_template_variables_in_str(cwd, &task_variables)?;
+                depends_on_symbol |= cwd_depends_on_symbol;
+                Some(substitured_cwd)
+            }
             None => None,
         }
         .map(PathBuf::from)
         .or(cx.cwd.clone());
-        let shortened_label =
+        let (_, shortened_label) =
             substitute_all_template_variables_in_str(&self.label, &truncated_variables)?;
-        let full_label = substitute_all_template_variables_in_str(&self.label, &task_variables)?;
-        let command = substitute_all_template_variables_in_str(&self.command, &task_variables)?;
-        let args = substitute_all_template_variables_in_vec(self.args.clone(), &task_variables)?;
+        let (label_depends_on_symbol, full_label) =
+            substitute_all_template_variables_in_str(&self.label, &task_variables)?;
+        depends_on_symbol |= label_depends_on_symbol;
+        let (command_depends_on_symbol, command) =
+            substitute_all_template_variables_in_str(&self.command, &task_variables)?;
+        depends_on_symbol |= command_depends_on_symbol;
+        let (args_depends_on_symbol, args) =
+            substitute_all_template_variables_in_vec(self.args.clone(), &task_variables)?;
+        depends_on_symbol |= args_depends_on_symbol;
 
         let task_hash = to_hex_hash(&self)
             .context("hashing task template")
@@ -107,10 +118,13 @@ impl TaskTemplate {
             .context("hashing task variables")
             .log_err()?;
         let id = TaskId(format!("{id_base}_{task_hash}_{variables_hash}"));
-        let mut env = substitute_all_template_variables_in_map(self.env.clone(), &task_variables)?;
+        let (env_depends_on_symbol, mut env) =
+            substitute_all_template_variables_in_map(self.env.clone(), &task_variables)?;
+        depends_on_symbol |= env_depends_on_symbol;
         env.extend(task_variables.into_iter().map(|(k, v)| (k, v.to_owned())));
         Some(ResolvedTask {
             id: id.clone(),
+            depends_on_symbol,
             original_task: self.clone(),
             resolved_label: full_label.clone(),
             resolved: Some(SpawnInTerminal {
@@ -153,12 +167,14 @@ fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
 fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
     task_variables: &HashMap<String, A>,
-) -> Option<String> {
+) -> Option<(bool, String)> {
+    let mut depends_on_symbol = false;
     let substituted_string = shellexpand::env_with_context(template_str, |var| {
         // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
         let colon_position = var.find(':').unwrap_or(var.len());
         let (variable_name, default) = var.split_at(colon_position);
         if let Some(name) = task_variables.get(variable_name) {
+            depends_on_symbol = variable_name == VariableName::Symbol.to_string();
             let mut name = name.as_ref().to_owned();
             // Got a task variable hit
             if !default.is_empty() {
@@ -178,31 +194,39 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
         Ok(None)
     })
     .ok()?;
-    Some(substituted_string.into_owned())
+    Some((depends_on_symbol, substituted_string.into_owned()))
 }
 
 fn substitute_all_template_variables_in_vec(
     mut template_strs: Vec<String>,
     task_variables: &HashMap<String, &str>,
-) -> Option<Vec<String>> {
+) -> Option<(bool, Vec<String>)> {
+    let mut depends_on_symbol = false;
     for variable in template_strs.iter_mut() {
-        let new_value = substitute_all_template_variables_in_str(&variable, task_variables)?;
+        let (new_depends_on_symbol, new_value) =
+            substitute_all_template_variables_in_str(&variable, task_variables)?;
+        depends_on_symbol |= new_depends_on_symbol;
         *variable = new_value;
     }
-    Some(template_strs)
+    Some((depends_on_symbol, template_strs))
 }
 
 fn substitute_all_template_variables_in_map(
     keys_and_values: HashMap<String, String>,
     task_variables: &HashMap<String, &str>,
-) -> Option<HashMap<String, String>> {
+) -> Option<(bool, HashMap<String, String>)> {
+    let mut depends_on_symbol = false;
     let mut new_map: HashMap<String, String> = Default::default();
     for (key, value) in keys_and_values {
-        let new_value = substitute_all_template_variables_in_str(&value, task_variables)?;
-        let new_key = substitute_all_template_variables_in_str(&key, task_variables)?;
+        let (var_depends_on_symbol, new_value) =
+            substitute_all_template_variables_in_str(&value, task_variables)?;
+        depends_on_symbol |= var_depends_on_symbol;
+        let (key_depends_on_symbol, new_key) =
+            substitute_all_template_variables_in_str(&key, task_variables)?;
+        depends_on_symbol |= key_depends_on_symbol;
         new_map.insert(new_key, new_value);
     }
-    Some(new_map)
+    Some((depends_on_symbol, new_map))
 }
 
 #[cfg(test)]
@@ -387,7 +411,7 @@ mod tests {
             ).unwrap_or_else(|| panic!("Should successfully resolve task {task_with_all_variables:?} with variables {all_variables:?}"));
 
             match &first_resolved_id {
-                None => first_resolved_id = Some(resolved_task.id),
+                None => first_resolved_id = Some(resolved_task.id.clone()),
                 Some(first_id) => assert_eq!(
                     &resolved_task.id, first_id,
                     "Step {i}, for the same task template and context, there should be the same resolved task id"
@@ -402,6 +426,10 @@ mod tests {
                 resolved_task.resolved_label,
                 format!("test label for 1234 and {long_value}"),
                 "Resolved task label should be substituted with variables and those should not be shortened"
+            );
+            assert!(
+                resolved_task.depends_on_symbol,
+                "Task that depends on all vars, should depend on the Symbol one too, but got: {resolved_task:?}"
             );
 
             let spawn_in_terminal = resolved_task
@@ -496,5 +524,59 @@ mod tests {
         assert!(task
             .resolve_task(TEST_ID_BASE, &TaskContext::default())
             .is_none());
+    }
+
+    #[test]
+    fn test_symbol_dependent_tasks() {
+        let task_with_all_properties = TaskTemplate {
+            label: "test_label".to_string(),
+            command: "test_command".to_string(),
+            args: vec!["test_arg".to_string()],
+            env: HashMap::from_iter([("test_env_key".to_string(), "test_env_var".to_string())]),
+            ..TaskTemplate::default()
+        };
+        let cx = TaskContext {
+            cwd: None,
+            task_variables: TaskVariables::from_iter(Some((
+                VariableName::Symbol,
+                "test_symbol".to_string(),
+            ))),
+        };
+
+        for (i, symbol_dependent_task) in [
+            TaskTemplate {
+                label: format!("test_label_{}", VariableName::Symbol.template_value()),
+                ..task_with_all_properties.clone()
+            },
+            TaskTemplate {
+                command: format!("test_command_{}", VariableName::Symbol.template_value()),
+                ..task_with_all_properties.clone()
+            },
+            TaskTemplate {
+                args: vec![format!(
+                    "test_arg_{}",
+                    VariableName::Symbol.template_value()
+                )],
+                ..task_with_all_properties.clone()
+            },
+            TaskTemplate {
+                env: HashMap::from_iter([(
+                    "test_env_key".to_string(),
+                    format!("test_env_var_{}", VariableName::Symbol.template_value()),
+                )]),
+                ..task_with_all_properties.clone()
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let resolved = symbol_dependent_task
+                .resolve_task(TEST_ID_BASE, &cx)
+                .unwrap_or_else(|| panic!("Failed to resolve task {symbol_dependent_task:?}"));
+            assert!(
+                resolved.depends_on_symbol,
+                "(index {i}) Expected the task to depend on symbol task variable: {resolved:?}"
+            )
+        }
     }
 }
