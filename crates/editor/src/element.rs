@@ -1095,6 +1095,7 @@ impl EditorElement {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_inline_blame(
         &self,
         start_row: u32,

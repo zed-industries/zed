@@ -78,7 +78,7 @@ fn format_absolute_timestamp(
 fn format_absolute_timestamp_medium(timestamp: OffsetDateTime) -> String {
     #[cfg(target_os = "macos")]
     {
-        format!("{}", macos::format_date_medium(&timestamp))
+        macos::format_date_medium(&timestamp)
     }
     #[cfg(not(target_os = "macos"))]
     {
