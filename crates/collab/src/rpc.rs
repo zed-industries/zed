@@ -3588,20 +3588,16 @@ async fn complete_with_language_model(
     google_ai_api_key: Option<Arc<str>>,
     anthropic_api_key: Option<Arc<str>>,
 ) -> Result<()> {
-    dbg!();
     let Some(session) = session.for_user() else {
         return Err(anyhow!("user not found"))?;
     };
     authorize_access_to_language_models(&session).await?;
-    dbg!();
     session
         .rate_limiter
         .check::<CompleteWithLanguageModelRateLimit>(session.user_id())
         .await?;
-    dbg!();
 
     if request.model.starts_with("gpt") {
-        dbg!();
         let api_key =
             open_ai_api_key.ok_or_else(|| anyhow!("no OpenAI API key configured on the server"))?;
         complete_with_open_ai(request, response, session, api_key).await?;

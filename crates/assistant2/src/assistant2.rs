@@ -7,14 +7,13 @@ use completion_provider::*;
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    list, prelude::IntoElement, AnyElement, AppContext, Global, ListAlignment, ListState, Render,
-    View,
+    list, prelude::*, AnyElement, AppContext, Global, ListAlignment, ListState, Render, View,
 };
 use language::language_settings::SoftWrap;
 use semantic_index::SearchResult;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Tooltip};
 
 gpui::actions!(assistant, [Submit]);
 
@@ -47,6 +46,7 @@ impl Render for AssistantPanel {
 }
 
 struct AssistantChat {
+    model: String,
     messages: Vec<AssistantMessage>,
     list_state: ListState,
 }
@@ -74,7 +74,10 @@ impl AssistantChat {
             },
         );
 
+        let model = CompletionProvider::get(cx).default_model();
+
         Self {
+            model,
             messages,
             list_state,
         }
@@ -84,23 +87,19 @@ impl AssistantChat {
         // Detect which message is focused and send the ones above it
         //
         let completion = CompletionProvider::get(cx).complete(
-            "gpt-4-turbo-preview".to_string(),
+            self.model.clone(),
             self.messages(cx),
             Vec::new(),
             1.0,
         );
 
         cx.spawn(|this, cx| async move {
-            dbg!();
             let mut stream = completion.await?;
-            dbg!();
 
             while let Some(chunk) = stream.next().await {
-                dbg!();
                 let text = chunk?;
                 dbg!(text);
             }
-            dbg!();
 
             anyhow::Ok(())
         })
@@ -136,14 +135,68 @@ impl AssistantChat {
             })
             .collect()
     }
+
+    fn render_model_dropdown(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let this = cx.view().downgrade();
+        div().w_32().child(
+            popover_menu("user-menu")
+                .menu(move |cx| {
+                    ContextMenu::build(cx, |mut menu, cx| {
+                        for model in CompletionProvider::get(cx).available_models() {
+                            menu = menu.custom_entry(
+                                {
+                                    let model = model.clone();
+                                    move |_| model.clone().into_any_element()
+                                },
+                                {
+                                    let this = this.clone();
+                                    move |cx| {
+                                        _ = this.update(cx, |this, cx| {
+                                            this.model = model.clone();
+                                            cx.notify();
+                                        });
+                                    }
+                                },
+                            );
+                        }
+                        menu
+                    })
+                    .into()
+                })
+                .trigger(
+                    ButtonLike::new("active-model")
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .overflow_x_hidden()
+                                        .flex_grow()
+                                        .whitespace_nowrap()
+                                        .child(self.model.clone()),
+                                )
+                                .child(
+                                    div().child(
+                                        Icon::new(IconName::ChevronDown).color(Color::Muted),
+                                    ),
+                                ),
+                        )
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(move |cx| Tooltip::text("Change Model", cx)),
+                )
+                .anchor(gpui::AnchorCorner::TopRight),
+        )
+    }
 }
 
 impl Render for AssistantChat {
-    fn render(&mut self, cx: &mut workspace::ui::prelude::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .flex_1()
             .v_flex()
             .key_context("AssistantChat")
+            .child(self.render_model_dropdown(cx))
             .child(list(self.list_state.clone()).flex_1())
     }
 }

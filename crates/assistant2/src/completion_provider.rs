@@ -23,6 +23,14 @@ impl CompletionProvider {
         Self(Arc::new(backend))
     }
 
+    pub fn default_model(&self) -> String {
+        self.0.default_model()
+    }
+
+    pub fn available_models(&self) -> Vec<String> {
+        self.0.available_models()
+    }
+
     pub fn complete(
         &self,
         model: String,
@@ -37,6 +45,8 @@ impl CompletionProvider {
 impl Global for CompletionProvider {}
 
 pub trait CompletionProviderBackend: 'static {
+    fn default_model(&self) -> String;
+    fn available_models(&self) -> Vec<String>;
     fn complete(
         &self,
         model: String,
@@ -57,6 +67,14 @@ impl CloudCompletionProvider {
 }
 
 impl CompletionProviderBackend for CloudCompletionProvider {
+    fn default_model(&self) -> String {
+        "gpt-4-turbo".into()
+    }
+
+    fn available_models(&self) -> Vec<String> {
+        vec!["gpt-4-turbo".into(), "gpt-4".into(), "gpt-3.5-turbo".into()]
+    }
+
     fn complete(
         &self,
         model: String,
