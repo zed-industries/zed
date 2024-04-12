@@ -142,7 +142,7 @@ pub fn init(cx: &mut AppContext) {
     TerminalSettings::register(cx);
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalSize {
     pub cell_width: Pixels,
     pub line_height: Pixels,
@@ -992,7 +992,9 @@ impl Terminal {
 
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_size: TerminalSize) {
-        self.events.push_back(InternalEvent::Resize(new_size))
+        if self.last_content.size != new_size {
+            self.events.push_back(InternalEvent::Resize(new_size))
+        }
     }
 
     ///Write the Input payload to the tty.
