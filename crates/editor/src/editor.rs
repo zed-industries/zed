@@ -9527,7 +9527,7 @@ impl Editor {
         cx.spawn(|_, mut cx| async move {
             let workspace = workspace.ok_or_else(|| anyhow!("cannot jump without workspace"))?;
             let editor = workspace.update(&mut cx, |workspace, cx| {
-                workspace.open_path(path, None, true, cx)
+                workspace.open_path_preview(path, None, true, true, cx)
             })?;
             let editor = editor
                 .await?
