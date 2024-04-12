@@ -1,8 +1,6 @@
 mod completion_provider;
 
-use std::sync::Arc;
-
-use anyhow::anyhow;
+use anyhow::Result;
 use client::Client;
 use completion_provider::*;
 use editor::Editor;
@@ -13,15 +11,32 @@ use gpui::{
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use rich_text::RichText;
-use semantic_index::{SearchResult, SemanticIndex};
+use semantic_index::ProjectIndex;
+use semantic_index::SearchResult;
+use serde::Deserialize;
 use settings::Settings;
+use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip};
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::ResultExt;
 
-use semantic_index::ProjectIndex;
+// gpui::actions!(assistant, [Submit]);
 
-gpui::actions!(assistant, [Submit]);
+#[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
+pub struct Submit(SubmitMode);
+
+/// There are multiple different ways to submit a model request, represented by this enum.
+#[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
+pub enum SubmitMode {
+    /// Only include the conversation.
+    Simple,
+    /// Send the current file as context.
+    CurrentFile,
+    /// Search the codebase and send relevant excerpts.
+    Codebase,
+}
+
+gpui::impl_actions!(assistant, [Submit]);
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     cx.set_global(CompletionProvider::new(CloudCompletionProvider::new(
@@ -65,11 +80,12 @@ impl Render for AssistantPanel {
 
 struct AssistantChat {
     model: String,
-    messages: Vec<AssistantMessage>,
+    messages: Vec<ChatMessage>,
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
     project_index: Model<ProjectIndex>,
-    next_message_id: usize,
+    next_message_id: MessageId,
+    next_context_id: ContextId,
     pending_completion: Option<Task<()>>,
 }
 
@@ -92,53 +108,79 @@ impl AssistantChat {
             list_state,
             language_registry,
             project_index,
-            next_message_id: 0,
+            next_message_id: MessageId(0),
+            next_context_id: ContextId(0),
             pending_completion: None,
         };
-        this.push_user_message(true, cx);
+        this.push_new_user_message(true, cx);
         this
     }
 
-    fn submit(&mut self, _: &Submit, cx: &mut ViewContext<Self>) {
-        let Some((selected_message_ix, selected_message_focus_handle)) =
-            self.messages.iter().enumerate().find_map(|(ix, message)| {
-                if let AssistantMessage::User { body, .. } = message {
-                    let focus_handle = body.focus_handle(cx);
-                    if focus_handle.contains_focused(cx) {
-                        Some((ix, focus_handle))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-        else {
+    fn focused_message_id(&self, cx: &WindowContext) -> Option<MessageId> {
+        self.messages.iter().find_map(|message| match message {
+            ChatMessage::User(message) => message
+                .body
+                .focus_handle(cx)
+                .contains_focused(cx)
+                .then_some(message.id),
+            ChatMessage::Assistant(_) => None,
+        })
+    }
+
+    fn submit(&mut self, Submit(mode): &Submit, cx: &mut ViewContext<Self>) {
+        // Behind the scenes crafting of the system and user message
+        //
+        // SimpleStrategy:
+        //  - IF the user wants to chat with codebase
+        //   -> Send user's message to the semantic index
+        //   -> Await results
+        //   -> Append the search results to the "user message"
+        //   -> Craft
+        //
+        // Actual messages:
+        //      User message as is
+        //      System message with search results
+        //
+        //
+
+        let Some(focused_message_id) = self.focused_message_id(cx) else {
             log::error!("unexpected state: no user message editor is focused.");
             return;
         };
 
-        self.truncate_messages(selected_message_ix + 1, cx);
-        self.push_assistant_message(cx);
+        self.truncate_messages(focused_message_id, cx);
+        self.push_new_assistant_message(cx);
 
-        let completion = CompletionProvider::get(cx).complete(
-            self.model.clone(),
-            self.messages(cx),
-            Vec::new(),
-            1.0,
-        );
+        // USER
+        // SPECIAL MESSAGE (SYSTEM)
+        // ASSISTANT
+
+        let populate = self.populate_context_on_submit(focused_message_id, mode, cx);
+
         self.pending_completion = Some(cx.spawn(|this, mut cx| async move {
             let complete = async {
-                let mut stream = completion.await?;
+                populate.await;
+
+                let completion = this.update(&mut cx, |this, cx| {
+                    CompletionProvider::get(cx).complete(
+                        this.model.clone(),
+                        this.completion_messages(cx),
+                        Vec::new(),
+                        1.0,
+                    )
+                });
+
+                let mut stream = completion?.await?;
 
                 let mut body = String::new();
 
                 while let Some(chunk) = stream.next().await {
                     let chunk = chunk?;
                     this.update(&mut cx, |this, cx| {
-                        if let Some(AssistantMessage::Assistant {
-                            body: message_body, ..
-                        }) = this.messages.last_mut()
+                        if let Some(ChatMessage::Assistant(AssistantMessage {
+                            body: message_body,
+                            ..
+                        })) = this.messages.last_mut()
                         {
                             body.push_str(&chunk);
                             *message_body =
@@ -156,10 +198,10 @@ impl AssistantChat {
 
             this.update(&mut cx, |this, cx| {
                 if let Err(error) = complete {
-                    if let Some(AssistantMessage::Assistant {
+                    if let Some(ChatMessage::Assistant(AssistantMessage {
                         error: message_error,
                         ..
-                    }) = this.messages.last_mut()
+                    })) = this.messages.last_mut()
                     {
                         message_error.replace(SharedString::from(error.to_string()));
                         cx.notify();
@@ -168,16 +210,92 @@ impl AssistantChat {
                     }
                 }
 
-                let focus = selected_message_focus_handle.contains_focused(cx);
-                this.push_user_message(focus, cx);
+                let focus = this
+                    .user_message(focused_message_id)
+                    .body
+                    .focus_handle(cx)
+                    .contains_focused(cx);
+                this.push_new_user_message(focus, cx);
             })
             .log_err();
         }));
     }
 
-    fn push_user_message(&mut self, focus: bool, cx: &mut ViewContext<Self>) {
-        let message = AssistantMessage::User {
-            id: post_inc(&mut self.next_message_id),
+    fn populate_context_on_submit(
+        &mut self,
+        submitted_id: MessageId,
+        mode: &SubmitMode,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        // Want to mutate the user message that initiated
+
+        match mode {
+            SubmitMode::Simple => return Task::ready(Ok(())),
+            SubmitMode::CurrentFile => return Task::ready(Ok(())),
+            SubmitMode::Codebase => {}
+        }
+
+        let context_id = self.next_context_id.post_inc();
+        self.user_message(submitted_id)
+            .contexts
+            .push(AssistantContext::codebase(context_id));
+
+        let query = self.user_message(submitted_id).body.read(cx).text(cx);
+        let results = self.project_index.read(cx).search(&query, 4, cx);
+
+        cx.spawn(|this, mut cx| async move {
+            let results = results.await;
+
+            this.update(&mut cx, |this, cx| {
+                this.codebase_context(submitted_id, context_id)
+                    .populate(results);
+                cx.notify();
+            })?;
+
+            anyhow::Ok(())
+        })
+    }
+
+    fn user_message(&mut self, message_id: MessageId) -> &mut UserMessage {
+        self.messages
+            .iter_mut()
+            .find_map(|message| match message {
+                ChatMessage::User(user_message) if user_message.id == message_id => {
+                    Some(user_message)
+                }
+                _ => None,
+            })
+            .expect("User message not found")
+    }
+
+    fn codebase_context(
+        &mut self,
+        message_id: MessageId,
+        context_id: ContextId,
+    ) -> &mut CodebaseContext {
+        self.messages
+            .iter_mut()
+            .find_map(|message| match message {
+                ChatMessage::User(user_message) if user_message.id == message_id => user_message
+                    .contexts
+                    .iter_mut()
+                    .find_map(|context| match context {
+                        AssistantContext::Codebase(context) => {
+                            if context.id == context_id {
+                                Some(context)
+                            } else {
+                                None
+                            }
+                        }
+                    }),
+                _ => None,
+            })
+            .expect("Codebase context not found")
+    }
+
+    fn push_new_user_message(&mut self, focus: bool, cx: &mut ViewContext<Self>) {
+        let message = ChatMessage::User(UserMessage {
+            id: self.next_message_id.post_inc(),
             body: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(80, cx);
                 editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
@@ -187,30 +305,33 @@ impl AssistantChat {
                 editor
             }),
             contexts: Vec::new(),
-        };
+        });
         self.push_message(message, cx);
     }
 
-    fn push_assistant_message(&mut self, cx: &mut ViewContext<Self>) {
-        let message = AssistantMessage::Assistant {
-            id: post_inc(&mut self.next_message_id),
+    fn push_new_assistant_message(&mut self, cx: &mut ViewContext<Self>) {
+        let message = ChatMessage::Assistant(AssistantMessage {
+            id: self.next_message_id.post_inc(),
             body: RichText::default(),
             error: None,
-        };
+        });
         self.push_message(message, cx);
     }
 
-    fn push_message(&mut self, message: AssistantMessage, cx: &mut ViewContext<Self>) {
+    fn push_message(&mut self, message: ChatMessage, cx: &mut ViewContext<Self>) {
         let old_len = self.messages.len();
         self.messages.push(message);
         self.list_state.splice(old_len..old_len, 1);
         cx.notify();
     }
 
-    fn truncate_messages(&mut self, index: usize, cx: &mut ViewContext<Self>) {
-        if index < self.messages.len() {
-            self.list_state.splice(index..self.messages.len(), 0);
-            self.messages.truncate(index);
+    fn truncate_messages(&mut self, last_message_id: MessageId, cx: &mut ViewContext<Self>) {
+        if let Some(index) = self.messages.iter().position(|message| match message {
+            ChatMessage::User(message) => message.id == last_message_id,
+            ChatMessage::Assistant(message) => message.id == last_message_id,
+        }) {
+            self.list_state.splice(index + 1..self.messages.len(), 0);
+            self.messages.truncate(index + 1);
             cx.notify();
         }
     }
@@ -244,7 +365,7 @@ impl AssistantChat {
         let is_last = ix == self.messages.len() - 1;
 
         match &self.messages[ix] {
-            AssistantMessage::User { body, .. } => div()
+            ChatMessage::User(UserMessage { body, contexts, .. }) => div()
                 .on_action(cx.listener(Self::submit))
                 .p_2()
                 .when(!is_last, |element| element.mb_2())
@@ -252,24 +373,25 @@ impl AssistantChat {
                 .font(ThemeSettings::get_global(cx).buffer_font.clone())
                 .bg(cx.theme().colors().editor_background)
                 .child(body.clone())
+                .children(contexts.iter().map(|context| context.render(cx)))
                 .into_any(),
-            AssistantMessage::Assistant { id, body, error } => div()
+            ChatMessage::Assistant(AssistantMessage { id, body, error }) => div()
                 .when(!is_last, |element| element.mb_2())
-                .child(div().p_2().child(body.element(ElementId::from(*id), cx)))
+                .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
                 .child(self.render_error(error.clone(), ix, cx))
                 .into_any(),
         }
     }
 
-    fn messages(&self, cx: &WindowContext) -> Vec<CompletionMessage> {
+    fn completion_messages(&self, cx: &WindowContext) -> Vec<CompletionMessage> {
         self.messages
             .iter()
             .map(|message| match message {
-                AssistantMessage::User { body, contexts, .. } => CompletionMessage {
+                ChatMessage::User(UserMessage { body, contexts, .. }) => CompletionMessage {
                     role: CompletionRole::User,
                     body: body.read(cx).text(cx),
                 },
-                AssistantMessage::Assistant { body, .. } => CompletionMessage {
+                ChatMessage::Assistant(AssistantMessage { body, .. }) => CompletionMessage {
                     role: CompletionRole::Assistant,
                     body: body.text.to_string(),
                 },
@@ -344,19 +466,91 @@ impl Render for AssistantChat {
     }
 }
 
-enum AssistantMessage {
-    User {
-        id: usize,
-        body: View<Editor>,
-        contexts: Vec<AssistantContext>,
-    },
-    Assistant {
-        id: usize,
-        body: RichText,
-        error: Option<SharedString>,
-    },
+#[derive(Copy, Clone, Eq, PartialEq)]
+struct MessageId(usize);
+
+impl MessageId {
+    fn post_inc(&mut self) -> Self {
+        let id = *self;
+        self.0 += 1;
+        id
+    }
+}
+
+enum ChatMessage {
+    User(UserMessage),
+    Assistant(AssistantMessage),
+}
+
+struct UserMessage {
+    id: MessageId,
+    body: View<Editor>,
+    contexts: Vec<AssistantContext>,
+}
+
+// chain_of_thought: ... -> search -> search_results -> produce_new_message -> send for the real chat message
+
+struct AssistantMessage {
+    id: MessageId,
+    body: RichText,
+    error: Option<SharedString>,
 }
 
 enum AssistantContext {
-    Codebase { results: Vec<SearchResult> },
+    Codebase(CodebaseContext),
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+struct ContextId(usize);
+
+impl ContextId {
+    fn post_inc(&mut self) -> Self {
+        let id = *self;
+        self.0 += 1;
+        id
+    }
+}
+
+struct CodebaseContext {
+    id: ContextId,
+    results: Vec<SearchResult>,
+    pending: bool,
+}
+
+impl AssistantContext {
+    fn codebase(id: ContextId) -> Self {
+        Self::Codebase(CodebaseContext {
+            id,
+            results: Vec::new(),
+            pending: true,
+        })
+    }
+
+    fn render(&self, cx: &mut ViewContext<AssistantChat>) -> AnyElement {
+        match self {
+            AssistantContext::Codebase(context) => context.render(cx).into_any_element(),
+        }
+    }
+}
+
+impl CodebaseContext {
+    fn render(&self, cx: &mut ViewContext<AssistantChat>) -> impl IntoElement {
+        if self.pending {
+            div().child("⏳")
+        } else {
+            div().children(self.results.iter().map(|result| {
+                let path = result.path.to_string_lossy().to_string();
+                div()
+                    .p_2()
+                    .rounded_md()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(path)
+            }))
+        }
+    }
+
+    fn populate(&mut self, results: Vec<SearchResult>) {
+        self.results = results;
+        self.pending = false;
+    }
 }

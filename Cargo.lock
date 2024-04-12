@@ -391,6 +391,7 @@ dependencies = [
  "release_channel",
  "rich_text",
  "semantic_index",
+ "serde",
  "settings",
  "theme",
  "ui",

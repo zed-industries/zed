@@ -25,6 +25,7 @@ open_ai.workspace = true
 project.workspace = true
 rich_text.workspace = true
 semantic_index.workspace = true
+serde.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
