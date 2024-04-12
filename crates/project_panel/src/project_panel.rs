@@ -421,14 +421,16 @@ impl ProjectPanel {
                     |menu| {
                         menu.action("New File", Box::new(NewFile))
                             .action("New Folder", Box::new(NewDirectory))
+                            .separator()
                             .action("Reveal in Finder", Box::new(RevealInFinder))
                             .when(is_dir, |menu| {
-                                menu.action("Open in Terminal", Box::new(OpenInTerminal))
+                                menu.action("Open in Terminal…", Box::new(OpenInTerminal))
                             })
                             .separator()
                             .when(is_dir, |menu| {
-                                menu.action("Search In Folder", Box::new(NewSearchInDirectory))
+                                menu.action("Find in Folder…", Box::new(NewSearchInDirectory))
                             })
+                            .separator()
                             .action("Cut", Box::new(Cut))
                             .action("Copy", Box::new(Copy))
                             // TODO: Paste should always be visible, but disabled when clipboard is empty
@@ -445,21 +447,21 @@ impl ProjectPanel {
                             .when(!is_root, |menu| {
                                 menu.action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
-                            .separator()
                             .when(is_local & is_root, |menu| {
-                                menu.action(
-                                    "Add Folder to Project",
-                                    Box::new(workspace::AddFolderToProject),
-                                )
-                                .entry(
-                                    "Remove from Project",
-                                    None,
-                                    cx.handler_for(&this, move |this, cx| {
-                                        this.project.update(cx, |project, cx| {
-                                            project.remove_worktree(worktree_id, cx)
-                                        });
-                                    }),
-                                )
+                                menu.separator()
+                                    .action(
+                                        "Add Folder to Project…",
+                                        Box::new(workspace::AddFolderToProject),
+                                    )
+                                    .entry(
+                                        "Remove from Project",
+                                        None,
+                                        cx.handler_for(&this, move |this, cx| {
+                                            this.project.update(cx, |project, cx| {
+                                                project.remove_worktree(worktree_id, cx)
+                                            });
+                                        }),
+                                    )
                             })
                             .when(is_local & is_root, |menu| {
                                 menu.separator()
