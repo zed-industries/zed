@@ -426,9 +426,9 @@ impl ProjectPanel {
                             .when(is_dir, |menu| {
                                 menu.action("Open in Terminal…", Box::new(OpenInTerminal))
                             })
-                            .separator()
                             .when(is_dir, |menu| {
-                                menu.action("Find in Folder…", Box::new(NewSearchInDirectory))
+                                menu.separator()
+                                    .action("Find in Folder…", Box::new(NewSearchInDirectory))
                             })
                             .separator()
                             .action("Cut", Box::new(Cut))
