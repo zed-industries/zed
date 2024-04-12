@@ -8842,11 +8842,7 @@ impl Editor {
     }
 
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
-        if !self.show_git_blame_gutter {
-            self.show_git_blame_gutter = true
-        } else {
-            self.show_git_blame_gutter = false
-        }
+        self.show_git_blame_gutter = !self.show_git_blame_gutter;
 
         cx.notify();
     }
