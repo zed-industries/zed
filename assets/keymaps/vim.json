@@ -259,9 +259,6 @@
           "saveIntent": "saveAll"
         }
       ],
-      // tree-sitter related commands
-      "[ x": "editor::SelectLargerSyntaxNode",
-      "] x": "editor::SelectSmallerSyntaxNode",
       // Count support
       "1": ["vim::Number", 1],
       "2": ["vim::Number", 2],
@@ -371,7 +368,18 @@
       "> >": "vim::Indent",
       "< <": "vim::Outdent",
       "ctrl-pagedown": "pane::ActivateNextItem",
-      "ctrl-pageup": "pane::ActivatePrevItem"
+      "ctrl-pageup": "pane::ActivatePrevItem",
+      // tree-sitter related commands
+      "[ x": "editor::SelectLargerSyntaxNode",
+      "] x": "editor::SelectSmallerSyntaxNode"
+    }
+  },
+  {
+    "context": "Editor && vim_mode == visual && vim_operator == none && !VimWaiting",
+    "bindings": {
+      // tree-sitter related commands
+      "[ x": "editor::SelectLargerSyntaxNode",
+      "] x": "editor::SelectSmallerSyntaxNode"
     }
   },
   {
@@ -535,7 +543,6 @@
       ]
     }
   },
-
   {
     "context": "Editor && vim_mode == normal",
     "bindings": {
