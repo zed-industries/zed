@@ -1,14 +1,14 @@
 use anyhow::anyhow;
 use rpc::{proto, ConnectionId};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DatabaseTransaction, EntityTrait,
+    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait,
     ModelTrait, QueryFilter,
 };
 
 use crate::db::ProjectId;
 
 use super::{
-    channel, dev_server, project, project_collaborator, remote_project, worktree, ChannelId,
+    dev_server, project, project_collaborator, remote_project, worktree,
     Database, DevServerId, RejoinedProject, RemoteProjectId, ResharedProject, ServerId, UserId,
 };
 
@@ -82,7 +82,7 @@ impl Database {
                 .await?
                 .ok_or_else(|| anyhow!("no dev server with id {}", dev_server_id))?;
             if dev_server.user_id != user_id {
-                return anyhow!("not your dev server")?;
+                return Err(anyhow!("not your dev server"))?;
             }
 
             let project = remote_project::Entity::insert(remote_project::ActiveModel {
@@ -94,7 +94,7 @@ impl Database {
             .exec_with_returning(&*tx)
             .await?;
 
-            let status = self.build_remote_projects(&*tx).await?;
+            let status = self.build_remote_projects_internal(user_id, &*tx).await?;
 
             Ok((project, status))
         })
@@ -153,7 +153,7 @@ impl Database {
                 .await?;
             }
 
-            let status = self.build_remote_projects(&*tx).await?;
+            let status = self.build_remote_projects_internal(user_id, &*tx).await?;
 
             Ok((remote_project.to_proto(Some(project)), dev_server.user_id, status))
         })

@@ -253,6 +253,10 @@ impl DevServerSession {
     pub fn dev_server_id(&self) -> DevServerId {
         self.0.dev_server_id().unwrap()
     }
+
+    fn dev_server(&self) -> &DevServer {
+        &self.0.dev_server
+    }
 }
 
 impl Deref for DevServerSession {
@@ -1069,8 +1073,6 @@ impl Server {
                     };
                     pool.add_dev_server(connection_id, dev_server.id, zed_version);
                 }
-                update_remote_projects(dev_server, proto::DevServerStatus::Online, &session).await;
-                // todo!() allow only one connection.
 
                 let projects = self
                     .app_state
@@ -1079,6 +1081,13 @@ impl Server {
                     .await?;
                 self.peer
                     .send(connection_id, proto::DevServerInstructions { projects })?;
+
+                let status = self
+                    .app_state
+                    .db
+                    .build_remote_projects(dev_server.user_id)
+                    .await?;
+                send_remote_projects_update(dev_server.user_id, status, &session).await;
             }
         }
 
@@ -1384,8 +1393,6 @@ async fn connection_lost(
                 },
             Principal::DevServer(dev_server) => {
                 lost_dev_server_connection(&session).await?;
-                update_remote_projects(&dev_server, proto::DevServerStatus::Offline, &session)
-                    .await;
             },
         }
         },
@@ -1981,7 +1988,7 @@ async fn share_remote_project(
         return Err(anyhow!("failed to share remote project"))?;
     };
 
-    update_remote_projects(user_id, status, session).await;
+    send_remote_projects_update(user_id, status, &session).await;
 
     response.send(proto::ShareProjectResponse { project_id })?;
 
@@ -2207,7 +2214,7 @@ async fn create_remote_project(
         .get_remote_projects_for_dev_server(remote_project.dev_server_id)
         .await?;
 
-    update_remote_projects(status, session.user_id(), session).await;
+    send_remote_projects_update(status, session.user_id(), session).await;
 
     let dev_server_id = remote_project.dev_server_id;
     let dev_server_connection_id = connection_pool.dev_server_connection_id(dev_server_id);
@@ -2235,14 +2242,10 @@ async fn create_dev_server(
     let (dev_server, status) = session
         .db()
         .await
-        .create_dev_server(
-            &request.name,
-            &hashed_access_token,
-            session.user_id(),
-        )
+        .create_dev_server(&request.name, &hashed_access_token, session.user_id())
         .await?;
 
-    update_remote_projects(session.user_id(), status, &session);
+    send_remote_projects_update(session.user_id(), status, &session);
 
     response.send(proto::CreateDevServerResponse {
         dev_server_id: dev_server.id.0 as u64,
@@ -2365,7 +2368,7 @@ async fn shutdown_dev_server(
         .await
         .build_remote_projects(dev_server.user_id)
         .await?;
-    update_remote_projects(dev_server.user_id, status, &session).await;
+    send_remote_projects_update(dev_server.user_id, status, &session).await;
 
     Ok(())
 }
@@ -4588,7 +4591,7 @@ fn channel_updated(
     );
 }
 
-async fn update_remote_projects(
+async fn send_remote_projects_update(
     user_id: UserId,
     mut status: proto::RemoteProjects,
     session: &Session,
@@ -4639,7 +4642,7 @@ async fn update_user_contacts(user_id: UserId, session: &Session) -> Result<()> 
     Ok(())
 }
 
-async fn lost_dev_server_connection(session: &Session) -> Result<()> {
+async fn lost_dev_server_connection(session: &DevServerSession) -> Result<()> {
     log::info!("lost dev server connection, unsharing projects");
     let project_ids = session
         .db()
@@ -4651,6 +4654,8 @@ async fn lost_dev_server_connection(session: &Session) -> Result<()> {
         // not unshare re-checks the connection ids match, so we get away with no transaction
         unshare_project_internal(project_id, &session).await?;
     }
+
+    let status = session.db().await.build_remote_projects(session.dev_server)
 
     Ok(())
 }

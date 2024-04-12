@@ -7757,6 +7757,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "remote_projects"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "editor",
+ "fuzzy",
+ "gpui",
+ "language",
+ "menu",
+ "ordered-float 2.10.0",
+ "picker",
+ "serde",
+ "serde_json",
+ "smol",
+ "ui",
+ "util",
+]
+
+[[package]]
 name = "rend"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

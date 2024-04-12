@@ -4,8 +4,8 @@ use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMes
 use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
 use client::{
-    ChannelId, Client, ClientSettings, DevServerId, ProjectId, RemoteProjectId, Subscription, User,
-    UserId, UserStore,
+    ChannelId, Client, ClientSettings, DevServerId, ProjectId, Subscription, User, UserId,
+    UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
@@ -15,7 +15,7 @@ use gpui::{
 };
 use language::Capability;
 use rpc::{
-    proto::{self, ChannelRole, ChannelVisibility, DevServerStatus},
+    proto::{self, ChannelRole, ChannelVisibility},
     TypedEnvelope,
 };
 use settings::Settings;
@@ -53,45 +53,6 @@ impl From<proto::HostedProject> for HostedProject {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct RemoteProject {
-    pub id: RemoteProjectId,
-    pub project_id: Option<ProjectId>,
-    pub name: SharedString,
-    pub path: SharedString,
-    pub dev_server_id: DevServerId,
-}
-
-impl From<proto::RemoteProject> for RemoteProject {
-    fn from(project: proto::RemoteProject) -> Self {
-        Self {
-            id: RemoteProjectId(project.id),
-            project_id: project.project_id.map(|id| ProjectId(id)),
-            name: project.name.into(),
-            path: project.path.into(),
-            dev_server_id: DevServerId(project.dev_server_id),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DevServer {
-    pub id: DevServerId,
-    pub name: SharedString,
-    pub status: DevServerStatus,
-}
-
-impl From<proto::DevServer> for DevServer {
-    fn from(dev_server: proto::DevServer) -> Self {
-        Self {
-            id: DevServerId(dev_server.dev_server_id),
-            status: dev_server.status(),
-            name: dev_server.name.into(),
-        }
-    }
-}
-
 pub struct ChannelStore {
     pub channel_index: ChannelIndex,
     channel_invitations: Vec<Arc<Channel>>,
