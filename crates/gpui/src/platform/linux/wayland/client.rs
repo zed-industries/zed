@@ -103,9 +103,13 @@ pub(crate) struct WaylandClientState {
     click: ClickState,
     repeat: KeyRepeat,
     modifiers: Modifiers,
-    scroll_direction: f64,
     axis_source: AxisSource,
     mouse_location: Option<Point<Pixels>>,
+    continuous_scroll_delta: Option<Point<Pixels>>,
+    discrete_scroll_delta: Option<Point<f32>>,
+    vertical_modifier: f32,
+    horizontal_modifier: f32,
+    scroll_event_received: bool,
     enter_token: Option<()>,
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
@@ -164,20 +168,21 @@ impl WaylandClientStatePtr {
 #[derive(Clone)]
 pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
 
-const WL_SEAT_MIN_VERSION: u32 = 4;
 const WL_OUTPUT_VERSION: u32 = 2;
 
 fn wl_seat_version(version: u32) -> u32 {
-    if version >= wl_pointer::EVT_AXIS_VALUE120_SINCE {
-        wl_pointer::EVT_AXIS_VALUE120_SINCE
-    } else if version >= WL_SEAT_MIN_VERSION {
-        WL_SEAT_MIN_VERSION
-    } else {
+    // We rely on the wl_pointer.frame event
+    const WL_SEAT_MIN_VERSION: u32 = 5;
+    const WL_SEAT_MAX_VERSION: u32 = 9;
+
+    if version < WL_SEAT_MIN_VERSION {
         panic!(
             "wl_seat below required version: {} < {}",
             version, WL_SEAT_MIN_VERSION
         );
     }
+
+    version.clamp(WL_SEAT_MIN_VERSION, WL_SEAT_MAX_VERSION)
 }
 
 impl WaylandClient {
@@ -257,9 +262,13 @@ impl WaylandClient {
                 function: false,
                 platform: false,
             },
-            scroll_direction: -1.0,
+            scroll_event_received: false,
             axis_source: AxisSource::Wheel,
             mouse_location: None,
+            continuous_scroll_delta: None,
+            discrete_scroll_delta: None,
+            vertical_modifier: -1.0,
+            horizontal_modifier: -1.0,
             button_pressed: None,
             mouse_focused_window: None,
             keyboard_focused_window: None,
@@ -887,45 +896,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => {}
                 }
             }
-            wl_pointer::Event::AxisRelativeDirection {
-                direction: WEnum::Value(direction),
-                ..
-            } => {
-                state.scroll_direction = match direction {
-                    AxisRelativeDirection::Identical => -1.0,
-                    AxisRelativeDirection::Inverted => 1.0,
-                    _ => -1.0,
-                }
-            }
+
+            // Axis Events
             wl_pointer::Event::AxisSource {
                 axis_source: WEnum::Value(axis_source),
             } => {
                 state.axis_source = axis_source;
-            }
-            wl_pointer::Event::AxisValue120 {
-                axis: WEnum::Value(axis),
-                value120,
-            } => {
-                if let Some(focused_window) = state.mouse_focused_window.clone() {
-                    let value = value120 as f64 * state.scroll_direction;
-
-                    let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
-                        position: state.mouse_location.unwrap(),
-                        delta: match axis {
-                            wl_pointer::Axis::VerticalScroll => {
-                                ScrollDelta::Pixels(point(px(0.0), px(value as f32)))
-                            }
-                            wl_pointer::Axis::HorizontalScroll => {
-                                ScrollDelta::Pixels(point(px(value as f32), px(0.0)))
-                            }
-                            _ => unimplemented!(),
-                        },
-                        modifiers: state.modifiers,
-                        touch_phase: TouchPhase::Moved,
-                    });
-                    drop(state);
-                    focused_window.handle_input(input)
-                }
             }
             wl_pointer::Event::Axis {
                 time,
@@ -933,31 +909,124 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 value,
                 ..
             } => {
-                // We handle discrete scroll events with `AxisValue120`.
-                if wl_pointer.version() >= wl_pointer::EVT_AXIS_VALUE120_SINCE
-                    && state.axis_source == AxisSource::Wheel
-                {
-                    return;
+                let axis_source = state.axis_source;
+                let axis_modifier = match axis {
+                    wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
+                    wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
+                    _ => 1.0,
+                };
+                let supports_relative_direction =
+                    wl_pointer.version() >= wl_pointer::EVT_AXIS_RELATIVE_DIRECTION_SINCE;
+                state.scroll_event_received = true;
+                let scroll_delta = state
+                    .continuous_scroll_delta
+                    .get_or_insert(point(px(0.0), px(0.0)));
+                // TODO: Make nice feeling kinetic scrolling that integrates with the platform's scroll settings
+                let modifier = 3.0;
+                match axis {
+                    wl_pointer::Axis::VerticalScroll => {
+                        scroll_delta.y += px(value as f32 * modifier * axis_modifier);
+                    }
+                    wl_pointer::Axis::HorizontalScroll => {
+                        scroll_delta.x += px(value as f32 * modifier * axis_modifier);
+                    }
+                    _ => unreachable!(),
                 }
-                if let Some(focused_window) = state.mouse_focused_window.clone() {
-                    let value = value * state.scroll_direction;
+            }
+            wl_pointer::Event::AxisDiscrete {
+                axis: WEnum::Value(axis),
+                discrete,
+            } => {
+                state.scroll_event_received = true;
+                let axis_modifier = match axis {
+                    wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
+                    wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
+                    _ => 1.0,
+                };
 
-                    let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
-                        position: state.mouse_location.unwrap(),
-                        delta: match axis {
-                            wl_pointer::Axis::VerticalScroll => {
-                                ScrollDelta::Pixels(point(px(0.0), px(value as f32)))
-                            }
-                            wl_pointer::Axis::HorizontalScroll => {
-                                ScrollDelta::Pixels(point(px(value as f32), px(0.0)))
-                            }
-                            _ => unimplemented!(),
-                        },
-                        modifiers: state.modifiers,
-                        touch_phase: TouchPhase::Moved,
-                    });
-                    drop(state);
-                    focused_window.handle_input(input)
+                // TODO: Make nice feeling kinetic scrolling that integrates with the platform's scroll settings
+                let modifier = 3.0;
+
+                let scroll_delta = state.discrete_scroll_delta.get_or_insert(point(0.0, 0.0));
+                match axis {
+                    wl_pointer::Axis::VerticalScroll => {
+                        scroll_delta.y += discrete as f32 * axis_modifier * modifier;
+                    }
+                    wl_pointer::Axis::HorizontalScroll => {
+                        scroll_delta.x += discrete as f32 * axis_modifier * modifier;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            wl_pointer::Event::AxisRelativeDirection {
+                axis: WEnum::Value(axis),
+                direction: WEnum::Value(direction),
+            } => match (axis, direction) {
+                (wl_pointer::Axis::VerticalScroll, AxisRelativeDirection::Identical) => {
+                    state.vertical_modifier = -1.0
+                }
+                (wl_pointer::Axis::VerticalScroll, AxisRelativeDirection::Inverted) => {
+                    state.vertical_modifier = 1.0
+                }
+                (wl_pointer::Axis::HorizontalScroll, AxisRelativeDirection::Identical) => {
+                    state.horizontal_modifier = -1.0
+                }
+                (wl_pointer::Axis::HorizontalScroll, AxisRelativeDirection::Inverted) => {
+                    state.horizontal_modifier = 1.0
+                }
+                _ => unreachable!(),
+            },
+            wl_pointer::Event::AxisValue120 {
+                axis: WEnum::Value(axis),
+                value120,
+            } => {
+                state.scroll_event_received = true;
+                let axis_modifier = match axis {
+                    wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
+                    wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
+                    _ => unreachable!(),
+                };
+
+                let scroll_delta = state.discrete_scroll_delta.get_or_insert(point(0.0, 0.0));
+                let wheel_percent = value120 as f32 / 120.0;
+                match axis {
+                    wl_pointer::Axis::VerticalScroll => {
+                        scroll_delta.y += wheel_percent * axis_modifier;
+                    }
+                    wl_pointer::Axis::HorizontalScroll => {
+                        scroll_delta.x += wheel_percent * axis_modifier;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            wl_pointer::Event::Frame => {
+                if state.scroll_event_received {
+                    state.scroll_event_received = false;
+                    let continuous = state.continuous_scroll_delta.take();
+                    let discrete = state.discrete_scroll_delta.take();
+                    if let Some(continuous) = continuous {
+                        if let Some(window) = state.mouse_focused_window.clone() {
+                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                position: state.mouse_location.unwrap(),
+                                delta: ScrollDelta::Pixels(continuous),
+                                modifiers: state.modifiers,
+                                touch_phase: TouchPhase::Moved,
+                            });
+                            drop(state);
+                            window.handle_input(input);
+                        }
+                    } else if let Some(discrete) = discrete {
+                        if let Some(window) = state.mouse_focused_window.clone() {
+                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                position: state.mouse_location.unwrap(),
+                                delta: ScrollDelta::Lines(discrete),
+                                modifiers: state.modifiers,
+                                touch_phase: TouchPhase::Moved,
+                            });
+                            drop(state);
+                            window.handle_input(input);
+                        }
+                    }
                 }
             }
             _ => {}
