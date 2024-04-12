@@ -23,13 +23,19 @@ pub fn init(cx: &mut AppContext) {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, cx| {
-                    if let Some((task_source_kind, last_scheduled_task)) =
+                    if let Some((task_source_kind, mut last_scheduled_task)) =
                         workspace.project().update(cx, |project, cx| {
                             project.task_inventory().read(cx).last_scheduled_task()
                         })
                     {
                         if action.reevaluate_context {
-                            let original_task = last_scheduled_task.original_task;
+                            let mut original_task = last_scheduled_task.original_task;
+                            if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
+                                original_task.allow_concurrent_runs = allow_concurrent_runs;
+                            }
+                            if let Some(use_new_terminal) = action.use_new_terminal {
+                                original_task.use_new_terminal = use_new_terminal;
+                            }
                             let cwd = task_cwd(workspace, cx).log_err().flatten();
                             let task_context = task_context(workspace, cwd, cx);
                             schedule_task(
@@ -41,6 +47,15 @@ pub fn init(cx: &mut AppContext) {
                                 cx,
                             )
                         } else {
+                            if let Some(resolved) = last_scheduled_task.resolved.as_mut() {
+                                if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
+                                    resolved.allow_concurrent_runs = allow_concurrent_runs;
+                                }
+                                if let Some(use_new_terminal) = action.use_new_terminal {
+                                    resolved.use_new_terminal = use_new_terminal;
+                                }
+                            }
+
                             schedule_resolved_task(
                                 workspace,
                                 task_source_kind,

@@ -44,6 +44,10 @@ pub struct Rerun {
     /// If it is, these variables will be updated to reflect current state of editor at the time task::Rerun is executed.
     /// default: false
     pub reevaluate_context: bool,
+    #[serde(default)]
+    pub allow_concurrent_runs: Option<bool>,
+    #[serde(default)]
+    pub use_new_terminal: Option<bool>,
 }
 
 impl_actions!(task, [Rerun, Spawn]);
