@@ -2,6 +2,7 @@ mod completion_provider;
 
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use client::Client;
 use completion_provider::*;
 use editor::Editor;
@@ -114,6 +115,7 @@ impl AssistantChat {
                 let mut stream = completion.await?;
 
                 let mut body = String::new();
+
                 while let Some(chunk) = stream.next().await {
                     let chunk = chunk?;
                     this.update(&mut cx, |this, cx| {
@@ -146,6 +148,15 @@ impl AssistantChat {
                         cx.notify();
                     } else {
                         unreachable!()
+                    }
+                } else {
+                    // Make a fake error for rendering
+                    if let Some(AssistantMessage::Assistant {
+                        error: message_error,
+                        ..
+                    }) = this.messages.last_mut()
+                    {
+                        message_error.replace(SharedString::from("Failed to initiate hyperdrive."));
                     }
                 }
 
