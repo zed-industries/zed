@@ -613,17 +613,18 @@
       "%": "project_panel::NewFile",
       "/": "project_panel::NewSearchInDirectory",
       "d": "project_panel::NewDirectory",
-      "enter": "project_panel::Open",
+      "enter": "project_panel::OpenPermanent",
       "escape": "project_panel::ToggleFocus",
       "h": "project_panel::CollapseSelectedEntry",
       "j": "menu::SelectNext",
       "k": "menu::SelectPrev",
       "l": "project_panel::ExpandSelectedEntry",
-      "o": "project_panel::Open",
+      "o": "project_panel::OpenPermanent",
       "shift-d": "project_panel::Delete",
       "shift-r": "project_panel::Rename",
-      "t": "project_panel::Open",
-      "v": "project_panel::Open",
+      "t": "project_panel::OpenPermanent",
+      "v": "project_panel::OpenPermanent",
+      "p": "project_panel::Open",
       "x": "project_panel::RevealInFinder"
     }
   }
