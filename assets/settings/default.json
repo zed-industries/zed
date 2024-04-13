@@ -150,10 +150,7 @@
     // Whether to show symbols selections in the scrollbar.
     "symbols_selections": true,
     // Whether to show diagnostic indicators in the scrollbar.
-    "diagnostics": true,
-    // Scroll sensitivity multiplier. This multiplier is applied 
-    // to both the horizontal and vertical delta values while scrolling.
-    "sensitivity": 1.0
+    "diagnostics": true
   },
   // What to do when multibuffer is double clicked in some of its excerpts
   // (parts of singleton buffers).
@@ -174,6 +171,9 @@
   },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
+  // Scroll sensitivity multiplier. This multiplier is applied 
+  // to both the horizontal and vertical delta values while scrolling.
+  "scroll_sensitivity": 1.0,
   "relative_line_numbers": false,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:

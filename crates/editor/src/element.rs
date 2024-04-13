@@ -2748,7 +2748,10 @@ impl EditorElement {
             let editor = self.editor.clone();
             let hitbox = layout.hitbox.clone();
             let mut delta = ScrollDelta::default();
-            let scroll_sensitivity = f32::abs(EditorSettings::get_global(cx).scrollbar.sensitivity);
+
+            // Set a minimum scroll_sensitivity of 0.01 to make sure the user doesn't
+            // accidentally turn off their scrolling.
+            let scroll_sensitivity = EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
 
             move |event: &ScrollWheelEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
