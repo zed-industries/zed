@@ -593,7 +593,16 @@ impl DirectWriteState {
             bidiLevel: 0,
         };
 
-        let bitmap_size = glyph_bounds.size;
+        // let bitmap_size = glyph_bounds.size;
+        // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
+        let mut bitmap_size = glyph_bounds.size;
+        if params.subpixel_variant.x > 0 {
+            bitmap_size.width += DevicePixels(1);
+        }
+        if params.subpixel_variant.y > 0 {
+            bitmap_size.height += DevicePixels(1);
+        }
+        let bitmap_size = bitmap_size;
         let transform = DWRITE_MATRIX {
             m11: params.scale_factor,
             m12: 0.0,
@@ -669,7 +678,13 @@ impl DirectWriteState {
             let brush = render_target
                 .CreateSolidColorBrush(&BRUSH_COLOR, Some(&brush_property))
                 .unwrap();
-            let baseline_origin = D2D_POINT_2F { x: 0.0, y: 0.0 };
+            let subpixel_shift = params
+                .subpixel_variant
+                .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
+            let baseline_origin = D2D_POINT_2F {
+                x: subpixel_shift.x / params.scale_factor,
+                y: subpixel_shift.y / params.scale_factor,
+            };
 
             let render_target: ID2D1DeviceContext4 = std::mem::transmute(render_target);
             render_target.BeginDraw();
