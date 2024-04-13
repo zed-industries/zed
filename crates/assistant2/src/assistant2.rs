@@ -231,7 +231,7 @@ impl AssistantChat {
             .push(AssistantContext::codebase(context_id));
 
         let query = self.user_message(submitted_id).body.read(cx).text(cx);
-        let results = self.project_index.read(cx).search(&query, 4, cx);
+        let results = self.project_index.read(cx).search(&query, 16, cx);
         let fs = self.fs.clone();
 
         cx.spawn(|this, mut cx| async move {
