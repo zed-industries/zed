@@ -226,6 +226,8 @@ impl AssistantChat {
         }
 
         let context_id = self.next_context_id.post_inc();
+
+        self.user_message(submitted_id).contexts.clear();
         self.user_message(submitted_id)
             .contexts
             .push(AssistantContext::codebase(context_id));
