@@ -60,6 +60,7 @@ struct DirectWriteComponent {
     text_renderer: Arc<TextRendererWrapper>,
 }
 
+// All use of the IUnknown methods should be "thread-safe".
 unsafe impl Sync for DirectWriteComponent {}
 unsafe impl Send for DirectWriteComponent {}
 
