@@ -219,8 +219,6 @@ impl AssistantChat {
         mode: &SubmitMode,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        // Want to mutate the user message that initiated
-
         match mode {
             SubmitMode::Simple => return Task::ready(Ok(())),
             SubmitMode::CurrentFile => return Task::ready(Ok(())),
@@ -644,6 +642,8 @@ impl CodebaseContext {
         for excerpt in &self.excerpts {
             body.push_str("Excerpt from ");
             body.push_str(excerpt.path.as_ref());
+            body.push_str(", score ");
+            body.push_str(&excerpt.score.to_string());
             body.push_str(":\n");
             body.push_str("~~~\n");
             body.push_str(excerpt.text.as_ref());
