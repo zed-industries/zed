@@ -10,7 +10,7 @@ use windows::{
     core::{implement, HSTRING, PCWSTR},
     Foundation::Numerics::Matrix3x2,
     Win32::{
-        Foundation::{BOOL, COLORREF, E_NOTIMPL},
+        Foundation::{BOOL, E_NOTIMPL},
         Globalization::GetUserDefaultLocaleName,
         Graphics::{
             Direct2D::{
@@ -18,21 +18,16 @@ use windows::{
                     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_ALPHA_MODE_STRAIGHT, D2D1_COLOR_F,
                     D2D1_PIXEL_FORMAT, D2D_POINT_2F,
                 },
-                D2D1CreateFactory, ID2D1Brush, ID2D1DeviceContext4, ID2D1Factory,
-                D2D1_BRUSH_PROPERTIES, D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION_DEFAULT,
-                D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1_FEATURE_LEVEL_DEFAULT,
-                D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE, D2D1_RENDER_TARGET_USAGE_NONE,
+                D2D1CreateFactory, ID2D1DeviceContext4, ID2D1Factory, D2D1_BRUSH_PROPERTIES,
+                D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION_DEFAULT, D2D1_FACTORY_TYPE_MULTI_THREADED,
+                D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
+                D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
             },
             DirectWrite::*,
-            Dxgi::Common::{
-                DXGI_FORMAT_A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
-            },
+            Dxgi::Common::{DXGI_FORMAT_A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM},
             Imaging::{
-                CLSID_WICImagingFactory2, GUID_WICPixelFormat32bppBGRA,
-                GUID_WICPixelFormat32bppPBGRA, GUID_WICPixelFormat32bppPRGBA,
-                GUID_WICPixelFormat8bppAlpha, IWICBitmap, WICBitmapCacheOnLoad, WICRect,
-                D2D::IWICImagingFactory2,
+                CLSID_WICImagingFactory2, GUID_WICPixelFormat32bppPRGBA,
+                GUID_WICPixelFormat8bppAlpha, WICBitmapCacheOnLoad, D2D::IWICImagingFactory2,
             },
         },
         System::{
@@ -60,10 +55,8 @@ struct DirectWriteComponent {
     factory: IDWriteFactory5,
     bitmap_factory: IWICImagingFactory2,
     d2d1_factory: ID2D1Factory,
-    bitmap: IWICBitmap,
     in_memory_loader: IDWriteInMemoryFontFileLoader,
     builder: IDWriteFontSetBuilder1,
-    gdi: IDWriteGdiInterop,
     text_renderer: Arc<TextRendererWrapper>,
 }
 
@@ -87,19 +80,12 @@ impl DirectWriteComponent {
                 CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)?;
             let d2d1_factory: ID2D1Factory =
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
-            let bitmap = bitmap_factory.CreateBitmap(
-                20,
-                20,
-                &GUID_WICPixelFormat32bppPBGRA,
-                WICBitmapCacheOnLoad,
-            )?;
             let in_memory_loader = factory.CreateInMemoryFontFileLoader()?;
             factory.RegisterFontFileLoader(&in_memory_loader)?;
             let builder = factory.CreateFontSetBuilder2()?;
             let mut locale_vec = vec![0u16; LOCALE_NAME_MAX_LENGTH as usize];
             GetUserDefaultLocaleName(&mut locale_vec);
             let locale = String::from_utf16_lossy(&locale_vec);
-            let gdi = factory.GetGdiInterop()?;
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
 
             Ok(DirectWriteComponent {
@@ -107,10 +93,8 @@ impl DirectWriteComponent {
                 factory,
                 bitmap_factory,
                 d2d1_factory,
-                bitmap,
                 in_memory_loader,
                 builder,
-                gdi,
                 text_renderer,
             })
         }
