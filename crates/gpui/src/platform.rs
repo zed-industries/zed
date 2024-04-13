@@ -6,6 +6,9 @@
 mod app_menu;
 mod keystroke;
 
+#[cfg(not(target_os = "macos"))]
+mod cosmic_text;
+
 #[cfg(target_os = "linux")]
 mod linux;
 
@@ -49,6 +52,9 @@ use uuid::Uuid;
 
 pub use app_menu::*;
 pub use keystroke::*;
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) use cosmic_text::*;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
@@ -66,7 +72,19 @@ pub(crate) fn current_platform() -> Rc<dyn Platform> {
 }
 #[cfg(target_os = "linux")]
 pub(crate) fn current_platform() -> Rc<dyn Platform> {
-    Rc::new(LinuxPlatform::new())
+    let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
+    let x11_display = std::env::var_os("DISPLAY");
+
+    let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
+    let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
+
+    if use_wayland {
+        Rc::new(WaylandClient::new())
+    } else if use_x11 {
+        Rc::new(X11Client::new())
+    } else {
+        Rc::new(HeadlessClient::new())
+    }
 }
 // todo("windows")
 #[cfg(target_os = "windows")]
@@ -207,6 +225,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: &Scene);
+    fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 
     #[cfg(target_os = "windows")]

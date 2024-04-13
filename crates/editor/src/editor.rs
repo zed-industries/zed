@@ -129,6 +129,8 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use workspace::item::ItemHandle;
+use workspace::notifications::NotificationId;
 use workspace::Toast;
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
@@ -470,6 +472,8 @@ pub struct Editor {
                 + Fn(&mut Self, DisplayPoint, &mut ViewContext<Self>) -> Option<View<ui::ContextMenu>>,
         >,
     >,
+    last_bounds: Option<Bounds<Pixels>>,
+    expect_bounds_change: Option<Bounds<Pixels>>,
 }
 
 #[derive(Clone)]
@@ -1328,37 +1332,19 @@ impl InlayHintRefreshReason {
 
 impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                String::new(),
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::SingleLine, buffer, None, cx)
     }
 
     pub fn multi_line(cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                String::new(),
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, None, cx)
     }
 
     pub fn auto_height(max_lines: usize, cx: &mut ViewContext<Self>) -> Self {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                String::new(),
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local("", cx));
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
         Self::new(EditorMode::AutoHeight { max_lines }, buffer, None, cx)
     }
@@ -1502,6 +1488,8 @@ impl Editor {
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            last_bounds: None,
+            expect_bounds_change: None,
             gutter_width: Default::default(),
             style: None,
             show_cursor_names: false,
@@ -7098,22 +7086,13 @@ impl Editor {
                     .line_comment_prefixes()
                     .filter(|prefixes| !prefixes.is_empty())
                 {
-                    // Split the comment prefix's trailing whitespace into a separate string,
-                    // as that portion won't be used for detecting if a line is a comment.
-                    struct Comment {
-                        full_prefix: Arc<str>,
-                        trimmed_prefix_len: usize,
-                    }
-                    let prefixes: SmallVec<[Comment; 4]> = full_comment_prefixes
+                    let first_prefix = full_comment_prefixes
+                        .first()
+                        .expect("prefixes is non-empty");
+                    let prefix_trimmed_lengths = full_comment_prefixes
                         .iter()
-                        .map(|full_prefix| {
-                            let trimmed_prefix_len = full_prefix.trim_end_matches(' ').len();
-                            Comment {
-                                trimmed_prefix_len,
-                                full_prefix: full_prefix.clone(),
-                            }
-                        })
-                        .collect();
+                        .map(|p| p.trim_end_matches(' ').len())
+                        .collect::<SmallVec<[usize; 4]>>();
 
                     let mut all_selection_lines_are_comments = true;
 
@@ -7122,28 +7101,25 @@ impl Editor {
                             continue;
                         }
 
-                        let Some((prefix, prefix_range)) = prefixes
+                        let prefix_range = full_comment_prefixes
                             .iter()
-                            .map(|prefix| {
-                                (
-                                    prefix,
-                                    comment_prefix_range(
-                                        snapshot.deref(),
-                                        row,
-                                        &prefix.full_prefix[..prefix.trimmed_prefix_len],
-                                        &prefix.full_prefix[prefix.trimmed_prefix_len..],
-                                    ),
+                            .zip(prefix_trimmed_lengths.iter().copied())
+                            .map(|(prefix, trimmed_prefix_len)| {
+                                comment_prefix_range(
+                                    snapshot.deref(),
+                                    row,
+                                    &prefix[..trimmed_prefix_len],
+                                    &prefix[trimmed_prefix_len..],
                                 )
                             })
-                            .max_by_key(|(_, range)| range.end.column - range.start.column)
-                        else {
-                            // There has to be at least one prefix.
-                            break;
-                        };
+                            .max_by_key(|range| range.end.column - range.start.column)
+                            .expect("prefixes is non-empty");
+
                         if prefix_range.is_empty() {
                             all_selection_lines_are_comments = false;
                         }
-                        selection_edit_ranges.push((prefix_range, prefix.full_prefix.clone()));
+
+                        selection_edit_ranges.push(prefix_range);
                     }
 
                     if all_selection_lines_are_comments {
@@ -7151,17 +7127,17 @@ impl Editor {
                             selection_edit_ranges
                                 .iter()
                                 .cloned()
-                                .map(|(range, _)| (range, empty_str.clone())),
+                                .map(|range| (range, empty_str.clone())),
                         );
                     } else {
                         let min_column = selection_edit_ranges
                             .iter()
-                            .map(|(range, _)| range.start.column)
+                            .map(|range| range.start.column)
                             .min()
                             .unwrap_or(0);
-                        edits.extend(selection_edit_ranges.iter().map(|(range, prefix)| {
+                        edits.extend(selection_edit_ranges.iter().map(|range| {
                             let position = Point::new(range.start.row, min_column);
-                            (position..position, prefix.clone())
+                            (position..position, first_prefix.clone())
                         }));
                     }
                 } else if let Some((full_comment_prefix, comment_suffix)) =
@@ -8027,11 +8003,16 @@ impl Editor {
                 cx,
             );
         });
+        let item = Box::new(editor);
         if split {
-            workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
+            workspace.split_item(SplitDirection::Right, item.clone(), cx);
         } else {
-            workspace.add_item_to_active_pane(Box::new(editor), cx);
+            workspace.add_item_to_active_pane(item.clone(), cx);
         }
+        workspace.active_pane().clone().update(cx, |pane, cx| {
+            let item_id = item.item_id();
+            pane.set_preview_item_id(Some(item_id), cx);
+        });
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -8862,16 +8843,16 @@ impl Editor {
     }
 
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
-        if !self.show_git_blame {
+        if self.show_git_blame {
+            self.blame_subscription.take();
+            self.blame.take();
+            self.show_git_blame = false
+        } else {
             if let Err(error) = self.show_git_blame_internal(cx) {
                 log::error!("failed to toggle on 'git blame': {}", error);
                 return;
             }
             self.show_git_blame = true
-        } else {
-            self.blame_subscription.take();
-            self.blame.take();
-            self.show_git_blame = false
         }
 
         cx.notify();
@@ -8952,7 +8933,12 @@ impl Editor {
 
                 if let Some(workspace) = self.workspace() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_toast(Toast::new(0x156a5f9ee, message), cx)
+                        struct CopyPermalinkToLine;
+
+                        workspace.show_toast(
+                            Toast::new(NotificationId::unique::<CopyPermalinkToLine>(), message),
+                            cx,
+                        )
                     })
                 }
             }
@@ -8973,7 +8959,12 @@ impl Editor {
 
                 if let Some(workspace) = self.workspace() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.show_toast(Toast::new(0x45a8978, message), cx)
+                        struct OpenPermalinkToLine;
+
+                        workspace.show_toast(
+                            Toast::new(NotificationId::unique::<OpenPermalinkToLine>(), message),
+                            cx,
+                        )
                     })
                 }
             }
@@ -9536,7 +9527,11 @@ impl Editor {
         cx.spawn(|_, mut cx| async move {
             let workspace = workspace.ok_or_else(|| anyhow!("cannot jump without workspace"))?;
             let editor = workspace.update(&mut cx, |workspace, cx| {
-                workspace.open_path(path, None, true, cx)
+                // Reset the preview item id before opening the new item
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.set_preview_item_id(None, cx);
+                });
+                workspace.open_path_preview(path, None, true, true, cx)
             })?;
             let editor = editor
                 .await?
@@ -10200,7 +10195,7 @@ impl Render for Editor {
                 background,
                 local_player: cx.theme().players().local(),
                 text: text_style,
-                scrollbar_width: px(12.),
+                scrollbar_width: px(13.),
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
                 inlay_hints_style: HighlightStyle {
@@ -10598,6 +10593,11 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
 
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, true, cx.theme().status());
+        let theme_settings = ThemeSettings::get_global(cx);
+        text_style.font_family = theme_settings.buffer_font.family.clone();
+        text_style.font_style = theme_settings.buffer_font.style;
+        text_style.font_features = theme_settings.buffer_font.features;
+        text_style.font_weight = theme_settings.buffer_font.weight;
 
         let multi_line_diagnostic = diagnostic.message.contains('\n');
 

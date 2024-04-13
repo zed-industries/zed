@@ -15,6 +15,8 @@ wasmtime::component::bindgen!({
     path: "../extension_api/wit/since_v0.0.1",
     with: {
          "worktree": ExtensionWorktree,
+         "zed:extension/github": latest::zed::extension::github,
+         "zed:extension/platform": latest::zed::extension::platform,
     },
 });
 
@@ -23,53 +25,6 @@ pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
     LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
-}
-
-impl From<latest::Os> for Os {
-    fn from(value: latest::Os) -> Self {
-        match value {
-            latest::Os::Mac => Os::Mac,
-            latest::Os::Linux => Os::Linux,
-            latest::Os::Windows => Os::Windows,
-        }
-    }
-}
-
-impl From<latest::Architecture> for Architecture {
-    fn from(value: latest::Architecture) -> Self {
-        match value {
-            latest::Architecture::Aarch64 => Self::Aarch64,
-            latest::Architecture::X86 => Self::X86,
-            latest::Architecture::X8664 => Self::X8664,
-        }
-    }
-}
-
-impl From<latest::GithubRelease> for GithubRelease {
-    fn from(value: latest::GithubRelease) -> Self {
-        Self {
-            version: value.version,
-            assets: value.assets.into_iter().map(|asset| asset.into()).collect(),
-        }
-    }
-}
-
-impl From<latest::GithubReleaseAsset> for GithubReleaseAsset {
-    fn from(value: latest::GithubReleaseAsset) -> Self {
-        Self {
-            name: value.name,
-            download_url: value.download_url,
-        }
-    }
-}
-
-impl From<GithubReleaseOptions> for latest::GithubReleaseOptions {
-    fn from(value: GithubReleaseOptions) -> Self {
-        Self {
-            require_assets: value.require_assets,
-            pre_release: value.pre_release,
-        }
-    }
 }
 
 impl From<DownloadedFileType> for latest::DownloadedFileType {
@@ -135,21 +90,21 @@ impl HostWorktree for WasmState {
 #[async_trait]
 impl ExtensionImports for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
-        latest::ExtensionImports::node_binary_path(self).await
+        latest::nodejs::Host::node_binary_path(self).await
     }
 
     async fn npm_package_latest_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        latest::ExtensionImports::npm_package_latest_version(self, package_name).await
+        latest::nodejs::Host::npm_package_latest_version(self, package_name).await
     }
 
     async fn npm_package_installed_version(
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<Option<String>, String>> {
-        latest::ExtensionImports::npm_package_installed_version(self, package_name).await
+        latest::nodejs::Host::npm_package_installed_version(self, package_name).await
     }
 
     async fn npm_install_package(
@@ -157,7 +112,7 @@ impl ExtensionImports for WasmState {
         package_name: String,
         version: String,
     ) -> wasmtime::Result<Result<(), String>> {
-        latest::ExtensionImports::npm_install_package(self, package_name, version).await
+        latest::nodejs::Host::npm_install_package(self, package_name, version).await
     }
 
     async fn latest_github_release(
@@ -165,17 +120,11 @@ impl ExtensionImports for WasmState {
         repo: String,
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        Ok(
-            latest::ExtensionImports::latest_github_release(self, repo, options.into())
-                .await?
-                .map(|github| github.into()),
-        )
+        latest::zed::extension::github::Host::latest_github_release(self, repo, options).await
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
-        latest::ExtensionImports::current_platform(self)
-            .await
-            .map(|(os, arch)| (os.into(), arch.into()))
+        latest::zed::extension::platform::Host::current_platform(self).await
     }
 
     async fn set_language_server_installation_status(

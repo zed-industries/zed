@@ -36,7 +36,7 @@
   //         },
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
-  "ui_font_family": "Zed Sans",
+  "ui_font_family": ".SystemUIFont",
   // The OpenType features to enable for text in the UI
   "ui_font_features": {
     // Disable ligatures:
@@ -58,6 +58,8 @@
   "hover_popover_enabled": true,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
+  // Whether to restore last closed project when fresh Zed instance is opened.
+  "restore_on_startup": "last_workspace",
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // Whether to pop the completions menu while typing in an editor without
@@ -215,7 +217,10 @@
     // Whether to reveal it in the project panel automatically,
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
-    "auto_reveal_entries": true
+    "auto_reveal_entries": true,
+    /// Whether to fold directories automatically
+    /// when a directory has only one directory inside.
+    "auto_fold_dirs": false
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -287,12 +292,27 @@
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
   "autosave": "off",
+  // Settings related to the editor's tab bar.
+  "tab_bar": {
+    // Whether or not to show the navigation history buttons.
+    "show_nav_history_buttons": true
+  },
   // Settings related to the editor's tabs
   "tabs": {
     // Show git status colors in the editor tabs.
     "git_status": false,
     // Position of the close button on the editor tabs.
     "close_position": "right"
+  },
+  // Settings related to preview tabs.
+  "preview_tabs": {
+    // Whether preview tabs should be enabled.
+    // Preview tabs allow you to open files in preview mode, where they close automatically
+    // when you switch to another file unless you explicitly pin them.
+    // This is useful for quickly viewing files without cluttering your workspace.
+    "enabled": true,
+    // Whether to open files in preview mode when selected from the file finder.
+    "enable_preview_from_file_finder": false
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -554,52 +574,16 @@
     "C": {
       "format_on_save": "off"
     },
-    "Plain Text": {
-      "soft_wrap": "preferred_line_length"
-    },
-    "Elixir": {
-      "tab_size": 2
-    },
     "Gleam": {
       "tab_size": 2
     },
     "Go": {
-      "tab_size": 4,
-      "hard_tabs": true,
       "code_actions_on_format": {
         "source.organizeImports": true
       }
     },
     "Make": {
       "hard_tabs": true
-    },
-    "Markdown": {
-      "tab_size": 2,
-      "soft_wrap": "preferred_line_length"
-    },
-    "JavaScript": {
-      "tab_size": 2
-    },
-    "Terraform": {
-      "tab_size": 2
-    },
-    "TypeScript": {
-      "tab_size": 2
-    },
-    "TSX": {
-      "tab_size": 2
-    },
-    "YAML": {
-      "tab_size": 2
-    },
-    "JSON": {
-      "tab_size": 2
-    },
-    "OCaml": {
-      "tab_size": 2
-    },
-    "OCaml Interface": {
-      "tab_size": 2
     },
     "Prisma": {
       "tab_size": 2
@@ -655,5 +639,17 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
-  }
+  },
+  // Task-related settings.
+  "task": {
+    // Whether to show task status indicator in the status bar. Default: true
+    "show_status_indicator": true
+  },
+  // Whether to show full labels in line indicator or short ones
+  //
+  // Values:
+  //   - `short`: "2 s, 15 l, 32 c"
+  //   - `long`: "2 selections, 15 lines, 32 characters"
+  // Default: long
+  "line_indicator_format": "long"
 }

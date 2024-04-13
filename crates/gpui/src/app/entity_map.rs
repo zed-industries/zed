@@ -9,6 +9,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
+    num::NonZeroU64,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
@@ -31,6 +32,11 @@ impl From<u64> for EntityId {
 }
 
 impl EntityId {
+    /// Converts this entity id to a [NonZeroU64]
+    pub fn as_non_zero_u64(self) -> NonZeroU64 {
+        NonZeroU64::new(self.0.as_ffi()).unwrap()
+    }
+
     /// Converts this entity id to a [u64]
     pub fn as_u64(self) -> u64 {
         self.0.as_ffi()
@@ -128,14 +134,16 @@ impl EntityMap {
 
         dropped_entity_ids
             .into_iter()
-            .map(|entity_id| {
+            .filter_map(|entity_id| {
                 let count = ref_counts.counts.remove(entity_id).unwrap();
                 debug_assert_eq!(
                     count.load(SeqCst),
                     0,
                     "dropped an entity that was referenced"
                 );
-                (entity_id, self.entities.remove(entity_id).unwrap())
+                // If the EntityId was allocated with `Context::reserve`,
+                // the entity may not have been inserted.
+                Some((entity_id, self.entities.remove(entity_id)?))
             })
             .collect()
     }

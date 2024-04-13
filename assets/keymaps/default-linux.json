@@ -28,7 +28,7 @@
       "ctrl-0": "zed::ResetBufferFontSize",
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
-      "ctrl-h": "zed::Hide",
+      "alt-f9": "zed::Hide",
       "f11": "zed::ToggleFullScreen"
     }
   },
@@ -38,7 +38,6 @@
       "escape": "editor::Cancel",
       "backspace": "editor::Backspace",
       "shift-backspace": "editor::Backspace",
-      "ctrl-h": "editor::Backspace",
       "delete": "editor::Delete",
       "ctrl-d": "editor::Delete",
       "tab": "editor::Tab",
@@ -150,10 +149,11 @@
       "ctrl-shift-enter": "editor::NewlineBelow",
       "ctrl-enter": "editor::NewlineAbove",
       "alt-z": "editor::ToggleSoftWrap",
-      "ctrl-f": [
+      "ctrl-f": "buffer_search::Deploy",
+      "ctrl-h": [
         "buffer_search::Deploy",
         {
-          "focus": true
+          "replace_enabled": true
         }
       ],
       // "cmd-e": [
@@ -212,7 +212,8 @@
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
-      "alt-tab": "search::CycleMode"
+      "ctrl-f": "search::FocusSearch",
+      "ctrl-h": "search::ToggleReplace"
     }
   },
   {
@@ -233,10 +234,10 @@
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "alt-tab": "search::CycleMode",
+      "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
-      "alt-ctrl-g": "search::ActivateRegexMode",
-      "alt-ctrl-x": "search::ActivateTextMode"
+      "alt-ctrl-g": "search::ToggleRegex",
+      "alt-ctrl-x": "search::ToggleRegex"
     }
   },
   {
@@ -257,10 +258,9 @@
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "alt-tab": "search::CycleMode",
       "ctrl-shift-h": "search::ToggleReplace",
-      "alt-ctrl-g": "search::ActivateRegexMode",
-      "alt-ctrl-x": "search::ActivateTextMode"
+      "alt-ctrl-g": "search::ToggleRegex",
+      "alt-ctrl-x": "search::ToggleRegex"
     }
   },
   {
@@ -280,10 +280,10 @@
       "alt-enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
-      "alt-r": "search::CycleMode",
+      "alt-r": "search::ToggleRegex",
       "alt-ctrl-f": "project_search::ToggleFilters",
-      "ctrl-alt-shift-r": "search::ActivateRegexMode",
-      "ctrl-alt-shift-x": "search::ActivateTextMode"
+      "ctrl-alt-shift-r": "search::ToggleRegex",
+      "ctrl-alt-shift-x": "search::ToggleRegex"
     }
   },
   // Bindings from VS Code
@@ -419,6 +419,12 @@
       "ctrl-j": "workspace::ToggleBottomDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "ctrl-shift-f": "pane::DeploySearch",
+      "ctrl-shift-h": [
+        "pane::DeploySearch",
+        {
+          "replace_enabled": true
+        }
+      ],
       "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-shift-t": "project_symbols::Toggle",
@@ -599,6 +605,8 @@
   {
     "context": "TabSwitcher",
     "bindings": {
+      "ctrl-up": "menu::SelectPrev",
+      "ctrl-down": "menu::SelectNext",
       "ctrl-shift-tab": "menu::SelectPrev",
       "ctrl-backspace": "tab_switcher::CloseSelectedItem"
     }

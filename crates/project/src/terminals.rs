@@ -52,6 +52,7 @@ impl Project {
             (
                 Some(TaskState {
                     id: spawn_task.id,
+                    full_label: spawn_task.full_label,
                     label: spawn_task.label,
                     status: TaskStatus::Running,
                     completion_rx,

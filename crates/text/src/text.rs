@@ -71,12 +71,19 @@ impl Display for BufferId {
     }
 }
 
+impl From<NonZeroU64> for BufferId {
+    fn from(id: NonZeroU64) -> Self {
+        BufferId(id)
+    }
+}
+
 impl BufferId {
     /// Returns Err if `id` is outside of BufferId domain.
     pub fn new(id: u64) -> anyhow::Result<Self> {
         let id = NonZeroU64::new(id).context("Buffer id cannot be 0.")?;
         Ok(Self(id))
     }
+
     /// Increments this buffer id, returning the old value.
     /// So that's a post-increment operator in disguise.
     pub fn next(&mut self) -> Self {

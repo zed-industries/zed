@@ -1,14 +1,14 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::{AsyncAppContext, Task};
+use gpui::{AppContext, AsyncAppContext, Task};
 pub use language::*;
 use lsp::{CompletionItemKind, LanguageServerBinary, SymbolKind};
 use project::project_settings::ProjectSettings;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 use smol::fs::{self, File};
 use std::{
     any::Any,
@@ -20,10 +20,7 @@ use std::{
         Arc,
     },
 };
-use task::{
-    static_source::{Definition, TaskDefinitions},
-    VariableName,
-};
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{
     fs::remove_matching,
     github::{latest_github_release, GitHubLspBinaryVersion},
@@ -56,15 +53,8 @@ impl Settings for ElixirSettings {
 
     type FileContent = ElixirSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut gpui::AppContext,
-    ) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        Self::load_via_json_merge(default_value, user_values)
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
     }
 }
 
@@ -561,27 +551,31 @@ fn label_for_symbol_elixir(
 
 pub(super) fn elixir_task_context() -> ContextProviderWithTasks {
     // Taken from https://gist.github.com/josevalim/2e4f60a14ccd52728e3256571259d493#gistcomment-4995881
-    ContextProviderWithTasks::new(TaskDefinitions(vec![
-        Definition {
-            label: "Elixir: test suite".to_owned(),
+    ContextProviderWithTasks::new(TaskTemplates(vec![
+        TaskTemplate {
+            label: "mix test".to_owned(),
             command: "mix".to_owned(),
             args: vec!["test".to_owned()],
-            ..Definition::default()
+            ..TaskTemplate::default()
         },
-        Definition {
-            label: "Elixir: failed tests suite".to_owned(),
+        TaskTemplate {
+            label: "mix test --failed".to_owned(),
             command: "mix".to_owned(),
             args: vec!["test".to_owned(), "--failed".to_owned()],
-            ..Definition::default()
+            ..TaskTemplate::default()
         },
-        Definition {
-            label: "Elixir: test file".to_owned(),
+        TaskTemplate {
+            label: format!("mix test {}", VariableName::Symbol.template_value()),
             command: "mix".to_owned(),
             args: vec!["test".to_owned(), VariableName::Symbol.template_value()],
-            ..Definition::default()
+            ..TaskTemplate::default()
         },
-        Definition {
-            label: "Elixir: test at current line".to_owned(),
+        TaskTemplate {
+            label: format!(
+                "mix test {}:{}",
+                VariableName::File.template_value(),
+                VariableName::Row.template_value()
+            ),
             command: "mix".to_owned(),
             args: vec![
                 "test".to_owned(),
@@ -591,9 +585,9 @@ pub(super) fn elixir_task_context() -> ContextProviderWithTasks {
                     VariableName::Row.template_value()
                 ),
             ],
-            ..Definition::default()
+            ..TaskTemplate::default()
         },
-        Definition {
+        TaskTemplate {
             label: "Elixir: break line".to_owned(),
             command: "iex".to_owned(),
             args: vec![
@@ -607,7 +601,7 @@ pub(super) fn elixir_task_context() -> ContextProviderWithTasks {
                     VariableName::Row.template_value()
                 ),
             ],
-            ..Definition::default()
+            ..TaskTemplate::default()
         },
     ]))
 }

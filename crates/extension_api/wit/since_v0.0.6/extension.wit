@@ -1,56 +1,14 @@
 package zed:extension;
 
 world extension {
-    import lsp;
+    import github;
+    import platform;
+    import nodejs;
 
     use lsp.{completion, symbol};
 
     /// Initializes the extension.
     export init-extension: func();
-
-    /// A GitHub release.
-    record github-release {
-        /// The version of the release.
-        version: string,
-        /// The list of assets attached to the release.
-        assets: list<github-release-asset>,
-    }
-
-    /// An asset from a GitHub release.
-    record github-release-asset {
-        /// The name of the asset.
-        name: string,
-        /// The download URL for the asset.
-        download-url: string,
-    }
-
-    /// The options used to filter down GitHub releases.
-    record github-release-options {
-        /// Whether releases without assets should be included.
-        require-assets: bool,
-        /// Whether pre-releases should be included.
-        pre-release: bool,
-    }
-
-    /// An operating system.
-    enum os {
-        /// macOS.
-        mac,
-        /// Linux.
-        linux,
-        /// Windows.
-        windows,
-    }
-
-    /// A platform architecture.
-    enum architecture {
-        /// AArch64 (e.g., Apple Silicon).
-        aarch64,
-        /// x86.
-        x86,
-        /// x86-64.
-        x8664,
-    }
 
     /// The type of a downloaded file.
     enum downloaded-file-type {
@@ -76,30 +34,12 @@ world extension {
         failed(string),
     }
 
-    /// Returns operating system and architecture for the current platform.
-    import current-platform: func() -> tuple<os, architecture>;
-
     record settings-location {
         worktree-id: u64,
         path: string,
     }
 
     import get-settings: func(path: option<settings-location>, category: string, key: option<string>) -> result<string, string>;
-
-    /// Returns the path to the Node binary used by Zed.
-    import node-binary-path: func() -> result<string, string>;
-
-    /// Returns the latest version of the given NPM package.
-    import npm-package-latest-version: func(package-name: string) -> result<string, string>;
-
-    /// Returns the installed version of the given NPM package, if it exists.
-    import npm-package-installed-version: func(package-name: string) -> result<option<string>, string>;
-
-    /// Installs the specified NPM package.
-    import npm-install-package: func(package-name: string, version: string) -> result<_, string>;
-
-    /// Returns the latest release for the given GitHub repository.
-    import latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
 
     /// Downloads a file from the given URL and saves it to the given path within the extension's
     /// working directory.
@@ -151,26 +91,37 @@ world extension {
     /// Returns the workspace configuration options to pass to the language server.
     export language-server-workspace-configuration: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 
+    /// A label containing some code.
     record code-label {
         /// The source code to parse with Tree-sitter.
         code: string,
+        /// The spans to display in the label.
         spans: list<code-label-span>,
+        /// The range of the code to include when filtering.
         filter-range: range,
     }
 
+    /// A span within a code label.
     variant code-label-span {
         /// A range into the parsed code.
         code-range(range),
+        /// A span containing a code literal.
         literal(code-label-span-literal),
     }
 
+    /// A span containing a code literal.
     record code-label-span-literal {
+        /// The literal text.
         text: string,
+        /// The name of the highlight to use for this literal.
         highlight-name: option<string>,
     }
 
+    /// A (half-open) range (`[start, end)`).
     record range {
+        /// The start of the range (inclusive).
         start: u32,
+        /// The end of the range (exclusive).
         end: u32,
     }
 

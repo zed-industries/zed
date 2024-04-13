@@ -1,7 +1,7 @@
 use crate::{
     self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
-    DefiniteLength, Fill, FlexDirection, FlexWrap, FontWeight, Hsla, JustifyContent, Length,
-    Position, SharedString, StyleRefinement, Visibility, WhiteSpace,
+    DefiniteLength, Fill, FlexDirection, FlexWrap, FontStyle, FontWeight, Hsla, JustifyContent,
+    Length, Position, SharedString, StyleRefinement, Visibility, WhiteSpace,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use smallvec::{smallvec, SmallVec};
@@ -678,6 +678,24 @@ pub trait Styled: Sized {
         self.text_style()
             .get_or_insert_with(Default::default)
             .font_size = Some(rems(1.875).into());
+        self
+    }
+
+    /// Set the font style to 'non-italic',
+    /// see the [Tailwind Docs](https://tailwindcss.com/docs/font-style#italicizing-text)
+    fn non_italic(mut self) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_style = Some(FontStyle::Normal);
+        self
+    }
+
+    /// Set the font style to 'italic',
+    /// see the [Tailwind Docs](https://tailwindcss.com/docs/font-style#italicizing-text)
+    fn italic(mut self) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .font_style = Some(FontStyle::Italic);
         self
     }
 

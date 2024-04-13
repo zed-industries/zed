@@ -26,7 +26,7 @@ use terminal_element::TerminalElement;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label};
 use util::{paths::PathLikeWithPosition, ResultExt};
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent},
+    item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
     notifications::NotifyResultExt,
     register_deserializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
@@ -222,21 +222,21 @@ impl TerminalView {
     }
 
     fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
-        if !self
+        if self
             .terminal
             .read(cx)
             .last_content
             .mode
             .contains(TermMode::ALT_SCREEN)
         {
-            cx.show_character_palette();
-        } else {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
                     &Keystroke::parse("ctrl-cmd-space").unwrap(),
                     TerminalSettings::get_global(cx).option_as_meta,
                 )
             });
+        } else {
+            cx.show_character_palette();
         }
     }
 
@@ -783,12 +783,7 @@ impl Item for TerminalView {
         Some(self.terminal().read(cx).title(false).into())
     }
 
-    fn tab_content(
-        &self,
-        _detail: Option<usize>,
-        selected: bool,
-        cx: &WindowContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
         let icon = match terminal.task() {
@@ -808,7 +803,7 @@ impl Item for TerminalView {
         h_flex()
             .gap_2()
             .child(Icon::new(icon))
-            .child(Label::new(title).color(if selected {
+            .child(Label::new(title).color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted
@@ -866,6 +861,7 @@ impl Item for TerminalView {
         Some(vec![BreadcrumbText {
             text: self.terminal().read(cx).breadcrumb_text.clone(),
             highlights: None,
+            font: None,
         }])
     }
 

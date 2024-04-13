@@ -159,12 +159,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         });
         let all_tasks = project
             .update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, cx| {
-                    inventory.list_tasks(None, None, false, cx)
-                })
+                project
+                    .task_inventory()
+                    .update(cx, |inventory, cx| inventory.list_tasks(None, None, cx))
             })
             .into_iter()
-            .map(|(source_kind, task)| (source_kind, task.name().to_string()))
+            .map(|(source_kind, task)| (source_kind, task.label))
             .collect::<Vec<_>>();
         assert_eq!(
             all_tasks,
@@ -172,14 +172,16 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 (
                     TaskSourceKind::Worktree {
                         id: workree_id,
-                        abs_path: PathBuf::from("/the-root/.zed/tasks.json")
+                        abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
+                        id_base: "local_tasks_for_worktree",
                     },
                     "cargo check".to_string()
                 ),
                 (
                     TaskSourceKind::Worktree {
                         id: workree_id,
-                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json")
+                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                        id_base: "local_tasks_for_worktree",
                     },
                     "cargo check".to_string()
                 ),
@@ -2659,7 +2661,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     )
     .await
     .unwrap();
-    worktree.next_event(cx);
+    worktree.next_event(cx).await;
 
     // Change the buffer's file again. Depending on the random seed, the
     // previous file change may still be in progress.
@@ -2670,7 +2672,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     )
     .await
     .unwrap();
-    worktree.next_event(cx);
+    worktree.next_event(cx).await;
 
     cx.executor().run_until_parked();
     let on_disk_text = fs.load(Path::new("/dir/file1")).await.unwrap();
@@ -2714,7 +2716,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     )
     .await
     .unwrap();
-    worktree.next_event(cx);
+    worktree.next_event(cx).await;
 
     cx.executor()
         .spawn(cx.executor().simulate_random_delay())
@@ -3120,12 +3122,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
             &[language::Event::Edited, language::Event::DirtyChanged]
         );
         events.lock().clear();
-        buffer.did_save(
-            buffer.version(),
-            buffer.as_rope().fingerprint(),
-            buffer.file().unwrap().mtime(),
-            cx,
-        );
+        buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), cx);
     });
 
     // after saving, the buffer is not dirty, and emits a saved event.

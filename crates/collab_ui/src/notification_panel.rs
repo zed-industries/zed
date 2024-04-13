@@ -21,6 +21,7 @@ use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{h_flex, prelude::*, v_flex, Avatar, Button, Icon, IconButton, IconName, Label, Tooltip};
 use util::{ResultExt, TryFutureExt};
+use workspace::notifications::NotificationId;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
@@ -534,8 +535,10 @@ impl NotificationPanel {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                workspace.dismiss_notification::<NotificationToast>(0, cx);
-                workspace.show_notification(0, cx, |cx| {
+                let id = NotificationId::unique::<NotificationToast>();
+
+                workspace.dismiss_notification(&id, cx);
+                workspace.show_notification(id, cx, |cx| {
                     let workspace = cx.view().downgrade();
                     cx.new_view(|_| NotificationToast {
                         notification_id,
@@ -554,7 +557,8 @@ impl NotificationPanel {
                 self.current_notification_toast.take();
                 self.workspace
                     .update(cx, |workspace, cx| {
-                        workspace.dismiss_notification::<NotificationToast>(0, cx)
+                        let id = NotificationId::unique::<NotificationToast>();
+                        workspace.dismiss_notification(&id, cx)
                     })
                     .ok();
             }

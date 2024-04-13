@@ -884,13 +884,21 @@ impl EditorElement {
                                     SharedString::from(character.to_string())
                                 };
                                 let len = text.len();
+
+                                let font = cursor_row_layout
+                                    .font_id_for_index(cursor_column)
+                                    .and_then(|cursor_font_id| {
+                                        cx.text_system().get_font_for_id(cursor_font_id)
+                                    })
+                                    .unwrap_or(self.style.text.font());
+
                                 cx.text_system()
                                     .shape_line(
                                         text,
                                         cursor_row_layout.font_size,
                                         &[TextRun {
                                             len,
-                                            font: self.style.text.font(),
+                                            font: font,
                                             color: self.style.background,
                                             background_color: None,
                                             strikethrough: None,
@@ -2965,7 +2973,7 @@ fn render_blame_entry(
                 cx.open_url(url.as_str())
             })
         })
-        .tooltip(move |cx| {
+        .hoverable_tooltip(move |cx| {
             BlameEntryTooltip::new(
                 sha_color.cursor,
                 commit_message.clone(),
@@ -3367,6 +3375,7 @@ impl Element for EditorElement {
                 let overscroll = size(em_width, px(0.));
 
                 snapshot = self.editor.update(cx, |editor, cx| {
+                    editor.last_bounds = Some(bounds);
                     editor.gutter_width = gutter_dimensions.width;
                     editor.set_visible_line_count(bounds.size.height / line_height, cx);
 
@@ -3415,7 +3424,7 @@ impl Element for EditorElement {
 
                 let autoscroll_horizontally = self.editor.update(cx, |editor, cx| {
                     let autoscroll_horizontally =
-                        editor.autoscroll_vertically(bounds.size.height, line_height, cx);
+                        editor.autoscroll_vertically(bounds, line_height, cx);
                     snapshot = editor.snapshot(cx);
                     autoscroll_horizontally
                 });

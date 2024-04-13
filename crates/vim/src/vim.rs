@@ -12,6 +12,7 @@ mod normal;
 mod object;
 mod replace;
 mod state;
+mod surrounds;
 mod utils;
 mod visual;
 
@@ -20,7 +21,7 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{
     movement::{self, FindRange},
-    Editor, EditorEvent, EditorMode,
+    Anchor, Editor, EditorEvent, EditorMode,
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
@@ -34,9 +35,10 @@ use replace::multi_replace;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{EditorState, Mode, Operator, RecordedSelection, WorkspaceState};
 use std::{ops::Range, sync::Arc};
+use surrounds::{add_surrounds, change_surrounds, delete_surrounds};
 use ui::BorrowAppContext;
 use visual::{visual_block_motion, visual_replace};
 use workspace::{self, Workspace};
@@ -65,7 +67,15 @@ struct Number(usize);
 
 actions!(
     vim,
-    [Tab, Enter, Object, InnerObject, FindForward, FindBackward]
+    [
+        Tab,
+        Enter,
+        Object,
+        InnerObject,
+        FindForward,
+        FindBackward,
+        OpenDefaultKeymap
+    ]
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
@@ -131,6 +141,14 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         })
     });
 
+    workspace.register_action(|_: &mut Workspace, _: &OpenDefaultKeymap, cx| {
+        cx.emit(workspace::Event::OpenBundledFile {
+            text: settings::vim_keymap(),
+            title: "Default Vim Bindings",
+            language: "JSON",
+        });
+    });
+
     normal::register(workspace, cx);
     insert::register(workspace, cx);
     motion::register(workspace, cx);
@@ -170,7 +188,14 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
     }
 
     Vim::update(cx, |vim, cx| match vim.active_operator() {
-        Some(Operator::FindForward { .. } | Operator::FindBackward { .. } | Operator::Replace) => {}
+        Some(
+            Operator::FindForward { .. }
+            | Operator::FindBackward { .. }
+            | Operator::Replace
+            | Operator::AddSurrounds { .. }
+            | Operator::ChangeSurrounds { .. }
+            | Operator::DeleteSurrounds,
+        ) => {}
         Some(_) => {
             vim.clear_operator(cx);
         }
@@ -286,6 +311,18 @@ impl Vim {
         Some(editor.update(cx, |editor, cx| update(self, editor, cx)))
     }
 
+    fn editor_selections(&mut self, cx: &mut WindowContext) -> Vec<Range<Anchor>> {
+        self.update_active_editor(cx, |_, editor, _| {
+            editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .map(|selection| selection.tail()..selection.head())
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
     /// When doing an action that modifies the buffer, we start recording so that `.`
     /// will replay the action.
     pub fn start_recording(&mut self, cx: &mut WindowContext) {
@@ -330,6 +367,10 @@ impl Vim {
                 self.workspace_state.recorded_selection = RecordedSelection::None;
             }
         }
+    }
+
+    pub fn stop_replaying(&mut self) {
+        self.workspace_state.replaying = false;
     }
 
     /// When finishing an action that modifies the buffer, stop recording.
@@ -476,6 +517,17 @@ impl Vim {
         ) {
             self.start_recording(cx)
         };
+        // Since these operations can only be entered with pre-operators,
+        // we need to clear the previous operators when pushing,
+        // so that the current stack is the most correct
+        if matches!(
+            operator,
+            Operator::AddSurrounds { .. }
+                | Operator::ChangeSurrounds { .. }
+                | Operator::DeleteSurrounds
+        ) {
+            self.clear_operator(cx);
+        };
         self.update_state(|state| state.operator_stack.push(operator));
         self.sync_vim_settings(cx);
     }
@@ -490,6 +542,7 @@ impl Vim {
         self.sync_vim_settings(cx);
         popped_operator
     }
+
     fn clear_operator(&mut self, cx: &mut WindowContext) {
         self.take_count(cx);
         self.update_state(|state| state.operator_stack.clear());
@@ -622,6 +675,31 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => visual_replace(text, cx),
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
+            Some(Operator::AddSurrounds { target }) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    if let Some(target) = target {
+                        add_surrounds(text, target, cx);
+                        Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+                    }
+                }
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            Some(Operator::ChangeSurrounds { target }) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    if let Some(target) = target {
+                        change_surrounds(text, target, cx);
+                        Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+                    }
+                }
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
+            Some(Operator::DeleteSurrounds) => match Vim::read(cx).state().mode {
+                Mode::Normal => {
+                    delete_surrounds(text, cx);
+                    Vim::update(cx, |vim, cx| vim.clear_operator(cx));
+                }
+                _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
+            },
             _ => match Vim::read(cx).state().mode {
                 Mode::Replace => multi_replace(text, cx),
                 _ => {}
@@ -728,13 +806,9 @@ impl Settings for VimModeSetting {
 
     type FileContent = Option<bool>;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self> {
-        Ok(Self(user_values.iter().rev().find_map(|v| **v).unwrap_or(
-            default_value.ok_or_else(Self::missing_default)?,
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        Ok(Self(sources.user.copied().flatten().unwrap_or(
+            sources.default.ok_or_else(Self::missing_default)?,
         )))
     }
 }
@@ -773,11 +847,7 @@ impl Settings for VimSettings {
 
     type FileContent = VimSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
     }
 }

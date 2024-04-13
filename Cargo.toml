@@ -38,6 +38,7 @@ members = [
     "crates/google_ai",
     "crates/gpui",
     "crates/gpui_macros",
+    "crates/headless",
     "crates/image_viewer",
     "crates/install_cli",
     "crates/journal",
@@ -72,6 +73,7 @@ members = [
     "crates/task",
     "crates/tasks_ui",
     "crates/search",
+    "crates/semantic_index",
     "crates/semantic_version",
     "crates/settings",
     "crates/snippet",
@@ -90,6 +92,7 @@ members = [
     "crates/telemetry_events",
     "crates/time_format",
     "crates/ui",
+    "crates/ui_text_field",
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
@@ -103,17 +106,22 @@ members = [
     "extensions/clojure",
     "extensions/csharp",
     "extensions/dart",
+    "extensions/elm",
     "extensions/emmet",
     "extensions/erlang",
     "extensions/gleam",
     "extensions/haskell",
     "extensions/html",
+    "extensions/lua",
+    "extensions/ocaml",
     "extensions/php",
     "extensions/prisma",
     "extensions/purescript",
     "extensions/svelte",
+    "extensions/terraform",
     "extensions/toml",
     "extensions/uiua",
+    "extensions/vue",
     "extensions/zig",
 
     "tooling/xtask",
@@ -161,6 +169,7 @@ go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui" }
 gpui_macros = { path = "crates/gpui_macros" }
+headless = { path = "crates/headless" }
 install_cli = { path = "crates/install_cli" }
 image_viewer = { path = "crates/image_viewer" }
 journal = { path = "crates/journal" }
@@ -214,6 +223,7 @@ theme_selector = { path = "crates/theme_selector" }
 telemetry_events = { path = "crates/telemetry_events" }
 time_format = { path = "crates/time_format" }
 ui = { path = "crates/ui" }
+ui_text_field = { path = "crates/ui_text_field" }
 util = { path = "crates/util" }
 vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
@@ -230,23 +240,26 @@ async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "61cbd6b2c224791d52b150fe535cee665cc91bb2" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "61cbd6b2c224791d52b150fe535cee665cc91bb2" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "810ec594358aafea29a4a3d8ab601d25292b2ce4" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "810ec594358aafea29a4a3d8ab601d25292b2ce4" }
 blade-rwh = { package = "raw-window-handle", version = "0.5" }
 cap-std = "3.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = { version = "0.11.6" }
 ctor = "0.2.6"
+ctrlc = "3.4.4"
 core-foundation = { version = "0.9.3" }
 core-foundation-sys = "0.8.6"
 derive_more = "0.99.17"
 emojis = "0.6.1"
 env_logger = "0.9"
 futures = "0.3"
+futures-batch = "0.6.1"
 futures-lite = "1.13"
 git2 = { version = "0.15", default-features = false }
 globset = "0.4"
+heed = { git = "https://github.com/meilisearch/heed", rev = "036ac23f73a021894974b9adc815bc95b3e0482a", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 ignore = "0.4.22"
 indoc = "1"
@@ -310,37 +323,29 @@ tree-sitter-c = "0.20.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "f44509141e7e483323d2ec178f2d2e6c0fc041c1" }
 tree-sitter-css = { git = "https://github.com/tree-sitter/tree-sitter-css", rev = "769203d0f9abe1a9a691ac2b9fe4bb4397a73c51" }
 tree-sitter-elixir = { git = "https://github.com/elixir-lang/tree-sitter-elixir", rev = "a2861e88a730287a60c11ea9299c033c7d076e30" }
-tree-sitter-elm = { git = "https://github.com/elm-tooling/tree-sitter-elm", rev = "692c50c0b961364c40299e73c1306aecb5d20f40" }
 tree-sitter-embedded-template = "0.20.0"
-tree-sitter-glsl = { git = "https://github.com/theHamsta/tree-sitter-glsl", rev = "2a56fb7bc8bb03a1892b4741279dd0a8758b7fb3" }
 tree-sitter-go = { git = "https://github.com/tree-sitter/tree-sitter-go", rev = "aeb2f33b366fd78d5789ff104956ce23508b85db" }
 tree-sitter-gomod = { git = "https://github.com/camdencheek/tree-sitter-go-mod" }
 tree-sitter-gowork = { git = "https://github.com/d1y/tree-sitter-go-work" }
-tree-sitter-hcl = { git = "https://github.com/MichaHoffmann/tree-sitter-hcl", rev = "v1.1.0" }
 rustc-demangle = "0.1.23"
 tree-sitter-heex = { git = "https://github.com/phoenixframework/tree-sitter-heex", rev = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a" }
 tree-sitter-html = "0.19.0"
 tree-sitter-jsdoc = { git = "https://github.com/tree-sitter/tree-sitter-jsdoc", ref = "6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55" }
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
-tree-sitter-lua = "0.0.14"
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
-tree-sitter-nix = { git = "https://github.com/nix-community/tree-sitter-nix", rev = "66e3e9ce9180ae08fc57372061006ef83f0abde7" }
 tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "7dd29f9616822e5fc259f5b4ae6c4ded9a71a132" }
-tree-sitter-ocaml = { git = "https://github.com/tree-sitter/tree-sitter-ocaml", rev = "4abfdc1c7af2c6c77a370aee974627be1c285b3b" }
 tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
 tree-sitter-python = "0.20.2"
-tree-sitter-racket = { git = "https://github.com/zed-industries/tree-sitter-racket", rev = "eb010cf2c674c6fd9a6316a84e28ef90190fe51a" }
 tree-sitter-regex = "0.20.0"
 tree-sitter-ruby = "0.20.0"
 tree-sitter-rust = "0.20.3"
-tree-sitter-scheme = { git = "https://github.com/6cdh/tree-sitter-scheme", rev = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9" }
 tree-sitter-typescript = { git = "https://github.com/tree-sitter/tree-sitter-typescript", rev = "5d20856f34315b068c41edaee2ac8a100081d259" }
-tree-sitter-vue = { git = "https://github.com/zed-industries/tree-sitter-vue", rev = "6608d9d60c386f19d80af7d8132322fa11199c42" }
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "f545a41f57502e1b5ddf2a6668896c1b0620f930" }
 unindent = "0.1.7"
 unicase = "2.6"
+unicode-segmentation = "1.10"
 url = "2.2"
-uuid = { version = "1.1.2", features = ["v4"] }
+uuid = { version = "1.1.2", features = ["v4", "v5"] }
 wasmparser = "0.201"
 wasm-encoder = "0.201"
 wasmtime = { version = "19.0.0", default-features = false, features = [

@@ -10,7 +10,7 @@ use serde::{
     de::{self, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
 };
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum ZedDotDevModel {
@@ -332,13 +332,12 @@ impl Settings for AssistantSettings {
     type FileContent = AssistantSettingsContent;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
     ) -> anyhow::Result<Self> {
         let mut settings = AssistantSettings::default();
 
-        for value in [default_value].iter().chain(user_values) {
+        for value in sources.defaults_and_customizations() {
             let value = value.upgrade();
             merge(&mut settings.enabled, value.enabled);
             merge(&mut settings.button, value.button);
