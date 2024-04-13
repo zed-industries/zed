@@ -579,16 +579,42 @@ impl AssistantContext {
 impl CodebaseContext {
     fn render(&self, cx: &mut ViewContext<AssistantChat>) -> impl IntoElement {
         if self.pending {
-            div().child("⏳")
+            div()
+                .h_flex()
+                .items_center()
+                .gap_1()
+                .child(Icon::new(IconName::Ai).color(Color::Muted).into_element())
+                .child("Searching codebase...")
         } else {
-            div().children(self.excerpts.iter().map(|result| {
-                div()
-                    .p_2()
-                    .rounded_md()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(result.path.clone())
-                    .child(result.text.clone())
-            }))
+            div()
+                .v_flex()
+                .gap_2()
+                .children(self.excerpts.iter().map(|excerpt| {
+                    div()
+                        .p_4()
+                        .rounded_lg()
+                        .border()
+                        .border_color(cx.theme().colors().border)
+                        .v_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .h_flex()
+                                .items_center()
+                                .gap_1()
+                                .child(Icon::new(IconName::File).color(Color::Muted))
+                                .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
+                        )
+                        .child(
+                            div()
+                                .p_2()
+                                .rounded_md()
+                                .bg(cx.theme().colors().editor_background)
+                                .child(
+                                    excerpt.text.clone(), // todo!(): Show as an editor block
+                                ),
+                        )
+                }))
         }
     }
 
