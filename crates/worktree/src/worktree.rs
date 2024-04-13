@@ -3586,6 +3586,13 @@ impl BackgroundScanner {
                     is_git_related = true;
                 }
 
+                let abs_path = if let Ok(path) = abs_path.canonicalize() {
+                    path
+                } else {
+                    log::error!("abs_path {abs_path:?} cannot canonicalize");
+                    return false;
+                };
+
                 let relative_path: Arc<Path> =
                     if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
                         path.into()
