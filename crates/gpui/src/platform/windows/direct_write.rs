@@ -777,7 +777,7 @@ impl IDWritePixelSnapping_Impl for TextRenderer {
         &self,
         _clientdrawingcontext: *const ::core::ffi::c_void,
     ) -> windows::core::Result<BOOL> {
-        Ok(BOOL(1))
+        Ok(BOOL(0))
     }
 
     fn GetCurrentTransform(
