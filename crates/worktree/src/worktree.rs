@@ -3589,7 +3589,8 @@ impl BackgroundScanner {
                 let abs_path = if let Ok(path) = abs_path.canonicalize() {
                     path
                 } else {
-                    log::error!("abs_path {abs_path:?} cannot canonicalize");
+                    // many intermediate file will hit here, currently not logger
+                    // log::error!("abs_path {abs_path:?} cannot canonicalize");
                     return false;
                 };
 
