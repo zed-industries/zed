@@ -660,24 +660,17 @@ impl DirectWriteState {
         }
 
         unsafe {
-            let bitmap = self
-                .components
-                .bitmap_factory
-                .CreateBitmap(
-                    bitmap_size.width.0 as u32,
-                    bitmap_size.height.0 as u32,
-                    bitmap_format,
-                    WICBitmapCacheOnLoad,
-                )
-                .unwrap();
+            let bitmap = self.components.bitmap_factory.CreateBitmap(
+                bitmap_size.width.0 as u32,
+                bitmap_size.height.0 as u32,
+                bitmap_format,
+                WICBitmapCacheOnLoad,
+            )?;
             let render_target = self
                 .components
                 .d2d1_factory
-                .CreateWicBitmapRenderTarget(&bitmap, &render_target_property)
-                .unwrap();
-            let brush = render_target
-                .CreateSolidColorBrush(&BRUSH_COLOR, Some(&brush_property))
-                .unwrap();
+                .CreateWicBitmapRenderTarget(&bitmap, &render_target_property)?;
+            let brush = render_target.CreateSolidColorBrush(&BRUSH_COLOR, Some(&brush_property))?;
             let subpixel_shift = params
                 .subpixel_variant
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
@@ -690,25 +683,21 @@ impl DirectWriteState {
             render_target.BeginDraw();
             if params.is_emoji {
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
-                let enumerator = self
-                    .components
-                    .factory
-                    .TranslateColorGlyphRun2(
-                        baseline_origin,
-                        &glyph_run as _,
-                        None,
-                        DWRITE_GLYPH_IMAGE_FORMATS_COLR
-                            | DWRITE_GLYPH_IMAGE_FORMATS_SVG
-                            | DWRITE_GLYPH_IMAGE_FORMATS_PNG
-                            | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
-                            | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                        Some(&transform as _),
-                        0,
-                    )
-                    .unwrap();
+                let enumerator = self.components.factory.TranslateColorGlyphRun2(
+                    baseline_origin,
+                    &glyph_run as _,
+                    None,
+                    DWRITE_GLYPH_IMAGE_FORMATS_COLR
+                        | DWRITE_GLYPH_IMAGE_FORMATS_SVG
+                        | DWRITE_GLYPH_IMAGE_FORMATS_PNG
+                        | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
+                        | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
+                    DWRITE_MEASURING_MODE_NATURAL,
+                    Some(&transform as _),
+                    0,
+                )?;
                 while enumerator.MoveNext().is_ok() {
-                    let Some(color_glyph) = enumerator.GetCurrentRun2().log_err() else {
+                    let Ok(color_glyph) = enumerator.GetCurrentRun2() else {
                         break;
                     };
                     let color_glyph = &*color_glyph;
@@ -750,11 +739,9 @@ impl DirectWriteState {
                     DWRITE_MEASURING_MODE_NATURAL,
                 );
             }
-            render_target.EndDraw(None, None).unwrap();
+            render_target.EndDraw(None, None)?;
             let mut raw_data = vec![0u8; total_bytes];
-            bitmap
-                .CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)
-                .unwrap();
+            bitmap.CopyPixels(std::ptr::null() as _, bitmap_stride, &mut raw_data)?;
             if params.is_emoji {
                 // Convert from BGRA with premultiplied alpha to BGRA with straight alpha.
                 for pixel in raw_data.chunks_exact_mut(4) {
