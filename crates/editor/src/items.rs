@@ -19,7 +19,10 @@ use project::repository::GitFileStatus;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::item::{TabBarPlacement, TabContentParams, TabsSettings};
+use workspace::{
+    item::{TabContentParams, TabsSettings},
+    TabBarPlacement,
+};
 
 use std::{
     borrow::Cow,

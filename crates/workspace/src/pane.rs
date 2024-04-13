@@ -1,10 +1,10 @@
 use crate::{
     item::{
-        ClosePosition, Item, ItemHandle, PreviewTabsSettings, TabBarPlacement, TabContentParams,
-        TabsSettings, WeakItemHandle,
+        ClosePosition, Item, ItemHandle, PreviewTabsSettings, TabContentParams, TabsSettings,
+        WeakItemHandle,
     },
     toolbar::Toolbar,
-    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, TabBarPlacement, TabBarSettings, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;

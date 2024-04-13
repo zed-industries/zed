@@ -2,7 +2,7 @@ use crate::{
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
-    workspace_settings::{AutosaveSetting, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, TabBarPlacement, WorkspaceSettings},
     DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, ToolbarItemLocation,
     ViewId, Workspace, WorkspaceId,
 };
@@ -38,21 +38,8 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
 #[derive(Deserialize)]
 pub struct TabsSettings {
-    pub placement: TabBarPlacement,
     pub git_status: bool,
     pub close_position: ClosePosition,
-}
-
-/// The tab bar placement in a pane.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TabBarPlacement {
-    /// Don't show tab bar.
-    No,
-    /// Place tab bar on top of the pane.
-    Top,
-    /// Place tab bar at the bottom of the pane.
-    Bottom,
 }
 
 #[derive(Deserialize)]
@@ -80,10 +67,6 @@ impl ClosePosition {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TabsSettingsContent {
-    /// Where to place tab bar in the editor.
-    ///
-    /// Default: top
-    pub placement: Option<TabBarPlacement>,
     /// Whether to show the Git file status on a tab item.
     ///
     /// Default: false

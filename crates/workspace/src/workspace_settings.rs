@@ -49,13 +49,30 @@ pub struct WorkspaceSettingsContent {
     pub restore_on_startup: Option<RestoreOnStartupBehaviour>,
 }
 
+/// The tab bar placement in a pane.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TabBarPlacement {
+    /// Don't show tab bar.
+    No,
+    /// Place tab bar on top of the pane.
+    Top,
+    /// Place tab bar at the bottom of the pane.
+    Bottom,
+}
+
 #[derive(Deserialize)]
 pub struct TabBarSettings {
+    pub placement: TabBarPlacement,
     pub show_nav_history_buttons: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TabBarSettingsContent {
+    /// Where to place tab bar in the editor.
+    ///
+    /// Default: top
+    pub placement: Option<TabBarPlacement>,
     /// Whether or not to show the navigation history buttons in the tab bar.
     ///
     /// Default: true

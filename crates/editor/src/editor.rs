@@ -129,12 +129,9 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::item::ItemHandle;
-use workspace::notifications::NotificationId;
 use workspace::{
-    item::{TabBarPlacement, TabsSettings},
-    searchable::SearchEvent,
-    ItemNavHistory, SplitDirection, Toast, ViewId, Workspace, WorkspaceId,
+    item::ItemHandle, notifications::NotificationId, searchable::SearchEvent, ItemNavHistory,
+    SplitDirection, TabBarPlacement, TabBarSettings, Toast, ViewId, Workspace, WorkspaceId,
 };
 
 use crate::hover_links::find_url;
@@ -1450,7 +1447,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
-            tab_bar_placement: TabsSettings::get_global(cx).placement,
+            tab_bar_placement: TabBarSettings::get_global(cx).placement,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
@@ -9449,7 +9446,7 @@ impl Editor {
         let editor_settings = EditorSettings::get_global(cx);
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
-        self.tab_bar_placement = TabsSettings::get_global(cx).placement;
+        self.tab_bar_placement = TabBarSettings::get_global(cx).placement;
         cx.notify();
     }
 
