@@ -447,14 +447,14 @@ impl TerminalElement {
                 if e.pressed_button.is_some() && !cx.has_active_drag() {
                     let hovered = hitbox.is_hovered(cx);
                     terminal.update(cx, |terminal, cx| {
-                        if !terminal.selection_started() {
+                        if terminal.selection_started() {
+                            terminal.mouse_drag(e, origin, hitbox.bounds);
+                            cx.notify();
+                        } else {
                             if hovered {
                                 terminal.mouse_drag(e, origin, hitbox.bounds);
                                 cx.notify();
                             }
-                        } else {
-                            terminal.mouse_drag(e, origin, hitbox.bounds);
-                            cx.notify();
                         }
                     })
                 }

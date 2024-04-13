@@ -1,13 +1,13 @@
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem, Context, Empty, Entity,
-    EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext,
+    AvailableSpace, BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, Empty,
+    Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
     TextSystem, View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
-use futures::{Stream, StreamExt};
+use futures::{channel::oneshot, Stream, StreamExt};
 use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
@@ -42,6 +42,20 @@ impl Context for TestAppContext {
         app.new_model(build_model)
     }
 
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+        let mut app = self.app.borrow_mut();
+        app.reserve_model()
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: crate::Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        let mut app = self.app.borrow_mut();
+        app.insert_model(reservation, build_model)
+    }
+
     fn update_model<T: 'static, R>(
         &mut self,
         handle: &Model<T>,
@@ -49,14 +63,6 @@ impl Context for TestAppContext {
     ) -> Self::Result<R> {
         let mut app = self.app.borrow_mut();
         app.update_model(handle, update)
-    }
-
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
-    where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
-    {
-        let mut lock = self.app.borrow_mut();
-        lock.update_window(window, f)
     }
 
     fn read_model<T, R>(
@@ -69,6 +75,14 @@ impl Context for TestAppContext {
     {
         let app = self.app.borrow();
         app.read_model(handle, read)
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
+        let mut lock = self.app.borrow_mut();
+        lock.update_window(window, f)
     }
 
     fn read_window<T, R>(
@@ -173,7 +187,7 @@ impl TestAppContext {
         let mut cx = self.app.borrow_mut();
 
         // Some tests rely on the window size matching the bounds of the test display
-        let bounds = Bounds::maximized(&mut cx);
+        let bounds = Bounds::maximized(None, &mut cx);
         cx.open_window(
             WindowOptions {
                 bounds: Some(bounds),
@@ -186,7 +200,7 @@ impl TestAppContext {
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(&mut cx);
+        let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
                 bounds: Some(bounds),
@@ -209,7 +223,7 @@ impl TestAppContext {
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(&mut cx);
+        let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
                 bounds: Some(bounds),
@@ -309,7 +323,7 @@ impl TestAppContext {
     /// sets the global in this context.
     pub fn set_global<G: Global>(&mut self, global: G) {
         let mut lock = self.app.borrow_mut();
-        lock.set_global(global);
+        lock.update(|cx| cx.set_global(global))
     }
 
     /// updates the global in this context. (panics if `has_global` would return false)
@@ -318,7 +332,7 @@ impl TestAppContext {
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> R {
         let mut lock = self.app.borrow_mut();
-        lock.update_global(update)
+        lock.update(|cx| cx.update_global(update))
     }
 
     /// Returns an `AsyncAppContext` which can be used to run tasks that expect to be on a background
@@ -463,33 +477,53 @@ impl TestAppContext {
     }
 }
 
-impl<T: Send> Model<T> {
+impl<T: 'static> Model<T> {
     /// Block until the next event is emitted by the model, then return it.
-    pub fn next_event<Evt>(&self, cx: &mut TestAppContext) -> Evt
+    pub fn next_event<Event>(&self, cx: &mut TestAppContext) -> impl Future<Output = Event>
     where
-        Evt: Send + Clone + 'static,
-        T: EventEmitter<Evt>,
+        Event: Send + Clone + 'static,
+        T: EventEmitter<Event>,
     {
-        let (tx, mut rx) = futures::channel::mpsc::unbounded();
-        let _subscription = self.update(cx, |_, cx| {
+        let (tx, mut rx) = oneshot::channel();
+        let mut tx = Some(tx);
+        let subscription = self.update(cx, |_, cx| {
             cx.subscribe(self, move |_, _, event, _| {
-                tx.unbounded_send(event.clone()).ok();
+                if let Some(tx) = tx.take() {
+                    _ = tx.send(event.clone());
+                }
             })
         });
 
-        // Run other tasks until the event is emitted.
-        loop {
-            match rx.try_next() {
-                Ok(Some(event)) => return event,
-                Ok(None) => panic!("model was dropped"),
-                Err(_) => {
-                    if !cx.executor().tick() {
-                        break;
-                    }
-                }
-            }
+        async move {
+            let event = rx.await.expect("no event emitted");
+            drop(subscription);
+            event
         }
-        panic!("no event received")
+    }
+
+    /// Returns a future that resolves when the model notifies.
+    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+        use postage::prelude::{Sink as _, Stream as _};
+
+        let (mut tx, mut rx) = postage::mpsc::channel(1);
+        let mut cx = cx.app.app.borrow_mut();
+        let subscription = cx.observe(self, move |_, _| {
+            tx.try_send(()).ok();
+        });
+
+        let duration = if std::env::var("CI").is_ok() {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_secs(1)
+        };
+
+        async move {
+            let notification = crate::util::timeout(duration, rx.recv())
+                .await
+                .expect("next notification timed out");
+            drop(subscription);
+            notification.expect("model dropped while test was waiting for its next notification")
+        }
     }
 }
 
@@ -665,6 +699,7 @@ impl VisualTestContext {
             modifiers,
             button: MouseButton::Left,
             click_count: 1,
+            first_mouse: false,
         });
         self.simulate_event(MouseUpEvent {
             position,
@@ -775,6 +810,18 @@ impl Context for VisualTestContext {
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>> {
         self.cx.new_model(build_model)
+    }
+
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+        self.cx.reserve_model()
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: crate::Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        self.cx.insert_model(reservation, build_model)
     }
 
     fn update_model<T, R>(

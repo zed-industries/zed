@@ -1,10 +1,14 @@
 use crate::{
-    language_settings::all_language_settings, task_context::ContextProvider, CachedLspAdapter,
-    File, Language, LanguageConfig, LanguageId, LanguageMatcher, LanguageServerName, LspAdapter,
-    LspAdapterDelegate, PARSER, PLAIN_TEXT,
+    language_settings::{
+        all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
+    },
+    task_context::ContextProvider,
+    CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
+    LanguageServerName, LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
+use futures::TryFutureExt;
 use futures::{
     channel::{mpsc, oneshot},
     future::Shared,
@@ -38,6 +42,7 @@ pub struct LanguageRegistry {
 struct LanguageRegistryState {
     next_language_server_id: usize,
     languages: Vec<Arc<Language>>,
+    language_settings: AllLanguageSettingsContent,
     available_languages: Vec<AvailableLanguage>,
     grammars: HashMap<Arc<str>, AvailableGrammar>,
     lsp_adapters: HashMap<Arc<str>, Vec<Arc<CachedLspAdapter>>>,
@@ -145,6 +150,7 @@ impl LanguageRegistry {
                 languages: Vec::new(),
                 available_languages: Vec::new(),
                 grammars: Default::default(),
+                language_settings: Default::default(),
                 loading_languages: Default::default(),
                 lsp_adapters: Default::default(),
                 subscription: watch::channel(),
@@ -235,12 +241,22 @@ impl LanguageRegistry {
         language_name: &str,
         adapter: crate::FakeLspAdapter,
     ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
+        self.register_specific_fake_lsp_adapter(language_name, true, adapter)
+    }
+
+    #[cfg(any(feature = "test-support", test))]
+    pub fn register_specific_fake_lsp_adapter(
+        &self,
+        language_name: &str,
+        primary: bool,
+        adapter: crate::FakeLspAdapter,
+    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
         self.state
             .write()
             .lsp_adapters
             .entry(language_name.into())
             .or_default()
-            .push(CachedLspAdapter::new(Arc::new(adapter), true));
+            .push(CachedLspAdapter::new(Arc::new(adapter), primary));
         self.fake_language_servers(language_name)
     }
 
@@ -326,6 +342,10 @@ impl LanguageRegistry {
         state.version += 1;
         state.reload_count += 1;
         *state.subscription.0.borrow_mut() = ();
+    }
+
+    pub fn language_settings(&self) -> AllLanguageSettingsContent {
+        self.state.read().language_settings.clone()
     }
 
     pub fn language_names(&self) -> Vec<String> {
@@ -437,11 +457,12 @@ impl LanguageRegistry {
         )
     }
 
-    pub fn language_for_file_path(
+    pub fn language_for_file_path<'a>(
         self: &Arc<Self>,
-        path: &Path,
-    ) -> impl Future<Output = Result<Arc<Language>>> {
+        path: &'a Path,
+    ) -> impl Future<Output = Result<Arc<Language>>> + 'a {
         self.language_for_file_internal(path, None, None)
+            .map_err(|error| error.context(format!("language for file path {}", path.display())))
     }
 
     fn language_for_file_internal(
@@ -736,9 +757,13 @@ impl LanguageRegistry {
                     let capabilities = adapter
                         .as_fake()
                         .map(|fake_adapter| fake_adapter.capabilities.clone())
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| lsp::ServerCapabilities {
+                            completion_provider: Some(Default::default()),
+                            ..Default::default()
+                        });
 
                     let (server, mut fake_server) = lsp::FakeLanguageServer::new(
+                        server_id,
                         binary,
                         adapter.name.0.to_string(),
                         capabilities,
@@ -840,6 +865,16 @@ impl LanguageRegistryState {
         if let Some(theme) = self.theme.as_ref() {
             language.set_theme(theme.syntax());
         }
+        self.language_settings.languages.insert(
+            language.name(),
+            LanguageSettingsContent {
+                tab_size: language.config.tab_size,
+                hard_tabs: language.config.hard_tabs,
+                soft_wrap: language.config.soft_wrap,
+                ..Default::default()
+            }
+            .clone(),
+        );
         self.languages.push(language);
         self.version += 1;
         *self.subscription.0.borrow_mut() = ();

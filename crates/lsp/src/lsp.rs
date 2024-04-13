@@ -4,7 +4,7 @@ pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, FutureExt};
+use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream};
@@ -15,17 +15,22 @@ use smol::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{self, Child},
 };
+
+#[cfg(target_os = "windows")]
+use smol::process::windows::CommandExt;
+
 use std::{
     ffi::OsString,
     fmt,
-    future::Future,
     io::Write,
     path::PathBuf,
+    pin::Pin,
     str::{self, FromStr as _},
     sync::{
         atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
     },
+    task::Poll,
     time::{Duration, Instant},
 };
 use std::{path::Path, process::Stdio};
@@ -164,6 +169,37 @@ struct Error {
     message: String,
 }
 
+pub trait LspRequestFuture<O>: Future<Output = O> {
+    fn id(&self) -> i32;
+}
+
+struct LspRequest<F> {
+    id: i32,
+    request: F,
+}
+
+impl<F> LspRequest<F> {
+    pub fn new(id: i32, request: F) -> Self {
+        Self { id, request }
+    }
+}
+
+impl<F: Future> Future for LspRequest<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: This is standard pin projection, we're pinned so our fields must be pinned.
+        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().request) };
+        inner.poll(cx)
+    }
+}
+
+impl<F: Future> LspRequestFuture<F::Output> for LspRequest<F> {
+    fn id(&self) -> i32 {
+        self.id
+    }
+}
+
 /// Experimental: Informs the end user about the state of the server
 ///
 /// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
@@ -215,15 +251,18 @@ impl LanguageServer {
             &binary.arguments
         );
 
-        let mut server = process::Command::new(&binary.path)
+        let mut command = process::Command::new(&binary.path);
+        command
             .current_dir(working_dir)
             .args(binary.arguments)
             .envs(binary.env.unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+        let mut server = command.spawn()?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
@@ -909,7 +948,7 @@ impl LanguageServer {
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
-    ) -> impl Future<Output = Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -928,7 +967,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> impl 'static + Future<Output = anyhow::Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -977,7 +1016,7 @@ impl LanguageServer {
         let outbound_tx = outbound_tx.downgrade();
         let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
         let started = Instant::now();
-        async move {
+        LspRequest::new(id, async move {
             handle_response?;
             send?;
 
@@ -1007,7 +1046,7 @@ impl LanguageServer {
                     anyhow::bail!("LSP request timeout");
                 }
             }
-        }
+        })
     }
 
     /// Sends a RPC notification to the language server.
@@ -1101,6 +1140,7 @@ pub struct FakeLanguageServer {
 impl FakeLanguageServer {
     /// Construct a fake language server.
     pub fn new(
+        server_id: LanguageServerId,
         binary: LanguageServerBinary,
         name: String,
         capabilities: ServerCapabilities,
@@ -1110,8 +1150,8 @@ impl FakeLanguageServer {
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
         let (notifications_tx, notifications_rx) = channel::unbounded();
 
-        let server = LanguageServer::new_internal(
-            LanguageServerId(0),
+        let mut server = LanguageServer::new_internal(
+            server_id,
             stdin_writer,
             stdout_reader,
             None::<async_pipe::PipeReader>,
@@ -1122,30 +1162,35 @@ impl FakeLanguageServer {
             cx.clone(),
             |_| {},
         );
+        server.name = name.as_str().into();
         let fake = FakeLanguageServer {
             binary,
-            server: Arc::new(LanguageServer::new_internal(
-                LanguageServerId(0),
-                stdout_writer,
-                stdin_reader,
-                None::<async_pipe::PipeReader>,
-                Arc::new(Mutex::new(None)),
-                None,
-                Path::new("/"),
-                None,
-                cx,
-                move |msg| {
-                    notifications_tx
-                        .try_send((
-                            msg.method.to_string(),
-                            msg.params
-                                .map(|raw_value| raw_value.get())
-                                .unwrap_or("null")
-                                .to_string(),
-                        ))
-                        .ok();
-                },
-            )),
+            server: Arc::new({
+                let mut server = LanguageServer::new_internal(
+                    server_id,
+                    stdout_writer,
+                    stdin_reader,
+                    None::<async_pipe::PipeReader>,
+                    Arc::new(Mutex::new(None)),
+                    None,
+                    Path::new("/"),
+                    None,
+                    cx,
+                    move |msg| {
+                        notifications_tx
+                            .try_send((
+                                msg.method.to_string(),
+                                msg.params
+                                    .map(|raw_value| raw_value.get())
+                                    .unwrap_or("null")
+                                    .to_string(),
+                            ))
+                            .ok();
+                    },
+                );
+                server.name = name.as_str().into();
+                server
+            }),
             notifications_rx,
         };
         fake.handle_request::<request::Initialize, _, _>({
@@ -1343,6 +1388,7 @@ mod tests {
             release_channel::init("0.0.0", cx);
         });
         let (server, mut fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
             LanguageServerBinary {
                 path: "path/to/language-server".into(),
                 arguments: vec![],

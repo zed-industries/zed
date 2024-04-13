@@ -12,16 +12,23 @@ workspace = true
 path = "src/git.rs"
 
 [dependencies]
+anyhow.workspace = true
 clock.workspace = true
+collections.workspace = true
 git2.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
+time.workspace = true
+url.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 unindent.workspace = true
+serde_json.workspace = true
+pretty_assertions.workspace = true
 
 [features]
 test-support = []

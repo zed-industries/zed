@@ -13,7 +13,7 @@ use crate::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
         SyntaxSnapshot, ToTreeSitterPoint,
     },
-    CodeLabel, LanguageScope, Outline,
+    LanguageScope, Outline,
 };
 use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
@@ -45,9 +45,9 @@ use text::operation_queue::OperationQueue;
 use text::*;
 pub use text::{
     Anchor, Bias, Buffer as TextBuffer, BufferId, BufferSnapshot as TextBufferSnapshot, Edit,
-    OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, RopeFingerprint, Selection,
-    SelectionGoal, Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint,
-    ToPointUtf16, Transaction, TransactionId, Unclipped,
+    OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, Selection, SelectionGoal,
+    Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
+    Transaction, TransactionId, Unclipped,
 };
 use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
@@ -87,8 +87,6 @@ pub struct Buffer {
     /// The version vector when this buffer was last loaded from
     /// or saved to disk.
     saved_version: clock::Global,
-    /// A hash of the current contents of the buffer's file.
-    file_fingerprint: RopeFingerprint,
     transaction_depth: usize,
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
@@ -250,34 +248,6 @@ pub enum Documentation {
     MultiLineMarkdown(ParsedMarkdown),
 }
 
-/// A completion provided by a language server
-#[derive(Clone, Debug)]
-pub struct Completion {
-    /// The range of the buffer that will be replaced.
-    pub old_range: Range<Anchor>,
-    /// The new text that will be inserted.
-    pub new_text: String,
-    /// A label for this completion that is shown in the menu.
-    pub label: CodeLabel,
-    /// The id of the language server that produced this completion.
-    pub server_id: LanguageServerId,
-    /// The documentation for this completion.
-    pub documentation: Option<Documentation>,
-    /// The raw completion provided by the language server.
-    pub lsp_completion: lsp::CompletionItem,
-}
-
-/// A code action provided by a language server.
-#[derive(Clone, Debug)]
-pub struct CodeAction {
-    /// The id of the language server that produced this code action.
-    pub server_id: LanguageServerId,
-    /// The range of the buffer where this code action is applicable.
-    pub range: Range<Anchor>,
-    /// The raw code action provided by the language server.
-    pub lsp_action: lsp::CodeAction,
-}
-
 /// An operation used to synchronize this buffer with its other replicas.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
@@ -407,7 +377,6 @@ pub trait LocalFile: File {
         &self,
         buffer_id: BufferId,
         version: &clock::Global,
-        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: Option<SystemTime>,
         cx: &mut AppContext,
@@ -531,9 +500,9 @@ pub enum CharKind {
 
 impl Buffer {
     /// Create a new buffer with the given base text.
-    pub fn new<T: Into<String>>(replica_id: ReplicaId, id: BufferId, base_text: T) -> Self {
+    pub fn local<T: Into<String>>(base_text: T, cx: &mut ModelContext<Self>) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, id, base_text.into()),
+            TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
             None,
             None,
             Capability::ReadWrite,
@@ -545,10 +514,10 @@ impl Buffer {
         remote_id: BufferId,
         replica_id: ReplicaId,
         capability: Capability,
-        base_text: String,
+        base_text: impl Into<String>,
     ) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, remote_id, base_text),
+            TextBuffer::new(replica_id, remote_id, base_text.into()),
             None,
             None,
             capability,
@@ -577,7 +546,6 @@ impl Buffer {
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
-        this.file_fingerprint = proto::deserialize_fingerprint(&message.saved_version_fingerprint)?;
         this.saved_mtime = message.saved_mtime.map(|time| time.into());
         Ok(this)
     }
@@ -591,7 +559,6 @@ impl Buffer {
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
-            saved_version_fingerprint: proto::serialize_fingerprint(self.file_fingerprint),
             saved_mtime: self.saved_mtime.map(|time| time.into()),
         }
     }
@@ -671,7 +638,6 @@ impl Buffer {
         Self {
             saved_mtime,
             saved_version: buffer.version(),
-            file_fingerprint: buffer.as_rope().fingerprint(),
             reload_task: None,
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
@@ -746,11 +712,6 @@ impl Buffer {
         &self.saved_version
     }
 
-    /// The fingerprint of the buffer's text when the buffer was last saved or reloaded from disk.
-    pub fn saved_version_fingerprint(&self) -> RopeFingerprint {
-        self.file_fingerprint
-    }
-
     /// The mtime of the buffer's file when the buffer was last saved or reloaded from disk.
     pub fn saved_mtime(&self) -> Option<SystemTime> {
         self.saved_mtime
@@ -783,13 +744,11 @@ impl Buffer {
     pub fn did_save(
         &mut self,
         version: clock::Global,
-        fingerprint: RopeFingerprint,
         mtime: Option<SystemTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
         self.has_conflict = false;
-        self.file_fingerprint = fingerprint;
         self.saved_mtime = mtime;
         cx.emit(Event::Saved);
         cx.notify();
@@ -821,13 +780,7 @@ impl Buffer {
                     this.apply_diff(diff, cx);
                     tx.send(this.finalize_last_transaction().cloned()).ok();
                     this.has_conflict = false;
-                    this.did_reload(
-                        this.version(),
-                        this.as_rope().fingerprint(),
-                        this.line_ending(),
-                        new_mtime,
-                        cx,
-                    );
+                    this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
                 } else {
                     if !diff.edits.is_empty()
                         || this
@@ -838,13 +791,7 @@ impl Buffer {
                         this.has_conflict = true;
                     }
 
-                    this.did_reload(
-                        prev_version,
-                        Rope::text_fingerprint(&new_text),
-                        this.line_ending(),
-                        this.saved_mtime,
-                        cx,
-                    );
+                    this.did_reload(prev_version, this.line_ending(), this.saved_mtime, cx);
                 }
 
                 this.reload_task.take();
@@ -857,20 +804,17 @@ impl Buffer {
     pub fn did_reload(
         &mut self,
         version: clock::Global,
-        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: Option<SystemTime>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_version = version;
-        self.file_fingerprint = fingerprint;
         self.text.set_line_ending(line_ending);
         self.saved_mtime = mtime;
         if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
             file.buffer_reloaded(
                 self.remote_id(),
                 &self.saved_version,
-                self.file_fingerprint,
                 self.line_ending(),
                 self.saved_mtime,
                 cx,
@@ -1355,14 +1299,7 @@ impl Buffer {
         current_size: IndentSize,
         new_size: IndentSize,
     ) -> Option<(Range<Point>, String)> {
-        if new_size.kind != current_size.kind {
-            Some((
-                Point::new(row, 0)..Point::new(row, current_size.len),
-                iter::repeat(new_size.char())
-                    .take(new_size.len as usize)
-                    .collect::<String>(),
-            ))
-        } else {
+        if new_size.kind == current_size.kind {
             match new_size.len.cmp(&current_size.len) {
                 Ordering::Greater => {
                     let point = Point::new(row, 0);
@@ -1381,6 +1318,13 @@ impl Buffer {
 
                 Ordering::Equal => None,
             }
+        } else {
+            Some((
+                Point::new(row, 0)..Point::new(row, current_size.len),
+                iter::repeat(new_size.char())
+                    .take(new_size.len as usize)
+                    .collect::<String>(),
+            ))
         }
     }
 
@@ -2527,6 +2471,11 @@ impl BufferSnapshot {
             .last()
     }
 
+    /// Returns the main [Language]
+    pub fn language(&self) -> Option<&Arc<Language>> {
+        self.language.as_ref()
+    }
+
     /// Returns the [Language] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<&Arc<Language>> {
         self.syntax_layer_at(position)
@@ -2778,10 +2727,13 @@ impl BufferSnapshot {
                         range.start + self.line_len(start.row as u32) as usize - start.column;
                 }
 
-                buffer_ranges.push((range, node_is_name));
+                if !range.is_empty() {
+                    buffer_ranges.push((range, node_is_name));
+                }
             }
 
             if buffer_ranges.is_empty() {
+                matches.advance();
                 continue;
             }
 
@@ -3506,24 +3458,6 @@ impl IndentSize {
             }
         }
         self
-    }
-}
-
-impl Completion {
-    /// A key that can be used to sort completions when displaying
-    /// them to the user.
-    pub fn sort_key(&self) -> (usize, &str) {
-        let kind_key = match self.lsp_completion.kind {
-            Some(lsp::CompletionItemKind::KEYWORD) => 0,
-            Some(lsp::CompletionItemKind::VARIABLE) => 1,
-            _ => 2,
-        };
-        (kind_key, &self.label.text[self.label.filter_range.clone()])
-    }
-
-    /// Whether this completion is a snippet.
-    pub fn is_snippet(&self) -> bool {
-        self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
 }
 

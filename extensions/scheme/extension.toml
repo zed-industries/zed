@@ -1,0 +1,11 @@
+id = "scheme"
+name = "Scheme"
+description = "Scheme support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Mikayla Maki <mikayla@zed.dev>"]
+repository = "https://github.com/zed-industries/zed"
+
+[grammars.scheme]
+repository = "https://github.com/6cdh/tree-sitter-scheme"
+commit = "af0fd1fa452cb2562dc7b5c8a8c55551c39273b9"

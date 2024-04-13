@@ -1,16 +1,17 @@
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, Context,
-    Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement, IntoElement, Model,
-    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    EventEmitter, FocusHandle, FocusableView, Img, InteractiveElement, IntoElement, Model,
+    ObjectFit, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use persistence::IMAGE_VIEWER;
-use ui::{h_flex, prelude::*};
+use ui::prelude::*;
 
 use project::{Project, ProjectEntryId, ProjectPath};
 use std::{ffi::OsStr, path::PathBuf};
 use util::ResultExt;
 use workspace::{
-    item::{Item, ProjectItem},
+    item::{Item, ProjectItem, TabContentParams},
     ItemId, Pane, Workspace, WorkspaceId,
 };
 
@@ -36,8 +37,9 @@ impl project::Item for ImageItem {
             .and_then(OsStr::to_str)
             .unwrap_or_default();
 
-        let format = gpui::ImageFormat::from_extension(ext);
-        if format.is_some() {
+        // Only open the item if it's a binary image (no SVGs, etc.)
+        // Since we do not have a way to toggle to an editor
+        if Img::extensions().contains(&ext) && !ext.contains("svg") {
             Some(cx.spawn(|mut cx| async move {
                 let abs_path = project
                     .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
@@ -70,17 +72,21 @@ pub struct ImageView {
 impl Item for ImageView {
     type Event = ();
 
-    fn tab_content(
-        &self,
-        _detail: Option<usize>,
-        _selected: bool,
-        _cx: &WindowContext,
-    ) -> AnyElement {
-        self.path
+    fn tab_content(&self, params: TabContentParams, _cx: &WindowContext) -> AnyElement {
+        let title = self
+            .path
             .file_name()
             .unwrap_or_else(|| self.path.as_os_str())
             .to_string_lossy()
-            .to_string()
+            .to_string();
+        Label::new(title)
+            .single_line()
+            .color(if params.selected {
+                Color::Default
+            } else {
+                Color::Muted
+            })
+            .italic(params.preview)
             .into_any_element()
     }
 
@@ -149,64 +155,67 @@ impl FocusableView for ImageView {
 
 impl Render for ImageView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let im = img(self.path.clone()).into_any();
+        let checkered_background = |bounds: Bounds<Pixels>, _, cx: &mut ElementContext| {
+            let square_size = 32.0;
+
+            let start_y = bounds.origin.y.0;
+            let height = bounds.size.height.0;
+            let start_x = bounds.origin.x.0;
+            let width = bounds.size.width.0;
+
+            let mut y = start_y;
+            let mut x = start_x;
+            let mut color_swapper = true;
+            // draw checkerboard pattern
+            while y <= start_y + height {
+                // Keeping track of the grid in order to be resilient to resizing
+                let start_swap = color_swapper;
+                while x <= start_x + width {
+                    let rect =
+                        Bounds::new(point(px(x), px(y)), size(px(square_size), px(square_size)));
+
+                    let color = if color_swapper {
+                        opaque_grey(0.6, 0.4)
+                    } else {
+                        opaque_grey(0.7, 0.4)
+                    };
+
+                    cx.paint_quad(fill(rect, color));
+                    color_swapper = !color_swapper;
+                    x += square_size;
+                }
+                x = start_x;
+                color_swapper = !start_swap;
+                y += square_size;
+            }
+        };
+
+        let checkered_background = canvas(|_, _| (), checkered_background)
+            .border_2()
+            .border_color(cx.theme().styles.colors.border)
+            .size_full()
+            .absolute()
+            .top_0()
+            .left_0();
 
         div()
             .track_focus(&self.focus_handle)
             .size_full()
+            .child(checkered_background)
             .child(
-                // Checkered background behind the image
-                canvas(
-                    |_, _| (),
-                    |bounds, _, cx| {
-                        let square_size = 32.0;
-
-                        let start_y = bounds.origin.y.0;
-                        let height = bounds.size.height.0;
-                        let start_x = bounds.origin.x.0;
-                        let width = bounds.size.width.0;
-
-                        let mut y = start_y;
-                        let mut x = start_x;
-                        let mut color_swapper = true;
-                        // draw checkerboard pattern
-                        while y <= start_y + height {
-                            // Keeping track of the grid in order to be resilient to resizing
-                            let start_swap = color_swapper;
-                            while x <= start_x + width {
-                                let rect = Bounds::new(
-                                    point(px(x), px(y)),
-                                    size(px(square_size), px(square_size)),
-                                );
-
-                                let color = if color_swapper {
-                                    opaque_grey(0.6, 0.4)
-                                } else {
-                                    opaque_grey(0.7, 0.4)
-                                };
-
-                                cx.paint_quad(fill(rect, color));
-                                color_swapper = !color_swapper;
-                                x += square_size;
-                            }
-                            x = start_x;
-                            color_swapper = !start_swap;
-                            y += square_size;
-                        }
-                    },
-                )
-                .border_2()
-                .border_color(cx.theme().styles.colors.border)
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0(),
-            )
-            .child(
-                v_flex()
+                div()
+                    .flex()
+                    .justify_center()
+                    .items_center()
+                    .w_full()
+                    // TODO: In browser based Tailwind & Flex this would be h-screen and we'd use w-full
                     .h_full()
-                    .justify_around()
-                    .child(h_flex().w_full().justify_around().child(im)),
+                    .child(
+                        img(self.path.clone())
+                            .object_fit(ObjectFit::ScaleDown)
+                            .max_w_full()
+                            .max_h_full(),
+                    ),
             )
     }
 }

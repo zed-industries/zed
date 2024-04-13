@@ -26,7 +26,7 @@ mod wrap_map;
 use crate::EditorStyle;
 use crate::{hover_links::InlayHighlight, movement::TextLayoutDetails, InlayId};
 pub use block_map::{BlockMap, BlockPoint};
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{HashMap, HashSet};
 use fold_map::FoldMap;
 use gpui::{Font, HighlightStyle, Hsla, LineLayout, Model, ModelContext, Pixels, UnderlineStyle};
 use inlay_map::InlayMap;
@@ -63,7 +63,7 @@ pub trait ToDisplayPoint {
 }
 
 type TextHighlights = TreeMap<Option<TypeId>, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
-type InlayHighlights = BTreeMap<TypeId, HashMap<InlayId, (HighlightStyle, InlayHighlight)>>;
+type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
@@ -257,10 +257,15 @@ impl DisplayMap {
         style: HighlightStyle,
     ) {
         for highlight in highlights {
-            self.inlay_highlights
-                .entry(type_id)
-                .or_default()
-                .insert(highlight.inlay, (style, highlight));
+            let update = self.inlay_highlights.update(&type_id, |highlights| {
+                highlights.insert(highlight.inlay, (style, highlight.clone()))
+            });
+            if update.is_none() {
+                self.inlay_highlights.insert(
+                    type_id,
+                    TreeMap::from_ordered_entries([(highlight.inlay, (style, highlight))]),
+                );
+            }
         }
     }
 
@@ -354,6 +359,7 @@ pub struct HighlightedChunk<'a> {
     pub is_tab: bool,
 }
 
+#[derive(Clone)]
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
     pub fold_snapshot: fold_map::FoldSnapshot,
@@ -427,7 +433,10 @@ impl DisplaySnapshot {
         } else if range.start.row == self.max_buffer_row()
             || (range.end.column > 0 && range.end.row == self.max_buffer_row())
         {
-            Point::new(range.start.row - 1, self.line_len(range.start.row - 1))
+            Point::new(
+                range.start.row - 1,
+                self.buffer_snapshot.line_len(range.start.row - 1),
+            )
         } else {
             self.prev_line_boundary(range.start).0
         };
@@ -657,7 +666,7 @@ impl DisplaySnapshot {
         layout_line.closest_index_for_x(x) as u32
     }
 
-    pub fn chars_at(
+    pub fn display_chars_at(
         &self,
         mut point: DisplayPoint,
     ) -> impl Iterator<Item = (char, DisplayPoint)> + '_ {
@@ -684,60 +693,24 @@ impl DisplaySnapshot {
             })
     }
 
-    pub fn reverse_chars_at(
+    pub fn buffer_chars_at(&self, mut offset: usize) -> impl Iterator<Item = (char, usize)> + '_ {
+        self.buffer_snapshot.chars_at(offset).map(move |ch| {
+            let ret = (ch, offset);
+            offset += ch.len_utf8();
+            ret
+        })
+    }
+
+    pub fn reverse_buffer_chars_at(
         &self,
-        mut point: DisplayPoint,
-    ) -> impl Iterator<Item = (char, DisplayPoint)> + '_ {
-        point = DisplayPoint(self.block_snapshot.clip_point(point.0, Bias::Left));
-        self.reverse_text_chunks(point.row())
-            .flat_map(|chunk| chunk.chars().rev())
-            .skip_while({
-                let mut column = self.line_len(point.row());
-                if self.max_point().row() > point.row() {
-                    column += 1;
-                }
-
-                move |char| {
-                    let at_point = column <= point.column();
-                    column = column.saturating_sub(char.len_utf8() as u32);
-                    !at_point
-                }
-            })
+        mut offset: usize,
+    ) -> impl Iterator<Item = (char, usize)> + '_ {
+        self.buffer_snapshot
+            .reversed_chars_at(offset)
             .map(move |ch| {
-                if ch == '\n' {
-                    *point.row_mut() -= 1;
-                    *point.column_mut() = self.line_len(point.row());
-                } else {
-                    *point.column_mut() = point.column().saturating_sub(ch.len_utf8() as u32);
-                }
-                (ch, point)
+                offset -= ch.len_utf8();
+                (ch, offset)
             })
-    }
-
-    pub fn column_to_chars(&self, display_row: u32, target: u32) -> u32 {
-        let mut count = 0;
-        let mut column = 0;
-        for (c, _) in self.chars_at(DisplayPoint::new(display_row, 0)) {
-            if column >= target {
-                break;
-            }
-            count += 1;
-            column += c.len_utf8() as u32;
-        }
-        count
-    }
-
-    pub fn column_from_chars(&self, display_row: u32, char_count: u32) -> u32 {
-        let mut column = 0;
-
-        for (count, (c, _)) in self.chars_at(DisplayPoint::new(display_row, 0)).enumerate() {
-            if c == '\n' || count >= char_count as usize {
-                break;
-            }
-            column += c.len_utf8() as u32;
-        }
-
-        column
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
@@ -806,20 +779,6 @@ impl DisplaySnapshot {
             }
         }
         result
-    }
-
-    pub fn line_indent(&self, display_row: u32) -> (u32, bool) {
-        let mut indent = 0;
-        let mut is_blank = true;
-        for (c, _) in self.chars_at(DisplayPoint::new(display_row, 0)) {
-            if c == ' ' {
-                indent += 1;
-            } else {
-                is_blank = c == '\n';
-                break;
-            }
-        }
-        (indent, is_blank)
     }
 
     pub fn line_indent_for_buffer_row(&self, buffer_row: u32) -> (u32, bool) {
@@ -922,7 +881,7 @@ impl DisplaySnapshot {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn inlay_highlights<Tag: ?Sized + 'static>(
         &self,
-    ) -> Option<&HashMap<InlayId, (HighlightStyle, InlayHighlight)>> {
+    ) -> Option<&TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
         let type_id = TypeId::of::<Tag>();
         self.inlay_highlights.get(&type_id)
     }
@@ -1015,7 +974,7 @@ pub mod tests {
         movement,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
     };
-    use gpui::{div, font, observe, px, AppContext, Context, Element, Hsla};
+    use gpui::{div, font, observe, px, AppContext, BorrowAppContext, Context, Element, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
         Buffer, Language, LanguageConfig, LanguageMatcher, SelectionGoal,
@@ -1025,7 +984,6 @@ pub mod tests {
     use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
-    use text::BufferId;
     use theme::{LoadThemes, SyntaxTheme};
     use util::test::{marked_text_ranges, sample_text};
     use Bias::*;
@@ -1143,7 +1101,7 @@ pub mod tests {
                                         position,
                                         height,
                                         disposition,
-                                        render: Arc::new(|_| div().into_any()),
+                                        render: Box::new(|_| div().into_any()),
                                     }
                                 })
                                 .collect::<Vec<_>>();
@@ -1486,10 +1444,7 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
 
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
-                .with_language(language, cx)
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -1574,10 +1529,7 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
-                .with_language(language, cx)
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -1643,10 +1595,7 @@ pub mod tests {
 
         let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
 
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
-                .with_language(language, cx)
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
 
         let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));

@@ -39,3 +39,21 @@ If you prefer to format your code with [Mix](https://hexdocs.pm/mix/Mix.html), u
   }
 }
 ```
+
+### Additional workspace configuration options (requires Zed `0.128.0`):
+
+You can pass additional elixir-ls workspace configuration options via lsp settings in `settings.json`.
+
+The following example disables dialyzer:
+
+```json
+"lsp": {
+  "elixir-ls": {
+    "settings": {
+      "dialyzerEnabled": false
+    }
+  }
+}
+```
+
+See [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#elixirls-configuration-settings) for more options.

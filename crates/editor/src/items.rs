@@ -19,7 +19,7 @@ use project::repository::GitFileStatus;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::item::{TabBarPlacement, TabsSettings};
+use workspace::item::{TabBarPlacement, TabContentParams, TabsSettings};
 
 use std::{
     borrow::Cow,
@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use text::{BufferId, Selection};
-use theme::Theme;
+use theme::{Theme, ThemeSettings};
 use ui::{h_flex, prelude::*, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent, FollowableItemHandle};
@@ -594,7 +594,7 @@ impl Item for Editor {
         Some(path.to_string_lossy().to_string().into())
     }
 
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let label_color = if TabsSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
@@ -602,14 +602,14 @@ impl Item for Editor {
                 .and_then(|buffer| buffer.read(cx).project_path(cx))
                 .and_then(|path| self.project.as_ref()?.read(cx).entry_for_path(&path, cx))
                 .map(|entry| {
-                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, selected)
+                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, params.selected)
                 })
-                .unwrap_or_else(|| entry_label_color(selected))
+                .unwrap_or_else(|| entry_label_color(params.selected))
         } else {
-            entry_label_color(selected)
+            entry_label_color(params.selected)
         };
 
-        let description = detail.and_then(|detail| {
+        let description = params.detail.and_then(|detail| {
             let path = path_for_buffer(&self.buffer, detail, false, cx)?;
             let description = path.to_string_lossy();
             let description = description.trim();
@@ -623,7 +623,11 @@ impl Item for Editor {
 
         h_flex()
             .gap_2()
-            .child(Label::new(self.title(cx).to_string()).color(label_color))
+            .child(
+                Label::new(self.title(cx).to_string())
+                    .color(label_color)
+                    .italic(params.preview),
+            )
             .when_some(description, |this, description| {
                 this.child(
                     Label::new(description)
@@ -699,20 +703,21 @@ impl Item for Editor {
         let buffers = self.buffer().clone().read(cx).all_buffers();
         cx.spawn(|this, mut cx| async move {
             if format {
-                this.update(&mut cx, |this, cx| {
-                    this.perform_format(project.clone(), FormatTrigger::Save, cx)
+                this.update(&mut cx, |editor, cx| {
+                    editor.perform_format(project.clone(), FormatTrigger::Save, cx)
                 })?
                 .await?;
             }
 
             if buffers.len() == 1 {
+                // Apply full save routine for singleton buffers, to allow to `touch` the file via the editor.
                 project
                     .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))?
                     .await?;
             } else {
-                // For multi-buffers, only save those ones that contain changes. For clean buffers
-                // we simulate saving by calling `Buffer::did_save`, so that language servers or
-                // other downstream listeners of save events get notified.
+                // For multi-buffers, only format and save the buffers with changes.
+                // For clean buffers, we simulate saving by calling `Buffer::did_save`,
+                // so that language servers or other downstream listeners of save events get notified.
                 let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
                     buffer
                         .update(&mut cx, |buffer, _| {
@@ -730,9 +735,8 @@ impl Item for Editor {
                     buffer
                         .update(&mut cx, |buffer, cx| {
                             let version = buffer.saved_version().clone();
-                            let fingerprint = buffer.saved_version_fingerprint();
                             let mtime = buffer.saved_mtime();
-                            buffer.did_save(version, fingerprint, mtime, cx);
+                            buffer.did_save(version, mtime, cx);
                         })
                         .ok();
                 }
@@ -827,13 +831,18 @@ impl Item for Editor {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
 
+        let settings = ThemeSettings::get_global(cx);
+
         let mut breadcrumbs = vec![BreadcrumbText {
             text: filename,
             highlights: None,
+            font: Some(settings.buffer_font.clone()),
         }];
+
         breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
             text: symbol.text,
             highlights: Some(symbol.highlight_ranges),
+            font: Some(settings.buffer_font.clone()),
         }));
         Some(breadcrumbs)
     }
@@ -986,7 +995,7 @@ impl SearchableItem for Editor {
         self.clear_background_highlights::<BufferSearchHighlights>(cx);
     }
 
-    fn update_matches(&mut self, matches: Vec<Range<Anchor>>, cx: &mut ViewContext<Self>) {
+    fn update_matches(&mut self, matches: &[Range<Anchor>], cx: &mut ViewContext<Self>) {
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.search_match_background,
@@ -1023,7 +1032,7 @@ impl SearchableItem for Editor {
     fn activate_match(
         &mut self,
         index: usize,
-        matches: Vec<Range<Anchor>>,
+        matches: &[Range<Anchor>],
         cx: &mut ViewContext<Self>,
     ) {
         self.unfold_ranges([matches[index].clone()], false, true, cx);
@@ -1033,10 +1042,10 @@ impl SearchableItem for Editor {
         })
     }
 
-    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
-        self.unfold_ranges(matches.clone(), false, false, cx);
+    fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
+        self.unfold_ranges(matches.to_vec(), false, false, cx);
         let mut ranges = Vec::new();
-        for m in &matches {
+        for m in matches {
             ranges.push(self.range_for_match(&m))
         }
         self.change_selections(None, cx, |s| s.select_ranges(ranges));
@@ -1065,7 +1074,7 @@ impl SearchableItem for Editor {
     }
     fn match_index_for_direction(
         &mut self,
-        matches: &Vec<Range<Anchor>>,
+        matches: &[Range<Anchor>],
         current_index: usize,
         direction: Direction,
         count: usize,
@@ -1157,14 +1166,18 @@ impl SearchableItem for Editor {
 
     fn active_match_index(
         &mut self,
-        matches: Vec<Range<Anchor>>,
+        matches: &[Range<Anchor>],
         cx: &mut ViewContext<Self>,
     ) -> Option<usize> {
         active_match_index(
-            &matches,
+            matches,
             &self.selections.newest_anchor().head(),
             &self.buffer().read(cx).snapshot(cx),
         )
+    }
+
+    fn search_bar_visibility_changed(&mut self, _visible: bool, _cx: &mut ViewContext<Self>) {
+        self.expect_bounds_change = self.last_bounds;
     }
 }
 
@@ -1204,7 +1217,7 @@ pub fn entry_git_aware_label_color(
     selected: bool,
 ) -> Color {
     if ignored {
-        Color::Disabled
+        Color::Ignored
     } else {
         match git_status {
             Some(GitFileStatus::Added) => Color::Created,

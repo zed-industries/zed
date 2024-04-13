@@ -376,6 +376,7 @@ impl Copilot {
         use node_runtime::FakeNodeRuntime;
 
         let (server, fake_server) = FakeLanguageServer::new(
+            LanguageServerId(0),
             LanguageServerBinary {
                 path: "path/to/copilot".into(),
                 arguments: vec![],
@@ -797,7 +798,7 @@ impl Copilot {
     ) -> Task<Result<()>> {
         let server = match self.server.as_authenticated() {
             Ok(server) => server,
-            Err(error) => return Task::ready(Err(error)),
+            Err(_) => return Task::ready(Ok(())),
         };
         let request =
             server
@@ -1041,9 +1042,7 @@ mod tests {
     async fn test_buffer_management(cx: &mut TestAppContext) {
         let (copilot, mut lsp) = Copilot::fake(cx);
 
-        let buffer_1 = cx.new_model(|cx| {
-            Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "Hello")
-        });
+        let buffer_1 = cx.new_model(|cx| Buffer::local("Hello", cx));
         let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
             .parse()
             .unwrap();
@@ -1061,13 +1060,7 @@ mod tests {
             }
         );
 
-        let buffer_2 = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                "Goodbye",
-            )
-        });
+        let buffer_2 = cx.new_model(|cx| Buffer::local("Goodbye", cx));
         let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
             .parse()
             .unwrap();
@@ -1262,7 +1255,6 @@ mod tests {
             &self,
             _: BufferId,
             _: &clock::Global,
-            _: language::RopeFingerprint,
             _: language::LineEnding,
             _: Option<std::time::SystemTime>,
             _: &mut AppContext,

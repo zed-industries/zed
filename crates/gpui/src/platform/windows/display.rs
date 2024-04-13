@@ -7,13 +7,13 @@ use windows::{
     Win32::{Foundation::*, Graphics::Gdi::*},
 };
 
-use crate::{Bounds, DisplayId, GlobalPixels, PlatformDisplay, Point, Size};
+use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay, Point, Size};
 
 #[derive(Debug)]
 pub(crate) struct WindowsDisplay {
     pub handle: HMONITOR,
     pub display_id: DisplayId,
-    bounds: Bounds<GlobalPixels>,
+    bounds: Bounds<DevicePixels>,
     uuid: Uuid,
 }
 
@@ -33,12 +33,12 @@ impl WindowsDisplay {
             display_id,
             bounds: Bounds {
                 origin: Point {
-                    x: GlobalPixels(size.left as f32),
-                    y: GlobalPixels(size.top as f32),
+                    x: DevicePixels(size.left),
+                    y: DevicePixels(size.top),
                 },
                 size: Size {
-                    width: GlobalPixels((size.right - size.left) as f32),
-                    height: GlobalPixels((size.bottom - size.top) as f32),
+                    width: DevicePixels(size.right - size.left),
+                    height: DevicePixels(size.bottom - size.top),
                 },
             },
             uuid,
@@ -59,12 +59,12 @@ impl WindowsDisplay {
             display_id: DisplayId(display_id as _),
             bounds: Bounds {
                 origin: Point {
-                    x: GlobalPixels(size.left as f32),
-                    y: GlobalPixels(size.top as f32),
+                    x: DevicePixels(size.left as i32),
+                    y: DevicePixels(size.top as i32),
                 },
                 size: Size {
-                    width: GlobalPixels((size.right - size.left) as f32),
-                    height: GlobalPixels((size.bottom - size.top) as f32),
+                    width: DevicePixels((size.right - size.left) as i32),
+                    height: DevicePixels((size.bottom - size.top) as i32),
                 },
             },
             uuid,
@@ -81,12 +81,12 @@ impl WindowsDisplay {
             display_id,
             bounds: Bounds {
                 origin: Point {
-                    x: GlobalPixels(size.left as f32),
-                    y: GlobalPixels(size.top as f32),
+                    x: DevicePixels(size.left as i32),
+                    y: DevicePixels(size.top as i32),
                 },
                 size: Size {
-                    width: GlobalPixels((size.right - size.left) as f32),
-                    height: GlobalPixels((size.bottom - size.top) as f32),
+                    width: DevicePixels((size.right - size.left) as i32),
+                    height: DevicePixels((size.bottom - size.top) as i32),
                 },
             },
             uuid,
@@ -121,21 +121,18 @@ impl WindowsDisplay {
     }
 
     pub(crate) fn frequency(&self) -> Option<u32> {
-        available_monitors()
-            .get(self.display_id.0 as usize)
-            .and_then(|hmonitor| get_monitor_info(*hmonitor).ok())
-            .and_then(|info| {
-                let mut devmode = DEVMODEW::default();
-                unsafe {
-                    EnumDisplaySettingsW(
-                        PCWSTR(info.szDevice.as_ptr()),
-                        ENUM_CURRENT_SETTINGS,
-                        &mut devmode,
-                    )
-                }
-                .as_bool()
-                .then(|| devmode.dmDisplayFrequency)
-            })
+        get_monitor_info(self.handle).ok().and_then(|info| {
+            let mut devmode = DEVMODEW::default();
+            unsafe {
+                EnumDisplaySettingsW(
+                    PCWSTR(info.szDevice.as_ptr()),
+                    ENUM_CURRENT_SETTINGS,
+                    &mut devmode,
+                )
+            }
+            .as_bool()
+            .then(|| devmode.dmDisplayFrequency)
+        })
     }
 }
 
@@ -148,7 +145,7 @@ impl PlatformDisplay for WindowsDisplay {
         Ok(self.uuid)
     }
 
-    fn bounds(&self) -> Bounds<GlobalPixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         self.bounds
     }
 }

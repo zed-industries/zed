@@ -77,7 +77,7 @@ unsafe fn read_modifiers(native_event: id) -> Modifiers {
         control,
         alt,
         shift,
-        command,
+        platform: command,
         function,
     }
 }
@@ -131,6 +131,7 @@ impl PlatformInput {
                         ),
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
+                        first_mouse: false,
                     })
                 })
             }
@@ -322,7 +323,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             control,
             alt,
             shift,
-            command,
+            platform: command,
             function,
         },
         key,

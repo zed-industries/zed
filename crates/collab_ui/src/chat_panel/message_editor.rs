@@ -9,12 +9,12 @@ use gpui::{
     Render, SharedString, Task, TextStyle, View, ViewContext, WeakView, WhiteSpace,
 };
 use language::{
-    language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, Completion,
-    LanguageRegistry, LanguageServerId, ToOffset,
+    language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
+    LanguageServerId, ToOffset,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
-use project::search::SearchQuery;
+use project::{search::SearchQuery, Completion};
 use settings::Settings;
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
@@ -48,7 +48,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         buffer: &Model<Buffer>,
         buffer_position: language::Anchor,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<anyhow::Result<Vec<language::Completion>>> {
+    ) -> Task<anyhow::Result<Vec<Completion>>> {
         let Some(handle) = self.0.upgrade() else {
             return Task::ready(Ok(Vec::new()));
         };
@@ -60,7 +60,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
     fn resolve_completions(
         &self,
         _completion_indices: Vec<usize>,
-        _completions: Arc<RwLock<Box<[language::Completion]>>>,
+        _completions: Arc<RwLock<Box<[Completion]>>>,
         _cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<bool>> {
         Task::ready(Ok(false))

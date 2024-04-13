@@ -52,7 +52,7 @@ pub enum Event {
     RemoteProjectInvitationDiscarded {
         project_id: u64,
     },
-    Left {
+    RoomLeft {
         channel_id: Option<ChannelId>,
     },
 }
@@ -366,9 +366,6 @@ impl Room {
 
     pub(crate) fn leave(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         cx.notify();
-        cx.emit(Event::Left {
-            channel_id: self.channel_id(),
-        });
         self.leave_internal(cx)
     }
 
@@ -1185,7 +1182,7 @@ impl Room {
         cx.emit(Event::RemoteProjectJoined { project_id: id });
         cx.spawn(move |this, mut cx| async move {
             let project =
-                Project::remote(id, client, user_store, language_registry, fs, cx.clone()).await?;
+                Project::in_room(id, client, user_store, language_registry, fs, cx.clone()).await?;
 
             this.update(&mut cx, |this, cx| {
                 this.joined_projects.retain(|project| {

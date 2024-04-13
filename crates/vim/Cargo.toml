@@ -39,6 +39,7 @@ ui.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 schemars.workspace = true
+util.workspace = true
 
 [dev-dependencies]
 command_palette.workspace = true

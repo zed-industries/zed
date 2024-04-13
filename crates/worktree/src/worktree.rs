@@ -31,12 +31,8 @@ use gpui::{
 use ignore::IgnoreStack;
 use itertools::Itertools;
 use language::{
-    proto::{
-        deserialize_fingerprint, deserialize_version, serialize_fingerprint, serialize_line_ending,
-        serialize_version,
-    },
-    Buffer, Capability, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, RopeFingerprint,
-    Unclipped,
+    proto::{deserialize_version, serialize_line_ending, serialize_version},
+    Buffer, Capability, DiagnosticEntry, File as _, LineEnding, PointUtf16, Rope, Unclipped,
 };
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use parking_lot::Mutex;
@@ -82,6 +78,17 @@ pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
 
+/// A set of local or remote files that are being opened as part of a project.
+/// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
+/// Stores git repositories data and the diagnostics for the file(s).
+///
+/// Has an absolute path, and may be set to be visible in Zed UI or not.
+/// May correspond to a directory or a single file.
+/// Possible examples:
+/// * a drag and dropped file — may be added as an invisible, "ephemeral" entry to the current worktree
+/// * a directory opened in Zed — may be added as a visible entry to the current worktree
+///
+/// Uses [`Entry`] to track the state of each file/directory, can look up absolute paths for entries.
 pub enum Worktree {
     Local(LocalWorktree),
     Remote(RemoteWorktree),
@@ -269,8 +276,8 @@ pub struct LocalRepositoryEntry {
 }
 
 impl LocalRepositoryEntry {
-    pub fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
-        self.repo_ptr.lock().load_index_text(relative_file_path)
+    pub fn repo(&self) -> &Arc<Mutex<dyn GitRepository>> {
+        &self.repo_ptr
     }
 }
 
@@ -743,20 +750,21 @@ impl LocalWorktree {
 
     pub fn load_buffer(
         &mut self,
-        id: BufferId,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<Model<Buffer>>> {
         let path = Arc::from(path);
+        let reservation = cx.reserve_model();
+        let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
         cx.spawn(move |this, mut cx| async move {
             let (file, contents, diff_base) = this
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))?
                 .await?;
             let text_buffer = cx
                 .background_executor()
-                .spawn(async move { text::Buffer::new(0, id, contents) })
+                .spawn(async move { text::Buffer::new(0, buffer_id, contents) })
                 .await;
-            cx.new_model(|_| {
+            cx.insert_model(reservation, |_| {
                 Buffer::build(
                     text_buffer,
                     diff_base,
@@ -769,13 +777,13 @@ impl LocalWorktree {
 
     pub fn new_buffer(
         &mut self,
-        buffer_id: BufferId,
         path: Arc<Path>,
         cx: &mut ModelContext<Worktree>,
     ) -> Model<Buffer> {
-        let text_buffer = text::Buffer::new(0, buffer_id, "".into());
         let worktree = cx.handle();
-        cx.new_model(|_| {
+        cx.new_model(|cx| {
+            let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
+            let text_buffer = text::Buffer::new(0, buffer_id, "".into());
             Buffer::build(
                 text_buffer,
                 None,
@@ -1073,10 +1081,25 @@ impl LocalWorktree {
                 {
                     if let Some(git_repo) = snapshot.git_repositories.get(&*repo.work_directory) {
                         let git_repo = git_repo.repo_ptr.clone();
-                        index_task = Some(
-                            cx.background_executor()
-                                .spawn(async move { git_repo.lock().load_index_text(&repo_path) }),
-                        );
+                        index_task = Some(cx.background_executor().spawn({
+                            let fs = fs.clone();
+                            let abs_path = abs_path.clone();
+                            async move {
+                                let abs_path_metadata = fs
+                                    .metadata(&abs_path)
+                                    .await
+                                    .with_context(|| {
+                                        format!("loading file and FS metadata for {abs_path:?}")
+                                    })
+                                    .log_err()
+                                    .flatten()?;
+                                if abs_path_metadata.is_dir || abs_path_metadata.is_symlink {
+                                    None
+                                } else {
+                                    git_repo.lock().load_index_text(&repo_path)
+                                }
+                            }
+                        }));
                     }
                 }
             }
@@ -1151,7 +1174,6 @@ impl LocalWorktree {
         }
 
         let text = buffer.as_rope().clone();
-        let fingerprint = text.fingerprint();
         let version = buffer.version();
         let save = self.write_file(path.as_ref(), text, buffer.line_ending(), cx);
         let fs = Arc::clone(&self.fs);
@@ -1214,12 +1236,11 @@ impl LocalWorktree {
                     buffer_id,
                     version: serialize_version(&version),
                     mtime: mtime.map(|time| time.into()),
-                    fingerprint: serialize_fingerprint(fingerprint),
                 })?;
             }
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), fingerprint, mtime, cx);
+                buffer.did_save(version.clone(), mtime, cx);
             })?;
 
             Ok(())
@@ -1620,11 +1641,10 @@ impl RemoteWorktree {
                 })
                 .await?;
             let version = deserialize_version(&response.version);
-            let fingerprint = deserialize_fingerprint(&response.fingerprint)?;
             let mtime = response.mtime.map(|mtime| mtime.into());
 
             buffer_handle.update(&mut cx, |buffer, cx| {
-                buffer.did_save(version.clone(), fingerprint, mtime, cx);
+                buffer.did_save(version.clone(), mtime, cx);
             })?;
 
             Ok(())
@@ -1975,10 +1995,10 @@ impl Snapshot {
         let mut repositories = self.repositories().peekable();
         entries.map(move |entry| {
             while let Some((repo_path, _)) = containing_repos.last() {
-                if !entry.path.starts_with(repo_path) {
-                    containing_repos.pop();
-                } else {
+                if entry.path.starts_with(repo_path) {
                     break;
+                } else {
+                    containing_repos.pop();
                 }
             }
             while let Some((repo_path, _)) = repositories.peek() {
@@ -2009,10 +2029,10 @@ impl Snapshot {
             let entry_to_finish = match (containing_entry, next_entry) {
                 (Some(_), None) => entry_stack.pop(),
                 (Some(containing_entry), Some(next_path)) => {
-                    if !next_path.path.starts_with(&containing_entry.path) {
-                        entry_stack.pop()
-                    } else {
+                    if next_path.path.starts_with(&containing_entry.path) {
                         None
+                    } else {
+                        entry_stack.pop()
                     }
                 }
                 (None, Some(_)) => None,
@@ -2059,7 +2079,7 @@ impl Snapshot {
             .map(|entry| &entry.path)
     }
 
-    fn child_entries<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
+    pub fn child_entries<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
         let mut cursor = self.entries_by_path.cursor();
         cursor.seek(&TraversalTarget::Path(parent_path), Bias::Right, &());
         let traversal = Traversal {
@@ -3006,7 +3026,6 @@ impl language::LocalFile for File {
         &self,
         buffer_id: BufferId,
         version: &clock::Global,
-        fingerprint: RopeFingerprint,
         line_ending: LineEnding,
         mtime: Option<SystemTime>,
         cx: &mut AppContext,
@@ -3020,7 +3039,6 @@ impl language::LocalFile for File {
                     buffer_id: buffer_id.into(),
                     version: serialize_version(version),
                     mtime: mtime.map(|time| time.into()),
-                    fingerprint: serialize_fingerprint(fingerprint),
                     line_ending: serialize_line_ending(line_ending) as i32,
                 })
                 .log_err();
@@ -3906,7 +3924,9 @@ impl BackgroundScanner {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
 
                 // Avoid recursing until crash in the case of a recursive symlink
-                if !job.ancestor_inodes.contains(&child_entry.inode) {
+                if job.ancestor_inodes.contains(&child_entry.inode) {
+                    new_jobs.push(None);
+                } else {
                     let mut ancestor_inodes = job.ancestor_inodes.clone();
                     ancestor_inodes.insert(child_entry.inode);
 
@@ -3923,8 +3943,6 @@ impl BackgroundScanner {
                         scan_queue: job.scan_queue.clone(),
                         containing_repository: job.containing_repository.clone(),
                     }));
-                } else {
-                    new_jobs.push(None);
                 }
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
@@ -4662,10 +4680,10 @@ impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTa
         match self {
             TraversalTarget::Path(path) => path.cmp(&cursor_location.max_path),
             TraversalTarget::PathSuccessor(path) => {
-                if !cursor_location.max_path.starts_with(path) {
-                    Ordering::Equal
-                } else {
+                if cursor_location.max_path.starts_with(path) {
                     Ordering::Greater
+                } else {
+                    Ordering::Equal
                 }
             }
             TraversalTarget::Count {
@@ -4688,7 +4706,7 @@ impl<'a, 'b> SeekTarget<'a, EntrySummary, (TraversalProgress<'a>, GitStatuses)>
     }
 }
 
-struct ChildEntriesIter<'a> {
+pub struct ChildEntriesIter<'a> {
     parent_path: &'a Path,
     traversal: Traversal<'a>,
 }
@@ -4775,10 +4793,10 @@ fn combine_git_statuses(
 ) -> Option<GitFileStatus> {
     if let Some(staged) = staged {
         if let Some(unstaged) = unstaged {
-            if unstaged != staged {
-                Some(GitFileStatus::Modified)
-            } else {
+            if unstaged == staged {
                 Some(staged)
+            } else {
+                Some(GitFileStatus::Modified)
             }
         } else {
             Some(staged)

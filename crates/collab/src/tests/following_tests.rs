@@ -7,8 +7,8 @@ use collab_ui::{
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    point, BackgroundExecutor, Context, Entity, SharedString, TestAppContext, View, VisualContext,
-    VisualTestContext,
+    point, BackgroundExecutor, BorrowAppContext, Context, Entity, SharedString, TestAppContext,
+    View, VisualContext, VisualTestContext,
 };
 use language::Capability;
 use live_kit_client::MacOSDisplay;
@@ -2007,7 +2007,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     });
 }
 
-async fn join_channel(
+pub(crate) async fn join_channel(
     channel_id: ChannelId,
     client: &TestClient,
     cx: &mut TestAppContext,

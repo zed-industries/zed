@@ -122,6 +122,13 @@ impl ThemeRegistry {
                 AppearanceContent::Light => SyntaxTheme::light(),
                 AppearanceContent::Dark => SyntaxTheme::dark(),
             };
+
+            let window_background_appearance = user_theme
+                .style
+                .window_background_appearance
+                .map(Into::into)
+                .unwrap_or_default();
+
             if !user_theme.style.syntax.is_empty() {
                 syntax_colors.highlights = user_theme
                     .style
@@ -153,6 +160,7 @@ impl ThemeRegistry {
                 },
                 styles: ThemeStyles {
                     system: SystemColors::default(),
+                    window_background_appearance,
                     colors: theme_colors,
                     status: status_colors,
                     player: player_colors,

@@ -13,7 +13,7 @@ use std::{borrow::Cow, sync::Arc};
 use ui::{popover_menu, prelude::*, Button, Checkbox, ContextMenu, Label, Selection};
 use util::maybe;
 use workspace::{
-    item::{Item, ItemHandle},
+    item::{Item, ItemHandle, TabContentParams},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
@@ -456,7 +456,7 @@ impl LspLogView {
             editor.set_text(log_contents, cx);
             editor.move_to_end(&MoveToEnd, cx);
             editor.set_read_only(true);
-            editor.set_show_copilot_suggestions(false);
+            editor.set_show_inline_completions(false);
             editor
         });
         let editor_subscription = cx.subscribe(
@@ -628,9 +628,9 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext<'_>) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &WindowContext<'_>) -> AnyElement {
         Label::new("LSP Logs")
-            .color(if selected {
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted
@@ -654,7 +654,7 @@ impl SearchableItem for LspLogView {
         self.editor.update(cx, |e, cx| e.clear_matches(cx))
     }
 
-    fn update_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+    fn update_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
         self.editor
             .update(cx, |e, cx| e.update_matches(matches, cx))
     }
@@ -666,14 +666,14 @@ impl SearchableItem for LspLogView {
     fn activate_match(
         &mut self,
         index: usize,
-        matches: Vec<Self::Match>,
+        matches: &[Self::Match],
         cx: &mut ViewContext<Self>,
     ) {
         self.editor
             .update(cx, |e, cx| e.activate_match(index, matches, cx))
     }
 
-    fn select_matches(&mut self, matches: Vec<Self::Match>, cx: &mut ViewContext<Self>) {
+    fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
         self.editor
             .update(cx, |e, cx| e.select_matches(matches, cx))
     }
@@ -700,7 +700,7 @@ impl SearchableItem for LspLogView {
     }
     fn active_match_index(
         &mut self,
-        matches: Vec<Self::Match>,
+        matches: &[Self::Match],
         cx: &mut ViewContext<Self>,
     ) -> Option<usize> {
         self.editor

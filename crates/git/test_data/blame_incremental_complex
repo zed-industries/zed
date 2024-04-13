@@ -1,0 +1,194 @@
+5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206 6 6 3
+author Mahdy M. Karam
+author-mail <64036912+mmkaram@users.noreply.github.com>
+author-time 1708621949
+author-tz -0800
+committer GitHub
+committer-mail <noreply@github.com>
+committer-time 1708621949
+committer-tz -0700
+summary Add option to either use system clipboard or vim clipboard (#7936)
+previous c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206 12 12 2
+previous c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206 18 18 1
+previous c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206 21 21 7
+previous c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206 31 31 1
+previous c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206 34 34 1
+previous c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206 86 86 16
+previous c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 1 1 2
+author Conrad Irwin
+author-mail <conrad@zed.dev>
+author-time 1707520689
+author-tz -0700
+committer GitHub
+committer-mail <noreply@github.com>
+committer-time 1707520689
+committer-tz -0700
+summary Highlight selections on vim yank (#7638)
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 4 4 1
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 7 10 2
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 10 14 4
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 15 19 2
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 19 28 3
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 22 32 2
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 25 35 2
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 31 41 1
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 57 67 5
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+3635d2dcedd83f1b6702f33ca2673317f7fa4695 78 102 18
+previous efe23ebfcdd653b13be79132b1e2925bcd7bde45 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+b65cf6d2d9576171edb407f5bbaa231c33af1f71 3 5 1
+author Max Brunsfeld
+author-mail <maxbrunsfeld@gmail.com>
+author-time 1705619094
+author-tz -0800
+committer Max Brunsfeld
+committer-mail <maxbrunsfeld@gmail.com>
+committer-time 1705619205
+committer-tz -0800
+summary Merge branch 'main' into language-api-docs
+previous 6457ccf9ece3b36a37e675783abee9748a443115 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+b65cf6d2d9576171edb407f5bbaa231c33af1f71 51 121 8
+previous 6457ccf9ece3b36a37e675783abee9748a443115 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+b02bd9bce1db3a68dcd606718fa02709020860af 29 61 1
+author Conrad Irwin
+author-mail <conrad@zed.dev>
+author-time 1694798044
+author-tz -0600
+committer Conrad Irwin
+committer-mail <conrad@zed.dev>
+committer-time 1694798044
+committer-tz -0600
+summary Fix Y on last line with no trailing new line
+previous 7c77baa7c17eea106330622e70513ea9389d50a1 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+b02bd9bce1db3a68dcd606718fa02709020860af 33 65 1
+previous 7c77baa7c17eea106330622e70513ea9389d50a1 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+e4794e3134b6449e36ed2771a8849046489cc252 13 45 1
+author Conrad Irwin
+author-mail <conrad@zed.dev>
+author-time 1692855942
+author-tz -0600
+committer Conrad Irwin
+committer-mail <conrad@zed.dev>
+committer-time 1692856812
+committer-tz -0600
+summary vim: Fix linewise copy of last line with no trailing newline
+previous 26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+e4794e3134b6449e36ed2771a8849046489cc252 21 53 8
+previous 26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+e4794e3134b6449e36ed2771a8849046489cc252 29 62 3
+previous 26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+e4794e3134b6449e36ed2771a8849046489cc252 33 66 1
+previous 26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+e4794e3134b6449e36ed2771a8849046489cc252 37 75 3
+previous 26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+33d7fe02ee560f6ed57d1425c43e60aef3b66e64 10 43 1
+author Conrad Irwin
+author-mail <conrad@zed.dev>
+author-time 1692644159
+author-tz -0600
+committer Conrad Irwin
+committer-mail <conrad@zed.dev>
+committer-time 1692732477
+committer-tz -0600
+summary Rewrite paste
+previous 31db5e4f62e8fca75aa0870f903ae044524c3580 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+33d7fe02ee560f6ed57d1425c43e60aef3b66e64 14 47 6
+previous 31db5e4f62e8fca75aa0870f903ae044524c3580 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+868c46062008bb0bcab2d41a38b4295996b9b958 20 81 1
+author Max Brunsfeld
+author-mail <maxbrunsfeld@gmail.com>
+author-time 1659072896
+author-tz -0700
+committer Max Brunsfeld
+committer-mail <maxbrunsfeld@gmail.com>
+committer-time 1659073230
+committer-tz -0700
+summary :art: Rename and simplify some autoindent stuff
+previous 7a26fa18c7fee3fe031b991e18b55fd8f9c4eb1b crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+e93c49f4f02b3edaddae6a6a4cc0ac433f242357 5 37 1
+author Kaylee Simmons
+author-mail <kay@the-simmons.net>
+author-time 1653424557
+author-tz -0700
+committer Kaylee Simmons
+committer-mail <kay@the-simmons.net>
+committer-time 1653609725
+committer-tz -0700
+summary Unify visual line_mode and non line_mode operators
+previous 11569a869a72f786a9798c53266e28c05c79f824 crates/vim/src/utils.rs
+filename crates/vim/src/utils.rs
+082036161fd3815c831ceedfd28ba15b0ed6eb9f 1 3 1
+author Kaylee Simmons
+author-mail <kay@the-simmons.net>
+author-time 1653007350
+author-tz -0700
+committer Kaylee Simmons
+committer-mail <kay@the-simmons.net>
+committer-time 1653609725
+committer-tz -0700
+summary Enable copy and paste in vim mode
+filename crates/vim/src/utils.rs
+082036161fd3815c831ceedfd28ba15b0ed6eb9f 4 9 1
+filename crates/vim/src/utils.rs
+082036161fd3815c831ceedfd28ba15b0ed6eb9f 7 38 3
+filename crates/vim/src/utils.rs
+082036161fd3815c831ceedfd28ba15b0ed6eb9f 10 42 1
+filename crates/vim/src/utils.rs
+082036161fd3815c831ceedfd28ba15b0ed6eb9f 11 44 1
+filename crates/vim/src/utils.rs
+082036161fd3815c831ceedfd28ba15b0ed6eb9f 14 46 1
+filename crates/vim/src/utils.rs
+082036161fd3815c831ceedfd28ba15b0ed6eb9f 15 72 3
+filename crates/vim/src/utils.rs
+082036161fd3815c831ceedfd28ba15b0ed6eb9f 18 78 3
+filename crates/vim/src/utils.rs
+082036161fd3815c831ceedfd28ba15b0ed6eb9f 21 82 4
+filename crates/vim/src/utils.rs
+082036161fd3815c831ceedfd28ba15b0ed6eb9f 26 120 1
+filename crates/vim/src/utils.rs

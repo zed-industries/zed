@@ -1,4 +1,5 @@
 use crate::db::{ChannelId, DevServerId};
+use rpc::proto;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -15,3 +16,14 @@ impl ActiveModelBehavior for ActiveModel {}
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {}
+
+impl Model {
+    pub fn to_proto(&self, status: proto::DevServerStatus) -> proto::DevServer {
+        proto::DevServer {
+            dev_server_id: self.id.to_proto(),
+            channel_id: self.channel_id.to_proto(),
+            name: self.name.clone(),
+            status: status as i32,
+        }
+    }
+}

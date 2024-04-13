@@ -71,12 +71,19 @@ impl Display for BufferId {
     }
 }
 
+impl From<NonZeroU64> for BufferId {
+    fn from(id: NonZeroU64) -> Self {
+        BufferId(id)
+    }
+}
+
 impl BufferId {
     /// Returns Err if `id` is outside of BufferId domain.
     pub fn new(id: u64) -> anyhow::Result<Self> {
         let id = NonZeroU64::new(id).context("Buffer id cannot be 0.")?;
         Ok(Self(id))
     }
+
     /// Increments this buffer id, returning the old value.
     /// So that's a post-increment operator in disguise.
     pub fn next(&mut self) -> Self {
@@ -1620,6 +1627,49 @@ impl Deref for Buffer {
 impl BufferSnapshot {
     pub fn as_rope(&self) -> &Rope {
         &self.visible_text
+    }
+
+    pub fn rope_for_version(&self, version: &clock::Global) -> Rope {
+        let mut rope = Rope::new();
+
+        let mut cursor = self
+            .fragments
+            .filter::<_, FragmentTextSummary>(move |summary| {
+                !version.observed_all(&summary.max_version)
+            });
+        cursor.next(&None);
+
+        let mut visible_cursor = self.visible_text.cursor(0);
+        let mut deleted_cursor = self.deleted_text.cursor(0);
+
+        while let Some(fragment) = cursor.item() {
+            if cursor.start().visible > visible_cursor.offset() {
+                let text = visible_cursor.slice(cursor.start().visible);
+                rope.append(text);
+            }
+
+            if fragment.was_visible(version, &self.undo_map) {
+                if fragment.visible {
+                    let text = visible_cursor.slice(cursor.end(&None).visible);
+                    rope.append(text);
+                } else {
+                    deleted_cursor.seek_forward(cursor.start().deleted);
+                    let text = deleted_cursor.slice(cursor.end(&None).deleted);
+                    rope.append(text);
+                }
+            } else if fragment.visible {
+                visible_cursor.seek_forward(cursor.end(&None).visible);
+            }
+
+            cursor.next(&None);
+        }
+
+        if cursor.start().visible > visible_cursor.offset() {
+            let text = visible_cursor.slice(cursor.start().visible);
+            rope.append(text);
+        }
+
+        rope
     }
 
     pub fn remote_id(&self) -> BufferId {
