@@ -3586,6 +3586,7 @@ impl BackgroundScanner {
                     is_git_related = true;
                 }
 
+                #[cfg(target_os = "windows")]
                 let abs_path = if let Ok(path) = abs_path.canonicalize() {
                     path
                 } else {
