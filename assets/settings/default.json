@@ -92,8 +92,9 @@
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
-  // Whether to automatically type closing characters for you. For example,
-  // when you type (, Zed will automatically add a closing ) at the correct position.
+  // Whether to automatically add matching closing characters when typing
+  // opening parenthesis, bracket, brace, single or double quote characters.
+  // For example, when you type (, Zed will add a closing ) at the correct position.
   "use_autoclose": true,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
