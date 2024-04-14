@@ -1828,6 +1828,27 @@ impl Editor {
         old_cursor_position: &Anchor,
         cx: &mut ViewContext<Self>,
     ) {
+        // Copy text to primary selection buffer
+        #[cfg(target_os = "linux")]
+        if local {
+            let selections = self.selections.all::<usize>(cx);
+            let buffer_handle = self.buffer.read(cx).read(cx);
+            println!("{:?}", selections);
+
+            let mut text = String::new();
+            for selection in selections {
+                let text_for_selection = buffer_handle
+                    .text_for_range(selection.start..selection.end)
+                    .collect::<String>();
+                text.push_str(&text_for_selection);
+            }
+
+            if !text.is_empty() {
+                println!("{text}");
+                cx.write_to_primary(ClipboardItem::new(text));
+            }
+        }
+
         if self.focus_handle.is_focused(cx) && self.leader_peer_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
