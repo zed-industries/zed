@@ -149,7 +149,7 @@ impl PlatformTextSystem for DirectWriteTextSystem {
             Ok(*font_id)
         } else {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let font_id = lock.select_font(font).unwrap();
+            let font_id = lock.select_font(font);
             lock.font_selections.insert(font.clone(), font_id);
             Ok(font_id)
         }
@@ -311,7 +311,16 @@ impl DirectWriteState {
         None
     }
 
-    fn select_font(&mut self, target_font: &Font) -> Option<FontId> {
+    unsafe fn update_system_font_collection(&mut self) {
+        let mut collection = std::mem::zeroed();
+        self.components
+            .factory
+            .GetSystemFontCollection2(false, &mut collection, true)
+            .unwrap();
+        self.system_font_collection = collection.unwrap();
+    }
+
+    fn select_font(&mut self, target_font: &Font) -> FontId {
         let family_name = if target_font.family == ".SystemUIFont" {
             // https://learn.microsoft.com/en-us/windows/win32/uxguide/vis-fonts
             // Segoe UI is the Windows font intended for user interface text strings.
@@ -337,6 +346,27 @@ impl DirectWriteState {
                     true,
                 )
             })
+            .or_else(|| {
+                self.update_system_font_collection();
+                self.get_font_id_from_font_collection(
+                    family_name,
+                    target_font.weight,
+                    target_font.style,
+                    &target_font.features,
+                    true,
+                )
+            })
+            .or_else(|| {
+                log::error!("{} not found, use Zed Mono instead.", family_name);
+                self.get_font_id_from_font_collection(
+                    "Zed Mono",
+                    target_font.weight,
+                    target_font.style,
+                    &target_font.features,
+                    false,
+                )
+            })
+            .unwrap()
         }
     }
 
@@ -933,7 +963,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             {
                 *id
             } else {
-                context.text_system.select_font(&font_struct).unwrap()
+                context.text_system.select_font(&font_struct)
             };
             let mut glyphs = SmallVec::new();
             for index in 0..glyph_count {
