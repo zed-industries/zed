@@ -370,7 +370,7 @@ impl Asset for Image {
             };
 
             let data = if let Ok(format) = image::guess_format(&bytes) {
-                let data = image::load_from_memory_with_format(&bytes, format)?.into_bgra8();
+                let data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
                 ImageData::new(data)
             } else {
                 let pixmap =
