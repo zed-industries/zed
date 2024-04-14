@@ -3590,8 +3590,8 @@ impl BackgroundScanner {
                 let abs_path = if let Ok(path) = abs_path.canonicalize() {
                     path
                 } else {
-                    // many intermediate file will hit here, currently not logger
-                    // log::error!("abs_path {abs_path:?} cannot canonicalize");
+                    // compile intermediate file will hit here, generated and then disappear;
+                    // so fs cannot find them after disappear.
                     return false;
                 };
 
