@@ -462,8 +462,16 @@ impl<P: LinuxClient + 'static> Platform for P {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
     }
 
+    fn write_to_primary(&self, item: ClipboardItem) {
+        self.write_to_primary(item)
+    }
+
     fn write_to_clipboard(&self, item: ClipboardItem) {
         self.write_to_clipboard(item)
+    }
+
+    fn read_from_primary(&self) -> Option<ClipboardItem> {
+        self.read_from_primary()
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {

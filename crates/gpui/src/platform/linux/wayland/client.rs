@@ -782,7 +782,6 @@ fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
     const BTN_FORWARD: u32 = 0x115;
     const BTN_BACK: u32 = 0x116;
 
-    //
     Some(match button {
         BTN_LEFT => MouseButton::Left,
         BTN_RIGHT => MouseButton::Right,
