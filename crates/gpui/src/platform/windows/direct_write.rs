@@ -623,7 +623,6 @@ impl DirectWriteState {
             bidiLevel: 0,
         };
 
-        // let bitmap_size = glyph_bounds.size;
         // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
         let mut bitmap_size = glyph_bounds.size;
         if params.subpixel_variant.x > 0 {
