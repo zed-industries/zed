@@ -1,6 +1,6 @@
 mod completion_provider;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use client::Client;
 use completion_provider::*;
 use editor::Editor;
@@ -253,6 +253,8 @@ impl AssistantChat {
                 query.push_str(&chunk);
             }
 
+            dbg!(&query);
+
             anyhow::Ok(query)
         })
     }
@@ -276,12 +278,23 @@ impl AssistantChat {
             .contexts
             .push(AssistantContext::codebase(context_id));
 
-        let query = self.user_message(submitted_id).body.read(cx).text(cx);
-        let results = self.project_index.read(cx).search(&query, 16, cx);
+        let query = self.setup_query(cx);
+        let results = cx.spawn(|this, mut cx| async move {
+            let query = query.await?;
+
+            let chat = this.upgrade().ok_or_else(|| anyhow!("model was dropped"))?;
+            let results = chat
+                .update(&mut cx, |this, cx| {
+                    this.project_index.read(cx).search(&query, 16, cx)
+                })?
+                .await;
+            anyhow::Ok(results)
+        });
+
         let fs = self.fs.clone();
 
         cx.spawn(|this, mut cx| async move {
-            let results = results.await;
+            let results = results.await?;
 
             let excerpts = results.into_iter().map(|result| {
                 let abs_path = result
@@ -401,7 +414,7 @@ impl AssistantChat {
     fn render_error(
         &self,
         error: Option<SharedString>,
-        ix: usize,
+        _ix: usize,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
