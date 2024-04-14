@@ -377,8 +377,24 @@ impl LinuxClient for WaylandClient {
             .log_err();
     }
 
+    fn write_to_primary(&self, item: crate::ClipboardItem) {
+        self.0.borrow_mut().primary.set_contents(item.text);
+    }
+
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
         self.0.borrow_mut().clipboard.set_contents(item.text);
+    }
+
+    fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
+        self.0
+            .borrow_mut()
+            .primary
+            .get_contents()
+            .ok()
+            .map(|s| crate::ClipboardItem {
+                text: s,
+                metadata: None,
+            })
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
@@ -766,6 +782,7 @@ fn linux_button_to_gpui(button: u32) -> Option<MouseButton> {
     const BTN_FORWARD: u32 = 0x115;
     const BTN_BACK: u32 = 0x116;
 
+    //
     Some(match button {
         BTN_LEFT => MouseButton::Left,
         BTN_RIGHT => MouseButton::Right,

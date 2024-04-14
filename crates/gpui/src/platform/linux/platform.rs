@@ -56,7 +56,9 @@ pub trait LinuxClient {
         options: WindowParams,
     ) -> Box<dyn PlatformWindow>;
     fn set_cursor_style(&self, style: CursorStyle);
+    fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
+    fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn run(&self);
 }
@@ -406,7 +408,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         })
     }
 
-    //todo(linux): add trait methods for accessing the primary selection
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
