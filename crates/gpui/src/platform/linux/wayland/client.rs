@@ -413,8 +413,8 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 version,
             } => match &interface[..] {
                 "wl_seat" => {
-                    registry.bind::<wl_seat::WlSeat, _, _>(name, wl_seat_version(version), qh, ());
                     state.wl_pointer = None;
+                    registry.bind::<wl_seat::WlSeat, _, _>(name, wl_seat_version(version), qh, ());
                 }
                 "wl_output" => {
                     let output =
@@ -802,6 +802,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.enter_token = Some(());
                     state.mouse_focused_window = Some(window.clone());
+                    state.cursor.mark_dirty();
                     state.cursor.set_serial_id(serial);
                     state
                         .cursor
@@ -811,7 +812,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
             }
             wl_pointer::Event::Leave { surface, .. } => {
-                state.cursor.mark_dirty();
                 if let Some(focused_window) = state.mouse_focused_window.clone() {
                     state.enter_token.take();
                     let input = PlatformInput::MouseExited(MouseExitEvent {
