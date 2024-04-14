@@ -11,7 +11,7 @@ impl zed::Extension for HaskellExtension {
 
     fn language_server_command(
         &mut self,
-        _language_server_id: &zed::LanguageServerId,
+        _config: zed::LanguageServerConfig,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let path = worktree
