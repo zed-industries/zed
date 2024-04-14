@@ -159,7 +159,7 @@
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-alt-z": "editor::RevertSelectedHunks",
-      "cmd-alt-g b": "editor::ToggleGitBlame"
+      "cmd-alt-g": "editor::ToggleGitBlame"
     }
   },
   {
