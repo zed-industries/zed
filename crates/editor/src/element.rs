@@ -2561,12 +2561,12 @@ impl EditorElement {
                             {
                                 let is_search_highlights = *background_highlight_id
                                     == TypeId::of::<BufferSearchHighlights>();
-                                let is_symbol_occurences = *background_highlight_id
+                                let is_symbol_occurrences = *background_highlight_id
                                     == TypeId::of::<DocumentHighlightRead>()
                                     || *background_highlight_id
                                         == TypeId::of::<DocumentHighlightWrite>();
                                 if (is_search_highlights && scrollbar_settings.search_results)
-                                    || (is_symbol_occurences && scrollbar_settings.selected_symbol)
+                                    || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
                                 {
                                     let marker_row_ranges =
                                         background_ranges.into_iter().map(|range| {

@@ -192,7 +192,7 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub search_results: Option<bool>,
-    /// Whether to show selected symbol occurences in the scrollbar.
+    /// Whether to show selected symbol occurrences in the scrollbar.
     ///
     /// Default: true
     pub selected_symbol: Option<bool>,

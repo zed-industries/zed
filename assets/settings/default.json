@@ -147,7 +147,7 @@
     "git_diff": true,
     // Whether to show buffer search results in the scrollbar.
     "search_results": true,
-    // Whether to show selected symbol occurences in the scrollbar.
+    // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true

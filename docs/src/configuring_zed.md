@@ -268,7 +268,7 @@ List of `string` values
 
 ### Selected Symbols Indicators
 
-- Description: Whether to show selected symbol occurences in the scrollbar.
+- Description: Whether to show selected symbol occurrences in the scrollbar.
 - Setting: `selected_symbol`
 - Default: `true`
 
