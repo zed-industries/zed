@@ -23,6 +23,7 @@ use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, ContextMenu, ToggleButton, Tooltip};
 use util::ResultExt as _;
+use workspace::item::TabContentParams;
 use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
@@ -925,9 +926,9 @@ impl FocusableView for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
         Label::new("Extensions")
-            .color(if selected {
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted

@@ -129,6 +129,7 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use workspace::item::ItemHandle;
 use workspace::notifications::NotificationId;
 use workspace::Toast;
 use workspace::{
@@ -471,6 +472,8 @@ pub struct Editor {
                 + Fn(&mut Self, DisplayPoint, &mut ViewContext<Self>) -> Option<View<ui::ContextMenu>>,
         >,
     >,
+    last_bounds: Option<Bounds<Pixels>>,
+    expect_bounds_change: Option<Bounds<Pixels>>,
 }
 
 #[derive(Clone)]
@@ -1485,6 +1488,8 @@ impl Editor {
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            last_bounds: None,
+            expect_bounds_change: None,
             gutter_width: Default::default(),
             style: None,
             show_cursor_names: false,
@@ -7998,11 +8003,16 @@ impl Editor {
                 cx,
             );
         });
+        let item = Box::new(editor);
         if split {
-            workspace.split_item(SplitDirection::Right, Box::new(editor), cx);
+            workspace.split_item(SplitDirection::Right, item.clone(), cx);
         } else {
-            workspace.add_item_to_active_pane(Box::new(editor), cx);
+            workspace.add_item_to_active_pane(item.clone(), cx);
         }
+        workspace.active_pane().clone().update(cx, |pane, cx| {
+            let item_id = item.item_id();
+            pane.set_preview_item_id(Some(item_id), cx);
+        });
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
@@ -9517,7 +9527,11 @@ impl Editor {
         cx.spawn(|_, mut cx| async move {
             let workspace = workspace.ok_or_else(|| anyhow!("cannot jump without workspace"))?;
             let editor = workspace.update(&mut cx, |workspace, cx| {
-                workspace.open_path(path, None, true, cx)
+                // Reset the preview item id before opening the new item
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.set_preview_item_id(None, cx);
+                });
+                workspace.open_path_preview(path, None, true, true, cx)
             })?;
             let editor = editor
                 .await?
@@ -10567,6 +10581,11 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
 
         let mut text_style = cx.text_style().clone();
         text_style.color = diagnostic_style(diagnostic.severity, true, cx.theme().status());
+        let theme_settings = ThemeSettings::get_global(cx);
+        text_style.font_family = theme_settings.buffer_font.family.clone();
+        text_style.font_style = theme_settings.buffer_font.style;
+        text_style.font_features = theme_settings.buffer_font.features;
+        text_style.font_weight = theme_settings.buffer_font.weight;
 
         let multi_line_diagnostic = diagnostic.message.contains('\n');
 

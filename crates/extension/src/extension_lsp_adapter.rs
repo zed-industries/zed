@@ -10,7 +10,7 @@ use gpui::AsyncAppContext;
 use language::{
     CodeLabel, HighlightId, Language, LanguageServerName, LspAdapter, LspAdapterDelegate,
 };
-use lsp::LanguageServerBinary;
+use lsp::{CodeActionKind, LanguageServerBinary};
 use serde::Serialize;
 use serde_json::Value;
 use std::ops::Range;
@@ -127,6 +127,23 @@ impl LspAdapter for ExtensionLspAdapter {
 
     async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
         None
+    }
+
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        let code_action_kinds = self
+            .extension
+            .manifest
+            .language_servers
+            .get(&self.language_server_id)
+            .and_then(|server| server.code_action_kinds.clone());
+
+        code_action_kinds.or(Some(vec![
+            CodeActionKind::EMPTY,
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::REFACTOR,
+            CodeActionKind::REFACTOR_EXTRACT,
+            CodeActionKind::SOURCE,
+        ]))
     }
 
     fn language_ids(&self) -> HashMap<String, String> {

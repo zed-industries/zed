@@ -334,7 +334,7 @@ impl MacTextSystemState {
         self.postscript_names_by_font_id
             .get(&font_id)
             .map_or(false, |postscript_name| {
-                postscript_name == "AppleColorEmoji"
+                postscript_name == "AppleColorEmoji" || postscript_name == ".AppleColorEmojiUI"
             })
     }
 

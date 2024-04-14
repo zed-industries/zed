@@ -38,12 +38,20 @@ impl Spawn {
 /// Rerun last task
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct Rerun {
-    #[serde(default)]
     /// Controls whether the task context is reevaluated prior to execution of a task.
     /// If it is not, environment variables such as ZED_COLUMN, ZED_FILE are gonna be the same as in the last execution of a task
     /// If it is, these variables will be updated to reflect current state of editor at the time task::Rerun is executed.
     /// default: false
+    #[serde(default)]
     pub reevaluate_context: bool,
+    /// Overrides `allow_concurrent_runs` property of the task being reran.
+    /// Default: null
+    #[serde(default)]
+    pub allow_concurrent_runs: Option<bool>,
+    /// Overrides `use_new_terminal` property of the task being reran.
+    /// Default: null
+    #[serde(default)]
+    pub use_new_terminal: Option<bool>,
 }
 
 impl_actions!(task, [Rerun, Spawn]);
@@ -94,7 +102,7 @@ impl TasksModalDelegate {
         };
         Some((
             source_kind,
-            new_oneshot.resolve_task(&id_base, self.task_context.clone())?,
+            new_oneshot.resolve_task(&id_base, &self.task_context)?,
         ))
     }
 
@@ -204,7 +212,7 @@ impl PickerDelegate for TasksModalDelegate {
                                     inventory.used_and_current_resolved_tasks(
                                         language,
                                         worktree,
-                                        picker.delegate.task_context.clone(),
+                                        &picker.delegate.task_context,
                                         cx,
                                     )
                                 });
@@ -395,7 +403,6 @@ impl PickerDelegate for TasksModalDelegate {
     }
 }
 
-// TODO kb more tests on recent tasks from language templates
 #[cfg(test)]
 mod tests {
     use gpui::{TestAppContext, VisualTestContext};

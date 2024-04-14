@@ -142,7 +142,7 @@ pub fn init(cx: &mut AppContext) {
     TerminalSettings::register(cx);
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalSize {
     pub cell_width: Pixels,
     pub line_height: Pixels,
@@ -288,6 +288,7 @@ impl Display for TerminalError {
 
 pub struct SpawnTask {
     pub id: TaskId,
+    pub full_label: String,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
@@ -594,6 +595,7 @@ pub struct Terminal {
 
 pub struct TaskState {
     pub id: TaskId,
+    pub full_label: String,
     pub label: String,
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
@@ -990,7 +992,9 @@ impl Terminal {
 
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_size: TerminalSize) {
-        self.events.push_back(InternalEvent::Resize(new_size))
+        if self.last_content.size != new_size {
+            self.events.push_back(InternalEvent::Resize(new_size))
+        }
     }
 
     ///Write the Input payload to the tty.
@@ -1363,7 +1367,7 @@ impl Terminal {
                 if truncate {
                     truncate_and_trailoff(&task_state.label, MAX_CHARS)
                 } else {
-                    task_state.label.clone()
+                    task_state.full_label.clone()
                 }
             }
             None => self

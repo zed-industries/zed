@@ -55,6 +55,8 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         }
     }
 
+    fn search_bar_visibility_changed(&mut self, _visible: bool, _cx: &mut ViewContext<Self>) {}
+
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>);
     fn update_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>);
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String;
@@ -131,6 +133,7 @@ pub trait SearchableItemHandle: ItemHandle {
         matches: &AnyVec<dyn Send>,
         cx: &mut WindowContext,
     ) -> Option<usize>;
+    fn search_bar_visibility_changed(&self, visible: bool, cx: &mut WindowContext);
 }
 
 impl<T: SearchableItem> SearchableItemHandle for View<T> {
@@ -226,6 +229,12 @@ impl<T: SearchableItem> SearchableItemHandle for View<T> {
     ) {
         let mat = mat.downcast_ref().unwrap();
         self.update(cx, |this, cx| this.replace(mat, query, cx))
+    }
+
+    fn search_bar_visibility_changed(&self, visible: bool, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| {
+            this.search_bar_visibility_changed(visible, cx)
+        });
     }
 }
 

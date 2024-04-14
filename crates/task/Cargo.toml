@@ -19,7 +19,6 @@ serde.workspace = true
 serde_json_lenient.workspace = true
 sha2.workspace = true
 shellexpand.workspace = true
-subst = "0.3.0"
 util.workspace = true
 
 [dev-dependencies]

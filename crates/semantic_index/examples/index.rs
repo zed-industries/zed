@@ -1,6 +1,6 @@
 use client::Client;
 use futures::channel::oneshot;
-use gpui::{App, Global, TestAppContext};
+use gpui::{App, Global};
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticIndex};

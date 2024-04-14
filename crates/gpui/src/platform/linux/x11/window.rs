@@ -33,8 +33,10 @@ use super::X11Display;
 
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
+        UTF8_STRING,
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
+        _NET_WM_NAME,
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
@@ -76,7 +78,7 @@ pub struct Callbacks {
 
 pub(crate) struct X11WindowState {
     raw: RawWindow,
-
+    atoms: XcbAtoms,
     bounds: Bounds<i32>,
     scale_factor: f32,
     renderer: BladeRenderer,
@@ -238,6 +240,7 @@ impl X11WindowState {
             bounds: params.bounds.map(|v| v.0),
             scale_factor: 1.0,
             renderer: BladeRenderer::new(gpu, gpu_extent),
+            atoms: *atoms,
 
             input_handler: None,
         }
@@ -439,6 +442,16 @@ impl PlatformWindow for X11Window {
                 self.x_window,
                 xproto::AtomEnum::WM_NAME,
                 xproto::AtomEnum::STRING,
+                title.as_bytes(),
+            )
+            .unwrap();
+
+        self.xcb_connection
+            .change_property8(
+                xproto::PropMode::REPLACE,
+                self.x_window,
+                self.state.borrow().atoms._NET_WM_NAME,
+                self.state.borrow().atoms.UTF8_STRING,
                 title.as_bytes(),
             )
             .unwrap();

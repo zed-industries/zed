@@ -214,7 +214,10 @@
     // Whether to reveal it in the project panel automatically,
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
-    "auto_reveal_entries": true
+    "auto_reveal_entries": true,
+    /// Whether to fold directories automatically
+    /// when a directory has only one directory inside.
+    "auto_fold_dirs": false
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -297,6 +300,16 @@
     "git_status": false,
     // Position of the close button on the editor tabs.
     "close_position": "right"
+  },
+  // Settings related to preview tabs.
+  "preview_tabs": {
+    // Whether preview tabs should be enabled.
+    // Preview tabs allow you to open files in preview mode, where they close automatically
+    // when you switch to another file unless you explicitly pin them.
+    // This is useful for quickly viewing files without cluttering your workspace.
+    "enabled": true,
+    // Whether to open files in preview mode when selected from the file finder.
+    "enable_preview_from_file_finder": false
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

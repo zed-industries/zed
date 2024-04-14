@@ -15,7 +15,7 @@
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut, Cow},
-    mem,
+    cmp, mem,
     ops::Range,
     rc::Rc,
     sync::Arc,
@@ -28,17 +28,18 @@ use futures::{future::Shared, FutureExt};
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use smallvec::SmallVec;
+use util::post_inc;
 
 use crate::{
-    hash, prelude::*, size, AnyElement, AnyTooltip, AppContext, Asset, AvailableSpace, Bounds,
-    BoxShadow, ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId, DispatchPhase,
-    DispatchTree, DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle, FocusId, FontId,
-    GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext, KeyEvent,
-    LayoutId, LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent, PaintQuad,
-    Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad, RenderGlyphParams,
-    RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size, StrikethroughStyle,
-    Style, Task, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, Window,
-    WindowContext, SUBPIXEL_VARIANTS,
+    hash, point, prelude::*, px, size, AnyElement, AnyTooltip, AppContext, Asset, AvailableSpace,
+    Bounds, BoxShadow, ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId,
+    DispatchPhase, DispatchTree, DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle,
+    FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext,
+    KeyEvent, LayoutId, LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent,
+    PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
+    RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, Task, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
 };
 
 pub(crate) type AnyMouseListener =
@@ -84,6 +85,33 @@ impl Hitbox {
 #[derive(Default, Eq, PartialEq)]
 pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
 
+/// An identifier for a tooltip.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct TooltipId(usize);
+
+impl TooltipId {
+    /// Checks if the tooltip is currently hovered.
+    pub fn is_hovered(&self, cx: &WindowContext) -> bool {
+        cx.window
+            .tooltip_bounds
+            .as_ref()
+            .map_or(false, |tooltip_bounds| {
+                tooltip_bounds.id == *self && tooltip_bounds.bounds.contains(&cx.mouse_position())
+            })
+    }
+}
+
+pub(crate) struct TooltipBounds {
+    id: TooltipId,
+    bounds: Bounds<Pixels>,
+}
+
+#[derive(Clone)]
+pub(crate) struct TooltipRequest {
+    id: TooltipId,
+    tooltip: AnyTooltip,
+}
+
 pub(crate) struct DeferredDraw {
     priority: usize,
     parent_node: DispatchNodeId,
@@ -108,7 +136,7 @@ pub(crate) struct Frame {
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
-    pub(crate) tooltip_requests: Vec<Option<AnyTooltip>>,
+    pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
@@ -364,6 +392,7 @@ impl<'a> VisualContext for ElementContext<'a> {
 impl<'a> ElementContext<'a> {
     pub(crate) fn draw_roots(&mut self) {
         self.window.draw_phase = DrawPhase::Layout;
+        self.window.tooltip_bounds.take();
 
         // Layout all root elements.
         let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
@@ -388,14 +417,8 @@ impl<'a> ElementContext<'a> {
             element.layout(offset, AvailableSpace::min_size(), self);
             active_drag_element = Some(element);
             self.app.active_drag = Some(active_drag);
-        } else if let Some(tooltip_request) =
-            self.window.next_frame.tooltip_requests.last().cloned()
-        {
-            let tooltip_request = tooltip_request.unwrap();
-            let mut element = tooltip_request.view.clone().into_any();
-            let offset = tooltip_request.cursor_offset;
-            element.layout(offset, AvailableSpace::min_size(), self);
-            tooltip_element = Some(element);
+        } else {
+            tooltip_element = self.layout_tooltip();
         }
 
         self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
@@ -413,6 +436,52 @@ impl<'a> ElementContext<'a> {
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self);
         }
+    }
+
+    fn layout_tooltip(&mut self) -> Option<AnyElement> {
+        let tooltip_request = self.window.next_frame.tooltip_requests.last().cloned()?;
+        let tooltip_request = tooltip_request.unwrap();
+        let mut element = tooltip_request.tooltip.view.clone().into_any();
+        let mouse_position = tooltip_request.tooltip.mouse_position;
+        let tooltip_size = element.measure(AvailableSpace::min_size(), self);
+
+        let mut tooltip_bounds = Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
+        let window_bounds = Bounds {
+            origin: Point::default(),
+            size: self.viewport_size(),
+        };
+
+        if tooltip_bounds.right() > window_bounds.right() {
+            let new_x = mouse_position.x - tooltip_bounds.size.width - px(1.);
+            if new_x >= Pixels::ZERO {
+                tooltip_bounds.origin.x = new_x;
+            } else {
+                tooltip_bounds.origin.x = cmp::max(
+                    Pixels::ZERO,
+                    tooltip_bounds.origin.x - tooltip_bounds.right() - window_bounds.right(),
+                );
+            }
+        }
+
+        if tooltip_bounds.bottom() > window_bounds.bottom() {
+            let new_y = mouse_position.y - tooltip_bounds.size.height - px(1.);
+            if new_y >= Pixels::ZERO {
+                tooltip_bounds.origin.y = new_y;
+            } else {
+                tooltip_bounds.origin.y = cmp::max(
+                    Pixels::ZERO,
+                    tooltip_bounds.origin.y - tooltip_bounds.bottom() - window_bounds.bottom(),
+                );
+            }
+        }
+
+        self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.after_layout(cx));
+
+        self.window.tooltip_bounds = Some(TooltipBounds {
+            id: tooltip_request.id,
+            bounds: tooltip_bounds,
+        });
+        Some(element)
     }
 
     fn layout_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
@@ -604,8 +673,13 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame
-    pub fn set_tooltip(&mut self, tooltip: AnyTooltip) {
-        self.window.next_frame.tooltip_requests.push(Some(tooltip));
+    pub fn set_tooltip(&mut self, tooltip: AnyTooltip) -> TooltipId {
+        let id = TooltipId(post_inc(&mut self.window.next_tooltip_id.0));
+        self.window
+            .next_frame
+            .tooltip_requests
+            .push(Some(TooltipRequest { id, tooltip }));
+        id
     }
 
     /// Pushes the given element id onto the global stack and invokes the given closure

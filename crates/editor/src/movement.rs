@@ -47,6 +47,12 @@ pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
 pub fn saturating_left(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     if point.column() > 0 {
         *point.column_mut() -= 1;
+    } else if point.column() == 0 {
+        // If the current sofr_wrap mode is used, the column corresponding to the display is 0,
+        //  which does not necessarily mean that the actual beginning of a paragraph
+        if map.display_point_to_fold_point(point, Bias::Left).column() > 0 {
+            return left(map, point);
+        }
     }
     map.clip_point(point, Bias::Left)
 }

@@ -1,6 +1,6 @@
 use std::{cmp, f32};
 
-use gpui::{px, Pixels, ViewContext};
+use gpui::{px, Bounds, Pixels, ViewContext};
 use language::Point;
 
 use crate::{display_map::ToDisplayPoint, Editor, EditorMode, LineWithInvisibles};
@@ -63,13 +63,23 @@ impl AutoscrollStrategy {
 impl Editor {
     pub fn autoscroll_vertically(
         &mut self,
-        viewport_height: Pixels,
+        bounds: Bounds<Pixels>,
         line_height: Pixels,
         cx: &mut ViewContext<Editor>,
     ) -> bool {
+        let viewport_height = bounds.size.height;
         let visible_lines = viewport_height / line_height;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
+        let original_y = scroll_position.y;
+        if let Some(last_bounds) = self.expect_bounds_change.take() {
+            if scroll_position.y != 0. {
+                scroll_position.y += (bounds.top() - last_bounds.top()) / line_height;
+                if scroll_position.y < 0. {
+                    scroll_position.y = 0.;
+                }
+            }
+        }
         let max_scroll_top = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             (display_map.max_point().row() as f32 - visible_lines + 1.).max(0.)
         } else {
@@ -77,6 +87,9 @@ impl Editor {
         };
         if scroll_position.y > max_scroll_top {
             scroll_position.y = max_scroll_top;
+        }
+
+        if original_y != scroll_position.y {
             self.set_scroll_position(scroll_position, cx);
         }
 
