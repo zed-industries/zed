@@ -5,7 +5,10 @@ use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticIndex};
 use settings::SettingsStore;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use util::http::HttpClientWithUrl;
 
 fn main() {
@@ -46,7 +49,7 @@ fn main() {
         );
 
         let semantic_index = SemanticIndex::new(
-            Path::new("/tmp/semantic-index-db.mdb"),
+            PathBuf::from("/tmp/semantic-index-db.mdb"),
             Arc::new(embedding_provider),
             cx,
         );

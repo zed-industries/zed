@@ -21,7 +21,7 @@ use std::{
     cmp::Ordering,
     future::Future,
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -38,15 +38,15 @@ impl Global for SemanticIndex {}
 
 impl SemanticIndex {
     pub fn new(
-        db_path: &Path,
+        db_path: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
         cx: &mut AppContext,
     ) -> Task<Result<Self>> {
-        let db_path = db_path.to_path_buf();
         cx.spawn(|cx| async move {
             let db_connection = cx
                 .background_executor()
                 .spawn(async move {
+                    std::fs::create_dir_all(&db_path)?;
                     unsafe {
                         heed::EnvOpenOptions::new()
                             .map_size(1024 * 1024 * 1024)
@@ -54,7 +54,8 @@ impl SemanticIndex {
                             .open(db_path)
                     }
                 })
-                .await?;
+                .await
+                .context("opening database connection")?;
 
             Ok(SemanticIndex {
                 db_connection,
@@ -879,11 +880,8 @@ mod tests {
 
         let mut semantic_index = cx
             .update(|cx| {
-                let semantic_index = SemanticIndex::new(
-                    Path::new(temp_dir.path()),
-                    Arc::new(TestEmbeddingProvider),
-                    cx,
-                );
+                let semantic_index =
+                    SemanticIndex::new(temp_dir.path().into(), Arc::new(TestEmbeddingProvider), cx);
                 semantic_index
             })
             .await

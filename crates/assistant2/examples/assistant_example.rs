@@ -6,7 +6,10 @@ use language::LanguageRegistry;
 use project::{Fs, Project};
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, ProjectIndex, SemanticIndex};
 use settings::{KeymapFile, DEFAULT_KEYMAP_PATH};
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use theme::LoadThemes;
 use ui::{div, prelude::*, Render};
 use util::http::HttpClientWithUrl;
@@ -67,13 +70,14 @@ fn main() {
         );
 
         let semantic_index = SemanticIndex::new(
-            Path::new("/tmp/semantic-index-db.mdb"),
+            PathBuf::from("/tmp/semantic-index-db.mdb"),
             Arc::new(embedding_provider),
             cx,
         );
 
         cx.spawn(|mut cx| async move {
             let project_path = Path::new(&args[1]);
+            dbg!(project_path);
             let project = Project::example([project_path], &mut cx).await;
             let mut semantic_index = semantic_index.await?;
 
