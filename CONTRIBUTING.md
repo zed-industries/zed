@@ -11,7 +11,7 @@ If you're looking for ideas about what to work on, check out:
 - Our [public roadmap](https://zed.dev/roadmap) contains a rough outline of our near-term priorities for Zed.
 - Our [top-ranking issues](https://github.com/zed-industries/zed/issues/5393) based on votes by the community.
 
-Outside of a handful of extremely popular languages and themes, we are generally not looking to extend Zed's language or theme support by directly building them into Zed. We really want to build a plugin system to handle making the editor extensible going forward. If you are passionate about shipping new languages or themes we suggest contributing to the extension system to help us get there faster.
+For adding themes or support for a new language to Zed, check out our [extension docs](https://github.com/zed-industries/extensions/blob/main/AUTHORING_EXTENSIONS.md).
 
 ## Proposing changes
 
