@@ -1253,6 +1253,14 @@ impl Client {
     pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
         self.peer.teardown();
         self.set_status(Status::SignedOut, cx);
+
+        self.state.write().credentials = None;
+
+        smol::block_on(async {
+            if self.has_keychain_credentials(cx).await {
+                delete_credentials_from_keychain(cx).await.log_err();
+            }
+        });
     }
 
     pub fn reconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
