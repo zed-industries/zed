@@ -3,24 +3,35 @@ use zed::LanguageServerId;
 use zed_extension_api::{self as zed, Result};
 
 struct ZigExtension {
-    cached_binary_path: Option<String>,
+    cached_binary: Option<ZlsBinary>,
+}
+
+#[derive(Clone)]
+struct ZlsBinary {
+    path: String,
+    environment: Option<Vec<(String, String)>>,
 }
 
 impl ZigExtension {
-    fn language_server_binary_path(
+    fn language_server_binary(
         &mut self,
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
-    ) -> Result<String> {
-        if let Some(path) = &self.cached_binary_path {
-            if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
-                return Ok(path.clone());
+    ) -> Result<ZlsBinary> {
+        if let Some(zls_binary) = &self.cached_binary {
+            if fs::metadata(&zls_binary.path).map_or(false, |stat| stat.is_file()) {
+                return Ok(zls_binary.clone());
             }
         }
 
         if let Some(path) = worktree.which("zls") {
-            self.cached_binary_path = Some(path.clone());
-            return Ok(path);
+            let environment = worktree.shell_env();
+            let zls_binary = ZlsBinary {
+                path,
+                environment: Some(environment),
+            };
+            self.cached_binary = Some(zls_binary.clone());
+            return Ok(zls_binary);
         }
 
         zed::set_language_server_installation_status(
@@ -91,15 +102,19 @@ impl ZigExtension {
             }
         }
 
-        self.cached_binary_path = Some(binary_path.clone());
-        Ok(binary_path)
+        let zls_binary = ZlsBinary {
+            path: binary_path,
+            environment: None,
+        };
+        self.cached_binary = Some(zls_binary.clone());
+        Ok(zls_binary)
     }
 }
 
 impl zed::Extension for ZigExtension {
     fn new() -> Self {
         Self {
-            cached_binary_path: None,
+            cached_binary: None,
         }
     }
 
@@ -108,10 +123,11 @@ impl zed::Extension for ZigExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        let zls_binary = self.language_server_binary(language_server_id, worktree)?;
         Ok(zed::Command {
-            command: self.language_server_binary_path(language_server_id, worktree)?,
+            command: zls_binary.path,
             args: vec![],
-            env: Default::default(),
+            env: zls_binary.environment.unwrap_or_default(),
         })
     }
 }
