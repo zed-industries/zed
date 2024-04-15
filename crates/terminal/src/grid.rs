@@ -73,49 +73,44 @@ fn append_text_to_grid(term: &FairMutex<Term<ZedListener>>, text_lines: &[&str])
     let new_lines_len = new_rows_for_message + 1;
 
     let mut rows_to_scroll = new_lines_len;
-    match bottommost_line.cmp(&first_clear_line) {
+    let rows_to_grow = match bottommost_line.cmp(&first_clear_line) {
         cmp::Ordering::Less => {
-            rows_to_scroll += (first_clear_line - bottommost_line).0 as usize;
+            let difference = (first_clear_line - bottommost_line).0 as usize;
+            rows_to_scroll += difference;
+            rows_to_scroll
         }
-        cmp::Ordering::Equal => {}
+        cmp::Ordering::Equal => rows_to_scroll,
         cmp::Ordering::Greater => {
-            rows_to_scroll =
-                rows_to_scroll.saturating_sub((bottommost_line - first_clear_line).0 as usize);
+            let difference = (bottommost_line - first_clear_line).0 as usize;
+            rows_to_scroll = rows_to_scroll.saturating_sub(difference);
+            rows_to_scroll
         }
-    }
-    let region = Line(0)..bottommost_line;
-    // TODO kb have to scroll down partially??? Because otherwise the assertion fails??
-    dbg!(
-        current_position,
-        max_columns,
-        bottommost_line,
-        first_clear_line,
-        rows_to_scroll
-    );
-    if rows_to_scroll > 0 {
-        grid_mut.scroll_down(&region, rows_to_scroll);
+    };
+    if rows_to_grow > 0 {
+        let screen_size = grid_mut.screen_lines();
+        grid_mut.resize(
+            false,
+            bottommost_line.0 as usize + rows_to_grow + screen_size,
+            max_columns,
+        );
+        grid_mut.scroll_display(alacritty_terminal::grid::Scroll::Delta(
+            -(new_lines_len as i32),
+        ));
     }
 
     let mut current_line = first_clear_line;
     for text_line in text_lines {
         let mut current_column = 0;
-        let mut chars_left = max_columns;
         for c in text_line.chars() {
             if current_column >= max_columns {
                 current_line += 1;
                 current_column = 0;
-                chars_left = max_columns;
             }
             grid_mut[current_line][Column(current_column)].c = c;
             current_column += 1;
-            chars_left -= 1;
-        }
-        for i in 0..chars_left {
-            grid_mut[current_line][Column(current_column + i)].c = ' ';
         }
         current_line += 1;
     }
-
     let _ = current_position;
     grid_mut.cursor.point.line = first_clear_line + new_lines_len;
     grid_mut.cursor.point.column = Column(0);
