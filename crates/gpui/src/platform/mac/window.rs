@@ -759,8 +759,8 @@ impl MacWindow {
             if maximized {
                 native_window.setFrame_display_animate_(
                     native_window.screen().visibleFrame(),
-                    1,
-                    0,
+                    YES,
+                    NO,
                 );
             }
 
