@@ -4,7 +4,8 @@ use crate::{
     DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowKind, WindowParams,
+    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowKind, WindowOpenStatus,
+    WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -287,6 +288,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(windowShouldClose:),
         window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
     );
+    decl.add_method(
+        sel!(windowShouldZoom:toFrame:),
+        window_should_zoom as extern "C" fn(&Object, Sel, id, NSRect) -> BOOL,
+    );
 
     decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
 
@@ -358,6 +363,7 @@ struct MacWindowState {
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     minimized: bool,
+    maximized_restore_bounds: Bounds<DevicePixels>,
 }
 
 impl MacWindowState {
@@ -649,6 +655,7 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 minimized: false,
+                maximized_restore_bounds: Bounds::default(),
             })));
 
             (*native_window).set_ivar(
@@ -782,6 +789,10 @@ impl Drop for MacWindow {
 impl PlatformWindow for MacWindow {
     fn bounds(&self) -> Bounds<DevicePixels> {
         self.0.as_ref().lock().bounds()
+    }
+
+    fn restore_status(&self) -> WindowOpenStatus {
+        WindowOpenStatus::Windowed(None)
     }
 
     fn is_maximized(&self) -> bool {
@@ -1552,6 +1563,14 @@ extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
     } else {
         YES
     }
+}
+
+extern "C" fn window_should_zoom(this: &Object, _: Sel, _: id, _: NSRect) -> BOOL {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    let bounds = lock.bounds();
+    println!("======>\n    Zoom bounds: {:#?}", bounds);
+    YES
 }
 
 extern "C" fn close_window(this: &Object, _: Sel) {
