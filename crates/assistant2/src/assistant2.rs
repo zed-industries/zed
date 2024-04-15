@@ -106,7 +106,7 @@ impl AssistantChat {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let this = cx.view().downgrade();
-        let list_state = ListState::new(0, ListAlignment::Bottom, px(1024.), move |ix, cx| {
+        let list_state = ListState::new(0, ListAlignment::Bottom, px(1024.), cx, move |ix, cx| {
             this.update(cx, |this, cx| this.render_message(ix, cx))
                 .unwrap()
         });
@@ -396,7 +396,7 @@ impl AssistantChat {
     fn push_message(&mut self, message: ChatMessage, cx: &mut ViewContext<Self>) {
         let old_len = self.messages.len();
         self.messages.push(message);
-        self.list_state.splice(old_len..old_len, 1);
+        self.list_state.splice(old_len..old_len, 1, cx);
         cx.notify();
     }
 
@@ -405,7 +405,8 @@ impl AssistantChat {
             ChatMessage::User(message) => message.id == last_message_id,
             ChatMessage::Assistant(message) => message.id == last_message_id,
         }) {
-            self.list_state.splice(index + 1..self.messages.len(), 0);
+            self.list_state
+                .splice(index + 1..self.messages.len(), 0, cx);
             self.messages.truncate(index + 1);
             cx.notify();
         }
