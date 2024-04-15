@@ -329,6 +329,10 @@ define_connection! {
     sql!(
         ALTER TABLE pane_groups ADD COLUMN flexes TEXT;
     ),
+    // Add fullscreen field to workspace
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN fullscreen INTEGER; //bool
+    ),
     // Add preview field to items
     sql!(
         ALTER TABLE items ADD COLUMN preview INTEGER; //bool
@@ -603,7 +607,7 @@ impl WorkspaceDb {
         &self,
     ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowOpenStatus>, Option<bool>)> {
         let mut prepared_query =
-            self.select::<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)>(sql!(
+            self.select::<(Option<Uuid>, Option<SerializedWindowOpenStatus>, Option<bool>)>(sql!(
                 SELECT
                 display,
                 window_state, window_x, window_y, window_width, window_height,
