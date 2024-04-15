@@ -940,7 +940,7 @@ impl Workspace {
                         .as_ref()
                         .and_then(|workspace| Some((workspace.display?, workspace.open_status?)))
                         .or_else(|| {
-                            let (display, open_status, _fullscreen) = DB.last_window().log_err()?;
+                            let (display, open_status) = DB.last_window().log_err()?;
                             Some((display?, open_status?))
                         });
 
