@@ -4920,7 +4920,7 @@ pub fn join_dev_server_project(
                 let window_bounds_override = window_bounds_env_override();
                 cx.update(|cx| {
                     let mut options = (app_state.build_window_options)(None, cx);
-                    options.bounds = window_bounds_override;
+                    options.open_status = WindowOpenStatus::Windowed(window_bounds_override);
                     cx.open_window(options, |cx| {
                         cx.new_view(|cx| {
                             Workspace::new(Default::default(), project, app_state.clone(), cx)
