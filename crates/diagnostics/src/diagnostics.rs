@@ -136,8 +136,15 @@ impl ProjectDiagnosticsEditor {
                         .entry(*language_server_id)
                         .or_default()
                         .insert(path.clone());
-                    if this.editor.read(cx).selections.all::<usize>(cx).is_empty()
-                        && !this.is_dirty(cx)
+
+                    if this.is_dirty(cx) {
+                        return;
+                    }
+                    let selections = this.editor.read(cx).selections.all::<usize>(cx);
+                    if selections.len() < 2
+                        && selections
+                            .first()
+                            .map_or(true, |selection| selection.end == selection.start)
                     {
                         this.update_excerpts(Some(*language_server_id), cx);
                     }
