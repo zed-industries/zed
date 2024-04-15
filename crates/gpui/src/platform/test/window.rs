@@ -2,7 +2,7 @@ use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
     DispatchEventResult, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
-    WindowBackgroundAppearance, WindowParams, WindowOpenStatus
+    WindowBackgroundAppearance, WindowOpenStatus, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
