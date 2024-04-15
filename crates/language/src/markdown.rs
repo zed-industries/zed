@@ -301,6 +301,7 @@ pub async fn parse_markdown_block(
                 TagEnd::Heading(_) => bold_depth -= 1,
                 TagEnd::CodeBlock => current_language = None,
                 TagEnd::Emphasis => italic_depth -= 1,
+                TagEnd::Paragraph => text.push('\n'),
                 TagEnd::Strong => bold_depth -= 1,
                 TagEnd::Strikethrough => strikethrough_depth -= 1,
                 TagEnd::Link => link_url = None,
