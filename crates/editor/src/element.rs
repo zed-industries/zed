@@ -1133,11 +1133,12 @@ impl EditorElement {
             content_origin.y + line_height * (row as f32 - scroll_pixel_position.y / line_height);
 
         let start_x = {
+            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
+
             let line_layout = &line_layouts[(row - start_row) as usize];
             let line_width = line_layout.line.width;
 
-            // TODO: define the padding as a constant
-            content_origin.x + line_width + (em_width * 6.)
+            content_origin.x + line_width + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS)
         };
 
         let absolute_offset = point(start_x, start_y);
