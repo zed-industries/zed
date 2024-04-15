@@ -441,17 +441,26 @@ impl AssistantChat {
 
         match &self.messages[ix] {
             ChatMessage::User(UserMessage { body, contexts, .. }) => div()
-                .on_action(cx.listener(Self::submit))
-                .p_2()
                 .when(!is_last, |element| element.mb_2())
-                .text_color(cx.theme().colors().editor_foreground)
-                .font(ThemeSettings::get_global(cx).buffer_font.clone())
-                .bg(cx.theme().colors().editor_background)
-                .child(body.clone())
-                .children(contexts.iter().map(|context| context.render(cx)))
+                .child(div().p_2().child(Label::new("You").color(Color::Default)))
+                .child(
+                    div()
+                        .on_action(cx.listener(Self::submit))
+                        .p_2()
+                        .text_color(cx.theme().colors().editor_foreground)
+                        .font(ThemeSettings::get_global(cx).buffer_font.clone())
+                        .bg(cx.theme().colors().editor_background)
+                        .child(body.clone())
+                        .children(contexts.iter().map(|context| context.render(cx))),
+                )
                 .into_any(),
             ChatMessage::Assistant(AssistantMessage { id, body, error }) => div()
                 .when(!is_last, |element| element.mb_2())
+                .child(
+                    div()
+                        .p_2()
+                        .child(Label::new("Assistant").color(Color::Modified)),
+                )
                 .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
                 .child(self.render_error(error.clone(), ix, cx))
                 .into_any(),
