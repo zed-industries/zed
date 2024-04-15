@@ -154,25 +154,47 @@ fn render_markdown_image(image: &ParsedMarkdownImage, cx: &mut RenderContext) ->
             render_markdown_text(alt_text, cx)
         } else {
             div()
-                .child(format!("Path {} not recognized", image.url))
+                .child(format!("Url '{}' not recognized", image.url))
                 .into_any()
         };
     };
 
-    let source = match link {
-        Link::Web { url } => ImageSource::Uri(url.into()),
+    let source = match &link {
+        Link::Web { url } => ImageSource::Uri(url.clone().into()),
         Link::Path {
             display_path: _,
             path,
-        } => ImageSource::File(Arc::new(path)),
+        } => ImageSource::File(Arc::new(path.clone())),
     };
 
-    let title = SharedString::from(image.title.clone());
+    let tooltip_text = SharedString::from(if image.title.is_empty() {
+        image.url.clone()
+    } else {
+        image.title.clone()
+    });
+
+    let workspace = cx.workspace.clone();
 
     div()
         .id(cx.next_id(&image.source_range))
         .child(img(source).object_fit(gpui::ObjectFit::None))
-        .tooltip(move |cx| Tooltip::text(title.clone(), cx))
+        .when(!tooltip_text.is_empty(), |this| {
+            this.tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
+        })
+        .cursor_pointer()
+        .on_click(move |_, cx| match &link {
+            Link::Web { url } => cx.open_url(url),
+            Link::Path {
+                path,
+                display_path: _,
+            } => {
+                if let Some(workspace) = &workspace {
+                    _ = workspace.update(cx, |workspace, cx| {
+                        workspace.open_abs_path(path.clone(), false, cx).detach();
+                    });
+                }
+            }
+        })
         .into_any()
 }
 
