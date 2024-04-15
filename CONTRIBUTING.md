@@ -1,6 +1,6 @@
 # Contributing to Zed
 
-Thanks for your interest in contributing to onetothree Zed, the collaborative platform that is also a code editor!
+Thanks for your interest in contributing to Zed, the collaborative platform that is also a code editor!
 
 All activity in Zed forums is subject to our [Code of Conduct](https://zed.dev/docs/code-of-conduct). Additionally, contributors must sign our [Contributor License Agreement](https://zed.dev/cla) before their contributions can be merged.
 
