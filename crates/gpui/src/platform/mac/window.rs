@@ -356,6 +356,7 @@ struct MacWindowState {
     minimized: bool,
     maximized: bool,
     maximized_restore_bounds: Bounds<DevicePixels>,
+    fullscreen_restore_bounds: Bounds<DevicePixels>,
 }
 
 impl MacWindowState {
@@ -500,7 +501,7 @@ impl MacWindowState {
 
     fn restore_status(&self) -> WindowOpenStatus {
         if self.is_fullscreen() {
-            WindowOpenStatus::FullScreen(self.bounds())
+            WindowOpenStatus::FullScreen(self.fullscreen_restore_bounds)
         } else if self.is_maximized() {
             WindowOpenStatus::Maximized(self.maximized_restore_bounds)
         } else {
@@ -621,14 +622,19 @@ impl MacWindow {
             };
 
             let mut maximized = false;
+            let mut fullscreen = false;
             let mut maximized_restore_bounds = Bounds::default();
+            let mut fullscreen_restore_bounds = Bounds::default();
             match open_status {
                 WindowOpenStatus::Windowed(_) => {}
                 WindowOpenStatus::Maximized(_) => {
                     maximized = true;
                     maximized_restore_bounds = bounds;
                 }
-                WindowOpenStatus::FullScreen(_) => {}
+                WindowOpenStatus::FullScreen(bounds) => {
+                    fullscreen = true;
+                    fullscreen_restore_bounds = bounds;
+                }
             }
 
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
@@ -667,6 +673,7 @@ impl MacWindow {
                 minimized: false,
                 maximized,
                 maximized_restore_bounds,
+                fullscreen_restore_bounds,
             })));
 
             (*native_window).set_ivar(
@@ -762,6 +769,8 @@ impl MacWindow {
                     YES,
                     NO,
                 );
+            } else if fullscreen {
+                window.toggle_fullscreen();
             }
 
             window.0.lock().move_traffic_light();
@@ -1504,6 +1513,28 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     window_state.as_ref().lock().move_traffic_light();
+}
+
+extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
+    window_fullscreen_changed(this, true);
+}
+
+extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
+    window_fullscreen_changed(this, false);
+}
+
+fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    if is_fullscreen {
+        lock.fullscreen_restore_bounds = lock.bounds();
+        println!("F bounds: {:#?}", lock.bounds());
+    }
+    if let Some(mut callback) = lock.fullscreen_callback.take() {
+        drop(lock);
+        callback(is_fullscreen);
+        window_state.lock().fullscreen_callback = Some(callback);
+    }
 }
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
