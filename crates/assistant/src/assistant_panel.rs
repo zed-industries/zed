@@ -2064,7 +2064,7 @@ impl ConversationEditor {
             workspace: workspace.downgrade(),
             _subscriptions,
         };
-        this.update_active_buffer(workspace, cx);
+        cx.defer(|this, cx| this.update_active_buffer(workspace, cx));
         this.update_message_headers(cx);
         this
     }
