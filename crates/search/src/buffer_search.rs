@@ -1096,6 +1096,7 @@ mod tests {
     use editor::{DisplayPoint, Editor};
     use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
     use language::Buffer;
+    use project::Project;
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -1106,6 +1107,7 @@ mod tests {
             editor::init(cx);
 
             language::init(cx);
+            Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
