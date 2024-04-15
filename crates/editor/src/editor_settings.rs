@@ -15,6 +15,7 @@ pub struct EditorSettings {
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
     pub vertical_scroll_margin: f32,
+    pub scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub multi_cursor_modifier: MultiCursorModifier,
@@ -138,6 +139,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 3.
     pub vertical_scroll_margin: Option<f32>,
+    /// Scroll sensitivity multiplier. This multiplier is applied
+    /// to both the horizontal and vertical delta values while scrolling.
+    ///
+    /// Default: 1.0
+    pub scroll_sensitivity: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
     ///
     /// Default: false
@@ -178,7 +184,7 @@ pub struct ToolbarContent {
 }
 
 /// Scrollbar related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
     ///

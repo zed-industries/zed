@@ -171,6 +171,9 @@
   },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
+  // Scroll sensitivity multiplier. This multiplier is applied 
+  // to both the horizontal and vertical delta values while scrolling.
+  "scroll_sensitivity": 1.0,
   "relative_line_numbers": false,
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:

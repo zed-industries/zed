@@ -2817,6 +2817,10 @@ impl EditorElement {
             let hitbox = layout.hitbox.clone();
             let mut delta = ScrollDelta::default();
 
+            // Set a minimum scroll_sensitivity of 0.01 to make sure the user doesn't
+            // accidentally turn off their scrolling.
+            let scroll_sensitivity = EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
+
             move |event: &ScrollWheelEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                     delta = delta.coalesce(event.delta);
@@ -2841,8 +2845,11 @@ impl EditorElement {
                         };
 
                         let scroll_position = position_map.snapshot.scroll_position();
-                        let x = (scroll_position.x * max_glyph_width - delta.x) / max_glyph_width;
-                        let y = (scroll_position.y * line_height - delta.y) / line_height;
+                        let x = (scroll_position.x * max_glyph_width
+                            - (delta.x * scroll_sensitivity))
+                            / max_glyph_width;
+                        let y = (scroll_position.y * line_height - (delta.y * scroll_sensitivity))
+                            / line_height;
                         let scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                         editor.scroll(scroll_position, axis, cx);
