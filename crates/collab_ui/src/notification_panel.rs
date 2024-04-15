@@ -107,7 +107,7 @@ impl NotificationPanel {
 
             let view = cx.view().downgrade();
             let notification_list =
-                ListState::new(0, ListAlignment::Top, px(1000.), move |ix, cx| {
+                ListState::new(0, ListAlignment::Top, px(1000.), cx, move |ix, cx| {
                     view.upgrade()
                         .and_then(|view| {
                             view.update(cx, |this, cx| this.render_notification(ix, cx))
@@ -507,7 +507,8 @@ impl NotificationPanel {
                 old_range,
                 new_count,
             } => {
-                self.notification_list.splice(old_range.clone(), *new_count);
+                self.notification_list
+                    .splice(old_range.clone(), *new_count, cx);
                 cx.notify();
             }
         }
