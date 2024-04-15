@@ -15,7 +15,8 @@ pub mod search_history;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use client::{
-    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
+    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, RemoteProjectId,
+    TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
@@ -208,6 +209,7 @@ pub struct Project {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
+    remote_project_id: Option<client::RemoteProjectId>,
     search_history: SearchHistory,
 }
 
@@ -724,6 +726,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
+                remote_project_id: None,
                 search_history: Self::new_search_history(),
             }
         })
@@ -878,6 +881,10 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
+                remote_project_id: response
+                    .payload
+                    .remote_project_id
+                    .map(|remote_project_id| RemoteProjectId(remote_project_id)),
                 search_history: Self::new_search_history(),
             };
             this.set_role(role, cx);
@@ -1186,6 +1193,10 @@ impl Project {
 
     pub fn hosted_project_id(&self) -> Option<ProjectId> {
         self.hosted_project_id
+    }
+
+    pub fn remote_project_id(&self) -> Option<RemoteProjectId> {
+        self.remote_project_id
     }
 
     pub fn replica_id(&self) -> ReplicaId {

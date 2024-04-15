@@ -5,9 +5,9 @@ use gpui::{
     ScrollHandle, Task, View, ViewContext,
 };
 use rpc::proto::{self, CreateDevServerResponse, DevServerStatus};
-use ui::{prelude::*, Indicator, List, ListHeader, ModalContent, ModalHeader, Tooltip};
+use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
 use util::ResultExt;
-use workspace::ModalView;
+use workspace::{notifications::DetachAndPromptErr, AppState, ModalView};
 
 pub struct DevServerModal {
     mode: Mode,
@@ -268,7 +268,7 @@ impl DevServerModal {
             .child(
                 v_flex()
                     .w_full()
-                    .bg(cx.theme().colors().title_bar_background)
+                    .bg(cx.theme().colors().title_bar_background) // todo: this should be distinct
                     .border()
                     .border_color(cx.theme().colors().border_variant)
                     .rounded_md()
@@ -285,30 +285,38 @@ impl DevServerModal {
                         ),
                     ),
             )
-        // .child(div().ml_8().child(
-        //     Button::new(("add-project", dev_server_id.0), "Add Project").on_click(cx.listener(
-        //         move |this, _, cx| {
-        //             this.mode = Mode::CreateRemoteProject(CreateRemoteProject {
-        //                 dev_server_id,
-        //                 creating: None,
-        //                 remote_project: None,
-        //             });
-        //             cx.notify();
-        //         },
-        //     )),
-        // ))
     }
 
     fn render_remote_project(
         &mut self,
         project: &RemoteProject,
-        _: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        h_flex()
-            .gap_2()
-            .child(Icon::new(IconName::FileTree))
-            .child(Label::new(project.name.clone()))
-            .child(Label::new(format!("({})", project.path.clone())).color(Color::Muted))
+        let remote_project_id = project.id;
+        let project_id = project.project_id;
+        let is_online = project_id.is_some();
+
+        ListItem::new(("remote-project", remote_project_id.0))
+            .start_slot(Icon::new(IconName::FileTree).when(!is_online, |icon| icon.color(Color::Muted)))
+            .child(
+                h_flex()
+                    .child(Label::new(project.name.clone()).when(!is_online, |label| {
+                        label.color(Color::Muted)
+                    }))
+                    .child(Label::new(format!("({})", project.path.clone())).color(Color::Muted)),
+            )
+            .on_click(cx.listener(move |_, _, cx| {
+                if let Some(project_id) = project_id {
+                    if let Some(app_state) = AppState::global(cx).upgrade() {
+                        workspace::join_remote_project(project_id, app_state, cx)
+                            .detach_and_prompt_err("Could not join project", cx, |_, _| None)
+                    }
+                } else {
+                    cx.spawn(|_, mut cx| async move {
+                        cx.prompt(gpui::PromptLevel::Critical, "This project is offline", Some("The `zed` instance running on this dev server is not connected. You will have to restart it."), &["Ok"]).await.log_err();
+                    }).detach();
+                }
+            }))
     }
 
     fn render_create_dev_server(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {

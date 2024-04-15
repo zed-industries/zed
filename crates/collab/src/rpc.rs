@@ -1033,12 +1033,14 @@ impl Server {
                         .await?;
                 }
 
-                let (contacts, channels_for_user, channel_invites) = future::try_join3(
-                    self.app_state.db.get_contacts(user.id),
-                    self.app_state.db.get_channels_for_user(user.id),
-                    self.app_state.db.get_channel_invites_for_user(user.id),
-                )
-                .await?;
+                let (contacts, channels_for_user, channel_invites, remote_projects) =
+                    future::try_join4(
+                        self.app_state.db.get_contacts(user.id),
+                        self.app_state.db.get_channels_for_user(user.id),
+                        self.app_state.db.get_channel_invites_for_user(user.id),
+                        self.app_state.db.remote_projects_update(user.id),
+                    )
+                    .await?;
 
                 {
                     let mut pool = self.connection_pool.lock();
@@ -1059,6 +1061,7 @@ impl Server {
                         build_channels_update(channels_for_user, channel_invites),
                     )?;
                 }
+                send_remote_projects_update(user.id, remote_projects, session).await;
 
                 if let Some(incoming_call) =
                     self.app_state.db.incoming_call_for_user(user.id).await?
@@ -1932,6 +1935,9 @@ async fn share_project(
             RoomId::from_proto(request.room_id),
             session.connection_id,
             &request.worktrees,
+            request
+                .remote_project_id
+                .map(|id| RemoteProjectId::from_proto(id)),
         )
         .await?;
     response.send(proto::ShareProjectResponse {
@@ -2081,7 +2087,10 @@ fn join_project_internal(
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
         language_servers: project.language_servers.clone(),
-        role: project.role.into(), // todo
+        role: project.role.into(),
+        remote_project_id: project
+            .remote_project_id
+            .map(|remote_project_id| remote_project_id.0 as u64),
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -2368,6 +2377,11 @@ async fn shutdown_dev_server(
     for project_id in remote_projects.iter().filter_map(|p| p.project_id) {
         unshare_project_internal(ProjectId::from_proto(project_id), &session.0).await?;
     }
+
+    session
+        .connection_pool()
+        .await
+        .set_dev_server_offline(session.dev_server_id());
 
     let status = session
         .db()

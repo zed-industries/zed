@@ -12524,6 +12524,7 @@ dependencies = [
  "quick_action_bar",
  "recent_projects",
  "release_channel",
+ "remote_projects",
  "rope",
  "search",
  "serde",

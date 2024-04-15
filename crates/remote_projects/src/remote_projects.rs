@@ -1,21 +1,19 @@
 mod dev_server_modal;
 
 use anyhow::Result;
-use gpui::{AppContext, AsyncAppContext, Global, Model, ModelContext, Task};
+use dev_server_modal::DevServerModal;
+use gpui::{actions, AppContext, AsyncAppContext, Global, Model, ModelContext, Task};
 use rpc::{
     proto::{self, DevServerStatus},
     TypedEnvelope,
 };
 use std::{collections::HashMap, sync::Arc};
+use workspace::Workspace;
 
-use client::{Client, ProjectId};
+actions!(projects, [OpenRemote]);
+
+use client::{Client, DevServerId, ProjectId, RemoteProjectId};
 use ui::{Context, SharedString};
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct DevServerId(pub u64);
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct RemoteProjectId(pub u64);
 
 pub struct Store {
     remote_projects: HashMap<RemoteProjectId, RemoteProject>,
@@ -69,6 +67,13 @@ impl Global for GlobalStore {}
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let store = cx.new_model(|cx| Store::new(client, cx));
     cx.set_global(GlobalStore(store));
+
+    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+        workspace.register_action(|workspace, _: &OpenRemote, cx| {
+            workspace.toggle_modal(cx, |cx| DevServerModal::new(cx));
+        });
+    })
+    .detach();
 }
 
 impl Store {
@@ -88,11 +93,14 @@ impl Store {
     }
 
     pub fn remote_projects_for_server(&self, id: DevServerId) -> Vec<RemoteProject> {
-        self.remote_projects
+        let mut projects: Vec<RemoteProject> = self
+            .remote_projects
             .values()
             .filter(|project| project.dev_server_id == id)
             .cloned()
-            .collect()
+            .collect();
+        projects.sort_by_key(|p| (p.name.clone(), p.id));
+        projects
     }
 
     pub fn dev_servers(&self) -> Vec<DevServer> {
@@ -119,7 +127,7 @@ impl Store {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(&mut cx, |this, _| {
+        this.update(&mut cx, |this, cx| {
             this.dev_servers = envelope
                 .payload
                 .dev_servers
@@ -132,6 +140,8 @@ impl Store {
                 .into_iter()
                 .map(|project| (RemoteProjectId(project.id), project.into()))
                 .collect();
+
+            cx.notify();
         })?;
         Ok(())
     }

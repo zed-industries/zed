@@ -1,4 +1,5 @@
 use anyhow::Result;
+use client::RemoteProjectId;
 use client::{user::UserStore, Client, ClientSettings};
 use fs::Fs;
 use futures::Future;
@@ -7,7 +8,6 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use postage::stream::Stream;
 use project::Project;
-use remote_projects::RemoteProjectId;
 use rpc::{proto, TypedEnvelope};
 use settings::Settings;
 use std::{collections::HashMap, sync::Arc};
@@ -16,7 +16,7 @@ use util::{ResultExt, TryFutureExt};
 pub struct DevServer {
     client: Arc<Client>,
     app_state: AppState,
-    projects: HashMap<remote_projects::RemoteProjectId, Model<Project>>,
+    projects: HashMap<RemoteProjectId, Model<Project>>,
     _subscriptions: Vec<client::Subscription>,
     _maintain_connection: Task<Option<()>>,
 }

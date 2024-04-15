@@ -30,6 +30,7 @@ impl Database {
         room_id: RoomId,
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
+        remote_project_id: Option<RemoteProjectId>,
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
@@ -56,6 +57,30 @@ impl Database {
                 .can_edit_projects()
             {
                 return Err(anyhow!("guests cannot share projects"))?;
+            }
+
+            if let Some(remote_project_id) = remote_project_id {
+                let project = project::Entity::find()
+                    .filter(project::Column::RemoteProjectId.eq(Some(remote_project_id)))
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("no remote project"))?;
+
+                if project.room_id.is_some() {
+                    return Err(anyhow!("project already shared"))?;
+                };
+
+                let project = project::Entity::update(project::ActiveModel {
+                    room_id: ActiveValue::Set(Some(room_id)),
+                    ..project.into_active_model()
+                })
+                .exec(&*tx)
+                .await?;
+
+                // todo! check user is a project-collaborator
+
+                let room = self.get_room(room_id, &tx).await?;
+                return Ok((project.id, room));
             }
 
             let project = project::ActiveModel {
@@ -753,6 +778,7 @@ impl Database {
                     name: language_server.name,
                 })
                 .collect(),
+            remote_project_id: project.remote_project_id,
         };
         Ok((project, replica_id as ReplicaId))
     }
