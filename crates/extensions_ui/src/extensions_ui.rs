@@ -196,8 +196,7 @@ impl ExtensionsPage {
 
         extension_store
             .dev_extensions()
-            .find(|dev_extension| dev_extension.id.as_ref() == extension_id)
-            .is_some()
+            .any(|dev_extension| dev_extension.id.as_ref() == extension_id)
     }
 
     fn extension_status(extension_id: &str, cx: &mut ViewContext<Self>) -> ExtensionStatus {
