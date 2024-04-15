@@ -114,12 +114,22 @@ impl TaskTemplate {
         }
         .map(PathBuf::from)
         .or(cx.cwd.clone());
-        let shortened_label = substitute_all_template_variables_in_str(
+        let human_readable_label = substitute_all_template_variables_in_str(
             &self.label,
             &truncated_variables,
             &variable_names,
             &mut substituted_variables,
-        )?;
+        )?
+        .lines()
+        .fold(String::new(), |mut string, line| {
+            if string.is_empty() {
+                string.push_str(line);
+            } else {
+                string.push_str("\\n");
+                string.push_str(line);
+            }
+            string
+        });
         let full_label = substitute_all_template_variables_in_str(
             &self.label,
             &task_variables,
@@ -162,7 +172,7 @@ impl TaskTemplate {
                 id,
                 cwd,
                 full_label,
-                label: shortened_label,
+                label: human_readable_label,
                 command,
                 args,
                 env,
