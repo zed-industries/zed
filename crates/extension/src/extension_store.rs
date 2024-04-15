@@ -672,8 +672,6 @@ impl ExtensionStore {
             return;
         };
 
-        dbg!(&url);
-
         self.install_or_upgrade_extension_at_endpoint(
             extension_id,
             url,
