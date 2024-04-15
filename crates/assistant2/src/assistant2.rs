@@ -45,8 +45,11 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 }
 
 pub struct AssistantPanel {
+    #[allow(dead_code)]
     language_registry: Arc<LanguageRegistry>,
+    #[allow(dead_code)]
     project_index: Model<ProjectIndex>,
+    #[allow(dead_code)]
     fs: Arc<dyn Fs>,
     chat: View<AssistantChat>,
 }
@@ -576,6 +579,20 @@ enum CodebaseContext {
     Done(Result<Vec<CodebaseExcerpt>>),
 }
 
+impl CodebaseContext {
+    fn toggle_expanded(&mut self, element_id: ElementId, cx: &mut ViewContext<Self>) {
+        if let CodebaseContext::Done(Ok(excerpts)) = self {
+            if let Some(excerpt) = excerpts
+                .iter_mut()
+                .find(|excerpt| excerpt.element_id == element_id)
+            {
+                excerpt.expanded = !excerpt.expanded;
+                cx.notify();
+            }
+        }
+    }
+}
+
 impl Render for CodebaseContext {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         match self {
@@ -590,21 +607,20 @@ impl Render for CodebaseContext {
                     .v_flex()
                     .gap_2()
                     .children(excerpts.iter().map(|excerpt| {
-                        // let expanded = self.expanded_excerpts.contains(&excerpt.element_id);
-                        let expanded = false;
-                        let _element_id = excerpt.element_id.clone();
+                        let expanded = excerpt.expanded;
+                        let element_id = excerpt.element_id.clone();
 
-                        CollapsibleContainer::new(excerpt.element_id.clone(), expanded)
+                        CollapsibleContainer::new(element_id.clone(), expanded.clone())
                             .start_slot(
                                 h_flex()
                                     .gap_1()
                                     .child(Icon::new(IconName::File).color(Color::Muted))
                                     .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
                             )
-                            // TODO: Need a view
-                            // .on_click(cx.listener(move |this, _, _cx| {
-                            //     this.toggle_excerpt(element_id.clone());
-                            // }))
+                            .on_click(cx.listener(move |this, _, cx| {
+                                dbg!("clicked");
+                                this.toggle_expanded(element_id.clone(), cx);
+                            }))
                             .child(
                                 div()
                                     .p_2()
