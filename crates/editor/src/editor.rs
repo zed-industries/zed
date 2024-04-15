@@ -155,7 +155,7 @@ pub fn render_parsed_markdown(
     parsed: &language::ParsedMarkdown,
     editor_style: &EditorStyle,
     workspace: Option<WeakView<Workspace>>,
-    cx: &mut ViewContext<Editor>,
+    cx: &mut WindowContext,
 ) -> InteractiveText {
     let code_span_background_color = cx
         .theme()
@@ -463,7 +463,9 @@ pub struct Editor {
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
     use_autoclose: bool,
     auto_replace_emoji_shortcode: bool,
-    show_git_blame: bool,
+    show_git_blame_gutter: bool,
+    show_git_blame_inline: bool,
+    show_git_blame_inline_delay_task: Option<Task<()>>,
     blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
     custom_context_menu: Option<
@@ -480,7 +482,7 @@ pub struct Editor {
 pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
-    show_git_blame: bool,
+    render_git_blame_gutter: bool,
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
@@ -1498,7 +1500,9 @@ impl Editor {
             vim_replace_map: Default::default(),
             show_inline_completions: mode == EditorMode::Full,
             custom_context_menu: None,
-            show_git_blame: false,
+            show_git_blame_gutter: false,
+            show_git_blame_inline: false,
+            show_git_blame_inline_delay_task: None,
             blame: None,
             blame_subscription: None,
             _subscriptions: vec![
@@ -1530,6 +1534,10 @@ impl Editor {
         if mode == EditorMode::Full {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
+
+            if ProjectSettings::get_global(cx).git.inline_blame_enabled() {
+                this.start_git_blame_inline(false, cx);
+            }
         }
 
         this.report_editor_event("open", None, cx);
@@ -1646,10 +1654,7 @@ impl Editor {
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
-            show_git_blame: self
-                .blame
-                .as_ref()
-                .map_or(false, |blame| blame.read(cx).has_generated_entries()),
+            render_git_blame_gutter: self.render_git_blame_gutter(cx),
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
@@ -1915,6 +1920,7 @@ impl Editor {
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
             self.discard_inline_completion(cx);
+            self.start_inline_blame_timer(cx);
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
@@ -3792,6 +3798,22 @@ impl Editor {
             .log_err();
         }));
         None
+    }
+
+    fn start_inline_blame_timer(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(delay) = ProjectSettings::get_global(cx).git.inline_blame_delay() {
+            self.show_git_blame_inline = false;
+
+            self.show_git_blame_inline_delay_task = Some(cx.spawn(|this, mut cx| async move {
+                cx.background_executor().timer(delay).await;
+
+                this.update(&mut cx, |this, cx| {
+                    this.show_git_blame_inline = true;
+                    cx.notify();
+                })
+                .log_err();
+            }));
+        }
     }
 
     fn refresh_document_highlights(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
@@ -8843,38 +8865,81 @@ impl Editor {
     }
 
     pub fn toggle_git_blame(&mut self, _: &ToggleGitBlame, cx: &mut ViewContext<Self>) {
-        if self.show_git_blame {
-            self.blame_subscription.take();
-            self.blame.take();
-            self.show_git_blame = false
-        } else {
-            if let Err(error) = self.show_git_blame_internal(cx) {
-                log::error!("failed to toggle on 'git blame': {}", error);
-                return;
-            }
-            self.show_git_blame = true
+        self.show_git_blame_gutter = !self.show_git_blame_gutter;
+
+        if self.show_git_blame_gutter && !self.has_blame_entries(cx) {
+            self.start_git_blame(true, cx);
         }
 
         cx.notify();
     }
 
-    fn show_git_blame_internal(&mut self, cx: &mut ViewContext<Self>) -> Result<()> {
+    pub fn toggle_git_blame_inline(
+        &mut self,
+        _: &ToggleGitBlameInline,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.toggle_git_blame_inline_internal(true, cx);
+        cx.notify();
+    }
+
+    fn start_git_blame(&mut self, user_triggered: bool, cx: &mut ViewContext<Self>) {
         if let Some(project) = self.project.as_ref() {
             let Some(buffer) = self.buffer().read(cx).as_singleton() else {
-                anyhow::bail!("git blame not available in multi buffers")
+                return;
             };
 
             let project = project.clone();
-            let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
+            let blame = cx.new_model(|cx| GitBlame::new(buffer, project, user_triggered, cx));
             self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
             self.blame = Some(blame);
         }
+    }
 
-        Ok(())
+    fn toggle_git_blame_inline_internal(
+        &mut self,
+        user_triggered: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.show_git_blame_inline || self.show_git_blame_inline_delay_task.is_some() {
+            self.show_git_blame_inline = false;
+            self.show_git_blame_inline_delay_task.take();
+        } else {
+            self.start_git_blame_inline(user_triggered, cx);
+        }
+
+        cx.notify();
+    }
+
+    fn start_git_blame_inline(&mut self, user_triggered: bool, cx: &mut ViewContext<Self>) {
+        if let Some(inline_blame_settings) = ProjectSettings::get_global(cx).git.inline_blame {
+            if inline_blame_settings.enabled {
+                self.start_git_blame(user_triggered, cx);
+
+                if inline_blame_settings.delay_ms.is_some() {
+                    self.start_inline_blame_timer(cx);
+                } else {
+                    self.show_git_blame_inline = true
+                }
+            }
+        }
     }
 
     pub fn blame(&self) -> Option<&Model<GitBlame>> {
         self.blame.as_ref()
+    }
+
+    pub fn render_git_blame_gutter(&mut self, cx: &mut WindowContext) -> bool {
+        self.show_git_blame_gutter && self.has_blame_entries(cx)
+    }
+
+    pub fn render_git_blame_inline(&mut self, cx: &mut WindowContext) -> bool {
+        self.show_git_blame_inline && self.has_blame_entries(cx)
+    }
+
+    fn has_blame_entries(&self, cx: &mut WindowContext) -> bool {
+        self.blame()
+            .map_or(false, |blame| blame.read(cx).has_generated_entries())
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
@@ -9446,6 +9511,14 @@ impl Editor {
         let editor_settings = EditorSettings::get_global(cx);
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
+
+        if self.mode == EditorMode::Full {
+            let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();
+            if self.show_git_blame_inline != inline_blame_enabled {
+                self.toggle_git_blame_inline_internal(false, cx);
+            }
+        }
+
         cx.notify();
     }
 
@@ -10058,7 +10131,7 @@ impl EditorSnapshot {
         };
 
         let git_blame_entries_width = self
-            .show_git_blame
+            .render_git_blame_gutter
             .then_some(em_width * GIT_BLAME_GUTTER_WIDTH_CHARS);
 
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);

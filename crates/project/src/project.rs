@@ -7756,13 +7756,20 @@ impl Project {
                     .as_local()
                     .context("worktree was not local")?
                     .snapshot();
-                let (work_directory, repo) = worktree
-                    .repository_and_work_directory_for_path(&buffer_project_path.path)
-                    .context("failed to get repo for blamed buffer")?;
 
-                let repo_entry = worktree
-                    .get_local_repo(&repo)
-                    .context("failed to get repo for blamed buffer")?;
+                let (work_directory, repo) = match worktree
+                    .repository_and_work_directory_for_path(&buffer_project_path.path)
+                {
+                    Some(work_dir_repo) => work_dir_repo,
+                    None => anyhow::bail!(NoRepositoryError {}),
+                };
+
+                let repo_entry = match worktree.get_local_repo(&repo) {
+                    Some(repo_entry) => repo_entry,
+                    None => anyhow::bail!(NoRepositoryError {}),
+                };
+
+                let repo = repo_entry.repo().clone();
 
                 let relative_path = buffer_project_path
                     .path
@@ -7773,7 +7780,6 @@ impl Project {
                     Some(version) => buffer.rope_for_version(&version).clone(),
                     None => buffer.as_rope().clone(),
                 };
-                let repo = repo_entry.repo().clone();
 
                 anyhow::Ok((repo, relative_path, content))
             });
@@ -10782,3 +10788,14 @@ fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
         Some(hover)
     }
 }
+
+#[derive(Debug)]
+pub struct NoRepositoryError {}
+
+impl std::fmt::Display for NoRepositoryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no git repository for worktree found")
+    }
+}
+
+impl std::error::Error for NoRepositoryError {}

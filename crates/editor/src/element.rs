@@ -4,7 +4,10 @@ use crate::{
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
+    git::{
+        blame::{CommitDetails, GitBlame},
+        diff_hunk_to_display, DisplayDiffHunk,
+    },
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -21,13 +24,13 @@ use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AnyView, AvailableSpace, Bounds,
-    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementContext, ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
+    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
+    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementContext,
+    ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
-    StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
-    ViewContext, WindowContext,
+    ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
+    TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -49,11 +52,11 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
-use theme::{ActiveTheme, PlayerColor};
+use theme::{ActiveTheme, PlayerColor, ThemeSettings};
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
 use util::ResultExt;
-use workspace::item::Item;
+use workspace::{item::Item, Workspace};
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -303,6 +306,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
         register_action(view, cx, Editor::toggle_git_blame);
+        register_action(view, cx, Editor::toggle_git_blame_inline);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -1093,6 +1097,58 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn layout_inline_blame(
+        &self,
+        start_row: u32,
+        row: u32,
+        line_layouts: &[LineWithInvisibles],
+        em_width: Pixels,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        cx: &mut ElementContext,
+    ) -> Option<AnyElement> {
+        if !self
+            .editor
+            .update(cx, |editor, cx| editor.render_git_blame_inline(cx))
+        {
+            return None;
+        }
+
+        let blame = self.editor.read(cx).blame.clone()?;
+        let workspace = self
+            .editor
+            .read(cx)
+            .workspace
+            .as_ref()
+            .map(|(w, _)| w.clone());
+        let blame_entry = blame
+            .update(cx, |blame, cx| blame.blame_for_rows([Some(row)], cx).next())
+            .flatten()?;
+
+        let mut element =
+            render_inline_blame_entry(&blame, blame_entry, &self.style, workspace, cx);
+
+        let start_y =
+            content_origin.y + line_height * (row as f32 - scroll_pixel_position.y / line_height);
+
+        let start_x = {
+            let line_layout = &line_layouts[(row - start_row) as usize];
+            let line_width = line_layout.line.width;
+
+            // TODO: define the padding as a constant
+            content_origin.x + line_width + (em_width * 6.)
+        };
+
+        let absolute_offset = point(start_x, start_y);
+        let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+
+        element.layout(absolute_offset, available_space, cx);
+
+        Some(element)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn layout_blame_entries(
         &self,
         buffer_rows: impl Iterator<Item = Option<u32>>,
@@ -1103,10 +1159,14 @@ impl EditorElement {
         max_width: Option<Pixels>,
         cx: &mut ElementContext,
     ) -> Option<Vec<AnyElement>> {
-        let Some(blame) = self.editor.read(cx).blame.as_ref().cloned() else {
+        if !self
+            .editor
+            .update(cx, |editor, cx| editor.render_git_blame_gutter(cx))
+        {
             return None;
-        };
+        }
 
+        let blame = self.editor.read(cx).blame.clone()?;
         let blamed_rows: Vec<_> = blame.update(cx, |blame, cx| {
             blame.blame_for_rows(buffer_rows, cx).collect()
         });
@@ -1120,7 +1180,6 @@ impl EditorElement {
         let start_x = em_width * 1;
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
-        let text_style = &self.style.text;
 
         let shaped_lines = blamed_rows
             .into_iter()
@@ -1131,7 +1190,7 @@ impl EditorElement {
                         ix,
                         &blame,
                         blame_entry,
-                        text_style,
+                        &self.style,
                         &mut last_used_color,
                         self.editor.clone(),
                         cx,
@@ -2256,6 +2315,7 @@ impl EditorElement {
                 self.paint_lines(&invisible_display_ranges, layout, cx);
                 self.paint_redactions(layout, cx);
                 self.paint_cursors(layout, cx);
+                self.paint_inline_blame(layout, cx);
             },
         )
     }
@@ -2730,6 +2790,14 @@ impl EditorElement {
         })
     }
 
+    fn paint_inline_blame(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
+        if let Some(mut inline_blame) = layout.inline_blame.take() {
+            cx.paint_layer(layout.text_hitbox.bounds, |cx| {
+                inline_blame.paint(cx);
+            })
+        }
+    }
+
     fn paint_blocks(&mut self, layout: &mut EditorLayout, cx: &mut ElementContext) {
         for mut block in layout.blocks.drain(..) {
             block.element.paint(cx);
@@ -2894,11 +2962,192 @@ impl EditorElement {
     }
 }
 
+fn render_inline_blame_entry(
+    blame: &gpui::Model<GitBlame>,
+    blame_entry: BlameEntry,
+    style: &EditorStyle,
+    workspace: Option<WeakView<Workspace>>,
+    cx: &mut ElementContext<'_>,
+) -> AnyElement {
+    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
+
+    let author = blame_entry.author.as_deref().unwrap_or_default();
+    let text = format!("{}, {}", author, relative_timestamp);
+
+    let details = blame.read(cx).details_for_entry(&blame_entry);
+
+    let tooltip = cx.new_view(|_| BlameEntryTooltip::new(blame_entry, details, style, workspace));
+
+    h_flex()
+        .id("inline-blame")
+        .w_full()
+        .font(style.text.font().family)
+        .text_color(cx.theme().status().hint)
+        .line_height(style.text.line_height)
+        .child(Icon::new(IconName::FileGit).color(Color::Hint))
+        .child(text)
+        .gap_2()
+        .hoverable_tooltip(move |_| tooltip.clone().into())
+        .into_any()
+}
+
+fn blame_entry_timestamp(
+    blame_entry: &BlameEntry,
+    format: time_format::TimestampFormat,
+    cx: &WindowContext,
+) -> String {
+    match blame_entry.author_offset_date_time() {
+        Ok(timestamp) => time_format::format_localized_timestamp(
+            timestamp,
+            time::OffsetDateTime::now_utc(),
+            cx.local_timezone(),
+            format,
+        ),
+        Err(_) => "Error parsing date".to_string(),
+    }
+}
+
+fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) -> String {
+    blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative, cx)
+}
+
+fn blame_entry_absolute_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) -> String {
+    blame_entry_timestamp(
+        blame_entry,
+        time_format::TimestampFormat::MediumAbsolute,
+        cx,
+    )
+}
+
+struct BlameEntryTooltip {
+    blame_entry: BlameEntry,
+    details: Option<CommitDetails>,
+    style: EditorStyle,
+    workspace: Option<WeakView<Workspace>>,
+    scroll_handle: ScrollHandle,
+}
+
+impl BlameEntryTooltip {
+    fn new(
+        blame_entry: BlameEntry,
+        details: Option<CommitDetails>,
+        style: &EditorStyle,
+        workspace: Option<WeakView<Workspace>>,
+    ) -> Self {
+        Self {
+            style: style.clone(),
+            blame_entry,
+            details,
+            workspace,
+            scroll_handle: ScrollHandle::new(),
+        }
+    }
+}
+
+impl Render for BlameEntryTooltip {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let author = self
+            .blame_entry
+            .author
+            .clone()
+            .unwrap_or("<no name>".to_string());
+
+        let author_email = self.blame_entry.author_mail.clone();
+
+        let pretty_commit_id = format!("{}", self.blame_entry.sha);
+        let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+        let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry, cx);
+
+        let message = self
+            .details
+            .as_ref()
+            .map(|details| {
+                crate::render_parsed_markdown(
+                    "blame-message",
+                    &details.parsed_message,
+                    &self.style,
+                    self.workspace.clone(),
+                    cx,
+                )
+                .into_any()
+            })
+            .unwrap_or("<no commit message>".into_any());
+
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+        let message_max_height = cx.line_height() * 12 + (ui_font_size / 0.4);
+
+        tooltip_container(cx, move |this, cx| {
+            this.occlude()
+                .on_mouse_move(|_, cx| cx.stop_propagation())
+                .child(
+                    v_flex()
+                        .w(gpui::rems(30.))
+                        .gap_4()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(author)
+                                .when_some(author_email, |this, author_email| {
+                                    this.child(
+                                        div()
+                                            .text_color(cx.theme().colors().text_muted)
+                                            .child(author_email),
+                                    )
+                                })
+                                .pb_1()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border),
+                        )
+                        .child(
+                            div()
+                                .id("inline-blame-commit-message")
+                                .occlude()
+                                .child(message)
+                                .max_h(message_max_height)
+                                .overflow_y_scroll()
+                                .track_scroll(&self.scroll_handle),
+                        )
+                        .child(
+                            h_flex()
+                                .text_color(cx.theme().colors().text_muted)
+                                .w_full()
+                                .justify_between()
+                                .child(absolute_timestamp)
+                                .child(
+                                    Button::new("commit-sha-button", short_commit_id.clone())
+                                        .style(ButtonStyle::Transparent)
+                                        .color(Color::Muted)
+                                        .icon(IconName::FileGit)
+                                        .icon_color(Color::Muted)
+                                        .icon_position(IconPosition::Start)
+                                        .disabled(
+                                            self.details.as_ref().map_or(true, |details| {
+                                                details.permalink.is_none()
+                                            }),
+                                        )
+                                        .when_some(
+                                            self.details
+                                                .as_ref()
+                                                .and_then(|details| details.permalink.clone()),
+                                            |this, url| {
+                                                this.on_click(move |_, cx| {
+                                                    cx.stop_propagation();
+                                                    cx.open_url(url.as_str())
+                                                })
+                                            },
+                                        ),
+                                ),
+                        ),
+                )
+        })
+    }
+}
+
 fn render_blame_entry(
     ix: usize,
     blame: &gpui::Model<GitBlame>,
     blame_entry: BlameEntry,
-    text_style: &TextStyle,
+    style: &EditorStyle,
     last_used_color: &mut Option<(PlayerColor, Oid)>,
     editor: View<Editor>,
     cx: &mut ElementContext<'_>,
@@ -2918,29 +3167,26 @@ fn render_blame_entry(
     };
     last_used_color.replace((sha_color, blame_entry.sha));
 
-    let relative_timestamp = match blame_entry.author_offset_date_time() {
-        Ok(timestamp) => time_format::format_localized_timestamp(
-            timestamp,
-            time::OffsetDateTime::now_utc(),
-            cx.local_timezone(),
-            time_format::TimestampFormat::Relative,
-        ),
-        Err(_) => "Error parsing date".to_string(),
-    };
+    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
 
     let pretty_commit_id = format!("{}", blame_entry.sha);
-    let short_commit_id = pretty_commit_id.clone().chars().take(6).collect::<String>();
+    let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
 
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
     let name = util::truncate_and_trailoff(author_name, 20);
 
-    let permalink = blame.read(cx).permalink_for_entry(&blame_entry);
-    let commit_message = blame.read(cx).message_for_entry(&blame_entry);
+    let details = blame.read(cx).details_for_entry(&blame_entry);
+
+    let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
+
+    let tooltip = cx.new_view(|_| {
+        BlameEntryTooltip::new(blame_entry.clone(), details.clone(), style, workspace)
+    });
 
     h_flex()
         .w_full()
-        .font(text_style.font().family)
-        .line_height(text_style.line_height)
+        .font(style.text.font().family)
+        .line_height(style.text.line_height)
         .id(("blame", ix))
         .children([
             div()
@@ -2962,21 +3208,17 @@ fn render_blame_entry(
             }
         })
         .hover(|style| style.bg(cx.theme().colors().element_hover))
-        .when_some(permalink, |this, url| {
-            let url = url.clone();
-            this.cursor_pointer().on_click(move |_, cx| {
-                cx.stop_propagation();
-                cx.open_url(url.as_str())
-            })
-        })
-        .hoverable_tooltip(move |cx| {
-            BlameEntryTooltip::new(
-                sha_color.cursor,
-                commit_message.clone(),
-                blame_entry.clone(),
-                cx,
-            )
-        })
+        .when_some(
+            details.and_then(|details| details.permalink),
+            |this, url| {
+                let url = url.clone();
+                this.cursor_pointer().on_click(move |_, cx| {
+                    cx.stop_propagation();
+                    cx.open_url(url.as_str())
+                })
+            },
+        )
+        .hoverable_tooltip(move |_| tooltip.clone().into())
         .into_any()
 }
 
@@ -2997,84 +3239,6 @@ fn deploy_blame_entry_context_menu(
         editor.mouse_context_menu = Some(MouseContextMenu::new(position, context_menu, cx));
         cx.notify();
     });
-}
-
-struct BlameEntryTooltip {
-    color: Hsla,
-    commit_message: Option<String>,
-    blame_entry: BlameEntry,
-}
-
-impl BlameEntryTooltip {
-    fn new(
-        color: Hsla,
-        commit_message: Option<String>,
-        blame_entry: BlameEntry,
-        cx: &mut WindowContext,
-    ) -> AnyView {
-        cx.new_view(|_cx| Self {
-            color,
-            commit_message,
-            blame_entry,
-        })
-        .into()
-    }
-}
-
-impl Render for BlameEntryTooltip {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let author = self
-            .blame_entry
-            .author
-            .clone()
-            .unwrap_or("<no name>".to_string());
-        let author_email = self.blame_entry.author_mail.clone().unwrap_or_default();
-        let absolute_timestamp = match self.blame_entry.author_offset_date_time() {
-            Ok(timestamp) => time_format::format_localized_timestamp(
-                timestamp,
-                time::OffsetDateTime::now_utc(),
-                cx.local_timezone(),
-                time_format::TimestampFormat::Absolute,
-            ),
-            Err(_) => "Error parsing date".to_string(),
-        };
-
-        let message = match &self.commit_message {
-            Some(message) => util::truncate_lines_and_trailoff(message, 15),
-            None => self.blame_entry.summary.clone().unwrap_or_default(),
-        };
-
-        let pretty_commit_id = format!("{}", self.blame_entry.sha);
-
-        tooltip_container(cx, move |this, cx| {
-            this.occlude()
-                .on_mouse_move(|_, cx| cx.stop_propagation())
-                .child(
-                    v_flex()
-                        .child(
-                            h_flex()
-                                .child(
-                                    div()
-                                        .text_color(cx.theme().colors().text_muted)
-                                        .child("Commit")
-                                        .pr_2(),
-                                )
-                                .child(
-                                    div().text_color(self.color).child(pretty_commit_id.clone()),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .child(format!(
-                                    "{} {} - {}",
-                                    author, author_email, absolute_timestamp
-                                ))
-                                .text_color(cx.theme().colors().text_muted),
-                        )
-                        .child(div().child(message)),
-                )
-        })
-    }
 }
 
 #[derive(Debug)]
@@ -3205,13 +3369,9 @@ impl LineWithInvisibles {
         let line_y =
             line_height * (row as f32 - layout.position_map.scroll_pixel_position.y / line_height);
 
-        self.line
-            .paint(
-                content_origin + gpui::point(-layout.position_map.scroll_pixel_position.x, line_y),
-                line_height,
-                cx,
-            )
-            .log_err();
+        let line_origin =
+            content_origin + gpui::point(-layout.position_map.scroll_pixel_position.x, line_y);
+        self.line.paint(line_origin, line_height, cx).log_err();
 
         self.draw_invisibles(
             &selection_ranges,
@@ -3490,16 +3650,6 @@ impl Element for EditorElement {
 
                 let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
 
-                let blamed_display_rows = self.layout_blame_entries(
-                    buffer_rows,
-                    em_width,
-                    scroll_position,
-                    line_height,
-                    &gutter_hitbox,
-                    gutter_dimensions.git_blame_entries_width,
-                    cx,
-                );
-
                 let mut max_visible_line_width = Pixels::ZERO;
                 let line_layouts =
                     self.layout_lines(start_row..end_row, &line_numbers, &snapshot, cx);
@@ -3525,6 +3675,37 @@ impl Element for EditorElement {
                     gutter_dimensions.width + gutter_dimensions.margin,
                     line_height,
                     &line_layouts,
+                    cx,
+                );
+
+                let scroll_pixel_position = point(
+                    scroll_position.x * em_width,
+                    scroll_position.y * line_height,
+                );
+
+                let mut inline_blame = None;
+                if let Some(newest_selection_head) = newest_selection_head {
+                    if (start_row..end_row).contains(&newest_selection_head.row()) {
+                        inline_blame = self.layout_inline_blame(
+                            start_row,
+                            newest_selection_head.row(),
+                            &line_layouts,
+                            em_width,
+                            content_origin,
+                            scroll_pixel_position,
+                            line_height,
+                            cx,
+                        );
+                    }
+                }
+
+                let blamed_display_rows = self.layout_blame_entries(
+                    buffer_rows,
+                    em_width,
+                    scroll_position,
+                    line_height,
+                    &gutter_hitbox,
+                    gutter_dimensions.git_blame_entries_width,
                     cx,
                 );
 
@@ -3554,11 +3735,6 @@ impl Element for EditorElement {
                         scroll_position = snapshot.scroll_position();
                     }
                 });
-
-                let scroll_pixel_position = point(
-                    scroll_position.x * em_width,
-                    scroll_position.y * line_height,
-                );
 
                 cx.with_element_id(Some("blocks"), |cx| {
                     self.layout_blocks(
@@ -3728,6 +3904,7 @@ impl Element for EditorElement {
                     line_numbers,
                     display_hunks,
                     blamed_display_rows,
+                    inline_blame,
                     folds,
                     blocks,
                     cursors,
@@ -3815,6 +3992,7 @@ pub struct EditorLayout {
     line_numbers: Vec<Option<ShapedLine>>,
     display_hunks: Vec<DisplayDiffHunk>,
     blamed_display_rows: Option<Vec<AnyElement>>,
+    inline_blame: Option<AnyElement>,
     folds: Vec<FoldLayout>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,

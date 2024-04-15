@@ -8,7 +8,7 @@ use gpui::{px, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Underl
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 /// Parsed Markdown content.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ParsedMarkdown {
     /// The Markdown text.
     pub text: String,

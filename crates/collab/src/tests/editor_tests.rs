@@ -2100,13 +2100,11 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
 
         blame.update(cx, |blame, _| {
             for (idx, entry) in entries.iter().flatten().enumerate() {
+                let details = blame.details_for_entry(entry).unwrap();
+                assert_eq!(details.message, format!("message for idx-{}", idx));
                 assert_eq!(
-                    blame.permalink_for_entry(entry).unwrap().to_string(),
+                    details.permalink.unwrap().to_string(),
                     format!("http://example.com/codehost/idx-{}", idx)
-                );
-                assert_eq!(
-                    blame.message_for_entry(entry).unwrap(),
-                    format!("message for idx-{}", idx)
                 );
             }
         });
