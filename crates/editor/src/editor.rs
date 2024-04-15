@@ -7305,7 +7305,7 @@ impl Editor {
 
         if selected_larger_node {
             stack.push(old_selections);
-            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            self.change_selections(None, cx, |s| {
                 s.select(new_selections);
             });
         }
@@ -7319,7 +7319,7 @@ impl Editor {
     ) {
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         if let Some(selections) = stack.pop() {
-            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            self.change_selections(None, cx, |s| {
                 s.select(selections.to_vec());
             });
         }
