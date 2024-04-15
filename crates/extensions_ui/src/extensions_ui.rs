@@ -421,7 +421,13 @@ impl ExtensionsPage {
         let extension_id = extension.id.clone();
         let (install_or_uninstall_button, upgrade_button) =
             self.buttons_for_entry(extension, &status, cx);
+        let version = extension.manifest.version.clone();
         let repository_url = extension.manifest.repository.clone();
+
+        let installed_version = match status {
+            ExtensionStatus::Installed(installed_version) => Some(installed_version),
+            _ => None,
+        };
 
         ExtensionCard::new()
             .child(
@@ -435,9 +441,14 @@ impl ExtensionsPage {
                                 Headline::new(extension.manifest.name.clone())
                                     .size(HeadlineSize::Medium),
                             )
-                            .child(
-                                Headline::new(format!("v{}", extension.manifest.version))
-                                    .size(HeadlineSize::XSmall),
+                            .child(Headline::new(format!("v{version}")).size(HeadlineSize::XSmall))
+                            .children(
+                                installed_version
+                                    .filter(|installed_version| *installed_version != version)
+                                    .map(|installed_version| {
+                                        Headline::new(format!("(v{installed_version} installed)",))
+                                            .size(HeadlineSize::XSmall)
+                                    }),
                             ),
                     )
                     .child(
