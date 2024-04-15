@@ -39,6 +39,15 @@ pub struct TaskTemplate {
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     #[serde(default)]
     pub allow_concurrent_runs: bool,
+    /// Task templates might produce different tasks with similar properties, e.g. equal labels.
+    /// Certain places in Zed like the task spawn modal, prefer already resolved tasks in such cases,
+    /// to allow rerunning previous tasks with previous contexts later.
+    ///
+    /// This property changes the behavior in such situations, ignoring the already resolved tasks instead.
+    /// It's useful for tasks where labels are constant, but the actual command always needs the freshmost context,
+    /// for instance, "run this selection" tasks.
+    #[serde(default)]
+    pub ignore_previously_resolved: bool,
     /// What to do with the terminal pane and tab, after the command was started:
     /// * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
     /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
