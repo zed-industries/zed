@@ -334,7 +334,6 @@ tree-sitter-html = "0.19.0"
 tree-sitter-jsdoc = { git = "https://github.com/tree-sitter/tree-sitter-jsdoc", ref = "6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55" }
 tree-sitter-json = { git = "https://github.com/tree-sitter/tree-sitter-json", rev = "40a81c01a40ac48744e0c8ccabbaba1920441199" }
 tree-sitter-markdown = { git = "https://github.com/MDeiml/tree-sitter-markdown", rev = "330ecab87a3e3a7211ac69bbadc19eabecdb1cca" }
-tree-sitter-nu = { git = "https://github.com/nushell/tree-sitter-nu", rev = "7dd29f9616822e5fc259f5b4ae6c4ded9a71a132" }
 tree-sitter-proto = { git = "https://github.com/rewinfrey/tree-sitter-proto", rev = "36d54f288aee112f13a67b550ad32634d0c2cb52" }
 tree-sitter-python = "0.20.2"
 tree-sitter-regex = "0.20.0"

@@ -22,7 +22,6 @@ mod deno;
 mod elixir;
 mod go;
 mod json;
-mod nu;
 mod python;
 mod ruby;
 mod rust;
@@ -69,7 +68,6 @@ pub fn init(
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("markdown", tree_sitter_markdown::language()),
-        ("nu", tree_sitter_nu::language()),
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("regex", tree_sitter_regex::language()),
@@ -272,7 +270,6 @@ pub fn init(
         "yaml",
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
-    language!("nu", vec![Arc::new(nu::NuLanguageServer {})]);
     language!("proto");
 
     languages.register_secondary_lsp_adapter(
