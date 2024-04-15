@@ -257,7 +257,7 @@ env_logger = "0.9"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-git2 = { version = "0.15", default-features = false }
+git2 = { version = "0.18", default-features = false }
 globset = "0.4"
 heed = { git = "https://github.com/meilisearch/heed", rev = "036ac23f73a021894974b9adc815bc95b3e0482a", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
