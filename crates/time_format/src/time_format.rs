@@ -32,7 +32,9 @@ pub fn format_localized_timestamp(
         TimestampFormat::EnhancedAbsolute => {
             format_absolute_timestamp(timestamp_local, reference_local, true)
         }
-        TimestampFormat::MediumAbsolute => format_absolute_timestamp_medium(timestamp_local),
+        TimestampFormat::MediumAbsolute => {
+            format_absolute_timestamp_medium(timestamp_local, reference_local)
+        }
         TimestampFormat::Relative => format_relative_time(timestamp_local, reference_local)
             .unwrap_or_else(|| format_relative_date(timestamp_local, reference_local)),
     }
@@ -75,7 +77,10 @@ fn format_absolute_timestamp(
     }
 }
 
-fn format_absolute_timestamp_medium(timestamp: OffsetDateTime) -> String {
+fn format_absolute_timestamp_medium(
+    timestamp: OffsetDateTime,
+    #[allow(unused_variables)] reference: OffsetDateTime,
+) -> String {
     #[cfg(target_os = "macos")]
     {
         macos::format_date_medium(&timestamp)
