@@ -44,8 +44,6 @@ use workspace::{
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
 
-const CONTEXT_LINE_COUNT: u32 = 1;
-
 pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
     cx.observe_new_views(ProjectDiagnosticsEditor::register)
@@ -63,6 +61,7 @@ struct ProjectDiagnosticsEditor {
     paths_to_update: HashMap<LanguageServerId, HashSet<ProjectPath>>,
     current_diagnostics: HashMap<LanguageServerId, HashSet<ProjectPath>>,
     include_warnings: bool,
+    context: u32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -116,7 +115,8 @@ impl ProjectDiagnosticsEditor {
         workspace.register_action(Self::deploy);
     }
 
-    fn new(
+    fn new_with_context(
+        context: u32,
         project_handle: Model<Project>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
@@ -181,6 +181,7 @@ impl ProjectDiagnosticsEditor {
         let summary = project.diagnostic_summary(false, cx);
         let mut this = Self {
             project: project_handle,
+            context,
             summary,
             workspace,
             excerpts,
@@ -198,6 +199,19 @@ impl ProjectDiagnosticsEditor {
         };
         this.update_excerpts(None, cx);
         this
+    }
+
+    fn new(
+        project_handle: Model<Project>,
+        workspace: WeakView<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self::new_with_context(
+            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+            project_handle,
+            workspace,
+            cx,
+        )
     }
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
@@ -430,18 +444,16 @@ impl ProjectDiagnosticsEditor {
                         let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
                         if let Some((range, start_ix)) = &mut pending_range {
                             if let Some(entry) = resolved_entry.as_ref() {
-                                if entry.range.start.row
-                                    <= range.end.row + 1 + CONTEXT_LINE_COUNT * 2
-                                {
+                                if entry.range.start.row <= range.end.row + 1 + self.context * 2 {
                                     range.end = range.end.max(entry.range.end);
                                     continue;
                                 }
                             }
 
                             let excerpt_start =
-                                Point::new(range.start.row.saturating_sub(CONTEXT_LINE_COUNT), 0);
+                                Point::new(range.start.row.saturating_sub(self.context), 0);
                             let excerpt_end = snapshot.clip_point(
-                                Point::new(range.end.row + CONTEXT_LINE_COUNT, u32::MAX),
+                                Point::new(range.end.row + self.context, u32::MAX),
                                 Bias::Left,
                             );
                             let excerpt_id = excerpts
@@ -1030,7 +1042,12 @@ mod tests {
 
         // Open the project diagnostics view while there are already diagnostics.
         let view = window.build_view(cx, |cx| {
-            ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)
+            ProjectDiagnosticsEditor::new_with_context(
+                1,
+                project.clone(),
+                workspace.downgrade(),
+                cx,
+            )
         });
 
         view.next_notification(cx).await;
@@ -1340,7 +1357,12 @@ mod tests {
         let workspace = window.root(cx).unwrap();
 
         let view = window.build_view(cx, |cx| {
-            ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)
+            ProjectDiagnosticsEditor::new_with_context(
+                1,
+                project.clone(),
+                workspace.downgrade(),
+                cx,
+            )
         });
 
         // Two language servers start updating diagnostics
