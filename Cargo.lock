@@ -520,7 +520,7 @@ dependencies = [
  "polling 3.3.2",
  "rustix 0.38.32",
  "slab",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "windows-sys 0.52.0",
 ]
 
@@ -861,7 +861,7 @@ dependencies = [
  "ring 0.17.7",
  "time",
  "tokio",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "zeroize",
 ]
 
@@ -897,7 +897,7 @@ dependencies = [
  "http-body",
  "percent-encoding",
  "pin-project-lite",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "uuid",
 ]
 
@@ -926,7 +926,7 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "regex-lite",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "url",
 ]
 
@@ -949,7 +949,7 @@ dependencies = [
  "http 0.2.9",
  "once_cell",
  "regex-lite",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -971,7 +971,7 @@ dependencies = [
  "http 0.2.9",
  "once_cell",
  "regex-lite",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -994,7 +994,7 @@ dependencies = [
  "http 0.2.9",
  "once_cell",
  "regex-lite",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -1022,7 +1022,7 @@ dependencies = [
  "sha2 0.10.7",
  "subtle",
  "time",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "zeroize",
 ]
 
@@ -1055,7 +1055,7 @@ dependencies = [
  "pin-project-lite",
  "sha1",
  "sha2 0.10.7",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -1087,7 +1087,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "pin-utils",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -1131,7 +1131,7 @@ dependencies = [
  "pin-utils",
  "rustls",
  "tokio",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -1146,7 +1146,7 @@ dependencies = [
  "http 0.2.9",
  "pin-project-lite",
  "tokio",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "zeroize",
 ]
 
@@ -1194,7 +1194,7 @@ dependencies = [
  "aws-smithy-types",
  "http 0.2.9",
  "rustc_version",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -1517,7 +1517,7 @@ dependencies = [
  "futures-io",
  "futures-lite 2.2.0",
  "piper",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -2275,7 +2275,7 @@ dependencies = [
  "toml 0.8.10",
  "tower",
  "tower-http 0.4.4",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "tracing-subscriber",
  "unindent",
  "util",
@@ -4573,7 +4573,7 @@ dependencies = [
  "slab",
  "tokio",
  "tokio-util",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -4884,7 +4884,7 @@ dependencies = [
  "socket2 0.4.9",
  "tokio",
  "tower-service",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "want",
 ]
 
@@ -5199,7 +5199,7 @@ dependencies = [
  "polling 2.8.0",
  "slab",
  "sluice",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "tracing-futures",
  "url",
  "waker-fn",
@@ -7165,7 +7165,7 @@ dependencies = [
  "concurrent-queue",
  "pin-project-lite",
  "rustix 0.38.32",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "windows-sys 0.52.0",
 ]
 
@@ -8069,7 +8069,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strum",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "util",
  "zstd",
 ]
@@ -8436,7 +8436,7 @@ dependencies = [
  "strum",
  "thiserror",
  "time",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -9210,7 +9210,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-stream",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "url",
  "uuid",
  "webpki-roots",
@@ -9297,7 +9297,7 @@ dependencies = [
  "stringprep",
  "thiserror",
  "time",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "uuid",
  "whoami",
 ]
@@ -9342,7 +9342,7 @@ dependencies = [
  "stringprep",
  "thiserror",
  "time",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "uuid",
  "whoami",
 ]
@@ -9367,7 +9367,7 @@ dependencies = [
  "serde",
  "sqlx-core",
  "time",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -10200,7 +10200,7 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "tokio",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -10295,7 +10295,7 @@ dependencies = [
  "tokio",
  "tower-layer",
  "tower-service",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -10332,7 +10332,7 @@ dependencies = [
  "pin-project-lite",
  "tower-layer",
  "tower-service",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
@@ -10356,16 +10356,7 @@ dependencies = [
  "log",
  "pin-project-lite",
  "tracing-attributes",
- "tracing-core 0.1.32 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "tracing"
-version = "0.1.40"
-source = "git+https://github.com/tokio-rs/tracing?rev=tracing-subscriber-0.3.18#8b7a1dde69797b33ecfa20da71e72eb5e61f0b25"
-dependencies = [
- "pin-project-lite",
- "tracing-core 0.1.32 (git+https://github.com/tokio-rs/tracing?rev=tracing-subscriber-0.3.18)",
+ "tracing-core",
 ]
 
 [[package]]
@@ -10386,14 +10377,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54"
 dependencies = [
  "once_cell",
-]
-
-[[package]]
-name = "tracing-core"
-version = "0.1.32"
-source = "git+https://github.com/tokio-rs/tracing?rev=tracing-subscriber-0.3.18#8b7a1dde69797b33ecfa20da71e72eb5e61f0b25"
-dependencies = [
- "once_cell",
  "valuable",
 ]
 
@@ -10404,32 +10387,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97d095ae15e245a057c8e8451bab9b3ee1e1f68e9ba2b4fbc18d0ac5237835f2"
 dependencies = [
  "pin-project",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
 ]
 
 [[package]]
 name = "tracing-log"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing?rev=tracing-subscriber-0.3.18#8b7a1dde69797b33ecfa20da71e72eb5e61f0b25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
 dependencies = [
  "log",
  "once_cell",
- "tracing-core 0.1.32 (git+https://github.com/tokio-rs/tracing?rev=tracing-subscriber-0.3.18)",
+ "tracing-core",
 ]
 
 [[package]]
 name = "tracing-serde"
 version = "0.1.3"
-source = "git+https://github.com/tokio-rs/tracing?rev=tracing-subscriber-0.3.18#8b7a1dde69797b33ecfa20da71e72eb5e61f0b25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc6b213177105856957181934e4920de57730fc69bf42c37ee5bb664d406d9e1"
 dependencies = [
  "serde",
- "tracing-core 0.1.32 (git+https://github.com/tokio-rs/tracing?rev=tracing-subscriber-0.3.18)",
+ "tracing-core",
 ]
 
 [[package]]
 name = "tracing-subscriber"
 version = "0.3.18"
-source = "git+https://github.com/tokio-rs/tracing?rev=tracing-subscriber-0.3.18#8b7a1dde69797b33ecfa20da71e72eb5e61f0b25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad0f048c97dbd9faa9b7df56362b8ebcaa52adb06b498c050d2f4e32f90a7a8b"
 dependencies = [
  "matchers",
  "nu-ansi-term",
@@ -10440,8 +10426,8 @@ dependencies = [
  "sharded-slab",
  "smallvec",
  "thread_local",
- "tracing 0.1.40 (git+https://github.com/tokio-rs/tracing?rev=tracing-subscriber-0.3.18)",
- "tracing-core 0.1.32 (git+https://github.com/tokio-rs/tracing?rev=tracing-subscriber-0.3.18)",
+ "tracing",
+ "tracing-core",
  "tracing-log",
  "tracing-serde",
 ]
@@ -11295,7 +11281,7 @@ dependencies = [
  "anyhow",
  "log",
  "once_cell",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "wasmtime",
  "wasmtime-c-api-macros",
 ]
@@ -11507,7 +11493,7 @@ dependencies = [
  "system-interface",
  "thiserror",
  "tokio",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "url",
  "wasmtime",
  "wiggle",
@@ -11744,7 +11730,7 @@ dependencies = [
  "async-trait",
  "bitflags 2.4.2",
  "thiserror",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "wasmtime",
  "wiggle-macro",
 ]
@@ -12500,7 +12486,7 @@ dependencies = [
  "serde_repr",
  "sha1",
  "static_assertions",
- "tracing 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
  "uds_windows",
  "windows-sys 0.52.0",
  "xdg-home",
