@@ -17,7 +17,7 @@ struct ContainerStyles {
 }
 
 #[derive(IntoElement)]
-struct CollapsibleContainer {
+pub struct CollapsibleContainer {
     id: ElementId,
     base: ButtonLike,
     toggle: bool,
