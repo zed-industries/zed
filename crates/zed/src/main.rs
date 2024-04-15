@@ -235,6 +235,7 @@ fn init_ui() {
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
 
+        client::init_settings(cx);
         let client = Client::production(cx);
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
