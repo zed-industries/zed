@@ -1,7 +1,7 @@
-use crate::{DevServer, DevServerId, RemoteProjectId};
+use crate::{DevServer, DevServerId, RemoteProject, RemoteProjectId};
 use editor::Editor;
 use gpui::{
-    AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     ScrollHandle, Task, View, ViewContext,
 };
 use rpc::proto::{self, CreateDevServerResponse, DevServerStatus};
@@ -13,6 +13,7 @@ pub struct DevServerModal {
     mode: Mode,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
+    remote_project_store: Model<crate::Store>,
     remote_project_name_editor: View<Editor>,
     remote_project_path_editor: View<Editor>,
     dev_server_name_editor: View<Editor>,
@@ -61,6 +62,7 @@ impl DevServerModal {
             mode: Mode::Default,
             focus_handle,
             scroll_handle: ScrollHandle::new(),
+            remote_project_store,
             remote_project_name_editor: name_editor,
             remote_project_path_editor: path_editor,
             dev_server_name_editor,
@@ -93,7 +95,7 @@ impl DevServerModal {
             return;
         }
 
-        let create = crate::Store::global(cx).update(cx, |store, cx| {
+        let create = self.remote_project_store.update(cx, |store, cx| {
             store.create_remote_project(dev_server_id, name, path, cx)
         });
 
@@ -138,7 +140,8 @@ impl DevServerModal {
             return;
         }
 
-        let dev_server = crate::Store::global(cx)
+        let dev_server = self
+            .remote_project_store
             .update(cx, |store, cx| store.create_dev_server(name.clone(), cx));
 
         let task = cx.spawn(|this, mut cx| async move {
@@ -274,9 +277,11 @@ impl DevServerModal {
                     .px_3()
                     .child(
                         List::new().empty_message("No projects.").children(
-                            crate::Store::global(cx)
+                            self.remote_project_store
                                 .read(cx)
-                                .remote_projects_for_server(dev_server.id),
+                                .remote_projects_for_server(dev_server.id)
+                                .iter()
+                                .map(|p| self.render_remote_project(p, cx)),
                         ),
                     ),
             )
@@ -361,11 +366,11 @@ impl DevServerModal {
                     }),
             )
             .when_some(dev_server.clone(), |div, dev_server| {
-                let channel_store = self.channel_store.read(cx);
-                let status = channel_store
-                    .find_dev_server_by_id(DevServerId(dev_server.dev_server_id))
-                    .map(|server| server.status)
-                    .unwrap_or(DevServerStatus::Offline);
+                let status = self
+                    .remote_project_store
+                    .read(cx)
+                    .dev_server_status(DevServerId(dev_server.dev_server_id));
+
                 let instructions = SharedString::from(format!(
                     "zed --dev-server-token {}",
                     dev_server.access_token
@@ -405,8 +410,7 @@ impl DevServerModal {
     }
 
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let channel_store = self.channel_store.read(cx);
-        let dev_servers = channel_store.dev_servers_for_id(self.channel_id);
+        let dev_servers = self.remote_project_store.read(cx).dev_servers();
         // let dev_servers = Vec::new();
 
         v_flex()
@@ -457,11 +461,17 @@ impl DevServerModal {
         else {
             unreachable!()
         };
-        let channel_store = self.channel_store.read(cx);
-        let (dev_server_name, dev_server_status) = channel_store
-            .find_dev_server_by_id(*dev_server_id)
-            .map(|server| (server.name.clone(), server.status))
+
+        let dev_server = self
+            .remote_project_store
+            .read(cx)
+            .dev_server(*dev_server_id)
+            .cloned();
+
+        let (dev_server_name, dev_server_status) = dev_server
+            .map(|server| (server.name, server.status))
             .unwrap_or((SharedString::from(""), DevServerStatus::Offline));
+
         v_flex()
             .px_1()
             .pt_0p5()
@@ -543,8 +553,9 @@ impl DevServerModal {
                     }),
             )
             .when_some(remote_project.clone(), |div, remote_project| {
-                let channel_store = self.channel_store.read(cx);
-                let status = channel_store
+                let status = self
+                    .remote_project_store
+                    .read(cx)
                     .find_remote_project_by_id(RemoteProjectId(remote_project.id))
                     .map(|project| {
                         if project.project_id.is_some() {

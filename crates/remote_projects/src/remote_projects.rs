@@ -1,7 +1,7 @@
 mod dev_server_modal;
 
 use anyhow::Result;
-use gpui::{AppContext, Global, Model, ModelContext, Task};
+use gpui::{AppContext, AsyncAppContext, Global, Model, ModelContext, Task};
 use rpc::{
     proto::{self, DevServerStatus},
     TypedEnvelope,
@@ -66,7 +66,7 @@ struct GlobalStore(Model<Store>);
 
 impl Global for GlobalStore {}
 
-pub fn init(client: Arc<Client>, cx: &AppContext) {
+pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let store = cx.new_model(|cx| Store::new(client, cx));
     cx.set_global(GlobalStore(store));
 }
@@ -87,26 +87,53 @@ impl Store {
         }
     }
 
-    fn handle_remote_projects_update(
+    pub fn remote_projects_for_server(&self, id: DevServerId) -> Vec<RemoteProject> {
+        self.remote_projects
+            .values()
+            .filter(|project| project.dev_server_id == id)
+            .cloned()
+            .collect()
+    }
+
+    pub fn dev_servers(&self) -> Vec<DevServer> {
+        self.dev_servers.values().cloned().collect()
+    }
+
+    pub fn dev_server(&self, id: DevServerId) -> Option<&DevServer> {
+        self.dev_servers.get(&id)
+    }
+
+    pub fn dev_server_status(&self, id: DevServerId) -> DevServerStatus {
+        self.dev_server(id)
+            .map(|server| server.status)
+            .unwrap_or(DevServerStatus::Offline)
+    }
+
+    pub fn find_remote_project_by_id(&self, id: RemoteProjectId) -> Option<&RemoteProject> {
+        self.remote_projects.get(&id)
+    }
+
+    async fn handle_remote_projects_update(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::RemoteProjectsUpdate>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        this.update(cx, |this| {
+        this.update(&mut cx, |this, _| {
             this.dev_servers = envelope
                 .payload
                 .dev_servers
                 .into_iter()
-                .map(|dev_server| (dev_server.id, dev_server.into()))
+                .map(|dev_server| (DevServerId(dev_server.dev_server_id), dev_server.into()))
                 .collect();
             this.remote_projects = envelope
                 .payload
                 .remote_projects
                 .into_iter()
-                .map(|project| (project.id, project.into()))
+                .map(|project| (RemoteProjectId(project.id), project.into()))
                 .collect();
-        })
+        })?;
+        Ok(())
     }
 
     pub fn create_remote_project(

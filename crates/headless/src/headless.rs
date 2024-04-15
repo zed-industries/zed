@@ -7,6 +7,7 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use postage::stream::Stream;
 use project::Project;
+use remote_projects::RemoteProjectId;
 use rpc::{proto, TypedEnvelope};
 use settings::Settings;
 use std::{collections::HashMap, sync::Arc};
