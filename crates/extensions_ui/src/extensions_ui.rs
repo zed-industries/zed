@@ -591,13 +591,11 @@ impl ExtensionsPage {
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
         let is_compatible = extension::is_version_compatible(&extension);
-        let disabled = !is_compatible;
 
         match status.clone() {
             ExtensionStatus::NotInstalled => (
-                Button::new(SharedString::from(extension.id.clone()), "Install")
-                    .disabled(disabled)
-                    .on_click(cx.listener({
+                Button::new(SharedString::from(extension.id.clone()), "Install").on_click(
+                    cx.listener({
                         let extension_id = extension.id.clone();
                         move |this, _, cx| {
                             this.telemetry
@@ -606,7 +604,8 @@ impl ExtensionsPage {
                                 store.install_latest_extension(extension_id.clone(), cx)
                             });
                         }
-                    })),
+                    }),
+                ),
                 None,
             ),
             ExtensionStatus::Installing => (
@@ -637,7 +636,20 @@ impl ExtensionsPage {
                 } else {
                     Some(
                         Button::new(SharedString::from(extension.id.clone()), "Upgrade")
-                            .disabled(disabled)
+                            .when(!is_compatible, |upgrade_button| {
+                                upgrade_button.disabled(true).tooltip({
+                                    let version = extension.manifest.version.clone();
+                                    move |cx| {
+                                        Tooltip::text(
+                                            format!(
+                                                "v{version} is not compatible with this version of Zed.",
+                                            ),
+                                            cx,
+                                        )
+                                    }
+                                })
+                            })
+                            .disabled(!is_compatible)
                             .on_click(cx.listener({
                                 let extension_id = extension.id.clone();
                                 let version = extension.manifest.version.clone();
