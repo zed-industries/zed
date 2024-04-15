@@ -52,7 +52,6 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: RefCell<Rc<WindowsDisplay>>,
-    last_ime_input: RefCell<Option<String>>,
     click_state: RefCell<ClickState>,
     fullscreen: Cell<Option<StyleAndBounds>>,
 }
@@ -114,7 +113,6 @@ impl WindowsWindowInner {
         let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
         let callbacks = RefCell::new(Callbacks::default());
         let display = RefCell::new(display);
-        let last_ime_input = RefCell::new(None);
         let click_state = RefCell::new(ClickState::new());
         let fullscreen = Cell::new(None);
         Self {
@@ -129,7 +127,6 @@ impl WindowsWindowInner {
             handle,
             hide_title_bar,
             display,
-            last_ime_input,
             click_state,
             fullscreen,
         }
@@ -816,6 +813,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_ime_composition(&self, lparam: LPARAM) -> Option<isize> {
+        let mut ime_input = None;
         if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
             let Some((string, string_len)) = self.parse_ime_compostion_string() else {
                 return None;
@@ -829,10 +827,10 @@ impl WindowsWindowInner {
                 Some(0..string_len),
             );
             self.input_handler.set(Some(input_handler));
-            *self.last_ime_input.borrow_mut() = Some(string);
+            ime_input = Some(string);
         }
         if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
-            let Some(ref comp_string) = *self.last_ime_input.borrow() else {
+            let Some(ref comp_string) = ime_input else {
                 return None;
             };
             let caret_pos = self.retrieve_composition_cursor_position();
@@ -863,7 +861,6 @@ impl WindowsWindowInner {
         };
         input_handler.replace_text_in_range(None, &ime_char);
         self.input_handler.set(Some(input_handler));
-        *self.last_ime_input.borrow_mut() = None;
         self.invalidate_client_area();
         Some(0)
     }
