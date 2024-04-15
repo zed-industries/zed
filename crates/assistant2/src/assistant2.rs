@@ -15,7 +15,7 @@ use rich_text::RichText;
 use semantic_index::ProjectIndex;
 use serde::Deserialize;
 use settings::Settings;
-use std::sync::Arc;
+use std::{cmp, sync::Arc};
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip};
 use util::ResultExt;
@@ -298,13 +298,11 @@ impl AssistantChat {
                 async move {
                     let path = result.path.clone();
                     let text = fs.load(&abs_path?).await?;
+                    // todo!("what should we do with stale ranges?");
+                    let range = cmp::min(result.range.start, text.len())
+                        ..cmp::min(result.range.end, text.len());
 
-                    // Check the range to see if it's within the text bounds
-                    if result.range.end > text.len() {
-                        return Err(anyhow!("Range out of bounds compared to indexed text",));
-                    }
-
-                    let text = SharedString::from(text[result.range].to_string());
+                    let text = SharedString::from(text[range].to_string());
 
                     anyhow::Ok(CodebaseExcerpt {
                         path: path.to_string_lossy().to_string().into(),
