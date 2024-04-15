@@ -1535,7 +1535,7 @@ impl Editor {
         }
 
         if this.show_git_blame_inline {
-            this.start_git_blame(cx);
+            this.start_git_blame(false, cx);
         }
 
         this.report_editor_event("open", None, cx);
@@ -8849,7 +8849,7 @@ impl Editor {
         self.show_git_blame_gutter = !self.show_git_blame_gutter;
 
         if self.show_git_blame_gutter && !self.has_blame_entries(cx) {
-            self.start_git_blame(cx);
+            self.start_git_blame(true, cx);
         }
 
         cx.notify();
@@ -8863,35 +8863,23 @@ impl Editor {
         self.show_git_blame_inline = !self.show_git_blame_inline;
 
         if self.show_git_blame_inline && !self.has_blame_entries(cx) {
-            self.start_git_blame(cx);
+            self.start_git_blame(true, cx);
         }
 
         cx.notify();
     }
 
-    fn start_git_blame(&mut self, cx: &mut ViewContext<Self>) {
+    fn start_git_blame(&mut self, user_triggered: bool, cx: &mut ViewContext<Self>) {
         if let Some(project) = self.project.as_ref() {
             let Some(buffer) = self.buffer().read(cx).as_singleton() else {
                 return;
             };
 
-            if self.can_show_git_blame_information(project, &buffer, cx) {
-                let project = project.clone();
-                let blame = cx.new_model(|cx| GitBlame::new(buffer, project, cx));
-                self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
-                self.blame = Some(blame);
-            };
+            let project = project.clone();
+            let blame = cx.new_model(|cx| GitBlame::new(buffer, project, user_triggered, cx));
+            self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
+            self.blame = Some(blame);
         }
-    }
-
-    fn can_show_git_blame_information(
-        &self,
-        project: &Model<Project>,
-        buffer: &Model<Buffer>,
-        cx: &mut ViewContext<Self>,
-    ) -> bool {
-        let path = buffer.read(cx).project_path(cx);
-        path.map_or(false, |path| project.read(cx).get_repo(&path, cx).is_some())
     }
 
     pub fn blame(&self) -> Option<&Model<GitBlame>> {

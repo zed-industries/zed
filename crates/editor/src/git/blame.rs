@@ -62,6 +62,7 @@ pub struct GitBlame {
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
     generated: bool,
+    user_triggered: bool,
     _refresh_subscription: Subscription,
 }
 
@@ -69,6 +70,7 @@ impl GitBlame {
     pub fn new(
         buffer: Model<Buffer>,
         project: Model<Project>,
+        user_triggered: bool,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let entries = SumTree::from_item(
@@ -110,6 +112,7 @@ impl GitBlame {
             buffer_snapshot,
             entries,
             buffer_edits,
+            user_triggered,
             commit_details: HashMap::default(),
             task: Task::ready(Ok(())),
             generated: false,
@@ -290,9 +293,19 @@ impl GitBlame {
                     cx.notify();
                 }
                 Err(error) => this.project.update(cx, |_, cx| {
-                    log::error!("failed to get git blame data: {error:?}");
-                    let notification = format!("{:#}", error).trim().to_string();
-                    cx.emit(project::Event::Notification(notification));
+                    if this.user_triggered {
+                        log::error!("failed to get git blame data: {error:?}");
+                        let notification = format!("{:#}", error).trim().to_string();
+                        cx.emit(project::Event::Notification(notification));
+                    } else {
+                        // If we weren't triggered by a user, we just log errors in the background, instead of sending
+                        // notifications.
+                        // Except for `NoRepositoryError`, which can  happen often if a user has inline-blame turned on
+                        // and opens a non-git file.
+                        if !error.downcast_ref::<project::NoRepositoryError>().is_some() {
+                            log::error!("failed to get git blame data: {error:?}");
+                        }
+                    }
                 }),
             })
         });
@@ -444,7 +457,7 @@ mod tests {
             .await
             .unwrap();
 
-        let blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), cx));
+        let blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), true, cx));
 
         let event = project.next_event(cx).await;
         assert_eq!(
@@ -513,7 +526,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
 
         cx.executor().run_until_parked();
 
@@ -593,7 +606,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
 
         cx.executor().run_until_parked();
 
@@ -742,7 +755,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
         cx.executor().run_until_parked();
         git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
 
