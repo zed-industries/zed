@@ -63,6 +63,7 @@ impl CollapsibleContainer {
 
 impl Clickable for CollapsibleContainer {
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+        dbg!("on click registered for collapsible container");
         self.base = self.base.on_click(handler);
         self
     }

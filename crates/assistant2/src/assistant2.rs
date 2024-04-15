@@ -618,7 +618,7 @@ impl Render for CodebaseContext {
                                     .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
                             )
                             .on_click(cx.listener(move |this, _, cx| {
-                                dbg!("clicked");
+                                dbg!("listener callback fired");
                                 this.toggle_expanded(element_id.clone(), cx);
                             }))
                             .child(
