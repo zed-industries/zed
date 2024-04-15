@@ -125,8 +125,7 @@ use theme::{
     ThemeColors, ThemeSettings,
 };
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
-    Tooltip,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::ItemHandle;
@@ -1040,11 +1039,15 @@ impl CompletionsMenu {
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
 
-        Popover::new()
-            .child(list)
-            .when_some(multiline_docs, |popover, multiline_docs| {
-                popover.aside(multiline_docs)
-            })
+        let mut menu = vec![v_flex().elevation_2(cx).px_1().child(list)];
+        multiline_docs.map(|doc| {
+            menu.push(v_flex().elevation_2(cx).px_1().child(doc));
+        });
+
+        h_flex()
+            .items_start()
+            .gap_1()
+            .children(menu)
             .into_any_element()
     }
 
