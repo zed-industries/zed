@@ -416,6 +416,16 @@ impl<'a> MarkdownParser<'a> {
         let (_event, source_range) = self.previous().unwrap();
         let source_range = source_range.clone();
 
+        let mut end_source_range = source_range.end;
+
+        if let Some(last_block) = self.parsed.last_mut() {
+            if let ParsedMarkdownElement::Paragraph(last_paragraph) = last_block {
+                // We have an inline image, insert paragraph start
+                end_source_range = last_paragraph.source_range.end;
+                last_paragraph.source_range.end = source_range.start;
+            }
+        }
+
         let mut alt_text = None;
 
         if let Some(Event::Text(_)) = self.current_event() {
@@ -423,8 +433,19 @@ impl<'a> MarkdownParser<'a> {
             self.cursor += 1;
         }
 
-        // Advance past the image end tag
-        self.cursor += 1;
+        if self
+            .current_event()
+            .is_some_and(|e| !matches!(e, Event::End(_)))
+        {
+            // We have an inline image, insert paragraph start
+            self.tokens.insert(
+                self.cursor,
+                (
+                    Event::Start(Tag::Paragraph),
+                    source_range.end..end_source_range,
+                ),
+            )
+        }
 
         let link = Link::identify(self.file_location_directory.clone(), url.clone());
 
@@ -865,9 +886,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_image() {
-        let markdown = "\
-![alt text](https://zed.dev \"title\")
-";
+        let markdown = "![alt text](https://zed.dev \"title\")";
         assert_eq!(
             parse(markdown).await.children[0],
             ParsedMarkdownElement::Image(ParsedMarkdownImage {
@@ -879,6 +898,30 @@ mod tests {
                 url: "https://zed.dev".to_string(),
                 alt_text: Some(text("alt text", 0..36)),
             })
+        );
+    }
+
+    #[gpui::test]
+    async fn test_image_inside_paragraph() {
+        let markdown = "before ![alt text](https://zed.dev \"title\") after";
+
+        let elements = parse(markdown).await.children;
+
+        assert_eq!(
+            elements,
+            vec![
+                p("before ", 0..7),
+                ParsedMarkdownElement::Image(ParsedMarkdownImage {
+                    source_range: 7..43,
+                    title: "title".to_string(),
+                    link: Some(Link::Web {
+                        url: "https://zed.dev".to_string()
+                    }),
+                    url: "https://zed.dev".to_string(),
+                    alt_text: Some(text("alt text", 7..43)),
+                }),
+                p(" after", 43..49),
+            ]
         );
     }
 
