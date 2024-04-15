@@ -2,6 +2,7 @@ pub mod mappings;
 
 pub use alacritty_terminal;
 
+mod grid;
 mod pty_info;
 pub mod terminal_settings;
 
@@ -28,6 +29,7 @@ use futures::{
     FutureExt,
 };
 
+use grid::display_task_results;
 use mappings::mouse::{
     alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
     scroll_report,
@@ -598,6 +600,7 @@ pub struct TaskState {
     pub id: TaskId,
     pub full_label: String,
     pub label: String,
+    pub command_label: String,
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
 }
@@ -657,13 +660,7 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => match &mut self.task {
-                Some(task) => {
-                    task.status.register_terminal_exit();
-                    self.completion_tx.try_send(()).ok();
-                }
-                None => cx.emit(Event::CloseTerminal),
-            },
+            AlacTermEvent::Exit => self.register_task_finished(None, cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
@@ -679,10 +676,7 @@ impl Terminal {
                     .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
             }
             AlacTermEvent::ChildExit(error_code) => {
-                if let Some(task) = &mut self.task {
-                    task.status.register_task_exit(*error_code);
-                    self.completion_tx.try_send(()).ok();
-                }
+                self.register_task_finished(Some(*error_code), cx);
             }
         }
     }
@@ -1424,6 +1418,37 @@ impl Terminal {
             }
         }
         Task::ready(())
+    }
+
+    fn register_task_finished(
+        &mut self,
+        error_code: Option<i32>,
+        cx: &mut ModelContext<'_, Terminal>,
+    ) {
+        self.completion_tx.try_send(()).ok();
+        let task = match &mut self.task {
+            Some(task) => {
+                if task.status != TaskStatus::Running {
+                    return;
+                }
+                task
+            }
+            None => {
+                if error_code.is_none() {
+                    cx.emit(Event::CloseTerminal);
+                }
+                return;
+            }
+        };
+        match error_code {
+            Some(error_code) => {
+                task.status.register_task_exit(error_code);
+            }
+            None => {
+                task.status.register_terminal_exit();
+            }
+        };
+        display_task_results(self.term.as_ref(), task, error_code);
     }
 }
 
