@@ -1,4 +1,4 @@
-use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
+use std::{borrow::Cow, ops::ControlFlow, path::PathBuf, sync::Arc};
 
 use crate::TerminalView;
 use collections::{HashMap, HashSet};
@@ -319,6 +319,7 @@ impl TerminalPanel {
         let args = std::mem::take(&mut spawn_task.args);
         for arg in args {
             command.push(' ');
+            let arg = shlex::try_quote(&arg).unwrap_or(Cow::Borrowed(&arg));
             command.push_str(&arg);
         }
         spawn_task.command = shell;

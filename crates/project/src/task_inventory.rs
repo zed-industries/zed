@@ -214,15 +214,20 @@ impl Inventory {
             .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
 
         let mut lru_score = 0_u32;
-        let mut task_usage = self.last_scheduled_tasks.iter().rev().fold(
-            HashMap::default(),
-            |mut tasks, (task_source_kind, resolved_task)| {
-                tasks
-                    .entry(&resolved_task.id)
-                    .or_insert_with(|| (task_source_kind, resolved_task, post_inc(&mut lru_score)));
-                tasks
-            },
-        );
+        let mut task_usage = self
+            .last_scheduled_tasks
+            .iter()
+            .rev()
+            .filter(|(_, task)| !task.original_task().ignore_previously_resolved)
+            .fold(
+                HashMap::default(),
+                |mut tasks, (task_source_kind, resolved_task)| {
+                    tasks.entry(&resolved_task.id).or_insert_with(|| {
+                        (task_source_kind, resolved_task, post_inc(&mut lru_score))
+                    });
+                    tasks
+                },
+            );
         let not_used_score = post_inc(&mut lru_score);
         let current_resolved_tasks = self
             .sources

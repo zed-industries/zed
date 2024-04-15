@@ -8,10 +8,14 @@ use smol::stream::StreamExt;
 use std::{str, sync::Arc};
 use util::{asset_str, ResultExt};
 
-use crate::{elixir::elixir_task_context, rust::RustContextProvider};
+use crate::{
+    bash::bash_task_context, elixir::elixir_task_context, python::python_task_context,
+    rust::RustContextProvider,
+};
 
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
+mod bash;
 mod c;
 mod css;
 mod deno;
@@ -133,7 +137,7 @@ pub fn init(
             );
         };
     }
-    language!("bash");
+    language!("bash", Vec::new(), bash_task_context());
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language!("cpp", vec![Arc::new(c::CLspAdapter)]);
     language!(
@@ -195,7 +199,8 @@ pub fn init(
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
-        ))]
+        ))],
+        python_task_context()
     );
     language!(
         "rust",
