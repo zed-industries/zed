@@ -179,7 +179,7 @@ impl<T: Item> SumTree<T> {
     ) -> Self {
         let mut nodes = Vec::new();
 
-        let mut iter = iter.into_iter().peekable();
+        let mut iter = iter.into_iter().fuse().peekable();
         while iter.peek().is_some() {
             let items: ArrayVec<T, { 2 * TREE_BASE }> = iter.by_ref().take(2 * TREE_BASE).collect();
             let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
@@ -1242,6 +1242,27 @@ mod tests {
         assert_eq!(tree.get(&1, &()), Some(&1));
         assert_eq!(tree.get(&2, &()), Some(&2));
         assert_eq!(tree.get(&4, &()), Some(&4));
+    }
+
+    #[test]
+    fn test_from_iter() {
+        assert_eq!(
+            SumTree::from_iter(0..100, &()).items(&()),
+            (0..100).collect::<Vec<_>>()
+        );
+
+        // Ensure `from_iter` works correctly when the given iterator restarts
+        // after calling `next` if `None` was already returned.
+        let mut ix = 0;
+        let iterator = std::iter::from_fn(|| {
+            ix = (ix + 1) % 2;
+            if ix == 1 {
+                Some(1)
+            } else {
+                None
+            }
+        });
+        assert_eq!(SumTree::from_iter(iterator, &()).items(&()), vec![1]);
     }
 
     #[derive(Clone, Default, Debug)]
