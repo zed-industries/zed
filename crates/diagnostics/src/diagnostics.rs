@@ -44,7 +44,7 @@ use workspace::{
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
 
-const CONTEXT_LINE_COUNT: u32 = 1;
+const CONTEXT_LINE_COUNT: u32 = 2;
 
 pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
