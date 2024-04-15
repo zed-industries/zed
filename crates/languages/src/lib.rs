@@ -207,22 +207,23 @@ pub fn init(
     );
     match &DenoSettings::get(None, cx).enable {
         true => {
+            let deno_path = &DenoSettings::get(None, cx).path;
             language!(
                 "tsx",
                 vec![
-                    Arc::new(deno::DenoLspAdapter::new()),
+                    Arc::new(deno::DenoLspAdapter::new(deno_path.clone())),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ]
             );
-            language!("typescript", vec![Arc::new(deno::DenoLspAdapter::new())]);
+            language!("typescript", vec![Arc::new(deno::DenoLspAdapter::new(deno_path.clone()))]);
             language!(
                 "javascript",
                 vec![
-                    Arc::new(deno::DenoLspAdapter::new()),
+                    Arc::new(deno::DenoLspAdapter::new(deno_path.clone())),
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ]
             );
-            language!("jsdoc", vec![Arc::new(deno::DenoLspAdapter::new())]);
+            language!("jsdoc", vec![Arc::new(deno::DenoLspAdapter::new(deno_path.clone()))]);
         }
         false => {
             language!(

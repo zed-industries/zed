@@ -20,11 +20,13 @@ use util::{
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DenoSettings {
     pub enable: bool,
+    pub path: Option<String>
 }
 
 #[derive(Clone, Serialize, Default, Deserialize, JsonSchema)]
 pub struct DenoSettingsContent {
     enable: Option<bool>,
+    path: Option<String>,
 }
 
 impl Settings for DenoSettings {
@@ -41,11 +43,15 @@ fn deno_server_binary_arguments() -> Vec<OsString> {
     vec!["lsp".into()]
 }
 
-pub struct DenoLspAdapter {}
+pub struct DenoLspAdapter {
+    path: Option<String>
+}
 
 impl DenoLspAdapter {
-    pub fn new() -> Self {
-        DenoLspAdapter {}
+    pub fn new(path: Option<String>) -> Self {
+        DenoLspAdapter {
+            path
+        }
     }
 }
 
@@ -86,40 +92,47 @@ impl LspAdapter for DenoLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let zip_path = container_dir.join(format!("deno_{}.zip", version.name));
-        let version_dir = container_dir.join(format!("deno_{}", version.name));
-        let binary_path = version_dir.join("deno");
+        let binary_path = match &self.path {
+            Some(path) => PathBuf::from(path),
+            None => {
+                let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
+                let zip_path = container_dir.join(format!("deno_{}.zip", version.name));
+                let version_dir = container_dir.join(format!("deno_{}", version.name));
+                let binary_path = version_dir.join("deno");
 
-        if fs::metadata(&binary_path).await.is_err() {
-            let mut response = delegate
-                .http_client()
-                .get(&version.url, Default::default(), true)
-                .await
-                .context("error downloading release")?;
-            let mut file = File::create(&zip_path).await?;
-            if !response.status().is_success() {
-                Err(anyhow!(
-                    "download failed with status {}",
-                    response.status().to_string()
-                ))?;
+                if fs::metadata(&binary_path).await.is_err() {
+                    let mut response = delegate
+                        .http_client()
+                        .get(&version.url, Default::default(), true)
+                        .await
+                        .context("error downloading release")?;
+                    let mut file = File::create(&zip_path).await?;
+                    if !response.status().is_success() {
+                        Err(anyhow!(
+                            "download failed with status {}",
+                            response.status().to_string()
+                        ))?;
+                    }
+                    futures::io::copy(response.body_mut(), &mut file).await?;
+
+                    let unzip_status = smol::process::Command::new("unzip")
+                        .current_dir(&container_dir)
+                        .arg(&zip_path)
+                        .arg("-d")
+                        .arg(&version_dir)
+                        .output()
+                        .await?
+                        .status;
+                    if !unzip_status.success() {
+                        Err(anyhow!("failed to unzip deno archive"))?;
+                    }
+
+                    remove_matching(&container_dir, |entry| entry != version_dir).await;
+                }
+
+                binary_path
             }
-            futures::io::copy(response.body_mut(), &mut file).await?;
-
-            let unzip_status = smol::process::Command::new("unzip")
-                .current_dir(&container_dir)
-                .arg(&zip_path)
-                .arg("-d")
-                .arg(&version_dir)
-                .output()
-                .await?
-                .status;
-            if !unzip_status.success() {
-                Err(anyhow!("failed to unzip deno archive"))?;
-            }
-
-            remove_matching(&container_dir, |entry| entry != version_dir).await;
-        }
+        };
 
         Ok(LanguageServerBinary {
             path: binary_path,
