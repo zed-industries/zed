@@ -279,22 +279,15 @@ impl AssistantChat {
             .push(AssistantContext::codebase(context_id));
 
         let query = self.setup_query(cx);
-        let results = cx.spawn(|this, mut cx| async move {
-            let query = query.await?;
+        let fs = self.fs.clone();
 
-            let chat = this.upgrade().ok_or_else(|| anyhow!("model was dropped"))?;
-            let results = chat
+        cx.spawn(|this, mut cx| async move {
+            let query = query.await?;
+            let results = this
                 .update(&mut cx, |this, cx| {
                     this.project_index.read(cx).search(&query, 16, cx)
                 })?
                 .await;
-            anyhow::Ok(results)
-        });
-
-        let fs = self.fs.clone();
-
-        cx.spawn(|this, mut cx| async move {
-            let results = results.await?;
 
             let excerpts = results.into_iter().map(|result| {
                 let abs_path = result
