@@ -315,10 +315,7 @@ impl TerminalPanel {
             return;
         };
 
-        let old_command = std::mem::take(&mut spawn_task.command);
-        let mut command = shlex::try_quote(&old_command)
-            .map(|quoted| quoted.into_owned())
-            .unwrap_or(old_command);
+        let mut command = std::mem::take(&mut spawn_task.command);
         let args = std::mem::take(&mut spawn_task.args);
         for arg in args {
             command.push(' ');

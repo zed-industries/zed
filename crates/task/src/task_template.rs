@@ -39,13 +39,18 @@ pub struct TaskTemplate {
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     #[serde(default)]
     pub allow_concurrent_runs: bool,
-    /// Task templates might produce different tasks with similar properties, e.g. equal labels.
-    /// Certain places in Zed like the task spawn modal, prefer already resolved tasks in such cases,
-    /// to allow rerunning previous tasks with previous contexts later.
-    ///
-    /// This property changes the behavior in such situations, ignoring the already resolved tasks instead.
-    /// It's useful for tasks where labels are constant, but the actual command always needs the freshmost context,
-    /// for instance, "run this selection" tasks.
+    // Tasks like "execute the selection" better have the constant labels (to avoid polluting the history with temporary tasks),
+    // and always use the latest context with the latest selection.
+    //
+    // Current impl will always pick previously spawned tasks on full label conflict in the tasks modal and terminal tabs, never
+    // getting the latest selection for them.
+    // This flag inverts the behavior, effectively removing all previously spawned tasks from history,
+    // if their full labels are the same as the labels of the newly resolved tasks.
+    // Such tasks are still re-runnable, and will use the old context in that case (unless the rerun task forces this).
+    //
+    // Current approach is relatively hacky, a better way is understand when the new resolved tasks needs a rerun,
+    // and replace the historic task accordingly.
+    #[doc(hidden)]
     #[serde(default)]
     pub ignore_previously_resolved: bool,
     /// What to do with the terminal pane and tab, after the command was started:
