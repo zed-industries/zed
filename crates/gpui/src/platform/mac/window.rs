@@ -1534,7 +1534,6 @@ fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
     let mut lock = window_state.as_ref().lock();
     if is_fullscreen {
         lock.fullscreen_restore_bounds = lock.bounds();
-        println!("F bounds: {:#?}", lock.bounds());
     }
     if let Some(mut callback) = lock.fullscreen_callback.take() {
         drop(lock);
