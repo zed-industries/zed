@@ -1,13 +1,13 @@
 mod completion_provider;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use client::Client;
 use completion_provider::*;
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    list, prelude::*, AnyElement, AppContext, Global, ListAlignment, ListState, Model, Render,
-    Task, View,
+    list, prelude::*, AnyElement, AppContext, FocusHandle, Global, ListAlignment, ListState, Model,
+    Render, Task, View,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use project::Fs;
@@ -105,12 +105,30 @@ impl AssistantChat {
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let this = cx.view().downgrade();
-        let list_state = ListState::new(0, ListAlignment::Bottom, px(1024.), cx, move |ix, cx| {
-            this.update(cx, |this, cx| this.render_message(ix, cx))
-                .unwrap()
-        });
         let model = CompletionProvider::get(cx).default_model();
+
+        let render_message = {
+            let this = cx.view().downgrade();
+            move |ix, cx: &mut WindowContext| {
+                this.update(cx, |this, cx| this.render_message(ix, cx))
+                    .unwrap()
+            }
+        };
+        let focus_handle_for_message = {
+            let this = cx.view().downgrade();
+            move |ix, cx: &mut WindowContext| {
+                this.update(cx, |this, cx| this.focus_handle_for_message(ix, cx))
+                    .unwrap()
+            }
+        };
+        let list_state = ListState::with_focusable_items(
+            0,
+            ListAlignment::Bottom,
+            px(1024.),
+            cx,
+            render_message,
+            focus_handle_for_message,
+        );
 
         let mut this = Self {
             model,
@@ -462,6 +480,13 @@ impl AssistantChat {
                 .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
                 .child(self.render_error(error.clone(), ix, cx))
                 .into_any(),
+        }
+    }
+
+    fn focus_handle_for_message(&self, ix: usize, cx: &WindowContext) -> Option<FocusHandle> {
+        match &self.messages[ix] {
+            ChatMessage::User(UserMessage { body, .. }) => Some(body.focus_handle(cx)),
+            ChatMessage::Assistant(_) => None,
         }
     }
 

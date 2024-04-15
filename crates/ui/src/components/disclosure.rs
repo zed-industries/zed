@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{AnyElement, ClickEvent};
-use smallvec::SmallVec;
+use gpui::ClickEvent;
 
 use crate::{prelude::*, Color, IconButton, IconName, IconSize};
 

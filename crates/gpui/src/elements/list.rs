@@ -222,8 +222,6 @@ impl ListState {
         this
     }
 
-    // pub fn set_focus_handle_for_item
-
     /// Reset this instantiation of the list state.
     ///
     /// Note that this will cause scroll events to be dropped until the next paint.
@@ -456,6 +454,7 @@ impl StateInner {
         let mut rendered_height = padding.top;
         let mut max_item_width = px(0.);
         let mut scroll_top = self.logical_scroll_top();
+        let mut rendered_focused_item = false;
 
         let available_item_space = size(
             available_width.map_or(AvailableSpace::MinContent, |width| {
@@ -477,6 +476,14 @@ impl StateInner {
             // Use the previously cached height and focus handle if available
             let mut size = item.size();
             let focus_handle = item.focus_handle();
+
+            // If this item's focus handle is focused, we know we've rendered the focused element and can avoid work later.
+            if focus_handle
+                .as_ref()
+                .is_some_and(|handle| handle.contains_focused(cx))
+            {
+                rendered_focused_item = true;
+            }
 
             // If we're within the visible area or the height wasn't cached, render and measure the item's element
             if visible_height < available_height || size.is_none() {
@@ -551,6 +558,12 @@ impl StateInner {
                     element.measure(available_item_space, cx)
                 };
                 let focus_handle = item.focus_handle();
+                if focus_handle
+                    .as_ref()
+                    .is_some_and(|handle| handle.contains_focused(cx))
+                {
+                    rendered_focused_item = true;
+                }
 
                 leading_overdraw += size.height;
                 measured_items.push_front(ListItem::Rendered { size, focus_handle });
@@ -566,6 +579,26 @@ impl StateInner {
         cursor.seek(&Count(measured_range.end), Bias::Right, &());
         new_items.append(cursor.suffix(&()), &());
 
+        // If we haven't already rendered the focused item, check if an off-screen item is focused.
+        let mut focused_offscreen_element = None;
+        if !rendered_focused_item && self.focus_handle_for_item.is_some() {
+            let mut cursor = new_items.filter::<_, Count>(|summary| summary.has_focus_handles);
+            loop {
+                cursor.next(&());
+                if let Some(item) = cursor.item() {
+                    if let Some(handle) = item.focus_handle() {
+                        if handle.contains_focused(cx) {
+                            focused_offscreen_element =
+                                Some((self.render_item)(cursor.start().0, cx));
+                            break;
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+
         self.items = new_items;
 
         LayoutItemsResponse {
@@ -573,7 +606,7 @@ impl StateInner {
             scroll_top,
             available_item_space,
             item_elements,
-            focused_offscreen_element: None, // todo!()
+            focused_offscreen_element,
         }
     }
 }
@@ -699,7 +732,7 @@ impl Element for List {
 
         // Only paint the visible items, if there is actually any space for them (taking padding into account)
         if bounds.size.height > padding.top + padding.bottom {
-            // Paint the visible items
+            // Layout the visible items followed by the offscreen focused item if it is present
             cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
@@ -707,6 +740,9 @@ impl Element for List {
                     let item_size = item_element.measure(layout_response.available_item_space, cx);
                     item_element.layout(item_origin, layout_response.available_item_space, cx);
                     item_origin.y += item_size.height;
+                }
+                if let Some(focused_element) = layout_response.focused_offscreen_element.as_mut() {
+                    focused_element.layout(item_origin, layout_response.available_item_space, cx);
                 }
             });
         }
@@ -729,6 +765,9 @@ impl Element for List {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             for item in &mut after_layout.layout.item_elements {
                 item.paint(cx);
+            }
+            if let Some(focused_element) = after_layout.layout.focused_offscreen_element.as_mut() {
+                focused_element.paint(cx);
             }
         });
 
