@@ -6,8 +6,8 @@ use completion_provider::*;
 use editor::Editor;
 use futures::StreamExt;
 use gpui::{
-    list, prelude::*, AnyElement, AppContext, FocusHandle, Global, ListAlignment, ListState, Model,
-    Render, Task, View,
+    list, prelude::*, AnyElement, AppContext, FocusHandle, Global,
+    ListAlignment, ListState, Model, Render, Task, View,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use project::Fs;
@@ -17,7 +17,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{cmp, sync::Arc};
 use theme::ThemeSettings;
-use ui::{popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip};
+use ui::{popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip, CollapsibleContainer};
 use util::ResultExt;
 
 // gpui::actions!(assistant, [Submit]);
@@ -310,6 +310,7 @@ impl AssistantChat {
                     let text = SharedString::from(text[range].to_string());
 
                     anyhow::Ok(CodebaseExcerpt {
+                        element_id: ElementId::Name(nanoid::nanoid!().into()),
                         path: path.to_string_lossy().to_string().into(),
                         text,
                         score: result.score,
@@ -621,13 +622,8 @@ impl ContextId {
     }
 }
 
-struct CodebaseContext {
-    id: ContextId,
-    excerpts: Vec<CodebaseExcerpt>,
-    pending: bool,
-}
-
 struct CodebaseExcerpt {
+    element_id: ElementId,
     path: SharedString,
     text: SharedString,
     score: f32,
@@ -635,11 +631,7 @@ struct CodebaseExcerpt {
 
 impl AssistantContext {
     fn codebase(id: ContextId) -> Self {
-        Self::Codebase(CodebaseContext {
-            id,
-            excerpts: Vec::new(),
-            pending: true,
-        })
+        Self::Codebase(CodebaseContext::new(id))
     }
 
     fn render(&self, cx: &mut ViewContext<AssistantChat>) -> AnyElement {
@@ -653,6 +645,12 @@ impl AssistantContext {
             AssistantContext::Codebase(context) => context.completion_messages(),
         }
     }
+}
+
+struct CodebaseContext {
+    id: ContextId,
+    excerpts: Vec<CodebaseExcerpt>,
+    pending: bool,
 }
 
 impl CodebaseContext {
@@ -669,21 +667,21 @@ impl CodebaseContext {
                 .v_flex()
                 .gap_2()
                 .children(self.excerpts.iter().map(|excerpt| {
-                    div()
-                        .p_4()
-                        .rounded_lg()
-                        .border()
-                        .border_color(cx.theme().colors().border)
-                        .v_flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .h_flex()
-                                .items_center()
+                    // let expanded = self.expanded_excerpts.contains(&excerpt.element_id);
+                    let expanded = false;
+                    let _element_id = excerpt.element_id.clone();
+
+                    CollapsibleContainer::new(excerpt.element_id.clone(), expanded)
+                        .start_slot(
+                            h_flex()
                                 .gap_1()
                                 .child(Icon::new(IconName::File).color(Color::Muted))
                                 .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
                         )
+                        // TODO: Need a view
+                        // .on_click(cx.listener(move |this, _, _cx| {
+                        //     this.toggle_excerpt(element_id.clone());
+                        // }))
                         .child(
                             div()
                                 .p_2()
@@ -694,6 +692,16 @@ impl CodebaseContext {
                                 ),
                         )
                 }))
+        }
+    }
+}
+
+impl CodebaseContext {
+    fn new(id: ContextId) -> Self {
+        Self {
+            id,
+            excerpts: Vec::new(),
+            pending: true,
         }
     }
 
