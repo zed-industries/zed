@@ -298,6 +298,12 @@ impl AssistantChat {
                 async move {
                     let path = result.path.clone();
                     let text = fs.load(&abs_path?).await?;
+
+                    // Check the range to see if it's within the text bounds
+                    if result.range.end > text.len() {
+                        return Err(anyhow!("Range out of bounds compared to indexed text",));
+                    }
+
                     let text = SharedString::from(text[result.range].to_string());
 
                     anyhow::Ok(CodebaseExcerpt {
