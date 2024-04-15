@@ -354,6 +354,7 @@ struct MacWindowState {
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     minimized: bool,
+    maximized: bool,
     maximized_restore_bounds: Bounds<DevicePixels>,
 }
 
@@ -434,11 +435,7 @@ impl MacWindowState {
     }
 
     fn is_maximized(&self) -> bool {
-        unsafe {
-            let bounds = self.bounds();
-            let screen_size = self.native_window.screen().visibleFrame().into();
-            bounds.size == screen_size
-        }
+        self.maximized
     }
 
     fn is_minimized(&self) -> bool {
@@ -499,6 +496,10 @@ impl MacWindowState {
             let content_layout_rect: CGRect = msg_send![self.native_window, contentLayoutRect];
             px((frame.size.height - content_layout_rect.size.height) as f32)
         }
+    }
+
+    fn restore_status(&self) -> WindowOpenStatus {
+        WindowOpenStatus::Windowed(None)
     }
 }
 
@@ -646,6 +647,7 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 minimized: false,
+                maximized: false,
                 maximized_restore_bounds: Bounds::default(),
             })));
 
@@ -783,7 +785,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn restore_status(&self) -> WindowOpenStatus {
-        WindowOpenStatus::Windowed(None)
+        self.0.as_ref().lock().restore_status()
     }
 
     fn is_maximized(&self) -> bool {
@@ -1545,7 +1547,9 @@ extern "C" fn window_should_zoom(this: &Object, _: Sel, _: id, _: NSRect) -> BOO
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     let bounds = lock.bounds();
-    println!("======>\n    Zoom bounds: {:#?}", bounds);
+    lock.maximized_restore_bounds = bounds;
+    lock.maximized = !lock.maximized;
+
     YES
 }
 
