@@ -1040,9 +1040,9 @@ impl CompletionsMenu {
         .with_width_from_item(widest_completion_ix);
 
         let mut menu = vec![v_flex().elevation_2(cx).px_1().child(list)];
-        multiline_docs.map(|doc| {
-            menu.push(v_flex().elevation_2(cx).px_1().child(doc));
-        });
+        if let Some(multiline_docs) = multiline_docs {
+            menu.push(v_flex().elevation_2(cx).px_1().child(multiline_docs));
+        }
 
         h_flex()
             .items_start()
