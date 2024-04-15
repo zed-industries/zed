@@ -184,7 +184,6 @@ impl<D: PickerDelegate> Picker<D> {
                     0,
                     gpui::ListAlignment::Top,
                     px(1000.),
-                    cx,
                     move |ix, cx| {
                         view.upgrade()
                             .map(|view| {
@@ -379,7 +378,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn matches_updated(&mut self, cx: &mut ViewContext<Self>) {
         if let ElementContainer::List(state) = &mut self.element_container {
-            state.reset(self.delegate.match_count(), cx);
+            state.reset(self.delegate.match_count());
         }
 
         let index = self.delegate.selected_index();

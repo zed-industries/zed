@@ -106,28 +106,15 @@ impl AssistantChat {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let model = CompletionProvider::get(cx).default_model();
-
-        let render_message = {
-            let this = cx.view().downgrade();
-            move |ix, cx: &mut WindowContext| {
-                this.update(cx, |this, cx| this.render_message(ix, cx))
-                    .unwrap()
-            }
-        };
-        let focus_handle_for_message = {
-            let this = cx.view().downgrade();
-            move |ix, cx: &mut WindowContext| {
-                this.update(cx, |this, cx| this.focus_handle_for_message(ix, cx))
-                    .unwrap()
-            }
-        };
-        let list_state = ListState::with_focusable_items(
+        let view = cx.view().downgrade();
+        let list_state = ListState::new(
             0,
             ListAlignment::Bottom,
             px(1024.),
-            cx,
-            render_message,
-            focus_handle_for_message,
+            move |ix, cx: &mut WindowContext| {
+                view.update(cx, |this, cx| this.render_message(ix, cx))
+                    .unwrap()
+            },
         );
 
         let mut this = Self {
@@ -410,8 +397,10 @@ impl AssistantChat {
 
     fn push_message(&mut self, message: ChatMessage, cx: &mut ViewContext<Self>) {
         let old_len = self.messages.len();
+        let focus_handle = Some(message.focus_handle(cx));
         self.messages.push(message);
-        self.list_state.splice(old_len..old_len, 1, cx);
+        self.list_state
+            .splice_focusable(old_len..old_len, focus_handle);
         cx.notify();
     }
 
@@ -420,8 +409,7 @@ impl AssistantChat {
             ChatMessage::User(message) => message.id == last_message_id,
             ChatMessage::Assistant(message) => message.id == last_message_id,
         }) {
-            self.list_state
-                .splice(index + 1..self.messages.len(), 0, cx);
+            self.list_state.splice(index + 1..self.messages.len(), 0);
             self.messages.truncate(index + 1);
             cx.notify();
         }
@@ -480,13 +468,6 @@ impl AssistantChat {
                 .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
                 .child(self.render_error(error.clone(), ix, cx))
                 .into_any(),
-        }
-    }
-
-    fn focus_handle_for_message(&self, ix: usize, cx: &WindowContext) -> Option<FocusHandle> {
-        match &self.messages[ix] {
-            ChatMessage::User(UserMessage { body, .. }) => Some(body.focus_handle(cx)),
-            ChatMessage::Assistant(_) => None,
         }
     }
 
@@ -600,6 +581,15 @@ impl MessageId {
 enum ChatMessage {
     User(UserMessage),
     Assistant(AssistantMessage),
+}
+
+impl ChatMessage {
+    fn focus_handle(&self, cx: &WindowContext) -> Option<FocusHandle> {
+        match self {
+            ChatMessage::User(UserMessage { body, .. }) => Some(body.focus_handle(cx)),
+            ChatMessage::Assistant(_) => None,
+        }
+    }
 }
 
 struct UserMessage {

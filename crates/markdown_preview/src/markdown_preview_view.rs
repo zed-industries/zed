@@ -142,7 +142,7 @@ impl MarkdownPreviewView {
             let view = cx.view().downgrade();
 
             let list_state =
-                ListState::new(0, gpui::ListAlignment::Top, px(1000.), cx, move |ix, cx| {
+                ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
                     if let Some(view) = view.upgrade() {
                         view.update(cx, |this, cx| {
                             let Some(contents) = &this.contents else {
@@ -358,7 +358,7 @@ impl MarkdownPreviewView {
                 let markdown_blocks_count = contents.children.len();
                 view.contents = Some(contents);
                 let scroll_top = view.list_state.logical_scroll_top();
-                view.list_state.reset(markdown_blocks_count, cx);
+                view.list_state.reset(markdown_blocks_count);
                 view.list_state.scroll_to(scroll_top);
                 cx.notify();
             })

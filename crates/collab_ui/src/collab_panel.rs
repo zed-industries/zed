@@ -243,7 +243,7 @@ impl CollabPanel {
 
             let view = cx.view().downgrade();
             let list_state =
-                ListState::new(0, gpui::ListAlignment::Top, px(1000.), cx, move |ix, cx| {
+                ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
                     if let Some(view) = view.upgrade() {
                         view.update(cx, |view, cx| view.render_list_entry(ix, cx))
                     } else {
@@ -809,7 +809,7 @@ impl CollabPanel {
         }
 
         let old_scroll_top = self.list_state.logical_scroll_top();
-        self.list_state.reset(self.entries.len(), cx);
+        self.list_state.reset(self.entries.len());
 
         if scroll_to_top {
             self.list_state.scroll_to(ListOffset::default());

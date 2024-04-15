@@ -91,12 +91,8 @@ impl ChatPanel {
 
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let view = cx.view().downgrade();
-            let message_list = ListState::new(
-                0,
-                gpui::ListAlignment::Bottom,
-                px(1000.),
-                cx,
-                move |ix, cx| {
+            let message_list =
+                ListState::new(0, gpui::ListAlignment::Bottom, px(1000.), move |ix, cx| {
                     if let Some(view) = view.upgrade() {
                         view.update(cx, |view, cx| {
                             view.render_message(ix, cx).into_any_element()
@@ -104,8 +100,7 @@ impl ChatPanel {
                     } else {
                         div().into_any()
                     }
-                },
-            );
+                });
 
             message_list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, cx| {
                 if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
@@ -243,7 +238,7 @@ impl ChatPanel {
                 let chat = chat.read(cx);
                 let channel_name = chat.channel(cx).map(|channel| channel.name.clone());
                 let message_count = chat.message_count();
-                self.message_list.reset(message_count, cx);
+                self.message_list.reset(message_count);
                 self.message_editor.update(cx, |editor, cx| {
                     editor.set_channel(channel_id, channel_name, cx);
                     editor.clear_reply_to_message_id();
@@ -267,7 +262,7 @@ impl ChatPanel {
                 old_range,
                 new_count,
             } => {
-                self.message_list.splice(old_range.clone(), *new_count, cx);
+                self.message_list.splice(old_range.clone(), *new_count);
                 if self.active {
                     self.acknowledge_last_message(cx);
                 }
@@ -276,8 +271,7 @@ impl ChatPanel {
                 message_id,
                 message_ix,
             } => {
-                self.message_list
-                    .splice(*message_ix..*message_ix + 1, 1, cx);
+                self.message_list.splice(*message_ix..*message_ix + 1, 1);
                 self.markdown_data.remove(message_id);
             }
             ChannelChatEvent::NewMessage {
