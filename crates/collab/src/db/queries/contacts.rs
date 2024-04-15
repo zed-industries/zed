@@ -3,88 +3,89 @@ use super::*;
 impl Database {
     /// Retrieves the contacts for the user with the given ID.
     pub async fn get_contacts(&self, user_id: UserId) -> Result<Vec<Contact>> {
-        #[derive(Debug, FromQueryResult)]
-        struct ContactWithUserBusyStatuses {
-            user_id_a: UserId,
-            user_id_b: UserId,
-            a_to_b: bool,
-            accepted: bool,
-            user_a_busy: bool,
-            user_b_busy: bool,
-        }
+        Ok(vec![])
+        // #[derive(Debug, FromQueryResult)]
+        // struct ContactWithUserBusyStatuses {
+        //     user_id_a: UserId,
+        //     user_id_b: UserId,
+        //     a_to_b: bool,
+        //     accepted: bool,
+        //     user_a_busy: bool,
+        //     user_b_busy: bool,
+        // }
 
-        self.transaction(|tx| async move {
-            let user_a_participant = Alias::new("user_a_participant");
-            let user_b_participant = Alias::new("user_b_participant");
-            let mut db_contacts = contact::Entity::find()
-                .column_as(
-                    Expr::col((user_a_participant.clone(), room_participant::Column::Id))
-                        .is_not_null(),
-                    "user_a_busy",
-                )
-                .column_as(
-                    Expr::col((user_b_participant.clone(), room_participant::Column::Id))
-                        .is_not_null(),
-                    "user_b_busy",
-                )
-                .filter(
-                    contact::Column::UserIdA
-                        .eq(user_id)
-                        .or(contact::Column::UserIdB.eq(user_id)),
-                )
-                .join_as(
-                    JoinType::LeftJoin,
-                    contact::Relation::UserARoomParticipant.def(),
-                    user_a_participant,
-                )
-                .join_as(
-                    JoinType::LeftJoin,
-                    contact::Relation::UserBRoomParticipant.def(),
-                    user_b_participant,
-                )
-                .into_model::<ContactWithUserBusyStatuses>()
-                .stream(&*tx)
-                .await?;
+        // self.transaction(|tx| async move {
+        //     let user_a_participant = Alias::new("user_a_participant");
+        //     let user_b_participant = Alias::new("user_b_participant");
+        //     let mut db_contacts = contact::Entity::find()
+        //         .column_as(
+        //             Expr::col((user_a_participant.clone(), room_participant::Column::Id))
+        //                 .is_not_null(),
+        //             "user_a_busy",
+        //         )
+        //         .column_as(
+        //             Expr::col((user_b_participant.clone(), room_participant::Column::Id))
+        //                 .is_not_null(),
+        //             "user_b_busy",
+        //         )
+        //         .filter(
+        //             contact::Column::UserIdA
+        //                 .eq(user_id)
+        //                 .or(contact::Column::UserIdB.eq(user_id)),
+        //         )
+        //         .join_as(
+        //             JoinType::LeftJoin,
+        //             contact::Relation::UserARoomParticipant.def(),
+        //             user_a_participant,
+        //         )
+        //         .join_as(
+        //             JoinType::LeftJoin,
+        //             contact::Relation::UserBRoomParticipant.def(),
+        //             user_b_participant,
+        //         )
+        //         .into_model::<ContactWithUserBusyStatuses>()
+        //         .stream(&*tx)
+        //         .await?;
 
-            let mut contacts = Vec::new();
-            while let Some(db_contact) = db_contacts.next().await {
-                let db_contact = db_contact?;
-                if db_contact.user_id_a == user_id {
-                    if db_contact.accepted {
-                        contacts.push(Contact::Accepted {
-                            user_id: db_contact.user_id_b,
-                            busy: db_contact.user_b_busy,
-                        });
-                    } else if db_contact.a_to_b {
-                        contacts.push(Contact::Outgoing {
-                            user_id: db_contact.user_id_b,
-                        })
-                    } else {
-                        contacts.push(Contact::Incoming {
-                            user_id: db_contact.user_id_b,
-                        });
-                    }
-                } else if db_contact.accepted {
-                    contacts.push(Contact::Accepted {
-                        user_id: db_contact.user_id_a,
-                        busy: db_contact.user_a_busy,
-                    });
-                } else if db_contact.a_to_b {
-                    contacts.push(Contact::Incoming {
-                        user_id: db_contact.user_id_a,
-                    });
-                } else {
-                    contacts.push(Contact::Outgoing {
-                        user_id: db_contact.user_id_a,
-                    });
-                }
-            }
+        //     let mut contacts = Vec::new();
+        //     while let Some(db_contact) = db_contacts.next().await {
+        //         let db_contact = db_contact?;
+        //         if db_contact.user_id_a == user_id {
+        //             if db_contact.accepted {
+        //                 contacts.push(Contact::Accepted {
+        //                     user_id: db_contact.user_id_b,
+        //                     busy: db_contact.user_b_busy,
+        //                 });
+        //             } else if db_contact.a_to_b {
+        //                 contacts.push(Contact::Outgoing {
+        //                     user_id: db_contact.user_id_b,
+        //                 })
+        //             } else {
+        //                 contacts.push(Contact::Incoming {
+        //                     user_id: db_contact.user_id_b,
+        //                 });
+        //             }
+        //         } else if db_contact.accepted {
+        //             contacts.push(Contact::Accepted {
+        //                 user_id: db_contact.user_id_a,
+        //                 busy: db_contact.user_a_busy,
+        //             });
+        //         } else if db_contact.a_to_b {
+        //             contacts.push(Contact::Incoming {
+        //                 user_id: db_contact.user_id_a,
+        //             });
+        //         } else {
+        //             contacts.push(Contact::Outgoing {
+        //                 user_id: db_contact.user_id_a,
+        //             });
+        //         }
+        //     }
 
-            contacts.sort_unstable_by_key(|contact| contact.user_id());
+        //     contacts.sort_unstable_by_key(|contact| contact.user_id());
 
-            Ok(contacts)
-        })
-        .await
+        //     Ok(contacts)
+        // })
+        // .await
     }
 
     /// Returns whether the given user is a busy (on a call).

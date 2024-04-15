@@ -432,53 +432,53 @@ impl Database {
         channel_ids: &[ChannelId],
         tx: &DatabaseTransaction,
     ) -> Result<Vec<proto::ChannelMessageId>> {
-        let mut values = String::new();
-        for id in channel_ids {
-            if !values.is_empty() {
-                values.push_str(", ");
-            }
-            write!(&mut values, "({})", id).unwrap();
-        }
+        // let mut values = String::new();
+        // for id in channel_ids {
+        //     if !values.is_empty() {
+        //         values.push_str(", ");
+        //     }
+        //     write!(&mut values, "({})", id).unwrap();
+        // }
 
-        if values.is_empty() {
-            return Ok(Vec::default());
-        }
+        // if values.is_empty() {
+        //     return Ok(Vec::default());
+        // }
 
-        let sql = format!(
-            r#"
-            SELECT
-                *
-            FROM (
-                SELECT
-                    *,
-                    row_number() OVER (
-                        PARTITION BY channel_id
-                        ORDER BY id DESC
-                    ) as row_number
-                FROM channel_messages
-                WHERE
-                    channel_id in ({values})
-            ) AS messages
-            WHERE
-                row_number = 1
-            "#,
-        );
+        // let sql = format!(
+        //     r#"
+        //     SELECT
+        //         *
+        //     FROM (
+        //         SELECT
+        //             *,
+        //             row_number() OVER (
+        //                 PARTITION BY channel_id
+        //                 ORDER BY id DESC
+        //             ) as row_number
+        //         FROM channel_messages
+        //         WHERE
+        //             channel_id in ({values})
+        //     ) AS messages
+        //     WHERE
+        //         row_number = 1
+        //     "#,
+        // );
 
-        let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
-        let mut last_messages = channel_message::Model::find_by_statement(stmt)
-            .stream(tx)
-            .await?;
+        // let stmt = Statement::from_string(self.pool.get_database_backend(), sql);
+        // let mut last_messages = channel_message::Model::find_by_statement(stmt)
+        //     .stream(tx)
+        //     .await?;
 
-        let mut results = Vec::new();
-        while let Some(result) = last_messages.next().await {
-            let message = result?;
-            results.push(proto::ChannelMessageId {
-                channel_id: message.channel_id.to_proto(),
-                message_id: message.id.to_proto(),
-            });
-        }
+        // let mut results = Vec::new();
+        // while let Some(result) = last_messages.next().await {
+        //     let message = result?;
+        //     results.push(proto::ChannelMessageId {
+        //         channel_id: message.channel_id.to_proto(),
+        //         message_id: message.id.to_proto(),
+        //     });
+        // }
 
-        Ok(results)
+        Ok(vec![])
     }
 
     fn get_notification_kind_id_by_name(&self, notification_kind: &str) -> Option<i32> {

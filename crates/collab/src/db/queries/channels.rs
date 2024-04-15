@@ -529,132 +529,133 @@ impl Database {
         ancestor_channel: Option<&channel::Model>,
         tx: &DatabaseTransaction,
     ) -> Result<ChannelsForUser> {
-        let mut filter = channel_member::Column::UserId
-            .eq(user_id)
-            .and(channel_member::Column::Accepted.eq(true));
+        // let mut filter = channel_member::Column::UserId
+        //     .eq(user_id)
+        //     .and(channel_member::Column::Accepted.eq(true));
 
-        if let Some(ancestor) = ancestor_channel {
-            filter = filter.and(channel_member::Column::ChannelId.eq(ancestor.root_id()));
-        }
+        // if let Some(ancestor) = ancestor_channel {
+        //     filter = filter.and(channel_member::Column::ChannelId.eq(ancestor.root_id()));
+        // }
 
-        let channel_memberships = channel_member::Entity::find()
-            .filter(filter)
-            .all(tx)
-            .await?;
+        // let channel_memberships = channel_member::Entity::find()
+        //     .filter(filter)
+        //     .all(tx)
+        //     .await?;
 
-        let channels = channel::Entity::find()
-            .filter(channel::Column::Id.is_in(channel_memberships.iter().map(|m| m.channel_id)))
-            .all(tx)
-            .await?;
+        // let channels = channel::Entity::find()
+        //     .filter(channel::Column::Id.is_in(channel_memberships.iter().map(|m| m.channel_id)))
+        //     .all(tx)
+        //     .await?;
 
-        let mut descendants = self
-            .get_channel_descendants_excluding_self(channels.iter(), tx)
-            .await?;
+        // let mut descendants = self
+        //     .get_channel_descendants_excluding_self(channels.iter(), tx)
+        //     .await?;
 
-        for channel in channels {
-            if let Err(ix) = descendants.binary_search_by_key(&channel.path(), |c| c.path()) {
-                descendants.insert(ix, channel);
-            }
-        }
+        // for channel in channels {
+        //     if let Err(ix) = descendants.binary_search_by_key(&channel.path(), |c| c.path()) {
+        //         descendants.insert(ix, channel);
+        //     }
+        // }
 
-        let roles_by_channel_id = channel_memberships
-            .iter()
-            .map(|membership| (membership.channel_id, membership.role))
-            .collect::<HashMap<_, _>>();
+        // let roles_by_channel_id = channel_memberships
+        //     .iter()
+        //     .map(|membership| (membership.channel_id, membership.role))
+        //     .collect::<HashMap<_, _>>();
 
-        let channels: Vec<Channel> = descendants
-            .into_iter()
-            .filter_map(|channel| {
-                let parent_role = roles_by_channel_id.get(&channel.root_id())?;
-                if parent_role.can_see_channel(channel.visibility) {
-                    Some(Channel::from_model(channel))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        // let channels: Vec<Channel> = descendants
+        //     .into_iter()
+        //     .filter_map(|channel| {
+        //         let parent_role = roles_by_channel_id.get(&channel.root_id())?;
+        //         if parent_role.can_see_channel(channel.visibility) {
+        //             Some(Channel::from_model(channel))
+        //         } else {
+        //             None
+        //         }
+        //     })
+        //     .collect();
 
-        #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
-        enum QueryUserIdsAndChannelIds {
-            ChannelId,
-            UserId,
-        }
+        // #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
+        // enum QueryUserIdsAndChannelIds {
+        //     ChannelId,
+        //     UserId,
+        // }
 
-        let mut channel_participants: HashMap<ChannelId, Vec<UserId>> = HashMap::default();
-        {
-            let mut rows = room_participant::Entity::find()
-                .inner_join(room::Entity)
-                .filter(room::Column::ChannelId.is_in(channels.iter().map(|c| c.id)))
-                .select_only()
-                .column(room::Column::ChannelId)
-                .column(room_participant::Column::UserId)
-                .into_values::<_, QueryUserIdsAndChannelIds>()
-                .stream(tx)
-                .await?;
-            while let Some(row) = rows.next().await {
-                let row: (ChannelId, UserId) = row?;
-                channel_participants.entry(row.0).or_default().push(row.1)
-            }
-        }
+        // let mut channel_participants: HashMap<ChannelId, Vec<UserId>> = HashMap::default();
+        // {
+        //     let mut rows = room_participant::Entity::find()
+        //         .inner_join(room::Entity)
+        //         .filter(room::Column::ChannelId.is_in(channels.iter().map(|c| c.id)))
+        //         .select_only()
+        //         .column(room::Column::ChannelId)
+        //         .column(room_participant::Column::UserId)
+        //         .into_values::<_, QueryUserIdsAndChannelIds>()
+        //         .stream(tx)
+        //         .await?;
+        //     while let Some(row) = rows.next().await {
+        //         let row: (ChannelId, UserId) = row?;
+        //         channel_participants.entry(row.0).or_default().push(row.1)
+        //     }
+        // }
 
-        let channel_ids = channels.iter().map(|c| c.id).collect::<Vec<_>>();
+        // let channel_ids = channels.iter().map(|c| c.id).collect::<Vec<_>>();
 
-        let mut channel_ids_by_buffer_id = HashMap::default();
-        let mut latest_buffer_versions: Vec<ChannelBufferVersion> = vec![];
-        let mut rows = buffer::Entity::find()
-            .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
-            .stream(tx)
-            .await?;
-        while let Some(row) = rows.next().await {
-            let row = row?;
-            channel_ids_by_buffer_id.insert(row.id, row.channel_id);
-            latest_buffer_versions.push(ChannelBufferVersion {
-                channel_id: row.channel_id.0 as u64,
-                epoch: row.latest_operation_epoch.unwrap_or_default() as u64,
-                version: if let Some((latest_lamport_timestamp, latest_replica_id)) = row
-                    .latest_operation_lamport_timestamp
-                    .zip(row.latest_operation_replica_id)
-                {
-                    vec![VectorClockEntry {
-                        timestamp: latest_lamport_timestamp as u32,
-                        replica_id: latest_replica_id as u32,
-                    }]
-                } else {
-                    vec![]
-                },
-            });
-        }
-        drop(rows);
+        // let mut channel_ids_by_buffer_id = HashMap::default();
+        // let mut latest_buffer_versions: Vec<ChannelBufferVersion> = vec![];
+        // let mut rows = buffer::Entity::find()
+        //     .filter(buffer::Column::ChannelId.is_in(channel_ids.iter().copied()))
+        //     .stream(tx)
+        //     .await?;
+        // while let Some(row) = rows.next().await {
+        //     let row = row?;
+        //     channel_ids_by_buffer_id.insert(row.id, row.channel_id);
+        //     latest_buffer_versions.push(ChannelBufferVersion {
+        //         channel_id: row.channel_id.0 as u64,
+        //         epoch: row.latest_operation_epoch.unwrap_or_default() as u64,
+        //         version: if let Some((latest_lamport_timestamp, latest_replica_id)) = row
+        //             .latest_operation_lamport_timestamp
+        //             .zip(row.latest_operation_replica_id)
+        //         {
+        //             vec![VectorClockEntry {
+        //                 timestamp: latest_lamport_timestamp as u32,
+        //                 replica_id: latest_replica_id as u32,
+        //             }]
+        //         } else {
+        //             vec![]
+        //         },
+        //     });
+        // }
+        // drop(rows);
 
-        let latest_channel_messages = self.latest_channel_messages(&channel_ids, tx).await?;
+        // let latest_channel_messages = self.latest_channel_messages(&channel_ids, tx).await?;
 
-        let observed_buffer_versions = self
-            .observed_channel_buffer_changes(&channel_ids_by_buffer_id, user_id, tx)
-            .await?;
+        // let observed_buffer_versions = self
+        //     .observed_channel_buffer_changes(&channel_ids_by_buffer_id, user_id, tx)
+        //     .await?;
 
-        let observed_channel_messages = self
-            .observed_channel_messages(&channel_ids, user_id, tx)
-            .await?;
+        // let observed_channel_messages = self
+        //     .observed_channel_messages(&channel_ids, user_id, tx)
+        //     .await?;
 
-        let hosted_projects = self
-            .get_hosted_projects(&channel_ids, &roles_by_channel_id, tx)
-            .await?;
+        // let hosted_projects = self
+        //     .get_hosted_projects(&channel_ids, &roles_by_channel_id, tx)
+        //     .await?;
 
-        let dev_servers = self.get_dev_servers(&channel_ids, tx).await?;
-        let remote_projects = self.get_remote_projects(&channel_ids, tx).await?;
+        // let dev_servers = self.get_dev_servers(&channel_ids, tx).await?;
+        // let remote_projects = self.get_remote_projects(&channel_ids, tx).await?;
 
-        Ok(ChannelsForUser {
-            channel_memberships,
-            channels,
-            hosted_projects,
-            dev_servers,
-            remote_projects,
-            channel_participants,
-            latest_buffer_versions,
-            latest_channel_messages,
-            observed_buffer_versions,
-            observed_channel_messages,
-        })
+        // Ok(ChannelsForUser {
+        //     channel_memberships,
+        //     channels,
+        //     hosted_projects,
+        //     dev_servers,
+        //     remote_projects,
+        //     channel_participants,
+        //     latest_buffer_versions,
+        //     latest_channel_messages,
+        //     observed_buffer_versions,
+        //     observed_channel_messages,
+        // })
+        Err(anyhow!("not implemented"))
     }
 
     /// Sets the role for the specified channel member.
