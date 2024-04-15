@@ -627,11 +627,6 @@ impl MacWindow {
                 WindowOpenStatus::Maximized(_) => {
                     maximized = true;
                     maximized_restore_bounds = bounds;
-                    native_window.setFrame_display_animate_(
-                        native_window.screen().visibleFrame(),
-                        1,
-                        0,
-                    );
                 }
                 WindowOpenStatus::FullScreen(_) => {}
             }
@@ -760,6 +755,15 @@ impl MacWindow {
             // the window position might be incorrect if the main screen (the screen that contains the window that has focus)
             //  is different from the primary screen.
             NSWindow::setFrameTopLeftPoint_(native_window, window_rect.origin);
+
+            if maximized {
+                native_window.setFrame_display_animate_(
+                    native_window.screen().visibleFrame(),
+                    1,
+                    0,
+                );
+            }
+
             window.0.lock().move_traffic_light();
 
             pool.drain();
