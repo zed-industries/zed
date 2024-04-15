@@ -22,6 +22,7 @@ smallvec.workspace = true
 story = { workspace = true, optional = true }
 strum = { version = "0.25.0", features = ["derive"] }
 theme.workspace = true
+nanoid = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
