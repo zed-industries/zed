@@ -1,12 +1,13 @@
 use crate::markdown_elements::{
     HeadingLevel, Link, ParsedMarkdown, ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock,
-    ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownList, ParsedMarkdownListItemType,
-    ParsedMarkdownTable, ParsedMarkdownTableAlignment, ParsedMarkdownTableRow, ParsedMarkdownText,
+    ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownImage, ParsedMarkdownList,
+    ParsedMarkdownListItemType, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
+    ParsedMarkdownTableRow, ParsedMarkdownText,
 };
 use gpui::{
-    div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Modifiers, ParentElement,
-    SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
+    div, img, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
+    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
+    ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
 use std::{
     ops::{Mul, Range},
@@ -110,6 +111,7 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
     match block {
         Paragraph(text) => render_markdown_paragraph(text, cx),
         Heading(heading) => render_markdown_heading(heading, cx),
+        Image(image) => render_markdown_image(image, cx),
         List(list) => render_markdown_list(list, cx),
         Table(table) => render_markdown_table(table, cx),
         BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
@@ -143,6 +145,34 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .pb_1()
         .child(render_markdown_text(&parsed.contents, cx))
         .whitespace_normal()
+        .into_any()
+}
+
+fn render_markdown_image(image: &ParsedMarkdownImage, cx: &mut RenderContext) -> AnyElement {
+    let Some(link) = image.link.clone() else {
+        return if let Some(alt_text) = &image.alt_text {
+            render_markdown_text(alt_text, cx)
+        } else {
+            div()
+                .child(format!("Path {} not recognized", image.url))
+                .into_any()
+        };
+    };
+
+    let source = match link {
+        Link::Web { url } => ImageSource::Uri(url.into()),
+        Link::Path {
+            display_path: _,
+            path,
+        } => ImageSource::File(Arc::new(path)),
+    };
+
+    let title = SharedString::from(image.title.clone());
+
+    div()
+        .id(cx.next_id(&image.source_range))
+        .child(img(source).object_fit(gpui::ObjectFit::None))
+        .tooltip(move |cx| Tooltip::text(title.clone(), cx))
         .into_any()
 }
 

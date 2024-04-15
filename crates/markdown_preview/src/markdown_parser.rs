@@ -87,8 +87,7 @@ impl<'a> MarkdownParser<'a> {
             | Event::Start(Tag::Link { link_type: _, dest_url: _, title: _, id: _ })
             | Event::Start(Tag::Emphasis)
             | Event::Start(Tag::Strong)
-            | Event::Start(Tag::Strikethrough)
-            | Event::Start(Tag::Image { link_type: _, dest_url: _, title: _, id: _ }) => {
+            | Event::Start(Tag::Strikethrough) => {
                 return true;
             }
             _ => return false,
@@ -111,7 +110,22 @@ impl<'a> MarkdownParser<'a> {
                 Tag::Paragraph => {
                     self.cursor += 1;
                     let text = self.parse_text(false);
+                    if text.contents.is_empty() {
+                        return None;
+                    }
                     Some(ParsedMarkdownElement::Paragraph(text))
+                }
+                Tag::Image {
+                    link_type: _,
+                    dest_url,
+                    title,
+                    id: _,
+                } => {
+                    let url = dest_url.to_string();
+                    let title = title.to_string();
+                    self.cursor += 1;
+                    let image = self.parse_image(url, title);
+                    Some(ParsedMarkdownElement::Image(image))
                 }
                 Tag::Heading {
                     level,
@@ -395,6 +409,31 @@ impl<'a> MarkdownParser<'a> {
                 pulldown_cmark::HeadingLevel::H6 => HeadingLevel::H6,
             },
             contents: text,
+        }
+    }
+
+    fn parse_image(&mut self, url: String, title: String) -> ParsedMarkdownImage {
+        let (_event, source_range) = self.previous().unwrap();
+        let source_range = source_range.clone();
+
+        let mut alt_text = None;
+
+        if let Some(Event::Text(_)) = self.current_event() {
+            alt_text = Some(self.parse_text(true));
+            self.cursor += 1;
+        }
+
+        // Advance past the image end tag
+        self.cursor += 1;
+
+        let link = Link::identify(self.file_location_directory.clone(), url.clone());
+
+        ParsedMarkdownImage {
+            source_range: source_range.clone(),
+            link,
+            url,
+            title,
+            alt_text,
         }
     }
 

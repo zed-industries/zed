@@ -8,6 +8,7 @@ use std::{fmt::Display, ops::Range, path::PathBuf};
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownElement {
     Heading(ParsedMarkdownHeading),
+    Image(ParsedMarkdownImage),
     /// An ordered or unordered list of items.
     List(ParsedMarkdownList),
     Table(ParsedMarkdownTable),
@@ -22,6 +23,7 @@ impl ParsedMarkdownElement {
     pub fn source_range(&self) -> Range<usize> {
         match self {
             Self::Heading(heading) => heading.source_range.clone(),
+            Self::Image(image) => image.source_range.clone(),
             Self::List(list) => list.source_range.clone(),
             Self::Table(table) => table.source_range.clone(),
             Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
@@ -87,6 +89,16 @@ pub enum HeadingLevel {
     H4,
     H5,
     H6,
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct ParsedMarkdownImage {
+    pub source_range: Range<usize>,
+    pub title: String,
+    pub link: Option<Link>,
+    pub url: String,
+    pub alt_text: Option<ParsedMarkdownText>,
 }
 
 #[derive(Debug)]
