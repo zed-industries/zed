@@ -334,25 +334,26 @@ const RUST_PACKAGE_TASK_VARIABLE: VariableName =
 impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
-        location: Location,
+        _: Option<&Path>,
+        location: &Location,
         cx: &mut gpui::AppContext,
     ) -> Result<TaskVariables> {
-        let mut context = SymbolContextProvider.build_context(location.clone(), cx)?;
-
         let local_abs_path = location
             .buffer
             .read(cx)
             .file()
             .and_then(|file| Some(file.as_local()?.abs_path(cx)));
-        if let Some(package_name) = local_abs_path
-            .as_deref()
-            .and_then(|local_abs_path| local_abs_path.parent())
-            .and_then(human_readable_package_name)
-        {
-            context.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
-        }
-
-        Ok(context)
+        Ok(
+            if let Some(package_name) = local_abs_path
+                .as_deref()
+                .and_then(|local_abs_path| local_abs_path.parent())
+                .and_then(human_readable_package_name)
+            {
+                TaskVariables::from_iter(Some((RUST_PACKAGE_TASK_VARIABLE.clone(), package_name)))
+            } else {
+                TaskVariables::default()
+            },
+        )
     }
 
     fn associated_tasks(&self) -> Option<TaskDefinitions> {

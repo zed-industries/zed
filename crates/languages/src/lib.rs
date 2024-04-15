@@ -105,7 +105,7 @@ pub fn init(
                     Ok((
                         config.clone(),
                         load_queries($name),
-                        Some(Arc::new(language::SymbolContextProvider)),
+                        Some(Arc::new(language::BasicContextProvider)),
                     ))
                 },
             );
@@ -125,7 +125,7 @@ pub fn init(
                     Ok((
                         config.clone(),
                         load_queries($name),
-                        Some(Arc::new(language::SymbolContextProvider)),
+                        Some(Arc::new(language::BasicContextProvider)),
                     ))
                 },
             );

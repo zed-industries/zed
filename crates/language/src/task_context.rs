@@ -1,34 +1,56 @@
+use std::path::Path;
+
 use crate::Location;
 
 use anyhow::Result;
 use gpui::AppContext;
 use task::{static_source::TaskDefinitions, TaskVariables, VariableName};
+use text::{Point, ToPoint};
 
-/// Language Contexts are used by Zed tasks to extract information about source file.
+/// Language Contexts are used by Zed tasks to extract information about the source file where the tasks are supposed to be scheduled from.
+/// Multiple context providers may be used together: by default, Zed provides a base [`BasicContextProvider`] context that fills all non-custom [`VariableName`] variants.
+///
+/// The context will be used to fill data for the tasks, and filter out the ones that do not have the variables required.
 pub trait ContextProvider: Send + Sync {
-    fn build_context(&self, _: Location, _: &mut AppContext) -> Result<TaskVariables> {
+    /// Builds a specific context to be placed on top of the basic one (replacing all conflicting entries) and to be used for task resolving later.
+    fn build_context(
+        &self,
+        _: Option<&Path>,
+        _: &Location,
+        _: &mut AppContext,
+    ) -> Result<TaskVariables> {
         Ok(TaskVariables::default())
     }
 
+    /// Provides all tasks, associated with the current language.
     fn associated_tasks(&self) -> Option<TaskDefinitions> {
         None
     }
+
+    // Determines whether the [`BasicContextProvider`] variables should be filled too (if `false`), or omitted (if `true`).
+    fn is_basic(&self) -> bool {
+        false
+    }
 }
 
-/// A context provider that finds out what symbol is currently focused in the buffer.
-pub struct SymbolContextProvider;
+/// A context provided that tries to provide values for all non-custom [`VariableName`] variants for a currently opened file.
+/// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
+pub struct BasicContextProvider;
 
-impl ContextProvider for SymbolContextProvider {
+impl ContextProvider for BasicContextProvider {
+    fn is_basic(&self) -> bool {
+        true
+    }
+
     fn build_context(
         &self,
-        location: Location,
+        worktree_abs_path: Option<&Path>,
+        location: &Location,
         cx: &mut AppContext,
-    ) -> gpui::Result<TaskVariables> {
-        let symbols = location
-            .buffer
-            .read(cx)
-            .snapshot()
-            .symbols_containing(location.range.start, None);
+    ) -> Result<TaskVariables> {
+        let buffer = location.buffer.read(cx);
+        let buffer_snapshot = buffer.snapshot();
+        let symbols = buffer_snapshot.symbols_containing(location.range.start, None);
         let symbol = symbols.unwrap_or_default().last().map(|symbol| {
             let range = symbol
                 .name_ranges
@@ -37,9 +59,40 @@ impl ContextProvider for SymbolContextProvider {
                 .unwrap_or(0..symbol.text.len());
             symbol.text[range].to_string()
         });
-        Ok(TaskVariables::from_iter(
-            Some(VariableName::Symbol).zip(symbol),
-        ))
+
+        let current_file = buffer
+            .file()
+            .and_then(|file| file.as_local())
+            .map(|file| file.abs_path(cx).to_string_lossy().to_string());
+        let Point { row, column } = location.range.start.to_point(&buffer_snapshot);
+        let row = row + 1;
+        let column = column + 1;
+        let selected_text = buffer
+            .chars_for_range(location.range.clone())
+            .collect::<String>();
+
+        let mut task_variables = TaskVariables::from_iter([
+            (VariableName::Row, row.to_string()),
+            (VariableName::Column, column.to_string()),
+        ]);
+
+        if let Some(symbol) = symbol {
+            task_variables.insert(VariableName::Symbol, symbol);
+        }
+        if !selected_text.trim().is_empty() {
+            task_variables.insert(VariableName::SelectedText, selected_text);
+        }
+        if let Some(path) = current_file {
+            task_variables.insert(VariableName::File, path);
+        }
+        if let Some(worktree_path) = worktree_abs_path {
+            task_variables.insert(
+                VariableName::WorktreeRoot,
+                worktree_path.to_string_lossy().to_string(),
+            );
+        }
+
+        Ok(task_variables)
     }
 }
 
@@ -59,7 +112,12 @@ impl ContextProvider for ContextProviderWithTasks {
         Some(self.definitions.clone())
     }
 
-    fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<TaskVariables> {
-        SymbolContextProvider.build_context(location, cx)
+    fn build_context(
+        &self,
+        worktree_abs_path: Option<&Path>,
+        location: &Location,
+        cx: &mut AppContext,
+    ) -> Result<TaskVariables> {
+        BasicContextProvider.build_context(worktree_abs_path, location, cx)
     }
 }
