@@ -508,7 +508,13 @@ impl MacWindowState {
     }
 
     fn restore_status(&self) -> WindowOpenStatus {
-        WindowOpenStatus::Windowed(None)
+        if self.is_fullscreen() {
+            WindowOpenStatus::FullScreen(self.bounds())
+        } else if self.is_maximized() {
+            WindowOpenStatus::Maximized(self.maximized_restore_bounds)
+        } else {
+            WindowOpenStatus::Windowed(Some(self.bounds()))
+        }
     }
 }
 
@@ -521,7 +527,7 @@ impl MacWindow {
         handle: AnyWindowHandle,
         WindowParams {
             window_background,
-            bounds,
+            open_status,
             titlebar,
             kind,
             is_movable,
@@ -583,6 +589,7 @@ impl MacWindow {
                 NSScreen::visibleFrame(screen)
             });
 
+            let bounds = open_status.get_bounds().unwrap();
             let window_rect = NSRect::new(
                 NSPoint::new(
                     screen_frame.origin.x + bounds.origin.x.0 as f64,
@@ -622,6 +629,22 @@ impl MacWindow {
                 )
             };
 
+            let mut maximized = false;
+            let mut maximized_restore_bounds = Bounds::default();
+            match open_status {
+                WindowOpenStatus::Windowed(_) => {}
+                WindowOpenStatus::Maximized(_) => {
+                    maximized = true;
+                    maximized_restore_bounds = bounds;
+                    native_window.setFrame_display_animate_(
+                        native_window.screen().visibleFrame(),
+                        1,
+                        0,
+                    );
+                }
+                WindowOpenStatus::FullScreen(_) => {}
+            }
+
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
@@ -656,8 +679,8 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 minimized: false,
-                maximized: false,
-                maximized_restore_bounds: Bounds::default(),
+                maximized,
+                maximized_restore_bounds,
             })));
 
             (*native_window).set_ivar(
