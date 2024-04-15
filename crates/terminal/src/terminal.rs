@@ -286,6 +286,7 @@ impl Display for TerminalError {
     }
 }
 
+#[derive(Debug)]
 pub struct SpawnTask {
     pub id: TaskId,
     pub full_label: String,

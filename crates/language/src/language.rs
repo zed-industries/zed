@@ -56,7 +56,7 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
-pub use task_context::{ContextProvider, ContextProviderWithTasks, SymbolContextProvider};
+pub use task_context::{BasicContextProvider, ContextProvider, ContextProviderWithTasks};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, WasmStore};
 use util::http::HttpClient;
