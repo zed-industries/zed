@@ -215,7 +215,10 @@ pub fn init(
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ]
             );
-            language!("typescript", vec![Arc::new(deno::DenoLspAdapter::new(deno_path.clone()))]);
+            language!(
+                "typescript",
+                vec![Arc::new(deno::DenoLspAdapter::new(deno_path.clone()))]
+            );
             language!(
                 "javascript",
                 vec![
@@ -223,7 +226,10 @@ pub fn init(
                     Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
                 ]
             );
-            language!("jsdoc", vec![Arc::new(deno::DenoLspAdapter::new(deno_path.clone()))]);
+            language!(
+                "jsdoc",
+                vec![Arc::new(deno::DenoLspAdapter::new(deno_path.clone()))]
+            );
         }
         false => {
             language!(

@@ -20,7 +20,7 @@ use util::{
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DenoSettings {
     pub enable: bool,
-    pub path: Option<String>
+    pub path: Option<String>,
 }
 
 #[derive(Clone, Serialize, Default, Deserialize, JsonSchema)]
@@ -44,14 +44,12 @@ fn deno_server_binary_arguments() -> Vec<OsString> {
 }
 
 pub struct DenoLspAdapter {
-    path: Option<String>
+    path: Option<String>,
 }
 
 impl DenoLspAdapter {
     pub fn new(path: Option<String>) -> Self {
-        DenoLspAdapter {
-            path
-        }
+        DenoLspAdapter { path }
     }
 }
 
