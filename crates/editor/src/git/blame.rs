@@ -302,7 +302,7 @@ impl GitBlame {
                         // notifications.
                         // Except for `NoRepositoryError`, which can  happen often if a user has inline-blame turned on
                         // and opens a non-git file.
-                        if !error.downcast_ref::<project::NoRepositoryError>().is_some() {
+                        if error.downcast_ref::<project::NoRepositoryError>().is_none() {
                             log::error!("failed to get git blame data: {error:?}");
                         }
                     }
