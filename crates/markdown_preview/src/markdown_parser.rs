@@ -864,6 +864,25 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_image() {
+        let markdown = "\
+![alt text](https://zed.dev \"title\")
+";
+        assert_eq!(
+            parse(markdown).await.children[0],
+            ParsedMarkdownElement::Image(ParsedMarkdownImage {
+                source_range: 0..36,
+                title: "title".to_string(),
+                link: Some(Link::Web {
+                    url: "https://zed.dev".to_string()
+                }),
+                url: "https://zed.dev".to_string(),
+                alt_text: Some(text("alt text", 0..36)),
+            })
+        );
+    }
+
+    #[gpui::test]
     async fn test_header_only_table() {
         let markdown = "\
 | Header 1 | Header 2 |
