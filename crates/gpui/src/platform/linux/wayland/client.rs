@@ -95,6 +95,7 @@ impl Globals {
 
 pub(crate) struct WaylandClientState {
     globals: Globals,
+    wl_pointer: Option<wl_pointer::WlPointer>,
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
@@ -240,6 +241,7 @@ impl WaylandClient {
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             globals,
+            wl_pointer: None,
             output_scales: outputs,
             windows: HashMap::default(),
             common,
@@ -343,7 +345,15 @@ impl LinuxClient for WaylandClient {
         }
         .to_string();
 
-        self.0.borrow_mut().cursor_icon_name = cursor_icon_name;
+        let mut state = self.0.borrow_mut();
+        state.cursor_icon_name = cursor_icon_name.clone();
+        if state.mouse_focused_window.is_some() {
+            let wl_pointer = state
+                .wl_pointer
+                .clone()
+                .expect("window is focused by pointer");
+            state.cursor.set_icon(&wl_pointer, &cursor_icon_name);
+        }
     }
 
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
@@ -403,6 +413,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 version,
             } => match &interface[..] {
                 "wl_seat" => {
+                    state.wl_pointer = None;
                     registry.bind::<wl_seat::WlSeat, _, _>(name, wl_seat_version(version), qh, ());
                 }
                 "wl_output" => {
@@ -582,7 +593,9 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                 seat.get_keyboard(qh, ());
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
-                seat.get_pointer(qh, ());
+                let client = state.get_client();
+                let mut state = client.borrow_mut();
+                state.wl_pointer = Some(seat.get_pointer(qh, ()));
             }
         }
     }
@@ -789,10 +802,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.enter_token = Some(());
                     state.mouse_focused_window = Some(window.clone());
+                    state.cursor.mark_dirty();
                     state.cursor.set_serial_id(serial);
                     state
                         .cursor
-                        .set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
+                        .set_icon(&wl_pointer, cursor_icon_name.as_str());
                     drop(state);
                     window.set_focused(true);
                 }
@@ -823,9 +837,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     return;
                 }
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
-                state
-                    .cursor
-                    .set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
 
                 if let Some(window) = state.mouse_focused_window.clone() {
                     let input = PlatformInput::MouseMove(MouseMoveEvent {
