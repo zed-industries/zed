@@ -3073,9 +3073,8 @@ impl Render for BlameEntryTooltip {
             })
             .unwrap_or("<no commit message>".into_any());
 
-        let settings = ThemeSettings::get_global(cx);
         let line_height = self.style.text.line_height_in_pixels(cx.rem_size());
-        let message_max_height = (line_height * 10.) + settings.buffer_font_size / 3.;
+        let message_max_height = line_height * 14.8;
 
         tooltip_container(cx, move |this, cx| {
             this.occlude()
