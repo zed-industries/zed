@@ -52,7 +52,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
-use theme::{ActiveTheme, PlayerColor};
+use theme::{ActiveTheme, PlayerColor, ThemeSettings};
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
 use util::ResultExt;
@@ -3073,8 +3073,8 @@ impl Render for BlameEntryTooltip {
             })
             .unwrap_or("<no commit message>".into_any());
 
-        let line_height = self.style.text.line_height_in_pixels(cx.rem_size());
-        let message_max_height = line_height * 14.8;
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+        let message_max_height = cx.line_height() * 12 + (ui_font_size / 0.4);
 
         tooltip_container(cx, move |this, cx| {
             this.occlude()
