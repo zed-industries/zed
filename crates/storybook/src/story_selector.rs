@@ -19,7 +19,6 @@ pub enum ComponentStory {
     CollabNotification,
     ContextMenu,
     Cursor,
-    CollapsibleContainer,
     Disclosure,
     Focus,
     Icon,
@@ -70,7 +69,6 @@ impl ComponentStory {
             Self::ToggleButton => cx.new_view(|_| ui::ToggleButtonStory).into(),
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),
             Self::Picker => PickerStory::new(cx).into(),
-            Self::CollapsibleContainer => cx.new_view(|_| ui::CollapsibleContainerStory).into(),
         }
     }
 }

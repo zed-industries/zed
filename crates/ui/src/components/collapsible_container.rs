@@ -1,4 +1,4 @@
-use crate::{prelude::*, ButtonLike, Disclosure};
+use crate::{prelude::*, ButtonLike};
 use smallvec::SmallVec;
 
 use gpui::*;
@@ -149,35 +149,5 @@ impl RenderOnce for CollapsibleContainer {
             .when(self.toggle, |this| {
                 this.child(h_flex().flex_1().w_full().p_1().children(self.children))
             })
-    }
-}
-
-use gpui::Render;
-use story::Story;
-
-pub struct CollapsibleContainerStory;
-
-impl Render for CollapsibleContainerStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        Story::container()
-            .text_color(cx.theme().colors().text)
-            .p_2()
-            .gap_2()
-            .child(Story::title_for::<CollapsibleContainer>())
-            .child(Story::label("Default Open"))
-            .child(
-                CollapsibleContainer::new("default_open", true)
-                    .start_slot(Label::new("Header content"))
-                    .end_slot(h_flex().gap_1().child(Label::new("End content")).child(
-                        IconButton::new("button", IconName::Plus).icon_size(IconSize::XSmall),
-                    ))
-                    .child(Label::new("This is some content inside the container")),
-            )
-            .child(Story::label("Default Closed"))
-            .child(
-                CollapsibleContainer::new("default_closed", false)
-                    .start_slot(Label::new("Header content"))
-                    .child(Label::new("This is some content inside the container")),
-            )
     }
 }
