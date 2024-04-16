@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::{ops::Range, path::PathBuf};
 
 use crate::{HighlightId, Language, LanguageRegistry};
+use async_recursion::async_recursion;
 use gpui::{px, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, UnderlineStyle};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
@@ -149,6 +150,7 @@ pub async fn parse_markdown(
 }
 
 /// Parses a Markdown block.
+#[async_recursion]
 pub async fn parse_markdown_block(
     markdown: &str,
     language_registry: &Arc<LanguageRegistry>,
@@ -165,7 +167,9 @@ pub async fn parse_markdown_block(
     let mut current_language = None;
     let mut list_stack = Vec::new();
 
-    for event in Parser::new_ext(markdown, Options::all()) {
+    let mut iter = Parser::new_ext(markdown, Options::all()).peekable();
+
+    while let Some(event) = iter.next() {
         let prev_len = text.len();
         match event {
             Event::Text(t) => {
@@ -214,24 +218,6 @@ pub async fn parse_markdown_block(
                     }
                 }
             }
-
-            Event::Code(t) => {
-                text.push_str(t.as_ref());
-                region_ranges.push(prev_len..text.len());
-
-                let link = link_url.clone().and_then(|u| Link::identify(u));
-                if link.is_some() {
-                    highlights.push((
-                        prev_len..text.len(),
-                        MarkdownHighlight::Style(MarkdownHighlightStyle {
-                            underline: true,
-                            ..Default::default()
-                        }),
-                    ));
-                }
-                regions.push(ParsedRegion { code: true, link });
-            }
-
             Event::Start(tag) => match tag {
                 Tag::Paragraph => new_paragraph(text, &mut list_stack),
 
@@ -294,9 +280,28 @@ pub async fn parse_markdown_block(
                     }
                 }
 
+                Tag::MetadataBlock(_) => {
+                    text.push('\n');
+                    if let Some(event) = iter.next() {
+                        match event {
+                            Event::Text(t) => {
+                                parse_markdown_block(
+                                    &t,
+                                    language_registry,
+                                    language.clone(),
+                                    text,
+                                    highlights,
+                                    region_ranges,
+                                    regions,
+                                )
+                                .await
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 _ => {}
             },
-
             Event::End(tag) => match tag {
                 TagEnd::Heading(_) => bold_depth -= 1,
                 TagEnd::CodeBlock => current_language = None,
@@ -308,11 +313,24 @@ pub async fn parse_markdown_block(
                 TagEnd::List(_) => drop(list_stack.pop()),
                 _ => {}
             },
+            Event::Code(t) => {
+                text.push_str(t.as_ref());
+                region_ranges.push(prev_len..text.len());
 
-            Event::HardBreak => text.push('\n'),
-
+                let link = link_url.clone().and_then(|u| Link::identify(u));
+                if link.is_some() {
+                    highlights.push((
+                        prev_len..text.len(),
+                        MarkdownHighlight::Style(MarkdownHighlightStyle {
+                            underline: true,
+                            ..Default::default()
+                        }),
+                    ));
+                }
+                regions.push(ParsedRegion { code: true, link });
+            }
             Event::SoftBreak => text.push(' '),
-
+            Event::HardBreak => text.push('\n'),
             _ => {}
         }
     }
