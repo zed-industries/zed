@@ -4,10 +4,10 @@ use anyhow::Result;
 use client::Client;
 use completion_provider::*;
 use editor::Editor;
-use futures::StreamExt;
+use futures::{channel::oneshot, Future, FutureExt as _, StreamExt};
 use gpui::{
-    list, prelude::*, AnyElement, AppContext, FocusHandle, Global,
-    ListAlignment, ListState, Model, Render, Task, View,
+    list, prelude::*, AnyElement, AppContext, FocusHandle, Global, ListAlignment, ListState, Model,
+    Render, Task, View,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use project::Fs;
@@ -17,7 +17,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{cmp, sync::Arc};
 use theme::ThemeSettings;
-use ui::{popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip, CollapsibleContainer};
+use ui::{popover_menu, prelude::*, ButtonLike, CollapsibleContainer, Color, ContextMenu, Tooltip};
 use util::ResultExt;
 
 // gpui::actions!(assistant, [Submit]);
@@ -45,8 +45,11 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 }
 
 pub struct AssistantPanel {
+    #[allow(dead_code)]
     language_registry: Arc<LanguageRegistry>,
+    #[allow(dead_code)]
     project_index: Model<ProjectIndex>,
+    #[allow(dead_code)]
     fs: Arc<dyn Fs>,
     chat: View<AssistantChat>,
 }
@@ -94,7 +97,6 @@ struct AssistantChat {
     project_index: Model<ProjectIndex>,
     fs: Arc<dyn Fs>,
     next_message_id: MessageId,
-    next_context_id: ContextId,
     pending_completion: Option<Task<()>>,
 }
 
@@ -125,7 +127,6 @@ impl AssistantChat {
             project_index,
             fs,
             next_message_id: MessageId(0),
-            next_context_id: ContextId(0),
             pending_completion: None,
         };
         this.push_new_user_message(true, cx);
@@ -264,74 +265,39 @@ impl AssistantChat {
         })
     }
 
+    // Returns a oneshot channel which resolves to true when the context is successfully populated.
     fn populate_context_on_submit(
         &mut self,
         submitted_id: MessageId,
         mode: &SubmitMode,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
+    ) -> oneshot::Receiver<bool> {
+        let (tx, rx) = oneshot::channel();
+
         match mode {
-            SubmitMode::Simple => return Task::ready(Ok(())),
-            SubmitMode::CurrentFile => return Task::ready(Ok(())),
-            SubmitMode::Codebase => {}
+            SubmitMode::Simple => {
+                tx.send(true).ok();
+            }
+            SubmitMode::CurrentFile => {
+                tx.send(true).ok();
+            }
+            SubmitMode::Codebase => {
+                self.user_message(submitted_id).contexts.clear();
+
+                let query = self.setup_query(cx);
+
+                let project_index = self.project_index.clone();
+                let fs = self.fs.clone();
+
+                self.user_message(submitted_id)
+                    .contexts
+                    .push(AssistantContext::Codebase(cx.new_view(|cx| {
+                        CodebaseContext::new(query, tx, project_index, fs, cx)
+                    })));
+            }
         }
 
-        let context_id = self.next_context_id.post_inc();
-
-        self.user_message(submitted_id).contexts.clear();
-        self.user_message(submitted_id)
-            .contexts
-            .push(AssistantContext::codebase(context_id));
-
-        let query = self.setup_query(cx);
-        let fs = self.fs.clone();
-
-        cx.spawn(|this, mut cx| async move {
-            let query = query.await?;
-            let results = this
-                .update(&mut cx, |this, cx| {
-                    this.project_index.read(cx).search(&query, 16, cx)
-                })?
-                .await;
-
-            let excerpts = results.into_iter().map(|result| {
-                let abs_path = result
-                    .worktree
-                    .read_with(&cx, |worktree, _| worktree.abs_path().join(&result.path));
-                let fs = fs.clone();
-
-                async move {
-                    let path = result.path.clone();
-                    let text = fs.load(&abs_path?).await?;
-                    // todo!("what should we do with stale ranges?");
-                    let range = cmp::min(result.range.start, text.len())
-                        ..cmp::min(result.range.end, text.len());
-
-                    let text = SharedString::from(text[range].to_string());
-
-                    anyhow::Ok(CodebaseExcerpt {
-                        element_id: ElementId::Name(nanoid::nanoid!().into()),
-                        path: path.to_string_lossy().to_string().into(),
-                        text,
-                        score: result.score,
-                    })
-                }
-            });
-
-            let excerpts = futures::future::join_all(excerpts).await;
-
-            this.update(&mut cx, |this, cx| {
-                this.codebase_context(submitted_id, context_id).populate(
-                    excerpts
-                        .into_iter()
-                        .filter_map(|result| result.log_err())
-                        .collect(),
-                );
-                cx.notify();
-            })?;
-
-            anyhow::Ok(())
-        })
+        rx
     }
 
     fn user_message(&mut self, message_id: MessageId) -> &mut UserMessage {
@@ -344,31 +310,6 @@ impl AssistantChat {
                 _ => None,
             })
             .expect("User message not found")
-    }
-
-    fn codebase_context(
-        &mut self,
-        message_id: MessageId,
-        context_id: ContextId,
-    ) -> &mut CodebaseContext {
-        self.messages
-            .iter_mut()
-            .find_map(|message| match message {
-                ChatMessage::User(user_message) if user_message.id == message_id => user_message
-                    .contexts
-                    .iter_mut()
-                    .find_map(|context| match context {
-                        AssistantContext::Codebase(context) => {
-                            if context.id == context_id {
-                                Some(context)
-                            } else {
-                                None
-                            }
-                        }
-                    }),
-                _ => None,
-            })
-            .expect("Codebase context not found")
     }
 
     fn push_new_user_message(&mut self, focus: bool, cx: &mut ViewContext<Self>) {
@@ -480,7 +421,7 @@ impl AssistantChat {
                 ChatMessage::User(UserMessage { body, contexts, .. }) => {
                     // setup context for model
                     contexts.iter().for_each(|context| {
-                        completion_messages.extend(context.completion_messages())
+                        completion_messages.extend(context.completion_messages(cx))
                     });
 
                     // Show user's message last so that the assistant is grounded in the user's request
@@ -608,18 +549,7 @@ struct AssistantMessage {
 }
 
 enum AssistantContext {
-    Codebase(CodebaseContext),
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-struct ContextId(usize);
-
-impl ContextId {
-    fn post_inc(&mut self) -> Self {
-        let id = *self;
-        self.0 += 1;
-        id
-    }
+    Codebase(View<CodebaseContext>),
 }
 
 struct CodebaseExcerpt {
@@ -627,87 +557,158 @@ struct CodebaseExcerpt {
     path: SharedString,
     text: SharedString,
     score: f32,
+    expanded: bool,
 }
 
 impl AssistantContext {
-    fn codebase(id: ContextId) -> Self {
-        Self::Codebase(CodebaseContext::new(id))
-    }
-
-    fn render(&self, cx: &mut ViewContext<AssistantChat>) -> AnyElement {
+    fn render(&self, _cx: &mut ViewContext<AssistantChat>) -> AnyElement {
         match self {
-            AssistantContext::Codebase(context) => context.render(cx).into_any_element(),
+            AssistantContext::Codebase(context) => context.clone().into_any_element(),
         }
     }
 
-    fn completion_messages(&self) -> Vec<CompletionMessage> {
+    fn completion_messages(&self, cx: &WindowContext) -> Vec<CompletionMessage> {
         match self {
-            AssistantContext::Codebase(context) => context.completion_messages(),
+            AssistantContext::Codebase(context) => context.read(cx).completion_messages(),
         }
     }
 }
 
-struct CodebaseContext {
-    id: ContextId,
-    excerpts: Vec<CodebaseExcerpt>,
-    pending: bool,
+enum CodebaseContext {
+    Pending { _task: Task<()> },
+    Done(Result<Vec<CodebaseExcerpt>>),
 }
 
 impl CodebaseContext {
-    fn render(&self, cx: &mut ViewContext<AssistantChat>) -> impl IntoElement {
-        if self.pending {
-            div()
+    fn toggle_expanded(&mut self, element_id: ElementId, cx: &mut ViewContext<Self>) {
+        if let CodebaseContext::Done(Ok(excerpts)) = self {
+            if let Some(excerpt) = excerpts
+                .iter_mut()
+                .find(|excerpt| excerpt.element_id == element_id)
+            {
+                excerpt.expanded = !excerpt.expanded;
+                cx.notify();
+            }
+        }
+    }
+}
+
+impl Render for CodebaseContext {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        match self {
+            CodebaseContext::Pending { .. } => div()
                 .h_flex()
                 .items_center()
                 .gap_1()
                 .child(Icon::new(IconName::Ai).color(Color::Muted).into_element())
-                .child("Searching codebase...")
-        } else {
-            div()
-                .v_flex()
-                .gap_2()
-                .children(self.excerpts.iter().map(|excerpt| {
-                    // let expanded = self.expanded_excerpts.contains(&excerpt.element_id);
-                    let expanded = false;
-                    let _element_id = excerpt.element_id.clone();
+                .child("Searching codebase..."),
+            CodebaseContext::Done(Ok(excerpts)) => {
+                div()
+                    .v_flex()
+                    .gap_2()
+                    .children(excerpts.iter().map(|excerpt| {
+                        let expanded = excerpt.expanded;
+                        let element_id = excerpt.element_id.clone();
 
-                    CollapsibleContainer::new(excerpt.element_id.clone(), expanded)
-                        .start_slot(
-                            h_flex()
-                                .gap_1()
-                                .child(Icon::new(IconName::File).color(Color::Muted))
-                                .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
-                        )
-                        // TODO: Need a view
-                        // .on_click(cx.listener(move |this, _, _cx| {
-                        //     this.toggle_excerpt(element_id.clone());
-                        // }))
-                        .child(
-                            div()
-                                .p_2()
-                                .rounded_md()
-                                .bg(cx.theme().colors().editor_background)
-                                .child(
-                                    excerpt.text.clone(), // todo!(): Show as an editor block
-                                ),
-                        )
-                }))
+                        CollapsibleContainer::new(element_id.clone(), expanded.clone())
+                            .start_slot(
+                                h_flex()
+                                    .gap_1()
+                                    .child(Icon::new(IconName::File).color(Color::Muted))
+                                    .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
+                            )
+                            .on_click(cx.listener(move |this, _, cx| {
+                                dbg!("listener callback fired");
+                                this.toggle_expanded(element_id.clone(), cx);
+                            }))
+                            .child(
+                                div()
+                                    .p_2()
+                                    .rounded_md()
+                                    .bg(cx.theme().colors().editor_background)
+                                    .child(
+                                        excerpt.text.clone(), // todo!(): Show as an editor block
+                                    ),
+                            )
+                    }))
+            }
+            CodebaseContext::Done(Err(error)) => div().child(error.to_string()), // todo!,
         }
     }
 }
 
 impl CodebaseContext {
-    fn new(id: ContextId) -> Self {
-        Self {
-            id,
-            excerpts: Vec::new(),
-            pending: true,
-        }
+    fn new(
+        query: impl 'static + Future<Output = Result<String>>,
+        populated: oneshot::Sender<bool>,
+        project_index: Model<ProjectIndex>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let query = query.boxed_local();
+        let _task = cx.spawn(|this, mut cx| async move {
+            let result = async {
+                let query = query.await?;
+                let results = this
+                    .update(&mut cx, |_this, cx| {
+                        project_index.read(cx).search(&query, 16, cx)
+                    })?
+                    .await;
+
+                let excerpts = results.into_iter().map(|result| {
+                    let abs_path = result
+                        .worktree
+                        .read_with(&cx, |worktree, _| worktree.abs_path().join(&result.path));
+                    let fs = fs.clone();
+
+                    async move {
+                        let path = result.path.clone();
+                        let text = fs.load(&abs_path?).await?;
+                        // todo!("what should we do with stale ranges?");
+                        let range = cmp::min(result.range.start, text.len())
+                            ..cmp::min(result.range.end, text.len());
+
+                        let text = SharedString::from(text[range].to_string());
+
+                        anyhow::Ok(CodebaseExcerpt {
+                            element_id: ElementId::Name(nanoid::nanoid!().into()),
+                            path: path.to_string_lossy().to_string().into(),
+                            text,
+                            score: result.score,
+                            expanded: false,
+                        })
+                    }
+                });
+
+                anyhow::Ok(
+                    futures::future::join_all(excerpts)
+                        .await
+                        .into_iter()
+                        .filter_map(|result| result.log_err())
+                        .collect(),
+                )
+            }
+            .await;
+
+            this.update(&mut cx, |this, cx| {
+                this.populate(result, populated, cx);
+            })
+            .ok();
+        });
+
+        Self::Pending { _task }
     }
 
-    fn populate(&mut self, excerpts: Vec<CodebaseExcerpt>) {
-        self.excerpts = excerpts;
-        self.pending = false;
+    fn populate(
+        &mut self,
+        result: Result<Vec<CodebaseExcerpt>>,
+        populated: oneshot::Sender<bool>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let success = result.is_ok();
+        *self = Self::Done(result);
+        populated.send(success).ok();
+        cx.notify();
     }
 
     fn completion_messages(&self) -> Vec<CompletionMessage> {
@@ -722,26 +723,31 @@ impl CodebaseContext {
         //
         // Excerpt from $path:
 
-        if self.excerpts.is_empty() {
-            return Vec::new();
+        match self {
+            CodebaseContext::Done(Ok(excerpts)) => {
+                if excerpts.is_empty() {
+                    return Vec::new();
+                }
+
+                let mut body = "Semantic search reasults for user query:\n".to_string();
+
+                for excerpt in excerpts {
+                    body.push_str("Excerpt from ");
+                    body.push_str(excerpt.path.as_ref());
+                    body.push_str(", score ");
+                    body.push_str(&excerpt.score.to_string());
+                    body.push_str(":\n");
+                    body.push_str("~~~\n");
+                    body.push_str(excerpt.text.as_ref());
+                    body.push_str("~~~\n");
+                }
+
+                vec![CompletionMessage {
+                    role: CompletionRole::System,
+                    body,
+                }]
+            }
+            _ => vec![],
         }
-
-        let mut body = "Semantic search reasults for user query:\n".to_string();
-
-        for excerpt in &self.excerpts {
-            body.push_str("Excerpt from ");
-            body.push_str(excerpt.path.as_ref());
-            body.push_str(", score ");
-            body.push_str(&excerpt.score.to_string());
-            body.push_str(":\n");
-            body.push_str("~~~\n");
-            body.push_str(excerpt.text.as_ref());
-            body.push_str("~~~\n");
-        }
-
-        vec![CompletionMessage {
-            role: CompletionRole::System,
-            body,
-        }]
     }
 }
