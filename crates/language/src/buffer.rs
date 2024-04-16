@@ -3148,7 +3148,7 @@ fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {
     indent_size_for_text(text.chars_at(Point::new(row, 0)))
 }
 
-fn indent_size_for_text(text: impl Iterator<Item = char>) -> IndentSize {
+pub fn indent_size_for_text(text: impl Iterator<Item = char>) -> IndentSize {
     let mut result = IndentSize::spaces(0);
     for c in text {
         let kind = match c {

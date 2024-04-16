@@ -4496,15 +4496,10 @@ impl Editor {
             let cursor = selection.head();
             let current_indent = snapshot.indent_size_for_line(cursor.row);
 
-            // Accept copilot completion if there is only one selection and the cursor is not
-            // in the leading whitespace.
-            if self.selections.count() == 1
-                && cursor.column >= current_indent.len
-                && self.has_active_inline_completion(cx)
-            {
-                self.accept_inline_completion(cx);
-                return;
-            }
+            let active_suggestion_indent = self
+                .active_inline_completion
+                .as_ref()
+                .map(|s| language::indent_size_for_text(s.text.chars_at(0)));
 
             // If the selection is empty and the cursor is in the leading whitespace before the
             // suggested indentation, then auto-indent the line.
@@ -4512,7 +4507,11 @@ impl Editor {
                 if cursor.column < suggested_indent.len
                     && cursor.column <= current_indent.len
                     && current_indent.len <= suggested_indent.len
-                {
+                // If the active suggestion implies a lower indent, then don't auto-indent.
+                // Instead, accept the suggestion.
+                && active_suggestion_indent.map_or(true, |ind| {
+                    current_indent.len + ind.len >= suggested_indent.len
+                }) {
                     selection.start = Point::new(cursor.row, suggested_indent.len);
                     selection.end = selection.start;
                     if row_delta == 0 {
@@ -4525,6 +4524,16 @@ impl Editor {
                     }
                     continue;
                 }
+            }
+
+            // Accept copilot completion if there is only one selection and the cursor is not
+            // in the leading whitespace.
+            if self.selections.count() == 1
+                && cursor.column >= current_indent.len
+                && self.has_active_inline_completion(cx)
+            {
+                self.accept_inline_completion(cx);
+                return;
             }
 
             // Otherwise, insert a hard or soft tab.

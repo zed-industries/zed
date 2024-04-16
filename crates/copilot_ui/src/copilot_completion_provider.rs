@@ -530,6 +530,40 @@ mod tests {
             assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
         });
+
+        // Verify that copilot suggestions are accepted if the copilot suggests less
+        // indentation than the suggested
+        cx.update_editor(|editor, cx| {
+            editor.set_text("fn foo() {\n\n}", cx);
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+            });
+        });
+
+        handle_copilot_completion_request(
+            &copilot_lsp,
+            vec![copilot::request::Completion {
+                text: "}".into(),
+                range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
+                ..Default::default()
+            }],
+            vec![],
+        );
+
+        cx.update_editor(|editor, cx| editor.next_inline_completion(&Default::default(), cx));
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+
+        cx.update_editor(|editor, cx| {
+            assert!(editor.has_active_inline_completion(cx));
+            assert_eq!(editor.display_text(cx), "fn foo() {\n}\n}");
+            assert_eq!(editor.text(cx), "fn foo() {\n\n}");
+
+            // Tabbing accepts the suggestion.
+            editor.tab(&Default::default(), cx);
+            assert!(!editor.has_active_inline_completion(cx));
+            assert_eq!(editor.text(cx), "fn foo() {\n}\n}");
+            assert_eq!(editor.display_text(cx), "fn foo() {\n}\n}");
+        });
     }
 
     #[gpui::test(iterations = 10)]
