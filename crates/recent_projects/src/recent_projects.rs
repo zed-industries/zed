@@ -541,7 +541,7 @@ mod tests {
                     }];
                     delegate.workspaces = vec![(
                         WorkspaceId::default(),
-                        WorkspaceLocation::local(vec!["/test/path/"]),
+                        WorkspaceLocation::from_local_paths(vec!["/test/path/"]),
                     )];
                 });
             })

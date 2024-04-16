@@ -17,25 +17,33 @@ use util::ResultExt;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceLocation{
+pub struct WorkspaceLocation {
     paths: Arc<Vec<PathBuf>>,
     dev_server: Option<(DevServerId, String)>,
-};
+}
 
 impl WorkspaceLocation {
+    pub fn local(paths: Arc<Vec<PathBuf>>) -> Self {
+        Self {
+            paths,
+            dev_server: None,
+        }
+    }
+
     pub fn paths(&self) -> Arc<Vec<PathBuf>> {
         self.paths.clone()
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn local<P: AsRef<Path>>(paths: Vec<P>) -> Self {
-        Self{
-            paths:Arc::new(
-            paths
-                .into_iter()
-                .map(|p| p.as_ref().to_path_buf())
-                .collect(),
-        ), dev_server: None
+    pub fn from_local_paths<P: AsRef<Path>>(paths: Vec<P>) -> Self {
+        Self {
+            paths: Arc::new(
+                paths
+                    .into_iter()
+                    .map(|p| p.as_ref().to_path_buf())
+                    .collect(),
+            ),
+            dev_server: None,
         }
     }
 }
@@ -47,24 +55,43 @@ impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {
             .map(|p| p.as_ref().to_path_buf())
             .collect::<Vec<_>>();
         roots.sort();
-        Self(Arc::new(roots))
+        Self::local(Arc::new(roots))
     }
 }
 
-impl StaticColumnCount for WorkspaceLocation {}
+impl StaticColumnCount for WorkspaceLocation {
+    fn column_count() -> usize {
+        1 //TODO should this be 2?
+    }
+}
+
 impl Bind for &WorkspaceLocation {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        bincode::serialize(&self.0)
+        bincode::serialize(&self.paths)
             .expect("Bincode serialization of paths should not fail")
             .bind(statement, start_index)
+        //TODO serialize dev_server
+        // bincode::serialize(&self.dev_server)
+        //     .expect("Bincode serialization of dev_server should not fail")
+        //     .bind(statement, start_index + 1)
     }
 }
 
 impl Column for WorkspaceLocation {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let blob = statement.column_blob(start_index)?;
+        let path_blob = statement.column_blob(start_index)?;
+        let paths =
+            bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?;
+        //TODO deserialize dev_server
+        // let dev_server_blob = statement.column_blob(start_index + 1)?;
+        // let dev_server = bincode::deserialize(dev_server_blob)
+        //     .context("Bincode deserialization of dev_server failed")?;
+
         Ok((
-            WorkspaceLocation(bincode::deserialize(blob).context("Bincode failed")?),
+            WorkspaceLocation {
+                paths,
+                dev_server: None,
+            },
             start_index + 1,
         ))
     }

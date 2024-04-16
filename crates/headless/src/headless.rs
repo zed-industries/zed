@@ -54,7 +54,7 @@ pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) {
                 log::info!("Connected to {}", server_url);
             }
             Err(e) => {
-                log::error!("Error connecting to {}: {}", server_url, e);
+                log::error!("Error connecting to '{}': {}", server_url, e);
                 cx.update(|cx| cx.quit()).log_err();
             }
         }
