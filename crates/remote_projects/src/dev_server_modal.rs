@@ -200,6 +200,7 @@ impl DevServerModal {
             Mode::Default => cx.emit(DismissEvent),
             Mode::CreateRemoteProject(_) | Mode::CreateDevServer(_) => {
                 self.mode = Mode::Default;
+                self.focus_handle(cx).focus(cx);
                 cx.notify();
             }
         }
