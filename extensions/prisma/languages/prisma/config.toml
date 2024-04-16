@@ -7,3 +7,4 @@ brackets = [
     { start = "[", end = "]", close = true, newline = true },
     { start = "(", end = ")", close = true, newline = true }
 ]
+tab_size = 2

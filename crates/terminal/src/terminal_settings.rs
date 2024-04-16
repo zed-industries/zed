@@ -7,7 +7,7 @@ use schemars::{
 };
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::SettingsJsonSchemaParams;
+use settings::{SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -36,6 +36,7 @@ pub struct TerminalSettings {
     pub alternate_scroll: AlternateScroll,
     pub option_as_meta: bool,
     pub copy_on_select: bool,
+    pub button: bool,
     pub dock: TerminalDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
@@ -138,6 +139,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub copy_on_select: Option<bool>,
+    /// Whether to show the terminal button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
     pub dock: Option<TerminalDockPosition>,
     /// Default width when the terminal is docked to the left or right.
     ///
@@ -171,12 +176,12 @@ impl settings::Settings for TerminalSettings {
     type FileContent = TerminalSettingsContent;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
+
     fn json_schema(
         generator: &mut SchemaGenerator,
         params: &SettingsJsonSchemaParams,

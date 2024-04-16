@@ -69,6 +69,7 @@ impl TestPlatform {
             .multiple_choice
             .pop_front()
             .expect("no pending multiple choice prompt");
+        self.background_executor().set_waiting_hint(None);
         tx.send(response_ix).ok();
     }
 
@@ -76,8 +77,10 @@ impl TestPlatform {
         !self.prompts.borrow().multiple_choice.is_empty()
     }
 
-    pub(crate) fn prompt(&self) -> oneshot::Receiver<usize> {
+    pub(crate) fn prompt(&self, msg: &str, detail: Option<&str>) -> oneshot::Receiver<usize> {
         let (tx, rx) = oneshot::channel();
+        self.background_executor()
+            .set_waiting_hint(Some(format!("PROMPT: {:?} {:?}", msg, detail)));
         self.prompts.borrow_mut().multiple_choice.push_back(tx);
         rx
     }
@@ -119,14 +122,11 @@ impl Platform for TestPlatform {
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        #[cfg(target_os = "linux")]
-        return Arc::new(crate::platform::linux::LinuxTextSystem::new());
-
         #[cfg(target_os = "macos")]
         return Arc::new(crate::platform::mac::MacTextSystem::new());
 
-        #[cfg(target_os = "windows")]
-        return Arc::new(crate::platform::windows::WindowsTextSystem::new());
+        #[cfg(not(target_os = "macos"))]
+        return Arc::new(crate::platform::cosmic_text::CosmicTextSystem::new());
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {

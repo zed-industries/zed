@@ -1,12 +1,16 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::{channel_id, room_participants, rust_lang, RoomParticipants, TestClient, TestServer},
+    tests::{
+        channel_id, following_tests::join_channel, room_participants, rust_lang, RoomParticipants,
+        TestClient, TestServer,
+    },
 };
+use anyhow::{anyhow, Result};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
-use futures::StreamExt as _;
+use futures::{channel::mpsc, StreamExt as _};
 use gpui::{
     px, size, AppContext, BackgroundExecutor, BorrowAppContext, Model, Modifiers, MouseButton,
     MouseDownEvent, TestAppContext,
@@ -18,6 +22,7 @@ use language::{
 };
 use live_kit_client::MacOSDisplay;
 use lsp::LanguageServerId;
+use parking_lot::Mutex;
 use project::{
     search::SearchQuery, DiagnosticSummary, FormatTrigger, HoverBlockKind, Project, ProjectPath,
     SearchResult,
@@ -37,6 +42,7 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
+use workspace::Pane;
 
 #[ctor::ctor]
 fn init_logger() {
@@ -1863,6 +1869,24 @@ async fn test_active_call_events(
     executor.run_until_parked();
     assert_eq!(mem::take(&mut *events_a.borrow_mut()), vec![]);
     assert_eq!(mem::take(&mut *events_b.borrow_mut()), vec![]);
+
+    // Unsharing a project should dispatch the RemoteProjectUnshared event.
+    active_call_a
+        .update(cx_a, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    assert_eq!(
+        mem::take(&mut *events_a.borrow_mut()),
+        vec![room::Event::RoomLeft { channel_id: None }]
+    );
+    assert_eq!(
+        mem::take(&mut *events_b.borrow_mut()),
+        vec![room::Event::RemoteProjectUnshared {
+            project_id: project_a_id,
+        }]
+    );
 }
 
 fn active_call_events(cx: &mut TestAppContext) -> Rc<RefCell<Vec<room::Event>>> {
@@ -3736,7 +3760,7 @@ async fn test_leaving_project(
 
     // Client B can't join the project, unless they re-join the room.
     cx_b.spawn(|cx| {
-        Project::remote(
+        Project::in_room(
             project_id,
             client_b.app_state.client.clone(),
             client_b.user_store().clone(),
@@ -4638,9 +4662,17 @@ async fn test_references(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a
-        .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "my-fake-lsp-adapter",
+            capabilities: lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
 
     client_a
         .fs()
@@ -4670,12 +4702,40 @@ async fn test_references(
 
     // Request references to a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::References, _, _>(|params, _| async move {
+    let (lsp_response_tx, rx) = mpsc::unbounded::<Result<Option<Vec<lsp::Location>>>>();
+    fake_language_server.handle_request::<lsp::request::References, _, _>({
+        let rx = Arc::new(Mutex::new(Some(rx)));
+        move |params, _| {
+            assert_eq!(
+                params.text_document_position.text_document.uri.as_str(),
+                "file:///root/dir-1/one.rs"
+            );
+            let rx = rx.clone();
+            async move {
+                let mut response_rx = rx.lock().take().unwrap();
+                let result = response_rx.next().await.unwrap();
+                *rx.lock() = Some(response_rx);
+                result
+            }
+        }
+    });
+
+    let references = project_b.update(cx_b, |p, cx| p.references(&buffer_b, 7, cx));
+
+    // User is informed that a request is pending.
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, _| {
+        let status = project.language_server_statuses().next().cloned().unwrap();
+        assert_eq!(status.name, "my-fake-lsp-adapter");
         assert_eq!(
-            params.text_document_position.text_document.uri.as_str(),
-            "file:///root/dir-1/one.rs"
+            status.pending_work.values().next().unwrap().message,
+            Some("Finding references...".into())
         );
-        Ok(Some(vec![
+    });
+
+    // Cause the language server to respond.
+    lsp_response_tx
+        .unbounded_send(Ok(Some(vec![
             lsp::Location {
                 uri: lsp::Url::from_file_path("/root/dir-1/two.rs").unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 24), lsp::Position::new(0, 27)),
@@ -4688,16 +4748,18 @@ async fn test_references(
                 uri: lsp::Url::from_file_path("/root/dir-2/three.rs").unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 37), lsp::Position::new(0, 40)),
             },
-        ]))
-    });
-
-    let references = project_b
-        .update(cx_b, |p, cx| p.references(&buffer_b, 7, cx))
-        .await
+        ])))
         .unwrap();
-    cx_b.read(|cx| {
+
+    let references = references.await.unwrap();
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, cx| {
+        // User is informed that a request is no longer pending.
+        let status = project.language_server_statuses().next().unwrap();
+        assert!(status.pending_work.is_empty());
+
         assert_eq!(references.len(), 3);
-        assert_eq!(project_b.read(cx).worktrees().count(), 2);
+        assert_eq!(project.worktrees().count(), 2);
 
         let two_buffer = references[0].buffer.read(cx);
         let three_buffer = references[2].buffer.read(cx);
@@ -4714,6 +4776,32 @@ async fn test_references(
         assert_eq!(references[0].range.to_offset(two_buffer), 24..27);
         assert_eq!(references[1].range.to_offset(two_buffer), 35..38);
         assert_eq!(references[2].range.to_offset(three_buffer), 37..40);
+    });
+
+    let references = project_b.update(cx_b, |p, cx| p.references(&buffer_b, 7, cx));
+
+    // User is informed that a request is pending.
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, _| {
+        let status = project.language_server_statuses().next().cloned().unwrap();
+        assert_eq!(status.name, "my-fake-lsp-adapter");
+        assert_eq!(
+            status.pending_work.values().next().unwrap().message,
+            Some("Finding references...".into())
+        );
+    });
+
+    // Cause the LSP request to fail.
+    lsp_response_tx
+        .unbounded_send(Err(anyhow!("can't find references")))
+        .unwrap();
+    references.await.unwrap_err();
+
+    // User is informed that the request is no longer pending.
+    executor.run_until_parked();
+    project_b.read_with(cx_b, |project, _| {
+        let status = project.language_server_statuses().next().unwrap();
+        assert!(status.pending_work.is_empty());
     });
 }
 
@@ -4931,9 +5019,35 @@ async fn test_lsp_hover(
         .await;
 
     client_a.language_registry().add(rust_lang());
+    let language_server_names = ["rust-analyzer", "CrabLang-ls"];
     let mut fake_language_servers = client_a
         .language_registry()
-        .register_fake_lsp_adapter("Rust", Default::default());
+        .register_specific_fake_lsp_adapter(
+            "Rust",
+            true,
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        );
+    let _other_server = client_a
+        .language_registry()
+        .register_specific_fake_lsp_adapter(
+            "Rust",
+            false,
+            FakeLspAdapter {
+                name: "CrabLang-ls",
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        );
 
     let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
     let project_id = active_call_a
@@ -4946,66 +5060,133 @@ async fn test_lsp_hover(
     let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx));
     let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
-    // Request hover information as the guest.
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::HoverRequest, _, _>(
-        |params, _| async move {
-            assert_eq!(
-                params
-                    .text_document_position_params
-                    .text_document
-                    .uri
-                    .as_str(),
-                "file:///root-1/main.rs"
-            );
-            assert_eq!(
-                params.text_document_position_params.position,
-                lsp::Position::new(0, 22)
-            );
-            Ok(Some(lsp::Hover {
-                contents: lsp::HoverContents::Array(vec![
-                    lsp::MarkedString::String("Test hover content.".to_string()),
-                    lsp::MarkedString::LanguageString(lsp::LanguageString {
-                        language: "Rust".to_string(),
-                        value: "let foo = 42;".to_string(),
-                    }),
-                ]),
-                range: Some(lsp::Range::new(
-                    lsp::Position::new(0, 22),
-                    lsp::Position::new(0, 29),
-                )),
-            }))
-        },
-    );
+    let mut servers_with_hover_requests = HashMap::default();
+    for i in 0..language_server_names.len() {
+        let new_server = fake_language_servers.next().await.unwrap_or_else(|| {
+            panic!(
+                "Failed to get language server #{i} with name {}",
+                &language_server_names[i]
+            )
+        });
+        let new_server_name = new_server.server.name();
+        assert!(
+            !servers_with_hover_requests.contains_key(new_server_name),
+            "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
+        );
+        let new_server_name = new_server_name.to_string();
+        match new_server_name.as_str() {
+            "CrabLang-ls" => {
+                servers_with_hover_requests.insert(
+                    new_server_name.clone(),
+                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                        move |params, _| {
+                            assert_eq!(
+                                params
+                                    .text_document_position_params
+                                    .text_document
+                                    .uri
+                                    .as_str(),
+                                "file:///root-1/main.rs"
+                            );
+                            let name = new_server_name.clone();
+                            async move {
+                                Ok(Some(lsp::Hover {
+                                    contents: lsp::HoverContents::Scalar(
+                                        lsp::MarkedString::String(format!("{name} hover")),
+                                    ),
+                                    range: None,
+                                }))
+                            }
+                        },
+                    ),
+                );
+            }
+            "rust-analyzer" => {
+                servers_with_hover_requests.insert(
+                    new_server_name.clone(),
+                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                        |params, _| async move {
+                            assert_eq!(
+                                params
+                                    .text_document_position_params
+                                    .text_document
+                                    .uri
+                                    .as_str(),
+                                "file:///root-1/main.rs"
+                            );
+                            assert_eq!(
+                                params.text_document_position_params.position,
+                                lsp::Position::new(0, 22)
+                            );
+                            Ok(Some(lsp::Hover {
+                                contents: lsp::HoverContents::Array(vec![
+                                    lsp::MarkedString::String("Test hover content.".to_string()),
+                                    lsp::MarkedString::LanguageString(lsp::LanguageString {
+                                        language: "Rust".to_string(),
+                                        value: "let foo = 42;".to_string(),
+                                    }),
+                                ]),
+                                range: Some(lsp::Range::new(
+                                    lsp::Position::new(0, 22),
+                                    lsp::Position::new(0, 29),
+                                )),
+                            }))
+                        },
+                    ),
+                );
+            }
+            unexpected => panic!("Unexpected server name: {unexpected}"),
+        }
+    }
 
-    let hovers = project_b
+    // Request hover information as the guest.
+    let mut hovers = project_b
         .update(cx_b, |p, cx| p.hover(&buffer_b, 22, cx))
         .await;
     assert_eq!(
         hovers.len(),
-        1,
-        "Expected exactly one hover but got: {hovers:?}"
+        2,
+        "Expected two hovers from both language servers, but got: {hovers:?}"
     );
-    let hover_info = hovers.into_iter().next().unwrap();
 
+    let _: Vec<()> = futures::future::join_all(servers_with_hover_requests.into_values().map(
+        |mut hover_request| async move {
+            hover_request
+                .next()
+                .await
+                .expect("All hover requests should have been triggered")
+        },
+    ))
+    .await;
+
+    hovers.sort_by_key(|hover| hover.contents.len());
+    let first_hover = hovers.first().cloned().unwrap();
+    assert_eq!(
+        first_hover.contents,
+        vec![project::HoverBlock {
+            text: "CrabLang-ls hover".to_string(),
+            kind: HoverBlockKind::Markdown,
+        },]
+    );
+    let second_hover = hovers.last().cloned().unwrap();
+    assert_eq!(
+        second_hover.contents,
+        vec![
+            project::HoverBlock {
+                text: "Test hover content.".to_string(),
+                kind: HoverBlockKind::Markdown,
+            },
+            project::HoverBlock {
+                text: "let foo = 42;".to_string(),
+                kind: HoverBlockKind::Code {
+                    language: "Rust".to_string()
+                },
+            }
+        ]
+    );
     buffer_b.read_with(cx_b, |buffer, _| {
         let snapshot = buffer.snapshot();
-        assert_eq!(hover_info.range.unwrap().to_offset(&snapshot), 22..29);
-        assert_eq!(
-            hover_info.contents,
-            vec![
-                project::HoverBlock {
-                    text: "Test hover content.".to_string(),
-                    kind: HoverBlockKind::Markdown,
-                },
-                project::HoverBlock {
-                    text: "let foo = 42;".to_string(),
-                    kind: HoverBlockKind::Code {
-                        language: "Rust".to_string()
-                    },
-                }
-            ]
-        );
+        assert_eq!(second_hover.range.unwrap().to_offset(&snapshot), 22..29);
     });
 }
 
@@ -5914,7 +6095,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_cmd_k_left(cx: &mut TestAppContext) {
-    let client = TestServer::start1(cx).await;
+    let (_, client) = TestServer::start1(cx).await;
     let (workspace, cx) = client.build_test_workspace(cx).await;
 
     cx.simulate_keystrokes("cmd-n");
@@ -5932,5 +6113,284 @@ async fn test_cmd_k_left(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("left");
     workspace.update(cx, |workspace, cx| {
         assert!(workspace.items(cx).collect::<Vec<_>>().len() == 2);
+    });
+}
+
+#[gpui::test]
+async fn test_join_after_restart(cx1: &mut TestAppContext, cx2: &mut TestAppContext) {
+    let (mut server, client) = TestServer::start1(cx1).await;
+    let channel1 = server.make_public_channel("channel1", &client, cx1).await;
+    let channel2 = server.make_public_channel("channel2", &client, cx1).await;
+
+    join_channel(channel1, &client, cx1).await.unwrap();
+    drop(client);
+
+    let client2 = server.create_client(cx2, "user_a").await;
+    join_channel(channel2, &client2, cx2).await.unwrap();
+}
+
+#[gpui::test]
+async fn test_preview_tabs(cx: &mut TestAppContext) {
+    let (_server, client) = TestServer::start1(cx).await;
+    let (workspace, cx) = client.build_test_workspace(cx).await;
+    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees().next().unwrap().read(cx).id()
+    });
+
+    let path_1 = ProjectPath {
+        worktree_id,
+        path: Path::new("1.txt").into(),
+    };
+    let path_2 = ProjectPath {
+        worktree_id,
+        path: Path::new("2.js").into(),
+    };
+    let path_3 = ProjectPath {
+        worktree_id,
+        path: Path::new("3.rs").into(),
+    };
+
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+    let get_path = |pane: &Pane, idx: usize, cx: &AppContext| {
+        pane.item_for_index(idx).unwrap().project_path(cx).unwrap()
+    };
+
+    // Opening item 3 as a "permanent" tab
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path(path_3.clone(), None, false, cx)
+        })
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(pane.preview_item_id(), None);
+
+        assert!(!pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Open item 1 as preview
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path_preview(path_1.clone(), None, true, true, cx)
+        })
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(get_path(pane, 1, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Open item 2 as preview
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        })
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(get_path(pane, 1, cx), path_2.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Going back should show item 1 as preview
+    workspace
+        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(get_path(pane, 1, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(pane.can_navigate_forward());
+    });
+
+    // Closing item 1
+    pane.update(cx, |pane, cx| {
+        pane.close_item_by_id(
+            pane.active_item().unwrap().item_id(),
+            workspace::SaveIntent::Skip,
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(pane.preview_item_id(), None);
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Going back should show item 1 as preview
+    workspace
+        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_3.clone());
+        assert_eq!(get_path(pane, 1, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(pane.can_navigate_forward());
+    });
+
+    // Close permanent tab
+    pane.update(cx, |pane, cx| {
+        let id = pane.items().nth(0).unwrap().item_id();
+        pane.close_item_by_id(id, workspace::SaveIntent::Skip, cx)
+    })
+    .await
+    .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(0).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(pane.can_navigate_forward());
+    });
+
+    // Split pane to the right
+    pane.update(cx, |pane, cx| {
+        pane.split(workspace::SplitDirection::Right, cx);
+    });
+
+    let right_pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(0).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(pane.can_navigate_forward());
+    });
+
+    right_pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(pane.preview_item_id(), None);
+
+        assert!(!pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Open item 2 as preview in right pane
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        })
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(0).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(pane.can_navigate_forward());
+    });
+
+    right_pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(get_path(pane, 1, cx), path_2.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    // Focus left pane
+    workspace.update(cx, |workspace, cx| {
+        workspace.activate_pane_in_direction(workspace::SplitDirection::Left, cx)
+    });
+
+    // Open item 2 as preview in left pane
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        })
+        .await
+        .unwrap();
+
+    pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 1);
+        assert_eq!(get_path(pane, 0, cx), path_2.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(0).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
+    });
+
+    right_pane.update(cx, |pane, cx| {
+        assert_eq!(pane.items_len(), 2);
+        assert_eq!(get_path(pane, 0, cx), path_1.clone());
+        assert_eq!(get_path(pane, 1, cx), path_2.clone());
+        assert_eq!(
+            pane.preview_item_id(),
+            Some(pane.items().nth(1).unwrap().item_id())
+        );
+
+        assert!(pane.can_navigate_backward());
+        assert!(!pane.can_navigate_forward());
     });
 }

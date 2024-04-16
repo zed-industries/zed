@@ -32,20 +32,17 @@ use std::{
     mem,
     ops::Range,
     path::PathBuf,
-    sync::Arc,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::TryFutureExt;
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
 };
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
-
-const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
@@ -64,6 +61,7 @@ struct ProjectDiagnosticsEditor {
     paths_to_update: HashMap<LanguageServerId, HashSet<ProjectPath>>,
     current_diagnostics: HashMap<LanguageServerId, HashSet<ProjectPath>>,
     include_warnings: bool,
+    context: u32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -117,7 +115,8 @@ impl ProjectDiagnosticsEditor {
         workspace.register_action(Self::deploy);
     }
 
-    fn new(
+    fn new_with_context(
+        context: u32,
         project_handle: Model<Project>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
@@ -137,8 +136,15 @@ impl ProjectDiagnosticsEditor {
                         .entry(*language_server_id)
                         .or_default()
                         .insert(path.clone());
-                    if this.editor.read(cx).selections.all::<usize>(cx).is_empty()
-                        && !this.is_dirty(cx)
+
+                    if this.is_dirty(cx) {
+                        return;
+                    }
+                    let selections = this.editor.read(cx).selections.all::<usize>(cx);
+                    if selections.len() < 2
+                        && selections
+                            .first()
+                            .map_or(true, |selection| selection.end == selection.start)
                     {
                         this.update_excerpts(Some(*language_server_id), cx);
                     }
@@ -175,6 +181,7 @@ impl ProjectDiagnosticsEditor {
         let summary = project.diagnostic_summary(false, cx);
         let mut this = Self {
             project: project_handle,
+            context,
             summary,
             workspace,
             excerpts,
@@ -192,6 +199,19 @@ impl ProjectDiagnosticsEditor {
         };
         this.update_excerpts(None, cx);
         this
+    }
+
+    fn new(
+        project_handle: Model<Project>,
+        workspace: WeakView<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        Self::new_with_context(
+            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+            project_handle,
+            workspace,
+            cx,
+        )
     }
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
@@ -424,18 +444,16 @@ impl ProjectDiagnosticsEditor {
                         let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
                         if let Some((range, start_ix)) = &mut pending_range {
                             if let Some(entry) = resolved_entry.as_ref() {
-                                if entry.range.start.row
-                                    <= range.end.row + 1 + CONTEXT_LINE_COUNT * 2
-                                {
+                                if entry.range.start.row <= range.end.row + 1 + self.context * 2 {
                                     range.end = range.end.max(entry.range.end);
                                     continue;
                                 }
                             }
 
                             let excerpt_start =
-                                Point::new(range.start.row.saturating_sub(CONTEXT_LINE_COUNT), 0);
+                                Point::new(range.start.row.saturating_sub(self.context), 0);
                             let excerpt_end = snapshot.clip_point(
-                                Point::new(range.end.row + CONTEXT_LINE_COUNT, u32::MAX),
+                                Point::new(range.end.row + self.context, u32::MAX),
                                 Bias::Left,
                             );
                             let excerpt_id = excerpts
@@ -646,10 +664,10 @@ impl Item for ProjectDiagnosticsEditor {
         Some("Project Diagnostics".into())
     }
 
-    fn tab_content(&self, _detail: Option<usize>, selected: bool, _: &WindowContext) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
         if self.summary.error_count == 0 && self.summary.warning_count == 0 {
             Label::new("No problems")
-                .color(if selected {
+                .color(if params.selected {
                     Color::Default
                 } else {
                     Color::Muted
@@ -664,7 +682,7 @@ impl Item for ProjectDiagnosticsEditor {
                             .gap_1()
                             .child(Icon::new(IconName::XCircle).color(Color::Error))
                             .child(Label::new(self.summary.error_count.to_string()).color(
-                                if selected {
+                                if params.selected {
                                     Color::Default
                                 } else {
                                     Color::Muted
@@ -678,7 +696,7 @@ impl Item for ProjectDiagnosticsEditor {
                             .gap_1()
                             .child(Icon::new(IconName::ExclamationTriangle).color(Color::Warning))
                             .child(Label::new(self.summary.warning_count.to_string()).color(
-                                if selected {
+                                if params.selected {
                                     Color::Default
                                 } else {
                                     Color::Muted
@@ -805,7 +823,7 @@ impl Item for ProjectDiagnosticsEditor {
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic);
     let message: SharedString = message;
-    Arc::new(move |cx| {
+    Box::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_flex()
             .id("diagnostic header")
@@ -1024,7 +1042,12 @@ mod tests {
 
         // Open the project diagnostics view while there are already diagnostics.
         let view = window.build_view(cx, |cx| {
-            ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)
+            ProjectDiagnosticsEditor::new_with_context(
+                1,
+                project.clone(),
+                workspace.downgrade(),
+                cx,
+            )
         });
 
         view.next_notification(cx).await;
@@ -1334,7 +1357,12 @@ mod tests {
         let workspace = window.root(cx).unwrap();
 
         let view = window.build_view(cx, |cx| {
-            ProjectDiagnosticsEditor::new(project.clone(), workspace.downgrade(), cx)
+            ProjectDiagnosticsEditor::new_with_context(
+                1,
+                project.clone(),
+                workspace.downgrade(),
+                cx,
+            )
         });
 
         // Two language servers start updating diagnostics

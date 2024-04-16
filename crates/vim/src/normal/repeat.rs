@@ -172,6 +172,13 @@ pub(crate) fn repeat(cx: &mut WindowContext, from_insert_mode: bool) {
             editor.show_local_selections = false;
         })?;
         for action in actions {
+            if !matches!(
+                cx.update(|cx| Vim::read(cx).workspace_state.replaying),
+                Ok(true)
+            ) {
+                break;
+            }
+
             match action {
                 ReplayableAction::Action(action) => {
                     if should_replay(&action) {

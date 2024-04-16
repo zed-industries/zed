@@ -36,6 +36,7 @@ use node_runtime::NodeRuntime;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::ops::RangeInclusive;
 use std::str::FromStr;
 use std::{
     cmp::Ordering,
@@ -51,7 +52,10 @@ use util::{
     paths::EXTENSIONS_DIR,
     ResultExt,
 };
-use wasm_host::{wit::is_supported_wasm_api_version, WasmExtension, WasmHost};
+use wasm_host::{
+    wit::{is_supported_wasm_api_version, wasm_api_version_range},
+    WasmExtension, WasmHost,
+};
 
 pub use extension_manifest::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, OldExtensionManifest,
@@ -63,6 +67,11 @@ const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// The current extension [`SchemaVersion`] supported by Zed.
 const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+
+/// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
+pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
+    SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
+}
 
 /// Returns whether the given extension version is compatible with this version of Zed.
 pub fn is_version_compatible(extension_version: &ExtensionMetadata) -> bool {
@@ -228,6 +237,7 @@ impl ExtensionStore {
                 node_runtime,
                 language_registry.clone(),
                 work_dir,
+                cx,
             ),
             wasm_extensions: Vec::new(),
             fs,
@@ -412,15 +422,15 @@ impl ExtensionStore {
             query.push(("filter", search));
         }
 
-        self.fetch_extensions_from_api("/extensions", query, cx)
+        self.fetch_extensions_from_api("/extensions", &query, cx)
     }
 
     pub fn fetch_extensions_with_update_available(
         &mut self,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
-        let version = CURRENT_SCHEMA_VERSION.to_string();
-        let mut query = vec![("max_schema_version", version.as_str())];
+        let schema_versions = schema_version_range();
+        let wasm_api_versions = wasm_api_version_range();
         let extension_settings = ExtensionSettings::get_global(cx);
         let extension_ids = self
             .extension_index
@@ -430,9 +440,20 @@ impl ExtensionStore {
             .filter(|id| extension_settings.should_auto_update(id))
             .collect::<Vec<_>>()
             .join(",");
-        query.push(("ids", &extension_ids));
-
-        let task = self.fetch_extensions_from_api("/extensions", query, cx);
+        let task = self.fetch_extensions_from_api(
+            "/extensions/updates",
+            &[
+                ("min_schema_version", &schema_versions.start().to_string()),
+                ("max_schema_version", &schema_versions.end().to_string()),
+                (
+                    "min_wasm_api_version",
+                    &wasm_api_versions.start().to_string(),
+                ),
+                ("max_wasm_api_version", &wasm_api_versions.end().to_string()),
+                ("ids", &extension_ids),
+            ],
+            cx,
+        );
         cx.spawn(move |this, mut cx| async move {
             let extensions = task.await?;
             this.update(&mut cx, |this, _cx| {
@@ -456,7 +477,7 @@ impl ExtensionStore {
         extension_id: &str,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
-        self.fetch_extensions_from_api(&format!("/extensions/{extension_id}"), Vec::new(), cx)
+        self.fetch_extensions_from_api(&format!("/extensions/{extension_id}"), &[], cx)
     }
 
     pub fn check_for_updates(&mut self, cx: &mut ModelContext<Self>) {
@@ -500,7 +521,7 @@ impl ExtensionStore {
     fn fetch_extensions_from_api(
         &self,
         path: &str,
-        query: Vec<(&str, &str)>,
+        query: &[(&str, &str)],
         cx: &mut ModelContext<'_, ExtensionStore>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let url = self.http_client.build_zed_api_url(path, &query);
@@ -585,7 +606,22 @@ impl ExtensionStore {
             )
             .await?;
 
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+            let content_length = response
+                .headers()
+                .get(isahc::http::header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
+
+            let mut body = BufReader::new(response.body_mut());
+            let mut tar_gz_bytes = Vec::new();
+            body.read_to_end(&mut tar_gz_bytes).await?;
+
+            if let Some(content_length) = content_length {
+                let actual_len = tar_gz_bytes.len();
+                if content_length != actual_len {
+                    bail!("downloaded extension size {actual_len} does not match content length {content_length}");
+                }
+            }
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
             let archive = Archive::new(decompressed_bytes);
             archive.unpack(extension_dir).await?;
             this.update(&mut cx, |this, cx| {
@@ -614,9 +650,23 @@ impl ExtensionStore {
     ) {
         log::info!("installing extension {extension_id} latest version");
 
+        let schema_versions = schema_version_range();
+        let wasm_api_versions = wasm_api_version_range();
+
         let Some(url) = self
             .http_client
-            .build_zed_api_url(&format!("/extensions/{extension_id}/download"), &[])
+            .build_zed_api_url(
+                &format!("/extensions/{extension_id}/download"),
+                &[
+                    ("min_schema_version", &schema_versions.start().to_string()),
+                    ("max_schema_version", &schema_versions.end().to_string()),
+                    (
+                        "min_wasm_api_version",
+                        &wasm_api_versions.start().to_string(),
+                    ),
+                    ("max_wasm_api_version", &wasm_api_versions.end().to_string()),
+                ],
+            )
             .log_err()
         else {
             return;
@@ -927,8 +977,10 @@ impl ExtensionStore {
             };
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
             for (language_server_name, config) in extension.manifest.language_servers.iter() {
-                self.language_registry
-                    .remove_lsp_adapter(config.language.as_ref(), language_server_name);
+                for language in config.languages() {
+                    self.language_registry
+                        .remove_lsp_adapter(&language, language_server_name);
+                }
             }
         }
 
@@ -1067,19 +1119,21 @@ impl ExtensionStore {
                 this.reload_complete_senders.clear();
 
                 for (manifest, wasm_extension) in &wasm_extensions {
-                    for (language_server_name, language_server_config) in &manifest.language_servers
-                    {
-                        this.language_registry.register_lsp_adapter(
-                            language_server_config.language.clone(),
-                            Arc::new(ExtensionLspAdapter {
-                                extension: wasm_extension.clone(),
-                                host: this.wasm_host.clone(),
-                                config: wit::LanguageServerConfig {
-                                    name: language_server_name.0.to_string(),
-                                    language_name: language_server_config.language.to_string(),
-                                },
-                            }),
-                        );
+                    for (language_server_id, language_server_config) in &manifest.language_servers {
+                        for language in language_server_config.languages() {
+                            this.language_registry.register_lsp_adapter(
+                                language.clone(),
+                                Arc::new(ExtensionLspAdapter {
+                                    extension: wasm_extension.clone(),
+                                    host: this.wasm_host.clone(),
+                                    language_server_id: language_server_id.clone(),
+                                    config: wit::LanguageServerConfig {
+                                        name: language_server_id.0.to_string(),
+                                        language_name: language.to_string(),
+                                    },
+                                }),
+                            );
+                        }
                     }
                 }
                 this.wasm_extensions.extend(wasm_extensions);
@@ -1107,6 +1161,14 @@ impl ExtensionStore {
                     let Ok(extension_dir) = extension_dir else {
                         continue;
                     };
+
+                    if extension_dir
+                        .file_name()
+                        .map_or(false, |file_name| file_name == ".DS_Store")
+                    {
+                        continue;
+                    }
+
                     Self::add_extension_to_index(fs.clone(), extension_dir, &mut index)
                         .await
                         .log_err();

@@ -39,7 +39,7 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::{static_source::RevealStrategy, TaskId};
+use task::{RevealStrategy, TaskId};
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -142,7 +142,7 @@ pub fn init(cx: &mut AppContext) {
     TerminalSettings::register(cx);
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalSize {
     pub cell_width: Pixels,
     pub line_height: Pixels,
@@ -286,8 +286,10 @@ impl Display for TerminalError {
     }
 }
 
+#[derive(Debug)]
 pub struct SpawnTask {
     pub id: TaskId,
+    pub full_label: String,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
@@ -432,7 +434,7 @@ impl TerminalBuilder {
             last_mouse_position: None,
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
-            cmd_pressed: false,
+            secondary_pressed: false,
             hovered_word: false,
             url_regex,
             word_regex,
@@ -585,7 +587,7 @@ pub struct Terminal {
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
-    cmd_pressed: bool,
+    secondary_pressed: bool,
     hovered_word: bool,
     url_regex: RegexSearch,
     word_regex: RegexSearch,
@@ -594,6 +596,7 @@ pub struct Terminal {
 
 pub struct TaskState {
     pub id: TaskId,
+    pub full_label: String,
     pub label: String,
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
@@ -846,11 +849,11 @@ impl Terminal {
                         Some(url_match) => {
                             // `]` is a valid symbol in the `file://` URL, so the regex match will include it
                             // consider that when ensuring that the URL match is the same as the original word
-                            if sanitized_match != original_match {
+                            if sanitized_match == original_match {
+                                url_match == sanitized_match
+                            } else {
                                 url_match.start() == sanitized_match.start()
                                     && url_match.end() == original_match.end()
-                            } else {
-                                url_match == sanitized_match
                             }
                         }
                         None => false,
@@ -952,7 +955,7 @@ impl Terminal {
         }
     }
 
-    pub fn select_matches(&mut self, matches: Vec<RangeInclusive<AlacPoint>>) {
+    pub fn select_matches(&mut self, matches: &[RangeInclusive<AlacPoint>]) {
         let matches_to_select = self
             .matches
             .iter()
@@ -990,7 +993,9 @@ impl Terminal {
 
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_size: TerminalSize) {
-        self.events.push_back(InternalEvent::Resize(new_size))
+        if self.last_content.size != new_size {
+            self.events.push_back(InternalEvent::Resize(new_size))
+        }
     }
 
     ///Write the Input payload to the tty.
@@ -1029,11 +1034,11 @@ impl Terminal {
     }
 
     pub fn try_modifiers_change(&mut self, modifiers: &Modifiers) -> bool {
-        let changed = self.cmd_pressed != modifiers.command;
-        if !self.cmd_pressed && modifiers.command {
+        let changed = self.secondary_pressed != modifiers.secondary();
+        if !self.secondary_pressed && modifiers.secondary() {
             self.refresh_hovered_word();
         }
-        self.cmd_pressed = modifiers.command;
+        self.secondary_pressed = modifiers.secondary();
         changed
     }
 
@@ -1136,7 +1141,7 @@ impl Terminal {
                     self.pty_tx.notify(bytes);
                 }
             }
-        } else if self.cmd_pressed {
+        } else if self.secondary_pressed {
             self.word_from_position(Some(position));
         }
     }
@@ -1266,7 +1271,7 @@ impl Terminal {
                 let mouse_cell_index = content_index_for_mouse(position, &self.last_content.size);
                 if let Some(link) = self.last_content.cells[mouse_cell_index].hyperlink() {
                     cx.open_url(link.uri());
-                } else if self.cmd_pressed {
+                } else if self.secondary_pressed {
                     self.events
                         .push_back(InternalEvent::FindHyperlink(position, true));
                 }
@@ -1363,7 +1368,7 @@ impl Terminal {
                 if truncate {
                     truncate_and_trailoff(&task_state.label, MAX_CHARS)
                 } else {
-                    task_state.label.clone()
+                    task_state.full_label.clone()
                 }
             }
             None => self
@@ -1402,7 +1407,7 @@ impl Terminal {
     }
 
     pub fn can_navigate_to_selected_word(&self) -> bool {
-        self.cmd_pressed && self.hovered_word
+        self.secondary_pressed && self.hovered_word
     }
 
     pub fn task(&self) -> Option<&TaskState> {

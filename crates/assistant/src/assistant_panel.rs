@@ -31,7 +31,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Task, TextStyle, UniformListScrollHandle,
     View, ViewContext, VisualContext, WeakModel, WeakView, WhiteSpace, WindowContext,
 };
-use language::{language_settings::SoftWrap, Buffer, BufferId, LanguageRegistry, ToOffset as _};
+use language::{language_settings::SoftWrap, Buffer, LanguageRegistry, ToOffset as _};
 use parking_lot::Mutex;
 use project::Project;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -46,6 +46,7 @@ use ui::{
 };
 use util::{paths::CONVERSATIONS_DIR, post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
+use workspace::notifications::NotificationId;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     searchable::Direction,
@@ -345,7 +346,7 @@ impl AssistantPanel {
                     style: BlockStyle::Flex,
                     position: snapshot.anchor_before(point_selection.head()),
                     height: 2,
-                    render: Arc::new({
+                    render: Box::new({
                         let inline_assistant = inline_assistant.clone();
                         move |cx: &mut BlockContext| {
                             *measurements.lock() = BlockMeasurements {
@@ -418,10 +419,14 @@ impl AssistantPanel {
                                 if pending_assist.inline_assistant.is_none() {
                                     if let Some(workspace) = this.workspace.upgrade() {
                                         workspace.update(cx, |workspace, cx| {
-                                            workspace.show_toast(
-                                                Toast::new(inline_assist_id, error),
-                                                cx,
-                                            );
+                                            struct InlineAssistantError;
+
+                                            let id =
+                                                NotificationId::identified::<InlineAssistantError>(
+                                                    inline_assist_id,
+                                                );
+
+                                            workspace.show_toast(Toast::new(id, error), cx);
                                         })
                                     }
 
@@ -620,10 +625,10 @@ impl AssistantPanel {
         // If Markdown or No Language is Known, increase the randomness for more creative output
         // If Code, decrease temperature to get more deterministic outputs
         let temperature = if let Some(language) = language_name.clone() {
-            if language.as_ref() != "Markdown" {
-                0.5
-            } else {
+            if language.as_ref() == "Markdown" {
                 1.0
+            } else {
+                0.5
             }
         } else {
             1.0
@@ -695,8 +700,8 @@ impl AssistantPanel {
                 editor.clear_background_highlights::<PendingInlineAssist>(cx);
             } else {
                 editor.highlight_background::<PendingInlineAssist>(
-                    background_ranges,
-                    |theme| theme.editor_active_line_background, // todo!("use the appropriate color")
+                    &background_ranges,
+                    |theme| theme.editor_active_line_background, // TODO use the appropriate color
                     cx,
                 );
             }
@@ -1114,8 +1119,8 @@ impl AssistantPanel {
                     )
                     .size_full()
                     .into_any_element()
-                } else {
-                    let editor = self.active_conversation_editor().unwrap();
+                } else if let Some(editor) = self.active_conversation_editor() {
+                    let editor = editor.clone();
                     let conversation = editor.read(cx).conversation.clone();
                     div()
                         .size_full()
@@ -1130,6 +1135,8 @@ impl AssistantPanel {
                                 .children(self.render_remaining_tokens(&conversation, cx)),
                         )
                         .into_any_element()
+                } else {
+                    div().into_any_element()
                 },
             ))
     }
@@ -1310,7 +1317,7 @@ impl Conversation {
     ) -> Self {
         let markdown = language_registry.language_for_name("Markdown");
         let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "");
+            let mut buffer = Buffer::local("", cx);
             buffer.set_language_registry(language_registry);
             cx.spawn(|buffer, mut cx| async move {
                 let markdown = markdown.await?;
@@ -1398,11 +1405,7 @@ impl Conversation {
         let mut message_anchors = Vec::new();
         let mut next_message_id = MessageId(0);
         let buffer = cx.new_model(|cx| {
-            let mut buffer = Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                saved_conversation.text,
-            );
+            let mut buffer = Buffer::local(saved_conversation.text, cx);
             for message in saved_conversation.messages {
                 message_anchors.push(MessageAnchor {
                     id: message.id,
@@ -2064,7 +2067,7 @@ impl ConversationEditor {
             workspace: workspace.downgrade(),
             _subscriptions,
         };
-        this.update_active_buffer(workspace, cx);
+        cx.defer(|this, cx| this.update_active_buffer(workspace, cx));
         this.update_message_headers(cx);
         this
     }
@@ -2266,7 +2269,7 @@ impl ConversationEditor {
                         .unwrap(),
                     height: 2,
                     style: BlockStyle::Sticky,
-                    render: Arc::new({
+                    render: Box::new({
                         let conversation = self.conversation.clone();
                         move |_cx| {
                             let message_id = message.id;

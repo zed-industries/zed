@@ -1,7 +1,7 @@
 use gpui::AppContext;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorktreeSettings {
@@ -31,10 +31,9 @@ impl Settings for WorktreeSettings {
     type FileContent = Self;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut AppContext,
     ) -> anyhow::Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+        sources.json_merge()
     }
 }

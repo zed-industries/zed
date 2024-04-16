@@ -101,15 +101,13 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        self.main_sender
-            .send(runnable)
-            .expect("Main thread is gone");
+        self.main_sender.send(runnable).ok();
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
         self.timer_sender
             .send(TimerAfter { duration, runnable })
-            .expect("Timer thread has died");
+            .ok();
     }
 
     fn tick(&self, background_only: bool) -> bool {
@@ -117,7 +115,7 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn park(&self) {
-        self.parker.lock().park()
+        self.parker.lock().park();
     }
 
     fn unparker(&self) -> Unparker {

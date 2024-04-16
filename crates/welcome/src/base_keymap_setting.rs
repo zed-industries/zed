@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
@@ -70,16 +70,12 @@ impl Settings for BaseKeymap {
     type FileContent = Option<Self>;
 
     fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
+        sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::AppContext,
-    ) -> anyhow::Result<Self>
-    where
-        Self: Sized,
-    {
-        Ok(user_values
-            .first()
-            .and_then(|v| **v)
-            .unwrap_or(default_value.unwrap()))
+    ) -> anyhow::Result<Self> {
+        if let Some(Some(user_value)) = sources.user.copied() {
+            return Ok(user_value);
+        }
+        sources.default.ok_or_else(Self::missing_default)
     }
 }

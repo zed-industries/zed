@@ -279,7 +279,7 @@ impl MacPlatform {
                         let mut mask = NSEventModifierFlags::empty();
                         for (modifier, flag) in &[
                             (
-                                keystroke.modifiers.command,
+                                keystroke.modifiers.platform,
                                 NSEventModifierFlags::NSCommandKeyMask,
                             ),
                             (
@@ -570,6 +570,7 @@ impl Platform for MacPlatform {
                     let _ = done_tx.send(result);
                 }
             });
+            let block = block.copy();
             let _: () = msg_send![workspace, setDefaultApplicationAtURL: app toOpenURLsWithScheme: scheme completionHandler: block];
         }
 

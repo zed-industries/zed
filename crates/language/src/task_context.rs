@@ -1,109 +1,125 @@
-use crate::{LanguageRegistry, Location};
+use std::path::Path;
+
+use crate::Location;
 
 use anyhow::Result;
-use gpui::{AppContext, Context, Model};
-use std::sync::Arc;
-use task::{static_source::tasks_for, static_source::TaskDefinitions, TaskSource, TaskVariables};
+use gpui::AppContext;
+use task::{TaskTemplates, TaskVariables, VariableName};
+use text::{Point, ToPoint};
 
-/// Language Contexts are used by Zed tasks to extract information about source file.
+/// Language Contexts are used by Zed tasks to extract information about the source file where the tasks are supposed to be scheduled from.
+/// Multiple context providers may be used together: by default, Zed provides a base [`BasicContextProvider`] context that fills all non-custom [`VariableName`] variants.
+///
+/// The context will be used to fill data for the tasks, and filter out the ones that do not have the variables required.
 pub trait ContextProvider: Send + Sync {
-    fn build_context(&self, _: Location, _: &mut AppContext) -> Result<TaskVariables> {
+    /// Builds a specific context to be placed on top of the basic one (replacing all conflicting entries) and to be used for task resolving later.
+    fn build_context(
+        &self,
+        _: Option<&Path>,
+        _: &Location,
+        _: &mut AppContext,
+    ) -> Result<TaskVariables> {
         Ok(TaskVariables::default())
     }
-    fn associated_tasks(&self) -> Option<TaskDefinitions> {
+
+    /// Provides all tasks, associated with the current language.
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
         None
+    }
+
+    // Determines whether the [`BasicContextProvider`] variables should be filled too (if `false`), or omitted (if `true`).
+    fn is_basic(&self) -> bool {
+        false
     }
 }
 
-/// A context provider that finds out what symbol is currently focused in the buffer.
-pub struct SymbolContextProvider;
+/// A context provided that tries to provide values for all non-custom [`VariableName`] variants for a currently opened file.
+/// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
+pub struct BasicContextProvider;
 
-impl ContextProvider for SymbolContextProvider {
+impl ContextProvider for BasicContextProvider {
+    fn is_basic(&self) -> bool {
+        true
+    }
+
     fn build_context(
         &self,
-        location: Location,
+        worktree_abs_path: Option<&Path>,
+        location: &Location,
         cx: &mut AppContext,
-    ) -> gpui::Result<TaskVariables> {
-        let symbols = location
-            .buffer
-            .read(cx)
-            .snapshot()
-            .symbols_containing(location.range.start, None);
-        let symbol = symbols.and_then(|symbols| {
-            symbols.last().map(|symbol| {
-                let range = symbol
-                    .name_ranges
-                    .last()
-                    .cloned()
-                    .unwrap_or(0..symbol.text.len());
-                symbol.text[range].to_string()
-            })
+    ) -> Result<TaskVariables> {
+        let buffer = location.buffer.read(cx);
+        let buffer_snapshot = buffer.snapshot();
+        let symbols = buffer_snapshot.symbols_containing(location.range.start, None);
+        let symbol = symbols.unwrap_or_default().last().map(|symbol| {
+            let range = symbol
+                .name_ranges
+                .last()
+                .cloned()
+                .unwrap_or(0..symbol.text.len());
+            symbol.text[range].to_string()
         });
-        Ok(TaskVariables::from_iter(
-            symbol.map(|symbol| ("ZED_SYMBOL".to_string(), symbol)),
-        ))
+
+        let current_file = buffer
+            .file()
+            .and_then(|file| file.as_local())
+            .map(|file| file.abs_path(cx).to_string_lossy().to_string());
+        let Point { row, column } = location.range.start.to_point(&buffer_snapshot);
+        let row = row + 1;
+        let column = column + 1;
+        let selected_text = buffer
+            .chars_for_range(location.range.clone())
+            .collect::<String>();
+
+        let mut task_variables = TaskVariables::from_iter([
+            (VariableName::Row, row.to_string()),
+            (VariableName::Column, column.to_string()),
+        ]);
+
+        if let Some(symbol) = symbol {
+            task_variables.insert(VariableName::Symbol, symbol);
+        }
+        if !selected_text.trim().is_empty() {
+            task_variables.insert(VariableName::SelectedText, selected_text);
+        }
+        if let Some(path) = current_file {
+            task_variables.insert(VariableName::File, path);
+        }
+        if let Some(worktree_path) = worktree_abs_path {
+            task_variables.insert(
+                VariableName::WorktreeRoot,
+                worktree_path.to_string_lossy().to_string(),
+            );
+        }
+
+        Ok(task_variables)
     }
 }
 
 /// A ContextProvider that doesn't provide any task variables on it's own, though it has some associated tasks.
 pub struct ContextProviderWithTasks {
-    definitions: TaskDefinitions,
+    templates: TaskTemplates,
 }
 
 impl ContextProviderWithTasks {
-    pub fn new(definitions: TaskDefinitions) -> Self {
-        Self { definitions }
+    pub fn new(definitions: TaskTemplates) -> Self {
+        Self {
+            templates: definitions,
+        }
     }
 }
 
 impl ContextProvider for ContextProviderWithTasks {
-    fn associated_tasks(&self) -> Option<TaskDefinitions> {
-        Some(self.definitions.clone())
+    fn associated_tasks(&self) -> Option<TaskTemplates> {
+        Some(self.templates.clone())
     }
 
-    fn build_context(&self, location: Location, cx: &mut AppContext) -> Result<TaskVariables> {
-        SymbolContextProvider.build_context(location, cx)
-    }
-}
-
-/// A source that pulls in the tasks from language registry.
-pub struct LanguageSource {
-    languages: Arc<LanguageRegistry>,
-}
-
-impl LanguageSource {
-    pub fn new(
-        languages: Arc<LanguageRegistry>,
+    fn build_context(
+        &self,
+        worktree_abs_path: Option<&Path>,
+        location: &Location,
         cx: &mut AppContext,
-    ) -> Model<Box<dyn TaskSource>> {
-        cx.new_model(|_| Box::new(Self { languages }) as Box<_>)
-    }
-}
-
-impl TaskSource for LanguageSource {
-    fn as_any(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn tasks_for_path(
-        &mut self,
-        _: Option<&std::path::Path>,
-        _: &mut gpui::ModelContext<Box<dyn TaskSource>>,
-    ) -> Vec<Arc<dyn task::Task>> {
-        self.languages
-            .to_vec()
-            .into_iter()
-            .filter_map(|language| {
-                language
-                    .context_provider()?
-                    .associated_tasks()
-                    .map(|tasks| (tasks, language))
-            })
-            .flat_map(|(tasks, language)| {
-                let language_name = language.name();
-                let id_base = format!("buffer_source_{language_name}");
-                tasks_for(tasks, &id_base)
-            })
-            .collect()
+    ) -> Result<TaskVariables> {
+        BasicContextProvider.build_context(worktree_abs_path, location, cx)
     }
 }

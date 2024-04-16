@@ -170,10 +170,11 @@
       "cmd-shift-enter": "editor::NewlineAbove",
       "cmd-enter": "editor::NewlineBelow",
       "alt-z": "editor::ToggleSoftWrap",
-      "cmd-f": [
+      "cmd-f": "buffer_search::Deploy",
+      "cmd-alt-f": [
         "buffer_search::Deploy",
         {
-          "focus": true
+          "replace_enabled": true
         }
       ],
       "cmd-e": [
@@ -232,7 +233,8 @@
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
-      "alt-tab": "search::CycleMode"
+      "cmd-f": "search::FocusSearch",
+      "cmd-alt-f": "search::ToggleReplace"
     }
   },
   {
@@ -253,10 +255,10 @@
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "alt-tab": "search::CycleMode",
+      "cmd-shift-f": "search::FocusSearch",
       "cmd-shift-h": "search::ToggleReplace",
-      "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-x": "search::ActivateTextMode"
+      "alt-cmd-g": "search::ToggleRegex",
+      "alt-cmd-x": "search::ToggleRegex"
     }
   },
   {
@@ -277,10 +279,9 @@
     "context": "ProjectSearchView",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "alt-tab": "search::CycleMode",
       "cmd-shift-h": "search::ToggleReplace",
-      "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-x": "search::ActivateTextMode"
+      "alt-cmd-g": "search::ToggleRegex",
+      "alt-cmd-x": "search::ToggleRegex"
     }
   },
   {
@@ -302,10 +303,9 @@
       "alt-enter": "search::SelectAllMatches",
       "alt-cmd-c": "search::ToggleCaseSensitive",
       "alt-cmd-w": "search::ToggleWholeWord",
-      "alt-tab": "search::CycleMode",
       "alt-cmd-f": "project_search::ToggleFilters",
-      "alt-cmd-g": "search::ActivateRegexMode",
-      "alt-cmd-x": "search::ActivateTextMode"
+      "alt-cmd-g": "search::ToggleRegex",
+      "alt-cmd-x": "search::ToggleRegex"
     }
   },
   // Bindings from VS Code
@@ -436,6 +436,12 @@
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "pane::DeploySearch",
+      "cmd-shift-h": [
+        "pane::DeploySearch",
+        {
+          "replace_enabled": true
+        }
+      ],
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
@@ -606,7 +612,12 @@
   },
   {
     "context": "TabSwitcher",
-    "bindings": { "ctrl-shift-tab": "menu::SelectPrev" }
+    "bindings": {
+      "ctrl-up": "menu::SelectPrev",
+      "ctrl-down": "menu::SelectNext",
+      "ctrl-shift-tab": "menu::SelectPrev",
+      "ctrl-backspace": "tab_switcher::CloseSelectedItem"
+    }
   },
   {
     "context": "Terminal",

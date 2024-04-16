@@ -3,7 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::AppContext;
+use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
@@ -245,12 +245,20 @@ impl EsLintLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
-    fn workspace_configuration(&self, workspace_root: &Path, cx: &mut AppContext) -> Value {
-        let eslint_user_settings = ProjectSettings::get_global(cx)
-            .lsp
-            .get(Self::SERVER_NAME)
-            .and_then(|s| s.settings.clone())
-            .unwrap_or_default();
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        let workspace_root = delegate.worktree_root_path();
+
+        let eslint_user_settings = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(Self::SERVER_NAME)
+                .and_then(|s| s.settings.clone())
+                .unwrap_or_default()
+        })?;
 
         let mut code_action_on_save = json!({
             // We enable this, but without also configuring `code_actions_on_format`
@@ -273,12 +281,17 @@ impl LspAdapter for EsLintLspAdapter {
             }
         }
 
+        let problems = eslint_user_settings
+            .get("problems")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+
         let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
             .any(|file| workspace_root.join(file).is_file());
 
-        json!({
+        Ok(json!({
             "": {
                 "validate": "on",
                 "rulesCustomizations": [],
@@ -290,13 +303,13 @@ impl LspAdapter for EsLintLspAdapter {
                     "name": workspace_root.file_name()
                         .unwrap_or_else(|| workspace_root.as_os_str()),
                 },
-                "problems": {},
+                "problems": problems,
                 "codeActionOnSave": code_action_on_save,
                 "experimental": {
                     "useFlatConfig": use_flat_config,
                 },
             }
-        })
+        }))
     }
 
     fn name(&self) -> LanguageServerName {
@@ -400,7 +413,6 @@ async fn get_cached_eslint_server_binary(
 #[cfg(test)]
 mod tests {
     use gpui::{Context, TestAppContext};
-    use text::BufferId;
     use unindent::Unindent;
 
     #[gpui::test]
@@ -422,10 +434,8 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.new_model(|cx| {
-            language::Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), text)
-                .with_language(language, cx)
-        });
+        let buffer =
+            cx.new_model(|cx| language::Buffer::local(text, cx).with_language(language, cx));
         let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline

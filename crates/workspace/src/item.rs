@@ -14,13 +14,13 @@ use client::{
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
+    Font, HighlightStyle, Model, Pixels, Point, SharedString, Task, View, ViewContext, WeakView,
     WindowContext,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsSources};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -40,6 +40,12 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
+}
+
+#[derive(Deserialize)]
+pub struct PreviewTabsSettings {
+    pub enabled: bool,
+    pub enable_preview_from_file_finder: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -71,17 +77,36 @@ pub struct ItemSettingsContent {
     close_position: Option<ClosePosition>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct PreviewTabsSettingsContent {
+    /// Whether to show opened editors as preview editors.
+    /// Preview editors do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
+    ///
+    /// Default: true
+    enabled: Option<bool>,
+    /// Whether to open a preview editor when opening a file using the file finder.
+    ///
+    /// Default: false
+    enable_preview_from_file_finder: Option<bool>,
+}
+
 impl Settings for ItemSettings {
     const KEY: Option<&'static str> = Some("tabs");
 
     type FileContent = ItemSettingsContent;
 
-    fn load(
-        default_value: &Self::FileContent,
-        user_values: &[&Self::FileContent],
-        _: &mut AppContext,
-    ) -> Result<Self> {
-        Self::load_via_json_merge(default_value, user_values)
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
+    }
+}
+
+impl Settings for PreviewTabsSettings {
+    const KEY: Option<&'static str> = Some("preview_tabs");
+
+    type FileContent = PreviewTabsSettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        sources.json_merge()
     }
 }
 
@@ -97,16 +122,19 @@ pub enum ItemEvent {
 pub struct BreadcrumbText {
     pub text: String,
     pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
+    pub font: Option<Font>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TabContentParams {
+    pub detail: Option<usize>,
+    pub selected: bool,
+    pub preview: bool,
 }
 
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
     type Event;
-    fn tab_content(
-        &self,
-        _detail: Option<usize>,
-        _selected: bool,
-        _cx: &WindowContext,
-    ) -> AnyElement {
+    fn tab_content(&self, _params: TabContentParams, _cx: &WindowContext) -> AnyElement {
         gpui::Empty.into_any()
     }
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
@@ -240,9 +268,9 @@ pub trait ItemHandle: 'static + Send {
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement;
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str>;
-    fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement;
+    fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
@@ -343,12 +371,18 @@ impl<T: Item> ItemHandle for View<T> {
         self.read(cx).tab_description(detail, cx)
     }
 
-    fn tab_content(&self, detail: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
-        self.read(cx).tab_content(detail, selected, cx)
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        self.read(cx).tab_content(params, cx)
     }
 
-    fn dragged_tab_content(&self, detail: Option<usize>, cx: &WindowContext) -> AnyElement {
-        self.read(cx).tab_content(detail, true, cx)
+    fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        self.read(cx).tab_content(
+            TabContentParams {
+                selected: true,
+                ..params
+            },
+            cx,
+        )
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
@@ -457,9 +491,7 @@ impl<T: Item> ItemHandle for View<T> {
                             }
 
                             workspace.update(&mut cx, |workspace, cx| {
-                                let item = item.upgrade().expect(
-                                    "item to be alive, otherwise task would have been dropped",
-                                );
+                                let Some(item) = item.upgrade() else { return };
                                 workspace.update_followers(
                                     is_project_item,
                                     proto::update_followers::Variant::UpdateView(
@@ -538,6 +570,7 @@ impl<T: Item> ItemHandle for View<T> {
                                     Pane::autosave_item(&item, workspace.project().clone(), cx)
                                 });
                             }
+                            pane.update(cx, |pane, cx| pane.handle_item_edit(item.item_id(), cx));
                         }
 
                         _ => {}
@@ -823,7 +856,7 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
-    use super::{Item, ItemEvent};
+    use super::{Item, ItemEvent, TabContentParams};
     use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
@@ -996,11 +1029,10 @@ pub mod test {
 
         fn tab_content(
             &self,
-            detail: Option<usize>,
-            _selected: bool,
+            params: TabContentParams,
             _cx: &ui::prelude::WindowContext,
         ) -> AnyElement {
-            self.tab_detail.set(detail);
+            self.tab_detail.set(params.detail);
             gpui::div().into_any_element()
         }
 

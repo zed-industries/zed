@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use collections::HashMap;
 use git::{
@@ -5,7 +7,7 @@ use git::{
     Oid,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
-use language::{Bias, Buffer, BufferSnapshot, Edit};
+use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
@@ -44,16 +46,23 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CommitDetails {
+    pub message: String,
+    pub parsed_message: ParsedMarkdown,
+    pub permalink: Option<Url>,
+}
+
 pub struct GitBlame {
     project: Model<Project>,
     buffer: Model<Buffer>,
     entries: SumTree<GitBlameEntry>,
-    permalinks: HashMap<Oid, Url>,
-    messages: HashMap<Oid, String>,
+    commit_details: HashMap<Oid, CommitDetails>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
     generated: bool,
+    user_triggered: bool,
     _refresh_subscription: Subscription,
 }
 
@@ -61,6 +70,7 @@ impl GitBlame {
     pub fn new(
         buffer: Model<Buffer>,
         project: Model<Project>,
+        user_triggered: bool,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let entries = SumTree::from_item(
@@ -102,8 +112,8 @@ impl GitBlame {
             buffer_snapshot,
             entries,
             buffer_edits,
-            permalinks: HashMap::default(),
-            messages: HashMap::default(),
+            user_triggered,
+            commit_details: HashMap::default(),
             task: Task::ready(Ok(())),
             generated: false,
             _refresh_subscription: refresh_subscription,
@@ -116,12 +126,8 @@ impl GitBlame {
         self.generated
     }
 
-    pub fn permalink_for_entry(&self, entry: &BlameEntry) -> Option<Url> {
-        self.permalinks.get(&entry.sha).cloned()
-    }
-
-    pub fn message_for_entry(&self, entry: &BlameEntry) -> Option<String> {
-        self.messages.get(&entry.sha).cloned()
+    pub fn details_for_entry(&self, entry: &BlameEntry) -> Option<CommitDetails> {
+        self.commit_details.get(&entry.sha).cloned()
     }
 
     pub fn blame_for_rows<'a>(
@@ -254,9 +260,10 @@ impl GitBlame {
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
+        let languages = self.project.read(cx).languages().clone();
 
         self.task = cx.spawn(|this, mut cx| async move {
-            let (entries, permalinks, messages) = cx
+            let result = cx
                 .background_executor()
                 .spawn({
                     let snapshot = snapshot.clone();
@@ -267,56 +274,119 @@ impl GitBlame {
                             messages,
                         } = blame.await?;
 
-                        let mut current_row = 0;
-                        let mut entries = SumTree::from_iter(
-                            entries.into_iter().flat_map(|entry| {
-                                let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
+                        let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
+                        let commit_details =
+                            parse_commit_messages(messages, &permalinks, &languages).await;
 
-                                if entry.range.start > current_row {
-                                    let skipped_rows = entry.range.start - current_row;
-                                    entries.push(GitBlameEntry {
-                                        rows: skipped_rows,
-                                        blame: None,
-                                    });
-                                }
-                                entries.push(GitBlameEntry {
-                                    rows: entry.range.len() as u32,
-                                    blame: Some(entry.clone()),
-                                });
-
-                                current_row = entry.range.end;
-                                entries
-                            }),
-                            &(),
-                        );
-
-                        let max_row = snapshot.max_point().row;
-                        if max_row >= current_row {
-                            entries.push(
-                                GitBlameEntry {
-                                    rows: (max_row + 1) - current_row,
-                                    blame: None,
-                                },
-                                &(),
-                            );
-                        }
-
-                        anyhow::Ok((entries, permalinks, messages))
+                        anyhow::Ok((entries, commit_details))
                     }
                 })
-                .await?;
+                .await;
 
-            this.update(&mut cx, |this, cx| {
-                this.buffer_edits = buffer_edits;
-                this.buffer_snapshot = snapshot;
-                this.entries = entries;
-                this.permalinks = permalinks;
-                this.messages = messages;
-                this.generated = true;
-                cx.notify();
+            this.update(&mut cx, |this, cx| match result {
+                Ok((entries, commit_details)) => {
+                    this.buffer_edits = buffer_edits;
+                    this.buffer_snapshot = snapshot;
+                    this.entries = entries;
+                    this.commit_details = commit_details;
+                    this.generated = true;
+                    cx.notify();
+                }
+                Err(error) => this.project.update(cx, |_, cx| {
+                    if this.user_triggered {
+                        log::error!("failed to get git blame data: {error:?}");
+                        let notification = format!("{:#}", error).trim().to_string();
+                        cx.emit(project::Event::Notification(notification));
+                    } else {
+                        // If we weren't triggered by a user, we just log errors in the background, instead of sending
+                        // notifications.
+                        // Except for `NoRepositoryError`, which can  happen often if a user has inline-blame turned on
+                        // and opens a non-git file.
+                        if error.downcast_ref::<project::NoRepositoryError>().is_none() {
+                            log::error!("failed to get git blame data: {error:?}");
+                        }
+                    }
+                }),
             })
         });
     }
+}
+
+fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree<GitBlameEntry> {
+    let mut current_row = 0;
+    let mut entries = SumTree::from_iter(
+        entries.into_iter().flat_map(|entry| {
+            let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
+
+            if entry.range.start > current_row {
+                let skipped_rows = entry.range.start - current_row;
+                entries.push(GitBlameEntry {
+                    rows: skipped_rows,
+                    blame: None,
+                });
+            }
+            entries.push(GitBlameEntry {
+                rows: entry.range.len() as u32,
+                blame: Some(entry.clone()),
+            });
+
+            current_row = entry.range.end;
+            entries
+        }),
+        &(),
+    );
+
+    if max_row >= current_row {
+        entries.push(
+            GitBlameEntry {
+                rows: (max_row + 1) - current_row,
+                blame: None,
+            },
+            &(),
+        );
+    }
+
+    entries
+}
+
+async fn parse_commit_messages(
+    messages: impl IntoIterator<Item = (Oid, String)>,
+    permalinks: &HashMap<Oid, Url>,
+    languages: &Arc<LanguageRegistry>,
+) -> HashMap<Oid, CommitDetails> {
+    let mut commit_details = HashMap::default();
+    for (oid, message) in messages {
+        let parsed_message = parse_markdown(&message, &languages).await;
+        let permalink = permalinks.get(&oid).cloned();
+
+        commit_details.insert(
+            oid,
+            CommitDetails {
+                message,
+                parsed_message,
+                permalink,
+            },
+        );
+    }
+
+    commit_details
+}
+
+async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -> ParsedMarkdown {
+    let mut parsed_message = ParsedMarkdown::default();
+
+    markdown::parse_markdown_block(
+        text,
+        language_registry,
+        None,
+        &mut parsed_message.text,
+        &mut parsed_message.highlights,
+        &mut parsed_message.region_ranges,
+        &mut parsed_message.regions,
+    )
+    .await;
+
+    parsed_message
 }
 
 #[cfg(test)]
@@ -356,6 +426,54 @@ mod tests {
             Project::init_settings(cx);
 
             crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_blame_error_notifications(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/my-repo",
+            json!({
+                ".git": {},
+                "file.txt": r#"
+                    irrelevant contents
+                "#
+                .unindent()
+            }),
+        )
+        .await;
+
+        // Creating a GitBlame without a corresponding blame state
+        // will result in an error.
+
+        let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/my-repo/file.txt", cx)
+            })
+            .await
+            .unwrap();
+
+        let blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), true, cx));
+
+        let event = project.next_event(cx).await;
+        assert_eq!(
+            event,
+            project::Event::Notification(
+                "Failed to blame \"file.txt\": failed to get blame for \"file.txt\"".to_string()
+            )
+        );
+
+        blame.update(cx, |blame, cx| {
+            assert_eq!(
+                blame
+                    .blame_for_rows((0..1).map(Some), cx)
+                    .collect::<Vec<_>>(),
+                vec![None]
+            );
         });
     }
 
@@ -408,7 +526,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
 
         cx.executor().run_until_parked();
 
@@ -488,7 +606,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
 
         cx.executor().run_until_parked();
 
@@ -637,7 +755,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
         cx.executor().run_until_parked();
         git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
 
