@@ -179,6 +179,12 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                         url: "https://twitter.com/zeddotdev".into(),
                     },
                 ),
+                MenuItem::action(
+                    "Join the Team",
+                    super::OpenBrowser {
+                        url: "https://zed.dev/jobs".into(),
+                    },
+                ),
             ],
         },
     ]
