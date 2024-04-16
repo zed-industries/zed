@@ -32,11 +32,9 @@ pub struct CollapsibleContainer {
 
 impl CollapsibleContainer {
     pub fn new(id: impl Into<ElementId>, toggle: bool) -> Self {
-        let button_id = ElementId::Name(nanoid::nanoid!().into());
-
         Self {
             id: id.into(),
-            base: ButtonLike::new(button_id),
+            base: ButtonLike::new("button_base"),
             toggle,
             start_slot: None,
             end_slot: None,
@@ -63,7 +61,6 @@ impl CollapsibleContainer {
 
 impl Clickable for CollapsibleContainer {
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
-        dbg!("on click registered for collapsible container");
         self.base = self.base.on_click(handler);
         self
     }
@@ -87,6 +84,7 @@ impl RenderOnce for CollapsibleContainer {
         };
 
         v_flex()
+            .id(self.id)
             .relative()
             .rounded_md()
             .bg(styles.background_color)
@@ -125,7 +123,7 @@ impl RenderOnce for CollapsibleContainer {
                                         .gap_1()
                                         .child(
                                             IconButton::new(
-                                                self.id,
+                                                "toggle_icon",
                                                 match self.toggle {
                                                     true => IconName::ChevronDown,
                                                     false => IconName::ChevronRight,
