@@ -105,10 +105,10 @@ pub struct ListAfterLayoutState {
 
 #[derive(Clone)]
 enum ListItem {
-    Unrendered {
+    Unmeasured {
         focus_handle: Option<FocusHandle>,
     },
-    Rendered {
+    Measured {
         size: Size<Pixels>,
         focus_handle: Option<FocusHandle>,
     },
@@ -116,7 +116,7 @@ enum ListItem {
 
 impl ListItem {
     fn size(&self) -> Option<Size<Pixels>> {
-        if let ListItem::Rendered { size, .. } = self {
+        if let ListItem::Measured { size, .. } = self {
             Some(*size)
         } else {
             None
@@ -125,8 +125,18 @@ impl ListItem {
 
     fn focus_handle(&self) -> Option<FocusHandle> {
         match self {
-            ListItem::Unrendered { focus_handle } | ListItem::Rendered { focus_handle, .. } => {
+            ListItem::Unmeasured { focus_handle } | ListItem::Measured { focus_handle, .. } => {
                 focus_handle.clone()
+            }
+        }
+    }
+
+    fn contains_focused(&self, cx: &WindowContext) -> bool {
+        match self {
+            ListItem::Unmeasured { focus_handle } | ListItem::Measured { focus_handle, .. } => {
+                focus_handle
+                    .as_ref()
+                    .is_some_and(|handle| handle.contains_focused(cx))
             }
         }
     }
@@ -157,8 +167,9 @@ impl ListState {
     /// Construct a new list state, for storage on a view.
     ///
     /// The overdraw parameter controls how much extra space is rendered
-    /// above and below the visible area. This can help ensure that the list
-    /// doesn't flicker or pop in when scrolling.
+    /// above and below the visible area. Elements within this area will
+    /// be measured even though they are not visible. This can help ensure
+    /// that the list doesn't flicker or pop in when scrolling.
     pub fn new<R>(
         item_count: usize,
         alignment: ListAlignment,
@@ -209,7 +220,8 @@ impl ListState {
 
     /// Register with the list state that the items in `old_range` have been replaced
     /// by new items. As opposed to [`splice`], this method allows an iterator of optional focus handles
-    /// to be supplied to properly integrate with items in the list that can be focused.
+    /// to be supplied to properly integrate with items in the list that can be focused. If a focused item
+    /// is scrolled out of view, the list will continue to render it to allow keyboard interaction.
     pub fn splice_focusable(
         &self,
         old_range: Range<usize>,
@@ -225,7 +237,7 @@ impl ListState {
         new_items.extend(
             focus_handles.into_iter().map(|focus_handle| {
                 spliced_count += 1;
-                ListItem::Unrendered { focus_handle }
+                ListItem::Unmeasured { focus_handle }
             }),
             &(),
         );
@@ -321,7 +333,7 @@ impl ListState {
         let scroll_top = cursor.start().1 .0 + scroll_top.offset_in_item;
 
         cursor.seek_forward(&Count(ix), Bias::Right, &());
-        if let Some(&ListItem::Rendered { size, .. }) = cursor.item() {
+        if let Some(&ListItem::Measured { size, .. }) = cursor.item() {
             let &(Count(count), Height(top)) = cursor.start();
             if count == ix {
                 let top = bounds.top() + top - scroll_top;
@@ -446,15 +458,6 @@ impl StateInner {
 
             // Use the previously cached height and focus handle if available
             let mut size = item.size();
-            let focus_handle = item.focus_handle();
-
-            // If this item's focus handle is focused, we know we've rendered the focused element and can avoid work later.
-            if focus_handle
-                .as_ref()
-                .is_some_and(|handle| handle.contains_focused(cx))
-            {
-                rendered_focused_item = true;
-            }
 
             // If we're within the visible area or the height wasn't cached, render and measure the item's element
             if visible_height < available_height || size.is_none() {
@@ -463,13 +466,19 @@ impl StateInner {
                 size = Some(element_size);
                 if visible_height < available_height {
                     item_elements.push_back(element);
+                    if item.contains_focused(cx) {
+                        rendered_focused_item = true;
+                    }
                 }
             }
 
             let size = size.unwrap();
             rendered_height += size.height;
             max_item_width = max_item_width.max(size.width);
-            measured_items.push_back(ListItem::Rendered { size, focus_handle });
+            measured_items.push_back(ListItem::Measured {
+                size,
+                focus_handle: item.focus_handle(),
+            });
         }
         rendered_height += padding.bottom;
 
@@ -485,13 +494,15 @@ impl StateInner {
                     let mut element = (self.render_item)(cursor.start().0, cx);
                     let element_size = element.measure(available_item_space, cx);
                     let focus_handle = item.focus_handle();
-
                     rendered_height += element_size.height;
-                    measured_items.push_front(ListItem::Rendered {
+                    measured_items.push_front(ListItem::Measured {
                         size: element_size,
                         focus_handle,
                     });
-                    item_elements.push_front(element)
+                    item_elements.push_front(element);
+                    if item.contains_focused(cx) {
+                        rendered_focused_item = true;
+                    }
                 } else {
                     break;
                 }
@@ -522,22 +533,18 @@ impl StateInner {
         while leading_overdraw < self.overdraw {
             cursor.prev(&());
             if let Some(item) = cursor.item() {
-                let size = if let ListItem::Rendered { size, .. } = item {
+                let size = if let ListItem::Measured { size, .. } = item {
                     *size
                 } else {
                     let mut element = (self.render_item)(cursor.start().0, cx);
                     element.measure(available_item_space, cx)
                 };
-                let focus_handle = item.focus_handle();
-                if focus_handle
-                    .as_ref()
-                    .is_some_and(|handle| handle.contains_focused(cx))
-                {
-                    rendered_focused_item = true;
-                }
 
                 leading_overdraw += size.height;
-                measured_items.push_front(ListItem::Rendered { size, focus_handle });
+                measured_items.push_front(ListItem::Measured {
+                    size,
+                    focus_handle: item.focus_handle(),
+                });
             } else {
                 break;
             }
@@ -549,28 +556,25 @@ impl StateInner {
         new_items.extend(measured_items, &());
         cursor.seek(&Count(measured_range.end), Bias::Right, &());
         new_items.append(cursor.suffix(&()), &());
+        self.items = new_items;
 
-        // If we haven't already rendered the focused item, check if an off-screen item is focused.
+        // If the none of the visible items are focused, check if an off-screen item is focused
+        // and include it to be rendered after the visible items so keyboard interaction continues
+        // to work for it.
         let mut focused_offscreen_element = None;
         if !rendered_focused_item {
-            let mut cursor = new_items.filter::<_, Count>(|summary| summary.has_focus_handles);
-            loop {
-                cursor.next(&());
-                if let Some(item) = cursor.item() {
-                    if let Some(handle) = item.focus_handle() {
-                        if dbg!(handle.contains_focused(cx)) {
-                            focused_offscreen_element =
-                                Some((self.render_item)(cursor.start().0, cx));
-                            break;
-                        }
-                    }
-                } else {
+            let mut cursor = self
+                .items
+                .filter::<_, Count>(|summary| summary.has_focus_handles);
+            cursor.next(&());
+            while let Some(item) = cursor.item() {
+                if item.contains_focused(cx) {
+                    focused_offscreen_element = Some((self.render_item)(cursor.start().0, cx));
                     break;
                 }
+                cursor.next(&());
             }
         }
-
-        self.items = new_items;
 
         LayoutItemsResponse {
             max_item_width,
@@ -585,8 +589,8 @@ impl StateInner {
 impl std::fmt::Debug for ListItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unrendered { .. } => write!(f, "Unrendered"),
-            Self::Rendered { size, .. } => f.debug_struct("Rendered").field("size", size).finish(),
+            Self::Unmeasured { .. } => write!(f, "Unrendered"),
+            Self::Measured { size, .. } => f.debug_struct("Rendered").field("size", size).finish(),
         }
     }
 }
@@ -688,7 +692,7 @@ impl Element for List {
             last_bounds.size.width != bounds.size.width
         }) {
             let new_items = SumTree::from_iter(
-                state.items.iter().map(|item| ListItem::Unrendered {
+                state.items.iter().map(|item| ListItem::Unmeasured {
                     focus_handle: item.focus_handle(),
                 }),
                 &(),
@@ -778,14 +782,14 @@ impl sum_tree::Item for ListItem {
 
     fn summary(&self) -> Self::Summary {
         match self {
-            ListItem::Unrendered { focus_handle } => ListItemSummary {
+            ListItem::Unmeasured { focus_handle } => ListItemSummary {
                 count: 1,
                 rendered_count: 0,
                 unrendered_count: 1,
                 height: px(0.),
                 has_focus_handles: focus_handle.is_some(),
             },
-            ListItem::Rendered {
+            ListItem::Measured {
                 size, focus_handle, ..
             } => ListItemSummary {
                 count: 1,
