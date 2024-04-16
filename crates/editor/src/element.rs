@@ -38,7 +38,7 @@ use gpui::{
     ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use language::language_settings::ShowWhitespaceSetting;
+use language::{language_settings::ShowWhitespaceSetting, Language};
 use lsp::DiagnosticSeverity;
 use multi_buffer::{Anchor, MultiBuffer, MultiBufferSnapshot};
 use project::{
@@ -1465,9 +1465,8 @@ impl EditorElement {
             .head
         });
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
-        let include_line_numbers = EditorSettings::get_global(cx).gutter.line_numbers
-            && snapshot.mode == EditorMode::Full
-            && snapshot.line_numbers_enabled;
+        let include_line_numbers =
+            EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full;
         let include_fold_statuses =
             EditorSettings::get_global(cx).gutter.folds && snapshot.mode == EditorMode::Full;
         let mut shaped_line_numbers = Vec::with_capacity(rows.len());
@@ -3080,6 +3079,7 @@ impl EditorElement {
                         let scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
                         editor.scroll(scroll_position, axis, cx);
+                        // TODO kb add a setting to skip this: to scroll over fixed-height editors
                         cx.stop_propagation();
                     });
                 }
@@ -3385,12 +3385,19 @@ fn insert_deleted_hunk_block(
     cx: &mut ViewContext<'_, Editor>,
 ) {
     let height = deleted_text.lines().count() as u8;
+    let language = editor.language_at(position, cx);
     let new_block_ids = editor.insert_blocks(
         Some(BlockProperties {
             position,
             height,
             style: BlockStyle::Flex,
-            render: render_deleted_block(deleted_text, height as f32, cx),
+            render: render_deleted_block(
+                language,
+                editor.gutter_width,
+                deleted_text,
+                height as f32,
+                cx,
+            ),
             disposition: BlockDisposition::Above,
         }),
         None,
@@ -3400,30 +3407,46 @@ fn insert_deleted_hunk_block(
 }
 
 fn render_deleted_block(
+    language: Option<Arc<Language>>,
+    parent_gutter_width: Pixels,
     deleted_text: String,
     height: f32,
     cx: &mut ViewContext<'_, Editor>,
 ) -> Box<dyn Send + Fn(&mut BlockContext) -> AnyElement> {
+    let mut deleted_color = cx.theme().status().git().deleted;
+    deleted_color.fade_out(0.7);
+
     let removed_editor = cx.new_view(|cx| {
         let mut editor = Editor::multi_line(cx);
+        if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_language(language, cx);
+            })
+        }
         editor.set_text(deleted_text, cx);
-        // TODO kb wrong: this moves the editor to the right, hides whitespaces before the code
-        editor.set_line_numbers_enabled(false);
+        editor.show_gutter = false;
         editor.set_read_only(true);
         let editor_snapshot = editor.snapshot(cx);
         let start = editor_snapshot.buffer_snapshot.anchor_before(0);
         let end = editor_snapshot
             .buffer_snapshot
             .anchor_after(editor.buffer.read(cx).len(cx));
-        let mut deleted_color = cx.theme().status().git().deleted;
-        deleted_color.fade_out(0.7);
+
         editor.highlight_rows::<GitRowHighlight>(start..end, Some(deleted_color), cx);
         // TODO kb does not scroll through, fix
+        // TODO kb disable wrapping
         editor.scroll_manager = ScrollManager::fixed(height);
         editor
     });
 
-    Box::new(move |_| removed_editor.clone().into_any_element())
+    Box::new(move |_| {
+        div()
+            .bg(deleted_color)
+            .size_full()
+            .pl(parent_gutter_width)
+            .child(removed_editor.clone())
+            .into_any_element()
+    })
 }
 
 fn original_text(
