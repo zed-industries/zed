@@ -1581,16 +1581,20 @@ impl MultiBuffer {
         line_count: u32,
         cx: &mut ModelContext<Self>,
     ) {
+        self.sync(cx);
+
         let snapshot = self.snapshot(cx);
         let locators = snapshot.excerpt_locators_for_ids(ids);
         let mut new_excerpts = SumTree::new();
-        let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>();
+        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, usize)>();
+        let mut edits = Vec::<Edit<usize>>::new();
 
         for locator in &locators {
             let prefix = cursor.slice(&Some(locator), Bias::Left, &());
             new_excerpts.append(prefix, &());
 
             let mut excerpt = cursor.item().unwrap().clone();
+            let old_text_len = excerpt.text_summary.len;
 
             let start_row = excerpt
                 .range
@@ -1614,7 +1618,26 @@ impl MultiBuffer {
                 .buffer
                 .text_summary_for_range(start_point..end_point);
 
+            let new_start_offset = new_excerpts.summary().text.len;
+            let old_start_offset = cursor.start().1;
+            let edit = Edit {
+                old: old_start_offset..old_start_offset + old_text_len,
+                new: new_start_offset..new_start_offset + excerpt.text_summary.len,
+            };
+
+            if let Some(last_edit) = edits.last_mut() {
+                if last_edit.old.end == edit.old.start {
+                    last_edit.old.end = edit.old.end;
+                    last_edit.new.end = edit.new.end;
+                } else {
+                    edits.push(edit);
+                }
+            } else {
+                edits.push(edit);
+            }
+
             new_excerpts.push(excerpt, &());
+
             cursor.next(&());
         }
 
@@ -1622,6 +1645,11 @@ impl MultiBuffer {
 
         drop(cursor);
         self.snapshot.borrow_mut().excerpts = new_excerpts;
+
+        self.subscriptions.publish_mut(edits);
+        cx.emit(Event::Edited {
+            singleton_buffer_edited: false,
+        });
         cx.notify();
     }
 
@@ -4809,13 +4837,7 @@ mod tests {
 
     #[gpui::test]
     fn test_expand_excerpts(cx: &mut AppContext) {
-        let buffer = cx.new_model(|cx| {
-            Buffer::new(
-                0,
-                BufferId::new(cx.entity_id().as_u64()).unwrap(),
-                sample_text(20, 3, 'a'),
-            )
-        });
+        let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
         let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
 
         multibuffer.update(cx, |multibuffer, cx| {
