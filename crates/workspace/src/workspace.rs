@@ -26,7 +26,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
+    actions, canvas, impl_actions, point, relative, size, Action, AnyElement, AnyView, AnyWeakView,
     AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DevicePixels, DragMoveEvent,
     Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke,
     LayoutId, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render,
@@ -78,9 +78,9 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, Context as _, Div, Element, ElementContext, FluentBuilder as _, InteractiveElement as _,
-    IntoElement, Label, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
-    VisualContext as _, WindowContext,
+    div, h_flex, Context as _, Div, Element, ElementContext, FluentBuilder,
+    InteractiveElement as _, IntoElement, Label, ParentElement as _, Pixels, SharedString,
+    Styled as _, ViewContext, VisualContext as _, WindowContext,
 };
 use util::ResultExt;
 use uuid::Uuid;
@@ -133,6 +133,7 @@ actions!(
         ToggleLeftDock,
         ToggleRightDock,
         ToggleBottomDock,
+        ToggleCenteredLayout,
         CloseAllDocks,
     ]
 );
@@ -581,6 +582,7 @@ pub struct Workspace {
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
+    centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
 }
 
@@ -600,6 +602,9 @@ struct FollowerState {
 }
 
 impl Workspace {
+    const DEFAULT_PADDING: f32 = 0.2;
+    const MAX_PADDING: f32 = 0.4;
+
     pub fn new(
         workspace_id: WorkspaceId,
         project: Model<Project>,
@@ -867,6 +872,7 @@ impl Workspace {
             workspace_actions: Default::default(),
             // This data will be incorrect, but it will be overwritten by the time it needs to be used.
             bounds: Default::default(),
+            centered_layout: false,
             bounds_save_task_queued: None,
         }
     }
@@ -956,12 +962,19 @@ impl Workspace {
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
                 options.bounds = bounds;
                 options.fullscreen = fullscreen;
+                let centered_layout = serialized_workspace
+                    .as_ref()
+                    .map(|w| w.centered_layout)
+                    .unwrap_or(false);
                 cx.open_window(options, {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
                     move |cx| {
                         cx.new_view(|cx| {
-                            Workspace::new(workspace_id, project_handle, app_state, cx)
+                            let mut workspace =
+                                Workspace::new(workspace_id, project_handle, app_state, cx);
+                            workspace.centered_layout = centered_layout;
+                            workspace
                         })
                     }
                 })?
@@ -3541,6 +3554,7 @@ impl Workspace {
                     display: Default::default(),
                     docks,
                     fullscreen: cx.is_fullscreen(),
+                    centered_layout: self.centered_layout,
                 };
                 return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
             }
@@ -3704,6 +3718,7 @@ impl Workspace {
                     workspace.reopen_closed_item(cx).detach();
                 }),
             )
+            .on_action(cx.listener(Workspace::toggle_centered_layout))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3771,6 +3786,21 @@ impl Workspace {
     {
         self.modal_layer
             .update(cx, |modal_layer, cx| modal_layer.toggle_modal(cx, build))
+    }
+
+    pub fn toggle_centered_layout(&mut self, _: &ToggleCenteredLayout, cx: &mut ViewContext<Self>) {
+        self.centered_layout = !self.centered_layout;
+        cx.background_executor()
+            .spawn(DB.set_centered_layout(self.database_id, self.centered_layout))
+            .detach_and_log_err(cx);
+        cx.notify();
+    }
+
+    fn adjust_padding(padding: Option<f32>) -> f32 {
+        padding
+            .unwrap_or(Self::DEFAULT_PADDING)
+            .min(Self::MAX_PADDING)
+            .max(0.0)
     }
 }
 
@@ -3916,7 +3946,27 @@ impl Render for Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut context = KeyContext::default();
         context.add("Workspace");
-
+        let centered_layout = self.centered_layout
+            && self.center.panes().len() == 1
+            && self.active_item(cx).is_some();
+        let render_padding = |size| {
+            (size > 0.0).then(|| {
+                div()
+                    .h_full()
+                    .w(relative(size))
+                    .bg(cx.theme().colors().editor_background)
+                    .border_color(cx.theme().colors().pane_group_border)
+            })
+        };
+        let paddings = if centered_layout {
+            let settings = WorkspaceSettings::get_global(cx).centered_layout;
+            (
+                render_padding(Self::adjust_padding(settings.left_padding)),
+                render_padding(Self::adjust_padding(settings.right_padding)),
+            )
+        } else {
+            (None, None)
+        };
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);
             (
@@ -4009,15 +4059,25 @@ impl Render for Workspace {
                                     .flex_col()
                                     .flex_1()
                                     .overflow_hidden()
-                                    .child(self.center.render(
-                                        &self.project,
-                                        &self.follower_states,
-                                        self.active_call(),
-                                        &self.active_pane,
-                                        self.zoomed.as_ref(),
-                                        &self.app_state,
-                                        cx,
-                                    ))
+                                    .child(
+                                        h_flex()
+                                            .h_full()
+                                            .when_some(paddings.0, |this, p| {
+                                                this.child(p.border_r_1())
+                                            })
+                                            .child(self.center.render(
+                                                &self.project,
+                                                &self.follower_states,
+                                                self.active_call(),
+                                                &self.active_pane,
+                                                self.zoomed.as_ref(),
+                                                &self.app_state,
+                                                cx,
+                                            ))
+                                            .when_some(paddings.1, |this, p| {
+                                                this.child(p.border_l_1())
+                                            }),
+                                    )
                                     .children(
                                         self.zoomed_position
                                             .ne(&Some(DockPosition::Bottom))
