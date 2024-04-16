@@ -933,6 +933,8 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
                 return Ok(());
             }
             let font_face = glyphrun.fontFace.as_ref().unwrap();
+            // this case should never fail since we are running on Win10+
+            let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
             let Some((postscript_name, font_struct, is_emoji)) =
                 get_postscript_name_and_font(font_face, &self.locale)
             else {
@@ -1110,16 +1112,13 @@ fn get_font_names_from_collection(
 }
 
 unsafe fn get_postscript_name_and_font(
-    font_face: &IDWriteFontFace,
+    font_face: &IDWriteFontFace3,
     locale: &str,
 ) -> Option<(String, Font, bool)> {
-    let font_face_pointer = font_face as *const IDWriteFontFace;
-    let font_face_3_pointer: *const IDWriteFontFace3 = std::mem::transmute(font_face_pointer);
-    let font_face_3 = &*font_face_3_pointer;
-    let Some(postscript_name) = get_postscript_name(font_face_3, locale) else {
+    let Some(postscript_name) = get_postscript_name(font_face, locale) else {
         return None;
     };
-    let Some(localized_family_name) = font_face_3.GetFamilyNames().log_err() else {
+    let Some(localized_family_name) = font_face.GetFamilyNames().log_err() else {
         return None;
     };
     let Some(family_name) = get_name(localized_family_name, locale) else {
@@ -1128,10 +1127,10 @@ unsafe fn get_postscript_name_and_font(
     let font_struct = Font {
         family: family_name.into(),
         features: FontFeatures::default(),
-        weight: font_face_3.GetWeight().into(),
-        style: font_face_3.GetStyle().into(),
+        weight: font_face.GetWeight().into(),
+        style: font_face.GetStyle().into(),
     };
-    let is_emoji = font_face_3.IsColorFont().as_bool();
+    let is_emoji = font_face.IsColorFont().as_bool();
     Some((postscript_name, font_struct, is_emoji))
 }
 
