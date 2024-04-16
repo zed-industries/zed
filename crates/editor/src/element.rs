@@ -1465,8 +1465,9 @@ impl EditorElement {
             .head
         });
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
-        let include_line_numbers =
-            EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full;
+        let include_line_numbers = EditorSettings::get_global(cx).gutter.line_numbers
+            && snapshot.mode == EditorMode::Full
+            && snapshot.line_numbers_enabled;
         let include_fold_statuses =
             EditorSettings::get_global(cx).gutter.folds && snapshot.mode == EditorMode::Full;
         let mut shaped_line_numbers = Vec::with_capacity(rows.len());
@@ -3340,6 +3341,8 @@ fn deploy_blame_entry_context_menu(
 // TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
 // TODO kb do not draw git diff hunks for the expanded ones
 // TODO kb update the expanded chunks on editor changes
+// TODO kb proper colors
+// TODO kb display a revert icon in each expanded hunk
 fn try_click_diff_hunk(
     editor: &mut Editor,
     hovered_hunk: &HoveredHunk,
@@ -3365,12 +3368,12 @@ fn try_click_diff_hunk(
                     position,
                     height,
                     style: BlockStyle::Flex,
-                    // TODO kb have proper numbers in the gutter, do not have a blank newline in the end
-                    // TODO kb deduplicate with another render below
+                    // TODO kb do not have a blank newline in the end
                     render: {
                         let removed_editor = cx.new_view(|cx| {
                             let mut editor = Editor::multi_line(cx);
                             editor.set_text(original_text.clone(), cx);
+                            editor.set_line_numbers_enabled(false);
                             editor.set_read_only(true);
                             let editor_snapshot = editor.snapshot(cx);
                             let start = editor_snapshot.buffer_snapshot.anchor_before(0);
@@ -3382,6 +3385,7 @@ fn try_click_diff_hunk(
                                 Some(cx.theme().status().git().deleted),
                                 cx,
                             );
+                            // TODO kb does not scroll through, fix
                             editor.scroll_manager = ScrollManager::noop(height as f32);
                             editor
                         });

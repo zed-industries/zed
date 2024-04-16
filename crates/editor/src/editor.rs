@@ -424,6 +424,7 @@ pub struct Editor {
     mode: EditorMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
+    line_numbers_enabled: bool,
     show_wrap_guides: Option<bool>,
     placeholder_text: Option<Arc<str>>,
     highlight_order: usize,
@@ -493,6 +494,7 @@ pub struct EditorSnapshot {
     pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
+    line_numbers_enabled: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
 }
@@ -1520,6 +1522,7 @@ impl Editor {
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             blame: None,
             blame_subscription: None,
+            line_numbers_enabled: true,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -1697,6 +1700,7 @@ impl Editor {
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
             is_focused: self.focus_handle.is_focused(cx),
+            line_numbers_enabled: self.line_numbers_enabled,
         }
     }
 
@@ -8984,9 +8988,15 @@ impl Editor {
     }
 
     pub fn toggle_line_numbers(&mut self, _: &ToggleLineNumbers, cx: &mut ViewContext<Self>) {
-        let mut editor_settings = EditorSettings::get_global(cx).clone();
-        editor_settings.gutter.line_numbers = !editor_settings.gutter.line_numbers;
-        EditorSettings::override_global(editor_settings, cx);
+        if self.line_numbers_enabled {
+            let mut editor_settings = EditorSettings::get_global(cx).clone();
+            editor_settings.gutter.line_numbers = !editor_settings.gutter.line_numbers;
+            EditorSettings::override_global(editor_settings, cx);
+        }
+    }
+
+    pub fn set_line_numbers_enabled(&mut self, enabled: bool) {
+        self.line_numbers_enabled = enabled;
     }
 
     pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ViewContext<Self>) {
@@ -10307,8 +10317,8 @@ impl EditorSnapshot {
             Some(GitGutterSetting::TrackedFiles)
         );
         let gutter_settings = EditorSettings::get_global(cx).gutter;
-
-        let line_gutter_width = if gutter_settings.line_numbers {
+        let gutter_lines_enabled = self.line_numbers_enabled && gutter_settings.line_numbers;
+        let line_gutter_width = if self.line_numbers_enabled && gutter_lines_enabled {
             // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
             let min_width_for_number_on_gutter = em_width * 4.0;
             max_line_number_width.max(min_width_for_number_on_gutter)
@@ -10323,19 +10333,19 @@ impl EditorSnapshot {
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
         left_padding += if gutter_settings.code_actions {
             em_width * 3.0
-        } else if show_git_gutter && gutter_settings.line_numbers {
+        } else if show_git_gutter && gutter_lines_enabled {
             em_width * 2.0
-        } else if show_git_gutter || gutter_settings.line_numbers {
+        } else if show_git_gutter || gutter_lines_enabled {
             em_width
         } else {
             px(0.)
         };
 
-        let right_padding = if gutter_settings.folds && gutter_settings.line_numbers {
+        let right_padding = if gutter_settings.folds && gutter_lines_enabled {
             em_width * 4.0
         } else if gutter_settings.folds {
             em_width * 3.0
-        } else if gutter_settings.line_numbers {
+        } else if gutter_lines_enabled {
             em_width
         } else {
             px(0.)
