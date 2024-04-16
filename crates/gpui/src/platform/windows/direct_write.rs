@@ -1081,8 +1081,8 @@ impl From<DWRITE_FONT_STYLE> for FontStyle {
     fn from(value: DWRITE_FONT_STYLE) -> Self {
         match value.0 {
             0 => FontStyle::Normal,
-            1 => FontStyle::Oblique,
-            2 => FontStyle::Italic,
+            1 => FontStyle::Italic,
+            2 => FontStyle::Oblique,
             _ => unreachable!(),
         }
     }
