@@ -3353,98 +3353,30 @@ fn try_click_diff_hunk(
         &hovered_hunk.display_row_range,
         &editor_snapshot.display_snapshot,
     );
-    let (buffer_snapshot, original_text) = editor.buffer().update(cx, |buffer, cx| {
+    let (buffer_snapshot, deleted_text) = editor.buffer().update(cx, |buffer, cx| {
         let buffer_snapshot = buffer.snapshot(cx);
         let original_text = original_text(buffer, buffer_range.clone(), cx)?;
         Some((buffer_snapshot, original_text))
     })?;
+    let hunk_start = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
+    let hunk_end = buffer_snapshot.anchor_at(buffer_range.end, Bias::Left);
 
     match hovered_hunk.status {
         DiffHunkStatus::Removed => {
-            let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-            let height = original_text.lines().count() as u8;
-            let new_block_ids = editor.insert_blocks(
-                Some(BlockProperties {
-                    position,
-                    height,
-                    style: BlockStyle::Flex,
-                    // TODO kb do not have a blank newline in the end
-                    render: {
-                        let removed_editor = cx.new_view(|cx| {
-                            let mut editor = Editor::multi_line(cx);
-                            editor.set_text(original_text.clone(), cx);
-                            editor.set_line_numbers_enabled(false);
-                            editor.set_read_only(true);
-                            let editor_snapshot = editor.snapshot(cx);
-                            let start = editor_snapshot.buffer_snapshot.anchor_before(0);
-                            let end = editor_snapshot
-                                .buffer_snapshot
-                                .anchor_after(editor.buffer.read(cx).len(cx));
-                            editor.highlight_rows::<GitRowHighlight>(
-                                start..end,
-                                Some(cx.theme().status().git().deleted),
-                                cx,
-                            );
-                            // TODO kb does not scroll through, fix
-                            editor.scroll_manager = ScrollManager::noop(height as f32);
-                            editor
-                        });
-
-                        Box::new(move |_| removed_editor.clone().into_any_element())
-                    },
-                    disposition: BlockDisposition::Above,
-                }),
-                None,
-                cx,
-            );
-            editor.git_blocks.extend(new_block_ids);
+            // TODO kb this lacks the text offset
+            insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx);
         }
         DiffHunkStatus::Added => {
             editor.highlight_rows::<GitRowHighlight>(
-                buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)
-                    ..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
+                hunk_start..hunk_end,
                 Some(cx.theme().status().git().created),
                 cx,
             );
         }
         DiffHunkStatus::Modified => {
-            // TODO kb deduplicate
-            let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-            let height = original_text.lines().count() as u8 + 1;
-            let new_block_ids = editor.insert_blocks(
-                Some(BlockProperties {
-                    position,
-                    height,
-                    style: BlockStyle::Flex,
-                    render: {
-                        let removed_editor = cx.new_view(|cx| {
-                            let mut editor = Editor::multi_line(cx);
-                            editor.set_text(original_text.clone(), cx);
-                            editor.set_read_only(true);
-                            let editor_snapshot = editor.snapshot(cx);
-                            let start = editor_snapshot.buffer_snapshot.anchor_before(0);
-                            let end = editor_snapshot
-                                .buffer_snapshot
-                                .anchor_after(editor.buffer.read(cx).len(cx));
-                            editor.highlight_rows::<GitRowHighlight>(
-                                start..end,
-                                Some(cx.theme().status().git().deleted),
-                                cx,
-                            );
-                            editor
-                        });
-
-                        Box::new(move |_| removed_editor.clone().into_any_element())
-                    },
-                    disposition: BlockDisposition::Above,
-                }),
-                None,
-                cx,
-            );
-            editor.git_blocks.extend(new_block_ids);
+            insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx);
             editor.highlight_rows::<GitRowHighlight>(
-                buffer_snapshot.anchor_at(buffer_range.start, Bias::Left)
-                    ..buffer_snapshot.anchor_at(buffer_range.end, Bias::Left),
+                hunk_start..hunk_end,
                 Some(cx.theme().status().git().created),
                 cx,
             );
@@ -3452,6 +3384,55 @@ fn try_click_diff_hunk(
     }
 
     Some(())
+}
+
+fn insert_deleted_hunk_block(
+    editor: &mut Editor,
+    position: Anchor,
+    deleted_text: String,
+    cx: &mut ViewContext<'_, Editor>,
+) {
+    let height = deleted_text.lines().count() as u8;
+    let new_block_ids = editor.insert_blocks(
+        Some(BlockProperties {
+            position,
+            height,
+            style: BlockStyle::Flex,
+            render: render_deleted_block(deleted_text, height as f32, cx),
+            disposition: BlockDisposition::Above,
+        }),
+        None,
+        cx,
+    );
+    editor.git_blocks.extend(new_block_ids);
+}
+
+fn render_deleted_block(
+    deleted_text: String,
+    height: f32,
+    cx: &mut ViewContext<'_, Editor>,
+) -> Box<dyn Send + Fn(&mut BlockContext) -> AnyElement> {
+    let removed_editor = cx.new_view(|cx| {
+        let mut editor = Editor::multi_line(cx);
+        editor.set_text(deleted_text, cx);
+        editor.set_line_numbers_enabled(false);
+        editor.set_read_only(true);
+        let editor_snapshot = editor.snapshot(cx);
+        let start = editor_snapshot.buffer_snapshot.anchor_before(0);
+        let end = editor_snapshot
+            .buffer_snapshot
+            .anchor_after(editor.buffer.read(cx).len(cx));
+        editor.highlight_rows::<GitRowHighlight>(
+            start..end,
+            Some(cx.theme().status().git().deleted),
+            cx,
+        );
+        // TODO kb does not scroll through, fix
+        editor.scroll_manager = ScrollManager::fixed(height);
+        editor
+    });
+
+    Box::new(move |_| removed_editor.clone().into_any_element())
 }
 
 fn original_text(

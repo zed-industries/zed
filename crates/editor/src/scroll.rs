@@ -160,7 +160,9 @@ impl ScrollManager {
         })
     }
 
-    pub(crate) fn noop(visible_line_count: f32) -> Self {
+    /// Element that gets this manager will not scroll,
+    /// always showing a fixed height, set via the line count.
+    pub(crate) fn fixed(visible_line_count: f32) -> Self {
         Self::Noop { visible_line_count }
     }
 
