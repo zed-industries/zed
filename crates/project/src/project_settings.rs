@@ -71,13 +71,18 @@ pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
-    /// Default: false
+    /// Default: true
+    #[serde(default = "true_value")]
     pub enabled: bool,
     /// Whether to only show the inline blame information
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
     pub delay_ms: Option<u64>,
+}
+
+const fn true_value() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
