@@ -46,7 +46,7 @@ impl LuaExtension {
             },
             arch = match arch {
                 zed::Architecture::Aarch64 => "arm64",
-                zed::Architecture::X8664 => "x86_64",
+                zed::Architecture::X8664 => "x64",
                 zed::Architecture::X86 => return Err("unsupported platform x86".into()),
             },
         );
