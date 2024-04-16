@@ -953,8 +953,8 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         bounds: Bounds<Pixels>,
         scroll_position: gpui::Point<f32>,
-        line_height: Pixels,
-        height_in_lines: f32,
+        row_height: Pixels,
+        rows_per_page: f32,
         cx: &mut ElementContext,
     ) -> Option<ScrollbarLayout> {
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
@@ -985,7 +985,7 @@ impl EditorElement {
             return None;
         }
 
-        let visible_row_range = scroll_position.y..scroll_position.y + height_in_lines;
+        let visible_row_range = scroll_position.y..scroll_position.y + rows_per_page;
 
         // If a drag took place after we started dragging the scrollbar,
         // cancel the scrollbar drag.
@@ -1000,27 +1000,21 @@ impl EditorElement {
             point(bounds.lower_right().x, bounds.lower_left().y),
         );
 
-        let scroll_height = snapshot.max_point().row() as f32 + height_in_lines;
-        let mut height = bounds.size.height;
-        let mut first_row_y_offset = px(0.0);
-
-        // Impose a minimum height on the scrollbar thumb
-        let row_height = height / scroll_height;
-        let min_thumb_height = line_height;
-        let thumb_height = height_in_lines * row_height;
-        if thumb_height < min_thumb_height {
-            first_row_y_offset = (min_thumb_height - thumb_height) / 2.0;
-            height -= min_thumb_height - thumb_height;
-        }
+        let height = bounds.size.height;
+        let total_rows = snapshot.max_point().row() as f32 + rows_per_page;
+        let px_per_row = height / total_rows;
+        let thumb_height = (rows_per_page * px_per_row).max(px(25.0));
+        let height = bounds.size.height - thumb_height;
+        let px_per_row = height / snapshot.max_point().row() as f32;
 
         Some(ScrollbarLayout {
             hitbox: cx.insert_hitbox(track_bounds, false),
             visible_row_range,
             height,
-            scroll_height,
-            first_row_y_offset,
-            row_height,
+            scroll_height: total_rows,
+            row_height: px_per_row,
             visible: show_scrollbars,
+            thumb_height,
         })
     }
 
@@ -4046,8 +4040,8 @@ struct ScrollbarLayout {
     visible: bool,
     height: Pixels,
     scroll_height: f32,
-    first_row_y_offset: Pixels,
     row_height: Pixels,
+    thumb_height: Pixels,
 }
 
 impl ScrollbarLayout {
@@ -4055,8 +4049,8 @@ impl ScrollbarLayout {
     const MIN_MARKER_HEIGHT: Pixels = px(2.0);
 
     fn thumb_bounds(&self) -> Bounds<Pixels> {
-        let thumb_top = self.y_for_row(self.visible_row_range.start) - self.first_row_y_offset;
-        let thumb_bottom = self.y_for_row(self.visible_row_range.end) + self.first_row_y_offset;
+        let thumb_top = self.y_for_row(self.visible_row_range.start);
+        let thumb_bottom = thumb_top + self.thumb_height;
         Bounds::from_corners(
             point(self.hitbox.left(), thumb_top),
             point(self.hitbox.right(), thumb_bottom),
@@ -4064,7 +4058,7 @@ impl ScrollbarLayout {
     }
 
     fn y_for_row(&self, row: f32) -> Pixels {
-        self.hitbox.top() + self.first_row_y_offset + row * self.row_height
+        self.hitbox.top() + row * self.row_height
     }
 
     fn marker_quads_for_ranges(
@@ -4081,8 +4075,8 @@ impl ScrollbarLayout {
         let mut background_pixel_ranges = row_ranges
             .into_iter()
             .map(|range| {
-                let start_y = self.first_row_y_offset + range.start as f32 * self.row_height;
-                let end_y = self.first_row_y_offset + (range.end + 1) as f32 * self.row_height;
+                let start_y = range.start as f32 * self.row_height;
+                let end_y = (range.end + 1) as f32 * self.row_height;
                 ColoredRange {
                     start: start_y,
                     end: end_y,
