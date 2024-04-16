@@ -252,7 +252,7 @@ pub async fn parse_markdown_block(
                     new_paragraph(text, &mut list_stack);
                     current_language = if let CodeBlockKind::Fenced(language) = kind {
                         language_registry
-                            .language_for_name(language.as_ref())
+                            .language_for_name_or_extension(language.as_ref())
                             .await
                             .ok()
                     } else {
@@ -358,5 +358,37 @@ pub fn new_paragraph(text: &mut String, list_stack: &mut Vec<(Option<u64>, bool)
     }
     if is_subsequent_paragraph_of_list {
         text.push_str("  ");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_dividers() {
+        let input = r#"
+### instance-method `format`
+
+---
+→ `void`
+Parameters:
+- `const int &`
+- `const std::tm &`
+- `int & dest`
+
+---
+```cpp
+// In my_formatter_flag
+public: void format(const int &, const std::tm &, int &dest)
+```
+"#;
+
+        let mut options = pulldown_cmark::Options::all();
+        options.remove(pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+
+        let parser = pulldown_cmark::Parser::new_ext(input, options);
+        for event in parser.into_iter() {
+            println!("{:?}", event);
+        }
     }
 }
