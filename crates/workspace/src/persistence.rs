@@ -285,7 +285,7 @@ define_connection! {
         ALTER TABLE items ADD COLUMN preview INTEGER; //bool
     ),
     sql!(
-        ALTER TABLE workspaces ADD COLUMN remote_project_json TEXT NOT NULL;
+        ALTER TABLE workspaces ADD COLUMN remote_project_json TEXT;
     )
     ];
 }

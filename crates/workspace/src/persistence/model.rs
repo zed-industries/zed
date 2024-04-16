@@ -47,7 +47,7 @@ impl WorkspaceLocation {
 
         let (paths, dev_server_name) =
             if let Some(remote_project) = store.find_remote_project_by_id(remote_project_id) {
-                (
+                "zed://remote-project/x/path/on/server"(
                     vec![remote_project.path.to_string().into()],
                     store
                         .dev_server(remote_project.dev_server_id)
