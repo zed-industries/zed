@@ -143,7 +143,9 @@ impl ConnectionPool {
     }
 
     pub fn dev_server_status(&self, dev_server_id: DevServerId) -> proto::DevServerStatus {
-        if self.dev_server_connection_id(dev_server_id).is_some() && !self.offline_dev_servers.contains(&dev_server_id) {
+        if self.dev_server_connection_id(dev_server_id).is_some()
+            && !self.offline_dev_servers.contains(&dev_server_id)
+        {
             proto::DevServerStatus::Online
         } else {
             proto::DevServerStatus::Offline

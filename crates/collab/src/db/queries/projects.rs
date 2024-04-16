@@ -159,7 +159,7 @@ impl Database {
                 if let Some(user_id) = user_id {
                     if user_id
                         != self
-                            .owner_for_remote_project(remote_project_id, &*tx)
+                            .owner_for_remote_project(remote_project_id, &tx)
                             .await?
                     {
                         Err(anyhow!("cannot unshare a project hosted by another user"))?

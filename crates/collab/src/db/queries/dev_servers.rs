@@ -32,7 +32,7 @@ impl Database {
         user_id: UserId,
     ) -> crate::Result<proto::RemoteProjectsUpdate> {
         self.transaction(
-            |tx| async move { self.remote_projects_update_internal(user_id, &*tx).await },
+            |tx| async move { self.remote_projects_update_internal(user_id, &tx).await },
         )
         .await
     }
@@ -84,7 +84,7 @@ impl Database {
             .exec_with_returning(&*tx)
             .await?;
 
-            let remote_projects = self.remote_projects_update_internal(user_id, &*tx).await?;
+            let remote_projects = self.remote_projects_update_internal(user_id, &tx).await?;
 
             Ok((dev_server, remote_projects))
         })

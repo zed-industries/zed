@@ -57,7 +57,7 @@ impl Database {
     ) -> crate::Result<UserId> {
         let dev_server = remote_project::Entity::find_by_id(remote_project_id)
             .find_also_related(dev_server::Entity)
-            .one(&*tx)
+            .one(tx)
             .await?
             .and_then(|(_, dev_server)| dev_server)
             .ok_or_else(|| anyhow!("no remote project"))?;
@@ -109,7 +109,7 @@ impl Database {
             .exec_with_returning(&*tx)
             .await?;
 
-            let status = self.remote_projects_update_internal(user_id, &*tx).await?;
+            let status = self.remote_projects_update_internal(user_id, &tx).await?;
 
             Ok((project, status))
         })
@@ -169,7 +169,7 @@ impl Database {
             }
 
             let status = self
-                .remote_projects_update_internal(dev_server.user_id, &*tx)
+                .remote_projects_update_internal(dev_server.user_id, &tx)
                 .await?;
 
             Ok((
