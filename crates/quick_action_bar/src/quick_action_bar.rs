@@ -121,10 +121,6 @@ impl Render for QuickActionBar {
             },
         );
 
-        // TODO:
-        // - [ ] Handle case where there are no items in the list (probably hide the menu)
-        // - [x] Add toggle git blame inline to menu
-
         let editor_settings_dropdown =
             IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
                 .size(ButtonSize::Compact)
@@ -141,7 +137,7 @@ impl Render for QuickActionBar {
                         let menu = ContextMenu::build(cx, |mut menu, _| {
                             if supports_inlay_hints {
                                 menu = menu.toggleable_entry(
-                                    "Inlay Hints",
+                                    "Show Inlay Hints",
                                     inlay_hints_enabled,
                                     Some(editor::actions::ToggleInlayHints.boxed_clone()),
                                     {
@@ -159,7 +155,7 @@ impl Render for QuickActionBar {
                             }
 
                             menu = menu.toggleable_entry(
-                                "Git Blame",
+                                "Show Git Blame",
                                 git_blame_inline_enabled,
                                 Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
                                 {
@@ -184,14 +180,19 @@ impl Render for QuickActionBar {
                         quick_action_bar.toggle_settings_menu = Some(menu);
                     })
                 })
-                .tooltip(|cx| Tooltip::text("Toggle Settings…", cx));
+                .tooltip(|cx| Tooltip::text("Editor Controls", cx));
 
         h_flex()
             .id("quick action bar")
-            .gap_2()
-            .when(AssistantSettings::get_global(cx).button, |bar| {
-                bar.child(assistant_button)
-            })
+            .gap_3()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .children(search_button)
+                    .when(AssistantSettings::get_global(cx).button, |bar| {
+                        bar.child(assistant_button)
+                    }),
+            )
             .child(editor_settings_dropdown)
             .when_some(
                 self.toggle_settings_menu.as_ref(),
@@ -199,7 +200,6 @@ impl Render for QuickActionBar {
                     el.child(Self::render_menu_overlay(toggle_settings_menu))
                 },
             )
-            .children(search_button)
     }
 }
 
