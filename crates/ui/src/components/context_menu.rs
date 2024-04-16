@@ -324,11 +324,11 @@ impl Render for ContextMenu {
                                     .selected(Some(ix) == self.selected_index)
                                     .when_some(*toggled, |list_item, toggled| {
                                         list_item.start_slot(if toggled {
-                                            v_flex().child(
+                                            v_flex().flex_none().child(
                                                 Icon::new(IconName::Check).color(Color::Accent),
                                             )
                                         } else {
-                                            v_flex().size(IconSize::default().rems())
+                                            v_flex().flex_none().size(IconSize::default().rems())
                                         })
                                     })
                                     .child(
