@@ -1427,12 +1427,7 @@ impl Terminal {
     ) {
         self.completion_tx.try_send(()).ok();
         let task = match &mut self.task {
-            Some(task) => {
-                if task.status != TaskStatus::Running {
-                    return;
-                }
-                task
-            }
+            Some(task) => task,
             None => {
                 if error_code.is_none() {
                     cx.emit(Event::CloseTerminal);
@@ -1440,6 +1435,9 @@ impl Terminal {
                 return;
             }
         };
+        if task.status != TaskStatus::Running {
+            return;
+        }
         match error_code {
             Some(error_code) => {
                 task.status.register_task_exit(error_code);
