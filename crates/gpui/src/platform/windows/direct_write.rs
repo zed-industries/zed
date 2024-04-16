@@ -693,7 +693,9 @@ impl DirectWriteState {
                 y: subpixel_shift.y / params.scale_factor,
             };
 
-            let render_target: ID2D1DeviceContext4 = std::mem::transmute(render_target);
+            // this case should never fail since we are running on Win10+, and
+            // ID2D1DeviceContext4 requires win8+
+            let render_target = render_target.cast::<ID2D1DeviceContext4>().unwrap();
             render_target.BeginDraw();
             if params.is_emoji {
                 // WARN: only DWRITE_GLYPH_IMAGE_FORMATS_COLR has been tested
