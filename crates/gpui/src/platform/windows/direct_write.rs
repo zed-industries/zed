@@ -66,6 +66,9 @@ impl DirectWriteComponent {
                 CoCreateInstance(&CLSID_WICImagingFactory2, None, CLSCTX_INPROC_SERVER)?;
             let d2d1_factory: ID2D1Factory =
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)?;
+            // The `IDWriteInMemoryFontFileLoader` here is supported starting from
+            // Windows 10 Creators Update, which consequently requires the entire
+            // `DirectWriteTextSystem` to run on `win10 1703`+.
             let in_memory_loader = factory.CreateInMemoryFontFileLoader()?;
             factory.RegisterFontFileLoader(&in_memory_loader)?;
             let builder = factory.CreateFontSetBuilder2()?;
