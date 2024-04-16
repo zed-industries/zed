@@ -38,4 +38,4 @@ You will need write access to the Zed repository to do this:
 ## Nightly release process
 
 - Merge your changes to main
-- Run `./script/bump-nightly`
+- Run `./script/trigger-release {nightly}`

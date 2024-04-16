@@ -3,6 +3,11 @@ set -euo pipefail
 
 which gh >/dev/null || brew install gh
 
+if [ "$1" == "nightly" ]; then
+  ./script/bump-nightly
+  exit
+fi
+
 version=$(./script/get-released-version "$1" | sed 's/\.[^\.]*$/.x/')
 echo "Bumping $1 (v$version)"
 
