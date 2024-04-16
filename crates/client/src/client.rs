@@ -132,7 +132,7 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
         move |_: &SignOut, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(|cx| async move {
-                    client.disconnect(&cx);
+                    client.sign_out(&cx).await;
                 })
                 .detach();
             }
@@ -1250,17 +1250,20 @@ impl Client {
         })
     }
 
+    pub async fn sign_out(self: &Arc<Self>, cx: &AsyncAppContext) {
+        // Clear the state to prevent wrongfully re-authentication
+        self.state.write().credentials = None;
+        // If there is a keychain credential clear-it
+        if self.has_keychain_credentials(cx).await {
+            delete_credentials_from_keychain(cx).await.log_err();
+        }
+        // Disconect from collab
+        self.disconnect(&cx);
+    }
+
     pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
         self.peer.teardown();
         self.set_status(Status::SignedOut, cx);
-
-        self.state.write().credentials = None;
-
-        smol::block_on(async {
-            if self.has_keychain_credentials(cx).await {
-                delete_credentials_from_keychain(cx).await.log_err();
-            }
-        });
     }
 
     pub fn reconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
