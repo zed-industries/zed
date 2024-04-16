@@ -726,8 +726,8 @@ impl Panel for TerminalPanel {
         "TerminalPanel"
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
-        TerminalSettings::get_global(_cx)
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        TerminalSettings::get_global(cx)
             .button
             .then(|| IconName::Terminal)
     }
