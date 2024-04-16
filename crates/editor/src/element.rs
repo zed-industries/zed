@@ -1099,9 +1099,9 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn layout_inline_blame(
         &self,
-        start_row: u32,
-        row: u32,
-        line_layouts: &[LineWithInvisibles],
+        display_row: u32,
+        display_snapshot: &DisplaySnapshot,
+        line_layout: &LineWithInvisibles,
         em_width: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
@@ -1115,29 +1115,33 @@ impl EditorElement {
             return None;
         }
 
-        let blame = self.editor.read(cx).blame.clone()?;
         let workspace = self
             .editor
             .read(cx)
             .workspace
             .as_ref()
             .map(|(w, _)| w.clone());
+
+        let display_point = DisplayPoint::new(display_row, 0);
+        let buffer_row = display_point.to_point(display_snapshot).row;
+
+        let blame = self.editor.read(cx).blame.clone()?;
         let blame_entry = blame
-            .update(cx, |blame, cx| blame.blame_for_rows([Some(row)], cx).next())
+            .update(cx, |blame, cx| {
+                blame.blame_for_rows([Some(buffer_row)], cx).next()
+            })
             .flatten()?;
 
         let mut element =
             render_inline_blame_entry(&blame, blame_entry, &self.style, workspace, cx);
 
-        let start_y =
-            content_origin.y + line_height * (row as f32 - scroll_pixel_position.y / line_height);
+        let start_y = content_origin.y
+            + line_height * (display_row as f32 - scroll_pixel_position.y / line_height);
 
         let start_x = {
             const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
 
-            let line_layout = &line_layouts[(row - start_row) as usize];
             let line_width = line_layout.line.width;
-
             content_origin.x + line_width + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS)
         };
 
@@ -3697,11 +3701,13 @@ impl Element for EditorElement {
 
                 let mut inline_blame = None;
                 if let Some(newest_selection_head) = newest_selection_head {
-                    if (start_row..end_row).contains(&newest_selection_head.row()) {
+                    let display_row = newest_selection_head.row();
+                    if (start_row..end_row).contains(&display_row) {
+                        let line_layout = &line_layouts[(display_row - start_row) as usize];
                         inline_blame = self.layout_inline_blame(
-                            start_row,
-                            newest_selection_head.row(),
-                            &line_layouts,
+                            display_row,
+                            &snapshot.display_snapshot,
+                            line_layout,
                             em_width,
                             content_origin,
                             scroll_pixel_position,
