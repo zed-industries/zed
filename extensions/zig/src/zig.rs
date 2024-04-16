@@ -3,7 +3,7 @@ use zed::LanguageServerId;
 use zed_extension_api::{self as zed, Result};
 
 struct ZigExtension {
-    cached_binary: Option<ZlsBinary>,
+    cached_binary: Option<String>,
 }
 
 #[derive(Clone)]
@@ -18,20 +18,21 @@ impl ZigExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<ZlsBinary> {
-        if let Some(zls_binary) = &self.cached_binary {
-            if fs::metadata(&zls_binary.path).map_or(false, |stat| stat.is_file()) {
-                return Ok(zls_binary.clone());
-            }
-        }
-
         if let Some(path) = worktree.which("zls") {
             let environment = worktree.shell_env();
-            let zls_binary = ZlsBinary {
+            return Ok(ZlsBinary {
                 path,
                 environment: Some(environment),
-            };
-            self.cached_binary = Some(zls_binary.clone());
-            return Ok(zls_binary);
+            });
+        }
+
+        if let Some(path) = &self.cached_binary {
+            if fs::metadata(&path).map_or(false, |stat| stat.is_file()) {
+                return Ok(ZlsBinary {
+                    path: path.clone(),
+                    environment: None,
+                });
+            }
         }
 
         zed::set_language_server_installation_status(
@@ -102,12 +103,11 @@ impl ZigExtension {
             }
         }
 
-        let zls_binary = ZlsBinary {
+        self.cached_binary = Some(binary_path.clone());
+        Ok(ZlsBinary {
             path: binary_path,
             environment: None,
-        };
-        self.cached_binary = Some(zls_binary.clone());
-        Ok(zls_binary)
+        })
     }
 }
 
