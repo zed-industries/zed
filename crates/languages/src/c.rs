@@ -2,9 +2,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncAppContext;
-use project::project_settings::ProjectSettings;
 pub use language::*;
 use lsp::LanguageServerBinary;
+use project::project_settings::{BinarySettings, ProjectSettings};
 use settings::Settings;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
@@ -28,29 +28,39 @@ impl super::LspAdapter for CLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        _delegate: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
         cx: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let binary = cx
-            .update(|cx| {
-                ProjectSettings::get_global(cx)
-                    .lsp
-                    .get(Self::SERVER_NAME)
-                    .and_then(|s| s.binary.clone())
-            })
-            .ok()??;
+        let configured_binary = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(Self::SERVER_NAME)
+                .and_then(|s| s.binary.clone())
+        });
 
-        let path = binary.path?;
-        Some(LanguageServerBinary {
-            path: path.into(),
-            arguments: binary
-                .arguments
-                .unwrap_or_default()
-                .iter()
-                .map(|arg| arg.into())
-                .collect(),
-            env: None,
-        })
+        if let Ok(Some(BinarySettings {
+            path: Some(path),
+            arguments,
+        })) = configured_binary
+        {
+            Some(LanguageServerBinary {
+                path: path.into(),
+                arguments: arguments
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|arg| arg.into())
+                    .collect(),
+                env: None,
+            })
+        } else {
+            let env = delegate.shell_env().await;
+            let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+            Some(LanguageServerBinary {
+                path,
+                arguments: vec![],
+                env: Some(env),
+            })
+        }
     }
 
     async fn fetch_latest_server_version(
