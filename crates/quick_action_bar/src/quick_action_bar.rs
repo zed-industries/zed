@@ -3,18 +3,21 @@ use assistant::{AssistantPanel, InlineAssist};
 use editor::{Editor, EditorSettings};
 
 use gpui::{
-    Action, ClickEvent, ElementId, EventEmitter, InteractiveElement, ParentElement, Render, Styled,
-    Subscription, View, ViewContext, WeakView,
+    anchored, deferred, Action, AnchorCorner, ClickEvent, DismissEvent, ElementId, EventEmitter,
+    InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
-use ui::{prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, Tooltip};
+use ui::{
+    prelude::*, ButtonSize, ButtonStyle, ContextMenu, IconButton, IconName, IconSize, Tooltip,
+};
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 pub struct QuickActionBar {
     buffer_search_bar: View<BufferSearchBar>,
+    toggle_settings_menu: Option<View<ContextMenu>>,
     active_item: Option<Box<dyn ItemHandle>>,
     _inlay_hints_enabled_subscription: Option<Subscription>,
     workspace: WeakView<Workspace>,
@@ -29,6 +32,7 @@ impl QuickActionBar {
     ) -> Self {
         let mut this = Self {
             buffer_search_bar,
+            toggle_settings_menu: None,
             active_item: None,
             _inlay_hints_enabled_subscription: None,
             workspace: workspace.weak_handle(),
@@ -62,6 +66,17 @@ impl QuickActionBar {
         } else {
             ToolbarItemLocation::Hidden
         }
+    }
+
+    fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
+        div().absolute().bottom_0().right_0().size_0().child(
+            deferred(
+                anchored()
+                    .anchor(AnchorCorner::TopRight)
+                    .child(menu.clone()),
+            )
+            .with_priority(1),
+        )
     }
 }
 
@@ -122,14 +137,57 @@ impl Render for QuickActionBar {
             },
         );
 
+        let editor_settings_dropdown =
+            IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
+                .size(ButtonSize::Compact)
+                .icon_size(IconSize::Small)
+                .style(ButtonStyle::Subtle)
+                .on_click({
+                    let editor = editor.clone();
+                    cx.listener(move |quick_action_bar, _, cx| {
+                        let inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
+
+                        let menu = ContextMenu::build(cx, |menu, _| {
+                            menu.toggleable_entry(
+                                "Inlay Hints",
+                                inlay_hints_enabled,
+                                Some(editor::actions::ToggleInlayHints.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.toggle_inlay_hints(
+                                                &editor::actions::ToggleInlayHints,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                },
+                            )
+                        });
+                        cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
+                            quick_action_bar.toggle_settings_menu = None;
+                        })
+                        .detach();
+                        quick_action_bar.toggle_settings_menu = Some(menu);
+                    })
+                })
+                .tooltip(|cx| Tooltip::text("Split Pane", cx));
+
         h_flex()
             .id("quick action bar")
             .gap_2()
-            .children(inlay_hints_button)
-            .children(search_button)
             .when(AssistantSettings::get_global(cx).button, |bar| {
                 bar.child(assistant_button)
             })
+            .child(editor_settings_dropdown)
+            .when_some(
+                self.toggle_settings_menu.as_ref(),
+                |el, toggle_settings_menu| {
+                    el.child(Self::render_menu_overlay(toggle_settings_menu))
+                },
+            )
+            .children(search_button)
     }
 }
 
