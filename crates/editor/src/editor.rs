@@ -467,6 +467,7 @@ pub struct Editor {
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
+    git_blame_inline_enabled: bool,
     blame: Option<Model<GitBlame>>,
     blame_subscription: Option<Subscription>,
     custom_context_menu: Option<
@@ -1504,6 +1505,7 @@ impl Editor {
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
             show_git_blame_inline_delay_task: None,
+            git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             blame: None,
             blame_subscription: None,
             _subscriptions: vec![
@@ -1536,7 +1538,8 @@ impl Editor {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
 
-            if ProjectSettings::get_global(cx).git.inline_blame_enabled() {
+            if this.git_blame_inline_enabled {
+                this.git_blame_inline_enabled = true;
                 this.start_git_blame_inline(false, cx);
             }
         }
@@ -1921,7 +1924,9 @@ impl Editor {
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, cx);
             self.discard_inline_completion(cx);
-            self.start_inline_blame_timer(cx);
+            if self.git_blame_inline_enabled {
+                self.start_inline_blame_timer(cx);
+            }
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
@@ -8902,10 +8907,12 @@ impl Editor {
         user_triggered: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.show_git_blame_inline || self.show_git_blame_inline_delay_task.is_some() {
+        if self.git_blame_inline_enabled {
+            self.git_blame_inline_enabled = false;
             self.show_git_blame_inline = false;
             self.show_git_blame_inline_delay_task.take();
         } else {
+            self.git_blame_inline_enabled = true;
             self.start_git_blame_inline(user_triggered, cx);
         }
 
@@ -8914,14 +8921,12 @@ impl Editor {
 
     fn start_git_blame_inline(&mut self, user_triggered: bool, cx: &mut ViewContext<Self>) {
         if let Some(inline_blame_settings) = ProjectSettings::get_global(cx).git.inline_blame {
-            if inline_blame_settings.enabled {
-                self.start_git_blame(user_triggered, cx);
+            self.start_git_blame(user_triggered, cx);
 
-                if inline_blame_settings.delay_ms.is_some() {
-                    self.start_inline_blame_timer(cx);
-                } else {
-                    self.show_git_blame_inline = true
-                }
+            if inline_blame_settings.delay_ms.is_some() {
+                self.start_inline_blame_timer(cx);
+            } else {
+                self.show_git_blame_inline = true
             }
         }
     }
@@ -9515,7 +9520,7 @@ impl Editor {
 
         if self.mode == EditorMode::Full {
             let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();
-            if self.show_git_blame_inline != inline_blame_enabled {
+            if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, cx);
             }
         }
