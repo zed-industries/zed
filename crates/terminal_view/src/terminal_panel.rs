@@ -727,7 +727,9 @@ impl Panel for TerminalPanel {
     }
 
     fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
-        Some(IconName::Terminal)
+        TerminalSettings::get_global(_cx)
+            .button
+            .then(|| IconName::Terminal)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
