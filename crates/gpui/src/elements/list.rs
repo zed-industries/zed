@@ -13,7 +13,7 @@ use crate::{
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
 use taffy::style::Overflow;
 
@@ -282,6 +282,53 @@ impl ListState {
         }
 
         state.logical_scroll_top = Some(scroll_top);
+    }
+
+    /// Scroll the list to the given item index and top/bottom offset.
+    /// If the given position is already visibile, this method won't scroll.
+    pub fn scroll_to_fit(
+        &self,
+        mut item_ix: usize,
+        mut top_offset_in_item: Pixels,
+        mut bottom_offset_in_item: Pixels,
+    ) {
+        let state = &mut *self.0.borrow_mut();
+        let Some(bounds) = state.last_layout_bounds else {
+            return;
+        };
+
+        let item_count = state.items.summary().count;
+        if item_ix >= item_count {
+            item_ix = item_count;
+            top_offset_in_item = Pixels::ZERO;
+            bottom_offset_in_item = Pixels::ZERO;
+        }
+
+        let logical_scroll_top = state.logical_scroll_top();
+
+        let mut cursor = state.items.cursor::<(Count, Height)>();
+        cursor.seek(&Count(logical_scroll_top.item_ix), Bias::Right, &());
+        let scroll_top = cursor.start().1 .0 + logical_scroll_top.offset_in_item;
+        let scroll_bottom = scroll_top + bounds.size.height;
+
+        cursor.seek(&Count(item_ix), Bias::Right, &());
+        let item_scroll_top = cursor.start().1 .0;
+        let desired_scroll_top = item_scroll_top + top_offset_in_item;
+        let desired_scroll_bottom = item_scroll_top + bottom_offset_in_item;
+        if desired_scroll_top < scroll_top {
+            state.logical_scroll_top = Some(ListOffset {
+                item_ix,
+                offset_in_item: desired_scroll_top - item_scroll_top,
+            });
+        } else if desired_scroll_bottom > scroll_bottom {
+            state.logical_scroll_top = Some(ListOffset {
+                item_ix,
+                offset_in_item: cmp::max(
+                    Pixels::ZERO,
+                    desired_scroll_bottom - item_scroll_top - bounds.size.height,
+                ),
+            });
+        }
     }
 
     /// Scroll the list to the given item, such that the item is fully visible.

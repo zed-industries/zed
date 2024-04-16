@@ -3,7 +3,7 @@ mod completion_provider;
 use anyhow::Result;
 use client::Client;
 use completion_provider::*;
-use editor::Editor;
+use editor::{Editor, EditorEvent};
 use futures::{channel::oneshot, Future, FutureExt as _, StreamExt};
 use gpui::{
     list, prelude::*, AnyElement, AppContext, FocusHandle, Global, ListAlignment, ListState, Model,
@@ -313,17 +313,51 @@ impl AssistantChat {
     }
 
     fn push_new_user_message(&mut self, focus: bool, cx: &mut ViewContext<Self>) {
-        let message = ChatMessage::User(UserMessage {
-            id: self.next_message_id.post_inc(),
-            body: cx.new_view(|cx| {
-                let mut editor = Editor::auto_height(80, cx);
-                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-                if focus {
-                    cx.focus_self();
+        let id = self.next_message_id.post_inc();
+        let body = cx.new_view(|cx| {
+            let mut editor = Editor::auto_height(80, cx);
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            if focus {
+                cx.focus_self();
+            }
+            editor
+        });
+        let _subscription = cx.subscribe(&body, move |this, editor, event, cx| match event {
+            EditorEvent::SelectionsChanged { .. } => {
+                if editor.read(cx).is_focused(cx) {
+                    let (message_ix, message) = this
+                        .messages
+                        .iter()
+                        .enumerate()
+                        .find_map(|(ix, message)| match message {
+                            ChatMessage::User(user_message) if user_message.id == id => {
+                                Some((ix, user_message))
+                            }
+                            _ => None,
+                        })
+                        .expect("user message not found");
+                    message.body.update(cx, |body, cx| {
+                        if let Some(editor_style) = body.style() {
+                            let row = body.selections.newest_display(cx).head().row();
+                            let line_height =
+                                editor_style.text.line_height_in_pixels(cx.rem_size());
+                            let row_y = row as f32 * line_height;
+                            this.list_state.scroll_to_fit(
+                                message_ix,
+                                row_y,
+                                row_y + 5. * line_height,
+                            );
+                        }
+                    });
                 }
-                editor
-            }),
+            }
+            _ => {}
+        });
+        let message = ChatMessage::User(UserMessage {
+            id,
+            body,
             contexts: Vec::new(),
+            _subscription,
         });
         self.push_message(message, cx);
     }
@@ -538,6 +572,7 @@ struct UserMessage {
     id: MessageId,
     body: View<Editor>,
     contexts: Vec<AssistantContext>,
+    _subscription: gpui::Subscription,
 }
 
 // chain_of_thought: ... -> search -> search_results -> produce_new_message -> send for the real chat message
