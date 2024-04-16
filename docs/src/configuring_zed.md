@@ -908,6 +908,7 @@ These values take in the same options as the root-level settings with the same n
   "font_features": null,
   "font_size": null,
   "option_as_meta": false,
+  "button": false
   "shell": {},
   "toolbar": {
     "title": true
@@ -1085,6 +1086,16 @@ See Buffer Font Features
 **Options**
 
 At the moment, only the `title` option is available, it controls displaying of the terminal title that can be changed via `PROMPT_COMMAND`. If the title is hidden, the terminal toolbar is not displayed.
+
+### Terminal Button
+
+- Description: Control to show or hide the terminal button in the status bar
+- Setting: `button`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ### Working Directory
 
