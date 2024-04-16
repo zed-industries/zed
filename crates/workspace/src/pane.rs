@@ -2029,17 +2029,22 @@ impl Render for Pane {
                             .on_drop(cx.listener(move |this, paths, cx| {
                                 this.handle_external_paths_drop(paths, cx)
                             }))
-                            .map(|div| match self.drag_split_direction {
-                                None => div.top_0().left_0().right_0().bottom_0(),
-                                Some(SplitDirection::Up) => div.top_0().left_0().right_0().h_32(),
-                                Some(SplitDirection::Down) => {
-                                    div.left_0().bottom_0().right_0().h_32()
-                                }
-                                Some(SplitDirection::Left) => {
-                                    div.top_0().left_0().bottom_0().w_32()
-                                }
-                                Some(SplitDirection::Right) => {
-                                    div.top_0().bottom_0().right_0().w_32()
+                            .map(|div| {
+                                let size = DefiniteLength::Fraction(0.5);
+                                match self.drag_split_direction {
+                                    None => div.top_0().right_0().bottom_0().left_0(),
+                                    Some(SplitDirection::Up) => {
+                                        div.top_0().left_0().right_0().h(size)
+                                    }
+                                    Some(SplitDirection::Down) => {
+                                        div.left_0().bottom_0().right_0().h(size)
+                                    }
+                                    Some(SplitDirection::Left) => {
+                                        div.top_0().left_0().bottom_0().w(size)
+                                    }
+                                    Some(SplitDirection::Right) => {
+                                        div.top_0().bottom_0().right_0().w(size)
+                                    }
                                 }
                             }),
                     )
