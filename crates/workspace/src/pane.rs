@@ -2013,10 +2013,7 @@ impl Render for Pane {
                         div()
                             .invisible()
                             .absolute()
-                            .bg(theme::color_alpha(
-                                cx.theme().colors().drop_target_background,
-                                0.75,
-                            ))
+                            .bg(cx.theme().colors().drop_target_background)
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<ProjectEntryId>("", |style| style.visible())
                             .group_drag_over::<ExternalPaths>("", |style| style.visible())
