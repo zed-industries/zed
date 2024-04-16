@@ -1,7 +1,8 @@
 use anyhow::anyhow;
 use rpc::{proto, ConnectionId};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ModelTrait, QueryFilter,
+    ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DatabaseTransaction, EntityTrait,
+    ModelTrait, QueryFilter,
 };
 
 use crate::db::ProjectId;
@@ -47,6 +48,21 @@ impl Database {
                 .collect())
         })
         .await
+    }
+
+    pub async fn owner_for_remote_project(
+        &self,
+        remote_project_id: RemoteProjectId,
+        tx: &DatabaseTransaction,
+    ) -> crate::Result<UserId> {
+        let dev_server = remote_project::Entity::find_by_id(remote_project_id)
+            .find_also_related(dev_server::Entity)
+            .one(&*tx)
+            .await?
+            .and_then(|(_, dev_server)| dev_server)
+            .ok_or_else(|| anyhow!("no remote project"))?;
+
+        Ok(dev_server.user_id)
     }
 
     pub async fn get_stale_dev_server_projects(

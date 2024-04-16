@@ -1958,7 +1958,7 @@ async fn unshare_project_internal(project_id: ProjectId, session: &Session) -> R
     let (room, guest_connection_ids) = &*session
         .db()
         .await
-        .unshare_project(project_id, session.connection_id)
+        .unshare_project(project_id, session.connection_id, session.user_id())
         .await?;
 
     let message = proto::UnshareProject {

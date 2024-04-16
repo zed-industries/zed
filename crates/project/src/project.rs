@@ -271,6 +271,7 @@ enum ProjectClientState {
         capability: Capability,
         remote_id: u64,
         replica_id: ReplicaId,
+        in_room: bool,
     },
 }
 
@@ -840,6 +841,7 @@ impl Project {
                     capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
+                    in_room: response.payload.remote_project_id.is_none(),
                 },
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
@@ -1516,7 +1518,16 @@ impl Project {
 
     pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
         if !matches!(self.client_state, ProjectClientState::Local) {
-            return Err(anyhow!("project was already shared"));
+            if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
+                if *in_room || self.remote_project_id.is_none() {
+                    return Err(anyhow!("project was already shared"));
+                } else {
+                    *in_room = true;
+                    return Ok(());
+                }
+            } else {
+                return Err(anyhow!("project was already shared"));
+            }
         }
         self.client_subscriptions.push(
             self.client
@@ -1727,7 +1738,14 @@ impl Project {
 
     fn unshare_internal(&mut self, cx: &mut AppContext) -> Result<()> {
         if self.is_remote() {
-            return Err(anyhow!("attempted to unshare a remote project"));
+            if self.remote_project_id().is_some() {
+                if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
+                    *in_room = false
+                }
+                return Ok(());
+            } else {
+                return Err(anyhow!("attempted to unshare a remote project"));
+            }
         }
 
         if let ProjectClientState::Shared { remote_id, .. } = self.client_state {
@@ -6923,7 +6941,8 @@ impl Project {
     pub fn is_shared(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Shared { .. } => true,
-            ProjectClientState::Local | ProjectClientState::Remote { .. } => false,
+            ProjectClientState::Local => false,
+            ProjectClientState::Remote { in_room, .. } => *in_room,
         }
     }
 

@@ -136,6 +136,7 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection: ConnectionId,
+        user_id: Option<UserId>,
     ) -> Result<TransactionGuard<(Option<proto::Room>, Vec<ConnectionId>)>> {
         self.project_transaction(project_id, |tx| async move {
             let guest_connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
@@ -143,19 +144,37 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("project not found"))?;
+            let room = if let Some(room_id) = project.room_id {
+                Some(self.get_room(room_id, &tx).await?)
+            } else {
+                None
+            };
             if project.host_connection()? == connection {
-                let room = if let Some(room_id) = project.room_id {
-                    Some(self.get_room(room_id, &tx).await?)
-                } else {
-                    None
-                };
                 project::Entity::delete(project.into_active_model())
                     .exec(&*tx)
                     .await?;
-                Ok((room, guest_connection_ids))
-            } else {
-                Err(anyhow!("cannot unshare a project hosted by another user"))?
+                return Ok((room, guest_connection_ids));
             }
+            if let Some(remote_project_id) = project.remote_project_id {
+                if let Some(user_id) = user_id {
+                    if user_id
+                        != self
+                            .owner_for_remote_project(remote_project_id, &*tx)
+                            .await?
+                    {
+                        Err(anyhow!("cannot unshare a project hosted by another user"))?
+                    }
+                    project::Entity::update(project::ActiveModel {
+                        room_id: ActiveValue::Set(None),
+                        ..project.into_active_model()
+                    })
+                    .exec(&*tx)
+                    .await?;
+                    return Ok((room, guest_connection_ids));
+                }
+            }
+
+            Err(anyhow!("cannot unshare a project hosted by another user"))?
         })
         .await
     }
