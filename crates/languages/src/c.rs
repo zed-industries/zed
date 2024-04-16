@@ -2,8 +2,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncAppContext;
+use project::project_settings::ProjectSettings;
 pub use language::*;
 use lsp::LanguageServerBinary;
+use settings::Settings;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{
@@ -14,10 +16,41 @@ use util::{
 
 pub struct CLspAdapter;
 
+impl CLspAdapter {
+    const SERVER_NAME: &'static str = "clangd";
+}
+
 #[async_trait(?Send)]
 impl super::LspAdapter for CLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("clangd".into())
+        LanguageServerName(Self::SERVER_NAME.into())
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        _delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let binary = cx
+            .update(|cx| {
+                ProjectSettings::get_global(cx)
+                    .lsp
+                    .get(Self::SERVER_NAME)
+                    .and_then(|s| s.binary.clone())
+            })
+            .ok()??;
+
+        let path = binary.path?;
+        Some(LanguageServerBinary {
+            path: path.into(),
+            arguments: binary
+                .arguments
+                .unwrap_or_default()
+                .iter()
+                .map(|arg| arg.into())
+                .collect(),
+            env: None,
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -43,20 +76,6 @@ impl super::LspAdapter for CLspAdapter {
             url: asset.browser_download_url.clone(),
         };
         Ok(Box::new(version) as Box<_>)
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        _: &AsyncAppContext,
-    ) -> Option<LanguageServerBinary> {
-        let env = delegate.shell_env().await;
-        let path = delegate.which("clangd".as_ref()).await?;
-        Some(LanguageServerBinary {
-            path,
-            arguments: vec![],
-            env: Some(env),
-        })
     }
 
     async fn fetch_server_binary(
