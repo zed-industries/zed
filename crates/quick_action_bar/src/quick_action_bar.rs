@@ -3,18 +3,21 @@ use assistant::{AssistantPanel, InlineAssist};
 use editor::{Editor, EditorSettings};
 
 use gpui::{
-    Action, ClickEvent, ElementId, EventEmitter, InteractiveElement, ParentElement, Render, Styled,
-    Subscription, View, ViewContext, WeakView,
+    anchored, deferred, Action, AnchorCorner, ClickEvent, DismissEvent, ElementId, EventEmitter,
+    InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
-use ui::{prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, Tooltip};
+use ui::{
+    prelude::*, ButtonSize, ButtonStyle, ContextMenu, IconButton, IconName, IconSize, Tooltip,
+};
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 pub struct QuickActionBar {
     buffer_search_bar: View<BufferSearchBar>,
+    toggle_settings_menu: Option<View<ContextMenu>>,
     active_item: Option<Box<dyn ItemHandle>>,
     _inlay_hints_enabled_subscription: Option<Subscription>,
     workspace: WeakView<Workspace>,
@@ -29,6 +32,7 @@ impl QuickActionBar {
     ) -> Self {
         let mut this = Self {
             buffer_search_bar,
+            toggle_settings_menu: None,
             active_item: None,
             _inlay_hints_enabled_subscription: None,
             workspace: workspace.weak_handle(),
@@ -63,6 +67,17 @@ impl QuickActionBar {
             ToolbarItemLocation::Hidden
         }
     }
+
+    fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
+        div().absolute().bottom_0().right_0().size_0().child(
+            deferred(
+                anchored()
+                    .anchor(AnchorCorner::TopRight)
+                    .child(menu.clone()),
+            )
+            .with_priority(1),
+        )
+    }
 }
 
 impl Render for QuickActionBar {
@@ -70,22 +85,6 @@ impl Render for QuickActionBar {
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
-        let inlay_hints_button = Some(QuickActionBarButton::new(
-            "toggle inlay hints",
-            IconName::InlayHint,
-            editor.read(cx).inlay_hints_enabled(),
-            Box::new(editor::actions::ToggleInlayHints),
-            "Toggle Inlay Hints",
-            {
-                let editor = editor.clone();
-                move |_, cx| {
-                    editor.update(cx, |editor, cx| {
-                        editor.toggle_inlay_hints(&editor::actions::ToggleInlayHints, cx);
-                    });
-                }
-            },
-        ))
-        .filter(|_| editor.read(cx).supports_inlay_hints(cx));
 
         let search_button = Some(QuickActionBarButton::new(
             "toggle buffer search",
@@ -122,14 +121,85 @@ impl Render for QuickActionBar {
             },
         );
 
+        let editor_settings_dropdown =
+            IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
+                .size(ButtonSize::Compact)
+                .icon_size(IconSize::Small)
+                .style(ButtonStyle::Subtle)
+                .selected(self.toggle_settings_menu.is_some())
+                .on_click({
+                    let editor = editor.clone();
+                    cx.listener(move |quick_action_bar, _, cx| {
+                        let inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
+                        let supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
+                        let git_blame_inline_enabled = editor.read(cx).git_blame_inline_enabled();
+
+                        let menu = ContextMenu::build(cx, |mut menu, _| {
+                            if supports_inlay_hints {
+                                menu = menu.toggleable_entry(
+                                    "Show Inlay Hints",
+                                    inlay_hints_enabled,
+                                    Some(editor::actions::ToggleInlayHints.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |cx| {
+                                            editor.update(cx, |editor, cx| {
+                                                editor.toggle_inlay_hints(
+                                                    &editor::actions::ToggleInlayHints,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    },
+                                );
+                            }
+
+                            menu = menu.toggleable_entry(
+                                "Show Git Blame",
+                                git_blame_inline_enabled,
+                                Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.toggle_git_blame_inline(
+                                                &editor::actions::ToggleGitBlameInline,
+                                                cx,
+                                            )
+                                        });
+                                    }
+                                },
+                            );
+
+                            menu
+                        });
+                        cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
+                            quick_action_bar.toggle_settings_menu = None;
+                        })
+                        .detach();
+                        quick_action_bar.toggle_settings_menu = Some(menu);
+                    })
+                })
+                .tooltip(|cx| Tooltip::text("Editor Controls", cx));
+
         h_flex()
             .id("quick action bar")
-            .gap_2()
-            .children(inlay_hints_button)
-            .children(search_button)
-            .when(AssistantSettings::get_global(cx).button, |bar| {
-                bar.child(assistant_button)
-            })
+            .gap_3()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .children(search_button)
+                    .when(AssistantSettings::get_global(cx).button, |bar| {
+                        bar.child(assistant_button)
+                    }),
+            )
+            .child(editor_settings_dropdown)
+            .when_some(
+                self.toggle_settings_menu.as_ref(),
+                |el, toggle_settings_menu| {
+                    el.child(Self::render_menu_overlay(toggle_settings_menu))
+                },
+            )
     }
 }
 

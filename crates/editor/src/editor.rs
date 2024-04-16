@@ -8889,6 +8889,10 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn git_blame_inline_enabled(&self) -> bool {
+        self.git_blame_inline_enabled
+    }
+
     fn start_git_blame(&mut self, user_triggered: bool, cx: &mut ViewContext<Self>) {
         if let Some(project) = self.project.as_ref() {
             let Some(buffer) = self.buffer().read(cx).as_singleton() else {
