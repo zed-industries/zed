@@ -342,9 +342,9 @@ impl DirectWriteState {
                 )
             })
             .or_else(|| {
-                log::error!("{} not found, use Zed Mono instead.", family_name);
+                log::error!("{} not found, use Arial instead.", family_name);
                 self.get_font_id_from_font_collection(
-                    "Zed Mono",
+                    "Arial",
                     target_font.weight,
                     target_font.style,
                     &target_font.features,
