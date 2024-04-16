@@ -483,7 +483,7 @@ To override settings for a language, add an entry for that language server's nam
 
 ## Auto close
 
-- Description: Whether or not to automatically type closing characters for you.
+- Description: Whether to automatically add matching closing characters when typing opening parenthesis, bracket, brace, single or double quote characters.
 - Setting: `use_autoclose`
 - Default: `true`
 
