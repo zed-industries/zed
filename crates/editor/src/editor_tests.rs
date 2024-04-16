@@ -877,7 +877,6 @@ fn test_move_cursor(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
-    return;
     init_test(cx, |_| {});
 
     let view = cx.add_window(|cx| {
