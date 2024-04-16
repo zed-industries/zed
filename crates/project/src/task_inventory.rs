@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use collections::{HashMap, VecDeque};
+use collections::{hash_map, HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use itertools::{Either, Itertools};
 use language::Language;
@@ -229,7 +229,7 @@ impl Inventory {
                 },
             );
         let not_used_score = post_inc(&mut lru_score);
-        let current_resolved_tasks = self
+        let currently_resolved_tasks = self
             .sources
             .iter()
             .filter(|source| {
@@ -257,16 +257,55 @@ impl Inventory {
                 (kind.clone(), task, lru_score)
             })
             .collect::<Vec<_>>();
-        let previous_resolved_tasks = task_usage
+        let previously_spawned_tasks = task_usage
             .into_iter()
             .map(|(_, (kind, task, lru_score))| (kind.clone(), task.clone(), lru_score));
 
-        previous_resolved_tasks
-            .chain(current_resolved_tasks)
+        let mut tasks_by_label = HashMap::default();
+        tasks_by_label = previously_spawned_tasks.into_iter().fold(
+            tasks_by_label,
+            |mut tasks_by_label, (source, task, lru_score)| {
+                match tasks_by_label.entry((source, task.resolved_label.clone())) {
+                    hash_map::Entry::Occupied(mut o) => {
+                        let (_, previous_lru_score) = o.get();
+                        if previous_lru_score >= &lru_score {
+                            o.insert((task, lru_score));
+                        }
+                    }
+                    hash_map::Entry::Vacant(v) => {
+                        v.insert((task, lru_score));
+                    }
+                }
+                tasks_by_label
+            },
+        );
+        tasks_by_label = currently_resolved_tasks.into_iter().fold(
+            tasks_by_label,
+            |mut tasks_by_label, (source, task, lru_score)| {
+                match tasks_by_label.entry((source, task.resolved_label.clone())) {
+                    hash_map::Entry::Occupied(mut o) => {
+                        let (previous_task, _) = o.get();
+                        let new_template = task.original_task();
+                        if new_template.ignore_previously_resolved
+                            || new_template != previous_task.original_task()
+                        {
+                            o.insert((task, lru_score));
+                        }
+                    }
+                    hash_map::Entry::Vacant(v) => {
+                        v.insert((task, lru_score));
+                    }
+                }
+                tasks_by_label
+            },
+        );
+
+        tasks_by_label
+            .into_iter()
+            .map(|((kind, _), (task, lru_score))| (kind, task, lru_score))
             .sorted_unstable_by(task_lru_comparator)
-            .unique_by(|(kind, task, _)| (kind.clone(), task.resolved_label.clone()))
-            .partition_map(|(kind, task, lru_index)| {
-                if lru_index < not_used_score {
+            .partition_map(|(kind, task, lru_score)| {
+                if lru_score < not_used_score {
                     Either::Left((kind, task))
                 } else {
                     Either::Right((kind, task))
@@ -705,7 +744,7 @@ mod tests {
             (
                 TaskSourceKind::AbsPath {
                     id_base: "test source",
-                    abs_path: path_1.to_path_buf(),
+                    abs_path: path_2.to_path_buf(),
                 },
                 common_name.to_string(),
             ),
@@ -719,7 +758,7 @@ mod tests {
             (
                 TaskSourceKind::AbsPath {
                     id_base: "test source",
-                    abs_path: path_2.to_path_buf(),
+                    abs_path: path_1.to_path_buf(),
                 },
                 common_name.to_string(),
             ),
