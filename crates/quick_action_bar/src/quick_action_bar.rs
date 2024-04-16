@@ -123,17 +123,20 @@ impl Render for QuickActionBar {
 
         // TODO:
         // - [ ] Handle case where there are no items in the list (probably hide the menu)
-        // - [ ] Add toggle git blame inline to menu
+        // - [x] Add toggle git blame inline to menu
+
         let editor_settings_dropdown =
             IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
                 .size(ButtonSize::Compact)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Subtle)
+                .selected(self.toggle_settings_menu.is_some())
                 .on_click({
                     let editor = editor.clone();
                     cx.listener(move |quick_action_bar, _, cx| {
                         let inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
                         let supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
+                        let git_blame_inline_enabled = editor.read(cx).git_blame_inline_enabled();
 
                         let menu = ContextMenu::build(cx, |mut menu, _| {
                             if supports_inlay_hints {
@@ -154,6 +157,23 @@ impl Render for QuickActionBar {
                                     },
                                 );
                             }
+
+                            menu = menu.toggleable_entry(
+                                "Git Blame",
+                                git_blame_inline_enabled,
+                                Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.toggle_git_blame_inline(
+                                                &editor::actions::ToggleGitBlameInline,
+                                                cx,
+                                            )
+                                        });
+                                    }
+                                },
+                            );
 
                             menu
                         });
