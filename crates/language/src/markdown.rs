@@ -5,7 +5,7 @@ use std::{ops::Range, path::PathBuf};
 
 use crate::{HighlightId, Language, LanguageRegistry};
 use gpui::{px, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, UnderlineStyle};
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
 /// Parsed Markdown content.
 #[derive(Debug, Clone, Default)]
@@ -165,7 +165,10 @@ pub async fn parse_markdown_block(
     let mut current_language = None;
     let mut list_stack = Vec::new();
 
-    for event in Parser::new_ext(markdown, Options::all()) {
+    let mut options = pulldown_cmark::Options::all();
+    options.remove(pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+
+    for event in Parser::new_ext(markdown, options) {
         let prev_len = text.len();
         match event {
             Event::Text(t) => {
