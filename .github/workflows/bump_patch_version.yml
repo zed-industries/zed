@@ -1,0 +1,48 @@
+name: Bump Patch Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch name to run on"
+        required: true
+
+concurrency:
+  # Allow only one workflow per any non-`main` branch.
+  group: ${{ github.workflow }}-${{ github.event.input.branch }}
+  cancel-in-progress: true
+
+jobs:
+  bump_patch_version:
+    runs-on:
+      - self-hosted
+      - test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Bump Patch Version
+        run: |
+          set -eu
+          channel=$(cat crates/zed/RELEASE_CHANNEL)
+
+          tag_suffix=""
+          case $channel in
+            stable)
+              ;;
+            preview)
+              tag_suffix="-pre"
+              ;;
+            *)
+              echo "this must be run on either of stable|preview release branches" >&2
+              exit 1
+              ;;
+          esac
+          which cargo-set-version > /dev/null || cargo install cargo-edit
+          output=$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')
+          cargo check --quiet
+          git commit -am "Bump to $output for $GITHUB_ACTOR"
+          git tag v${output}${suffix}
+          git push origin HEAD v${output}${suffix}
