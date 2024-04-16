@@ -2,6 +2,7 @@ use super::SerializedAxis;
 use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
+use client::DevServerId;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -16,21 +17,26 @@ use util::ResultExt;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceLocation(Arc<Vec<PathBuf>>);
+pub struct WorkspaceLocation{
+    paths: Arc<Vec<PathBuf>>,
+    dev_server: Option<(DevServerId, String)>,
+};
 
 impl WorkspaceLocation {
     pub fn paths(&self) -> Arc<Vec<PathBuf>> {
-        self.0.clone()
+        self.paths.clone()
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn new<P: AsRef<Path>>(paths: Vec<P>) -> Self {
-        Self(Arc::new(
+    pub fn local<P: AsRef<Path>>(paths: Vec<P>) -> Self {
+        Self{
+            paths:Arc::new(
             paths
                 .into_iter()
                 .map(|p| p.as_ref().to_path_buf())
                 .collect(),
-        ))
+        ), dev_server: None
+        }
     }
 }
 

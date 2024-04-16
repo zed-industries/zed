@@ -284,6 +284,10 @@ define_connection! {
     sql!(
         ALTER TABLE items ADD COLUMN preview INTEGER; //bool
     ),
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN dev_server_name TEXT;
+        ALTER TABLE workspaces ADD COLUMN dev_server_id INTEGER;
+    )
     ];
 }
 
@@ -379,9 +383,10 @@ impl WorkspaceDb {
                         bottom_dock_visible,
                         bottom_dock_active_panel,
                         bottom_dock_zoom,
+                        dev_server_name,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         workspace_location = ?2,
@@ -394,6 +399,7 @@ impl WorkspaceDb {
                         bottom_dock_visible = ?9,
                         bottom_dock_active_panel = ?10,
                         bottom_dock_zoom = ?11,
+                        dev_server_name = ?12,
                         timestamp = CURRENT_TIMESTAMP
                 ))?((workspace.id, &workspace.location, workspace.docks))
                 .context("Updating workspace")?;
