@@ -332,7 +332,7 @@ impl WorkspaceDb {
                     bottom_dock_active_panel,
                     bottom_dock_zoom
                 FROM workspaces
-                WHERE workspace_location = ? AND remote_project_json = ?
+                WHERE workspace_location = ? AND remote_project_id = ? // remote_project_json = ?
             })
             .and_then(|mut prepared_statement| (prepared_statement)(&workspace_location))
             .context("No workspaces found")
@@ -403,7 +403,6 @@ impl WorkspaceDb {
                         timestamp = CURRENT_TIMESTAMP
                 ))?((workspace.id, &workspace.location, workspace.docks))
                 .context("Updating workspace")?;
-                dbg!("here!");
 
                 // Save center pane group
                 Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
@@ -692,6 +691,7 @@ mod tests {
     use super::*;
     use db::open_test_db;
     use gpui;
+    use sqlez::statement;
 
     #[gpui::test]
     async fn test_next_id_stability() {
@@ -923,6 +923,23 @@ mod tests {
 
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_2.clone()).await;
+
+        let mut stmt = Statement::prepare(&db.0, "SELECT * FROM workspaces").unwrap();
+        stmt.map(|statement| {
+            for i in 0.. {
+                match statement.column_text(i) {
+                    Ok(s) => {
+                        dbg!(s);
+                    }
+                    Err(e) => {
+                        dbg!(e);
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
 
         // Test that paths are treated as a set
         assert_eq!(

@@ -352,7 +352,6 @@ impl<'a> Statement<'a> {
             callback: impl FnOnce(&mut Statement) -> Result<R>,
         ) -> Result<Option<R>> {
             if this.step().context("Failed on step call")? != StepResult::Row {
-                dbg!("OLA");
                 return Ok(None);
             }
 

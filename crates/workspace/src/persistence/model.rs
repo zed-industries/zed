@@ -31,13 +31,13 @@ pub struct WorkspaceLocation {
 
 impl WorkspaceLocation {
     pub fn local<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
+        let mut paths: Vec<PathBuf> = paths
+            .into_iter()
+            .map(|p| p.as_ref().to_path_buf())
+            .collect();
+        paths.sort();
         Self {
-            paths: Arc::new(
-                paths
-                    .into_iter()
-                    .map(|p| p.as_ref().to_path_buf())
-                    .collect(),
-            ),
+            paths: Arc::new(paths),
             remote_project: None,
         }
     }
@@ -47,7 +47,7 @@ impl WorkspaceLocation {
 
         let (paths, dev_server_name) =
             if let Some(remote_project) = store.find_remote_project_by_id(remote_project_id) {
-                "zed://remote-project/x/path/on/server"(
+                (
                     vec![remote_project.path.to_string().into()],
                     store
                         .dev_server(remote_project.dev_server_id)
@@ -84,17 +84,6 @@ impl WorkspaceLocation {
     }
 }
 
-// impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {
-//     fn from(iterator: T) -> Self {
-//         let mut roots = iterator
-//             .into_iter()
-//             .map(|p| p.as_ref().to_path_buf())
-//             .collect::<Vec<_>>();
-//         roots.sort();
-//         Self::local(Arc::new(roots))
-//     }
-// }
-
 impl StaticColumnCount for WorkspaceLocation {
     fn column_count() -> usize {
         2
@@ -103,21 +92,13 @@ impl StaticColumnCount for WorkspaceLocation {
 
 impl Bind for &WorkspaceLocation {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        bincode::serialize(&self.paths)
-            .expect("Bincode serialization of paths should not fail")
-            .bind(statement, start_index)
-            .map_err(|e| dbg!(e))?;
-        dbg!(serde_json::to_string(&self.remote_project)
-            .expect("Json serialization of remote project should not fail"))
-        .bind(statement, start_index + 1)
-        .map_err(|e| dbg!(e))
-        .map(|ret| dbg!(ret))
+        let next_index = statement.bind(&bincode::serialize(&self.paths)?, start_index)?;
+        statement.bind(&serde_json::to_string(&self.remote_project)?, next_index)
     }
 }
 
 impl Column for WorkspaceLocation {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        dbg!("wut?");
         let path_blob = statement.column_blob(start_index)?;
         let paths =
             bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?;
