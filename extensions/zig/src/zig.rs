@@ -3,7 +3,7 @@ use zed::LanguageServerId;
 use zed_extension_api::{self as zed, Result};
 
 struct ZigExtension {
-    cached_binary: Option<String>,
+    cached_binary_path: Option<String>,
 }
 
 #[derive(Clone)]
@@ -26,7 +26,7 @@ impl ZigExtension {
             });
         }
 
-        if let Some(path) = &self.cached_binary {
+        if let Some(path) = &self.cached_binary_path {
             if fs::metadata(&path).map_or(false, |stat| stat.is_file()) {
                 return Ok(ZlsBinary {
                     path: path.clone(),
@@ -103,7 +103,7 @@ impl ZigExtension {
             }
         }
 
-        self.cached_binary = Some(binary_path.clone());
+        self.cached_binary_path = Some(binary_path.clone());
         Ok(ZlsBinary {
             path: binary_path,
             environment: None,
@@ -114,7 +114,7 @@ impl ZigExtension {
 impl zed::Extension for ZigExtension {
     fn new() -> Self {
         Self {
-            cached_binary: None,
+            cached_binary_path: None,
         }
     }
 
