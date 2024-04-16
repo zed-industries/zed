@@ -1444,20 +1444,8 @@ impl Terminal {
                 task.status.register_terminal_exit();
             }
         };
-        let escaped_full_label = task.full_label.replace("\r\n", "\r").replace('\n', "\r");
-        let task_line = match error_code {
-            Some(0) => {
-                format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully")
-            }
-            Some(error_code) => {
-                format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}")
-            }
-            None => {
-                format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished")
-            }
-        };
-        let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
-        let command_line = format!("{TASK_DELIMITER}Command: '{escaped_command_label}'");
+
+        let (task_line, command_line) = task_summary(task, error_code);
         // SAFETY: the invocation happens on non `TaskStatus::Running` tasks, once,
         // after either `AlacTermEvent::Exit` or `AlacTermEvent::ChildExit` events that are spawned
         // when Zed task finishes and no more output is made.
@@ -1467,6 +1455,23 @@ impl Terminal {
 }
 
 const TASK_DELIMITER: &str = "⏵ ";
+fn task_summary(task: &TaskState, error_code: Option<i32>) -> (String, String) {
+    let escaped_full_label = task.full_label.replace("\r\n", "\r").replace('\n', "\r");
+    let task_line = match error_code {
+        Some(0) => {
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully")
+        }
+        Some(error_code) => {
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}")
+        }
+        None => {
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished")
+        }
+    };
+    let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
+    let command_line = format!("{TASK_DELIMITER}Command: '{escaped_command_label}'");
+    (task_line, command_line)
+}
 
 /// Appends a stringified task summary to the terminal, after its output.
 ///
