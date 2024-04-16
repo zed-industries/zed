@@ -965,11 +965,11 @@ impl EditorElement {
                 // Git
                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
                     ||
-                    // Selections
-                    (is_singleton && scrollbar_settings.selections && editor.has_background_highlights::<BufferSearchHighlights>())
+                    // Buffer Search Results
+                    (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
                     ||
-                    // Symbols Selections
-                    (is_singleton && scrollbar_settings.symbols_selections && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+                    // Selected Symbol Occurrences
+                    (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
                     ||
                     // Diagnostics
                     (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
@@ -2620,10 +2620,14 @@ impl EditorElement {
                             for (background_highlight_id, (_, background_ranges)) in
                                 background_highlights.iter()
                             {
-                                if (*background_highlight_id
-                                    == TypeId::of::<BufferSearchHighlights>()
-                                    && scrollbar_settings.selections)
-                                    || scrollbar_settings.symbols_selections
+                                let is_search_highlights = *background_highlight_id
+                                    == TypeId::of::<BufferSearchHighlights>();
+                                let is_symbol_occurrences = *background_highlight_id
+                                    == TypeId::of::<DocumentHighlightRead>()
+                                    || *background_highlight_id
+                                        == TypeId::of::<DocumentHighlightWrite>();
+                                if (is_search_highlights && scrollbar_settings.search_results)
+                                    || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
                                 {
                                     let marker_row_ranges =
                                         background_ranges.into_iter().map(|range| {

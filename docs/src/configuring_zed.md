@@ -190,6 +190,102 @@ List of `string` values
 2. Position the dock to the right of the workspace like a side panel: `right`
 3. Position the dock full screen over the entire workspace: `expanded`
 
+## Editor Scrollbar
+
+- Description: Whether or not to show the editor scrollbar and various elements in it.
+- Setting: `scrollbar`
+- Default:
+
+```json
+"scrollbar": {
+  "show": "auto",
+  "git_diff": true,
+  "search_results": true,
+  "selected_symbol": true,
+  "diagnostics": true
+},
+```
+
+### Show Mode
+
+- Description: When to show the editor scrollbar.
+- Setting: `show`
+- Default: `auto`
+
+**Options**
+
+1. Show the scrollbar if there's important information or follow the system's configured behavior:
+
+```json
+"scrollbar": {
+  "show": "auto"
+}
+```
+
+2. Match the system's configured behavior:
+
+```json
+"scrollbar": {
+  "show": "system"
+}
+```
+
+3. Always show the scrollbar:
+
+```json
+"scrollbar": {
+  "show": "always"
+}
+```
+
+4. Never show the scrollbar:
+
+```json
+"scrollbar": {
+  "show": "never"
+}
+```
+
+### Git Diff Indicators
+
+- Description: Whether to show git diff indicators in the scrollbar.
+- Setting: `git_diff`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Search Results Indicators
+
+- Description: Whether to show buffer search results in the scrollbar.
+- Setting: `search_results`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Selected Symbols Indicators
+
+- Description: Whether to show selected symbol occurrences in the scrollbar.
+- Setting: `selected_symbol`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Diagnostics
+
+- Description: Whether to show diagnostic indicators in the scrollbar.
+- Setting: `diagnostics`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
