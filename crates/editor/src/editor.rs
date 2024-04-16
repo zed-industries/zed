@@ -3358,7 +3358,7 @@ impl Editor {
             rem_size: cx.rem_size(),
             scroll_anchor: self.scroll_manager.anchor(),
             visible_rows: self.visible_line_count(),
-            vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
+            vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin(),
         }
     }
 
@@ -9694,7 +9694,8 @@ impl Editor {
             cx,
         );
         let editor_settings = EditorSettings::get_global(cx);
-        self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
+        self.scroll_manager
+            .set_vertical_scroll_margin(editor_settings.vertical_scroll_margin);
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
 
         if self.mode == EditorMode::Full {

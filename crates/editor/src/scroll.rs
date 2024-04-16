@@ -127,8 +127,14 @@ impl OngoingScroll {
     }
 }
 
-pub struct ScrollManager {
-    pub(crate) vertical_scroll_margin: f32,
+#[allow(private_interfaces)]
+pub enum ScrollManager {
+    Noop { visible_line_count: f32 },
+    Real(RealScrollManager),
+}
+
+struct RealScrollManager {
+    vertical_scroll_margin: f32,
     anchor: ScrollAnchor,
     ongoing: OngoingScroll,
     autoscroll_request: Option<(Autoscroll, bool)>,
@@ -141,7 +147,7 @@ pub struct ScrollManager {
 
 impl ScrollManager {
     pub fn new(cx: &mut WindowContext) -> Self {
-        ScrollManager {
+        Self::Real(RealScrollManager {
             vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
             ongoing: OngoingScroll::new(),
@@ -151,29 +157,72 @@ impl ScrollManager {
             dragging_scrollbar: false,
             last_autoscroll: None,
             visible_line_count: None,
+        })
+    }
+
+    pub(crate) fn noop(visible_line_count: f32) -> Self {
+        Self::Noop { visible_line_count }
+    }
+
+    pub(crate) fn vertical_scroll_margin(&self) -> f32 {
+        match self {
+            Self::Noop { .. } => 0.0,
+            Self::Real(real) => real.vertical_scroll_margin,
+        }
+    }
+
+    pub(crate) fn set_vertical_scroll_margin(&mut self, vertical_scroll_margin: f32) {
+        if let Self::Real(real) = self {
+            real.vertical_scroll_margin = vertical_scroll_margin;
+        }
+    }
+
+    fn visible_line_count(&self) -> Option<f32> {
+        match self {
+            Self::Noop { visible_line_count } => Some(*visible_line_count),
+            Self::Real(real) => real.visible_line_count,
+        }
+    }
+
+    fn set_visible_line_count(&mut self, visible_line_count: Option<f32>) {
+        if let Self::Real(real) = self {
+            real.visible_line_count = visible_line_count;
         }
     }
 
     pub fn clone_state(&mut self, other: &Self) {
-        self.anchor = other.anchor;
-        self.ongoing = other.ongoing;
+        if let (Self::Real(real), Self::Real(other)) = (self, other) {
+            real.anchor = other.anchor;
+            real.ongoing = other.ongoing;
+        }
     }
 
     pub fn anchor(&self) -> ScrollAnchor {
-        self.anchor
+        match self {
+            Self::Noop { .. } => ScrollAnchor::new(),
+            Self::Real(real) => real.anchor,
+        }
     }
 
     pub fn ongoing_scroll(&self) -> OngoingScroll {
-        self.ongoing
+        match self {
+            Self::Noop { .. } => OngoingScroll::new(),
+            Self::Real(real) => real.ongoing,
+        }
     }
 
     pub fn update_ongoing_scroll(&mut self, axis: Option<Axis>) {
-        self.ongoing.last_event = Instant::now();
-        self.ongoing.axis = axis;
+        if let Self::Real(real) = self {
+            real.ongoing.last_event = Instant::now();
+            real.ongoing.axis = axis;
+        }
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<f32> {
-        self.anchor.scroll_position(snapshot)
+        match self {
+            Self::Noop { .. } => gpui::Point::default(),
+            Self::Real(real) => real.anchor.scroll_position(snapshot),
+        }
     }
 
     fn set_scroll_position(
@@ -224,10 +273,18 @@ impl ScrollManager {
         workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.anchor = anchor;
-        cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
+        match self {
+            Self::Real(real) => {
+                real.anchor = anchor;
+                cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
+                real.autoscroll_request.take();
+            }
+            Self::Noop { .. } => {
+                return;
+            }
+        };
         self.show_scrollbar(cx);
-        self.autoscroll_request.take();
+
         if let Some(workspace_id) = workspace_id {
             let item_id = cx.view().entity_id().as_u64() as ItemId;
 
@@ -249,74 +306,125 @@ impl ScrollManager {
     }
 
     pub fn show_scrollbar(&mut self, cx: &mut ViewContext<Editor>) {
-        if !self.show_scrollbars {
-            self.show_scrollbars = true;
+        let Self::Real(real) = self else {
+            return;
+        };
+        if !real.show_scrollbars {
+            real.show_scrollbars = true;
             cx.notify();
         }
 
         if cx.default_global::<ScrollbarAutoHide>().0 {
-            self.hide_scrollbar_task = Some(cx.spawn(|editor, mut cx| async move {
+            real.hide_scrollbar_task = Some(cx.spawn(|editor, mut cx| async move {
                 cx.background_executor()
                     .timer(SCROLLBAR_SHOW_INTERVAL)
                     .await;
                 editor
                     .update(&mut cx, |editor, cx| {
-                        editor.scroll_manager.show_scrollbars = false;
+                        editor.scroll_manager.set_show_scrollbars(false);
                         cx.notify();
                     })
                     .log_err();
             }));
         } else {
-            self.hide_scrollbar_task = None;
+            real.hide_scrollbar_task = None;
+        }
+    }
+
+    fn set_show_scrollbars(&mut self, show_scrollbars: bool) {
+        if let Self::Real(real) = self {
+            real.show_scrollbars = show_scrollbars;
         }
     }
 
     pub fn scrollbars_visible(&self) -> bool {
-        self.show_scrollbars
+        match self {
+            Self::Noop { .. } => false,
+            Self::Real(real) => real.show_scrollbars,
+        }
     }
 
     pub fn autoscroll_requested(&self) -> bool {
-        self.autoscroll_request.is_some()
+        match self {
+            Self::Noop { .. } => false,
+            Self::Real(real) => real.autoscroll_request.is_some(),
+        }
+    }
+
+    fn take_autoscroll_request(&mut self) -> Option<(Autoscroll, bool)> {
+        match self {
+            Self::Noop { .. } => None,
+            Self::Real(real) => real.autoscroll_request.take(),
+        }
+    }
+
+    fn set_autoscroll_request(&mut self, autoscroll_request: Option<(Autoscroll, bool)>) {
+        if let Self::Real(real) = self {
+            real.autoscroll_request = autoscroll_request;
+        }
     }
 
     pub fn is_dragging_scrollbar(&self) -> bool {
-        self.dragging_scrollbar
+        match self {
+            Self::Noop { .. } => false,
+            Self::Real(real) => real.dragging_scrollbar,
+        }
     }
 
     pub fn set_is_dragging_scrollbar(&mut self, dragging: bool, cx: &mut ViewContext<Editor>) {
-        if dragging != self.dragging_scrollbar {
-            self.dragging_scrollbar = dragging;
-            cx.notify();
+        if let Self::Real(real) = self {
+            if dragging != real.dragging_scrollbar {
+                real.dragging_scrollbar = dragging;
+                cx.notify();
+            }
         }
     }
 
     pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
-        if max < self.anchor.offset.x {
-            self.anchor.offset.x = max;
-            true
-        } else {
-            false
+        if let Self::Real(real) = self {
+            if max < real.anchor.offset.x {
+                real.anchor.offset.x = max;
+                return true;
+            }
+        }
+        false
+    }
+
+    fn last_autoscroll(&self) -> Option<&(gpui::Point<f32>, f32, f32, AutoscrollStrategy)> {
+        match self {
+            Self::Noop { .. } => None,
+            Self::Real(real) => real.last_autoscroll.as_ref(),
+        }
+    }
+
+    fn set_last_autoscroll(
+        &mut self,
+        last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
+    ) {
+        if let Self::Real(real) = self {
+            real.last_autoscroll = last_autoscroll;
         }
     }
 }
 
 impl Editor {
     pub fn vertical_scroll_margin(&self) -> usize {
-        self.scroll_manager.vertical_scroll_margin as usize
+        self.scroll_manager.vertical_scroll_margin() as usize
     }
 
     pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut ViewContext<Self>) {
-        self.scroll_manager.vertical_scroll_margin = margin_rows as f32;
+        self.scroll_manager
+            .set_vertical_scroll_margin(margin_rows as f32);
         cx.notify();
     }
 
     pub fn visible_line_count(&self) -> Option<f32> {
-        self.scroll_manager.visible_line_count
+        self.scroll_manager.visible_line_count()
     }
 
     pub(crate) fn set_visible_line_count(&mut self, lines: f32, cx: &mut ViewContext<Self>) {
-        let opened_first_time = self.scroll_manager.visible_line_count.is_none();
-        self.scroll_manager.visible_line_count = Some(lines);
+        let opened_first_time = self.scroll_manager.visible_line_count().is_none();
+        self.scroll_manager.set_visible_line_count(Some(lines));
         if opened_first_time {
             cx.spawn(|editor, mut cx| async move {
                 editor
@@ -335,7 +443,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let position = self.scroll_manager.anchor.scroll_position(&display_map) + scroll_delta;
+        let position = self.scroll_manager.anchor().scroll_position(&display_map) + scroll_delta;
         self.set_scroll_position_taking_display_map(position, true, false, display_map, cx);
     }
 
@@ -382,7 +490,7 @@ impl Editor {
 
     pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> gpui::Point<f32> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.scroll_manager.anchor.scroll_position(&display_map)
+        self.scroll_manager.anchor().scroll_position(&display_map)
     }
 
     pub fn set_scroll_anchor(&mut self, scroll_anchor: ScrollAnchor, cx: &mut ViewContext<Self>) {
@@ -441,7 +549,7 @@ impl Editor {
             .to_display_point(&snapshot);
         let screen_top = self
             .scroll_manager
-            .anchor
+            .anchor()
             .anchor
             .to_display_point(&snapshot);
 

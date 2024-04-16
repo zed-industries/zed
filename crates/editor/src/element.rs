@@ -11,7 +11,7 @@ use crate::{
     },
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MouseContextMenu},
-    scroll::scroll_amount::ScrollAmount,
+    scroll::{scroll_amount::ScrollAmount, ScrollManager},
     BlockDisposition, BlockProperties, CursorShape, DisplayPoint, DocumentHighlightRead,
     DocumentHighlightWrite, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
    ExpandExcerpts, GitRowHighlight, GutterDimensions, HalfPageDown, HalfPageUp, HoveredCursor, LineDown, LineUp,
@@ -3339,6 +3339,7 @@ fn deploy_blame_entry_context_menu(
 
 // TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
 // TODO kb do not draw git diff hunks for the expanded ones
+// TODO kb update the expanded chunks on editor changes
 fn try_click_diff_hunk(
     editor: &mut Editor,
     hovered_hunk: &HoveredHunk,
@@ -3358,14 +3359,14 @@ fn try_click_diff_hunk(
     match hovered_hunk.status {
         DiffHunkStatus::Removed => {
             let position = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-            let height = original_text.lines().count() as u8 + 1;
+            let height = original_text.lines().count() as u8;
             let new_block_ids = editor.insert_blocks(
                 Some(BlockProperties {
                     position,
                     height,
                     style: BlockStyle::Flex,
-                    // TODO kb render a proper element that is displayed entirely, allows copying the text and has proper line numbers in its gutter...
-                    // How are exterpts rendered? Reuse them?
+                    // TODO kb have proper numbers in the gutter, do not have a blank newline in the end
+                    // TODO kb deduplicate with another render below
                     render: {
                         let removed_editor = cx.new_view(|cx| {
                             let mut editor = Editor::multi_line(cx);
@@ -3381,6 +3382,7 @@ fn try_click_diff_hunk(
                                 Some(cx.theme().status().git().deleted),
                                 cx,
                             );
+                            editor.scroll_manager = ScrollManager::noop(height as f32);
                             editor
                         });
 
@@ -3410,8 +3412,6 @@ fn try_click_diff_hunk(
                     position,
                     height,
                     style: BlockStyle::Flex,
-                    // TODO kb render a proper element that is displayed entirely, allows copying the text and has proper line numbers in its gutter...
-                    // How are exterpts rendered? Reuse them?
                     render: {
                         let removed_editor = cx.new_view(|cx| {
                             let mut editor = Editor::multi_line(cx);
