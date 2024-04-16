@@ -693,8 +693,8 @@ impl DirectWriteState {
                 y: subpixel_shift.y / params.scale_factor,
             };
 
-            // this case should never fail since we are running on Win10+, and
-            // ID2D1DeviceContext4 requires win8+
+            // This `cast()` action here should never fail since we are running on Win10+, and
+            // ID2D1DeviceContext4 requires Win8+
             let render_target = render_target.cast::<ID2D1DeviceContext4>().unwrap();
             render_target.BeginDraw();
             if params.is_emoji {
@@ -934,8 +934,10 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
             if glyphrun.fontFace.is_none() {
                 return Ok(());
             }
+
             let font_face = glyphrun.fontFace.as_ref().unwrap();
-            // this case should never fail since we are running on Win10+
+            // This `cast()` action here should never fail since we are running on Win10+, and
+            // `IDWriteFontFace3` requires Win10
             let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
             let Some((postscript_name, font_struct, is_emoji)) =
                 get_postscript_name_and_font(font_face, &self.locale)
