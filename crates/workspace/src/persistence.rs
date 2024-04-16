@@ -285,8 +285,7 @@ define_connection! {
         ALTER TABLE items ADD COLUMN preview INTEGER; //bool
     ),
     sql!(
-        ALTER TABLE workspaces ADD COLUMN dev_server_name TEXT;
-        ALTER TABLE workspaces ADD COLUMN dev_server_id INTEGER;
+        ALTER TABLE workspaces ADD COLUMN remote_project_json TEXT NOT NULL;
     )
     ];
 }
@@ -299,7 +298,7 @@ impl WorkspaceDb {
         &self,
         worktree_roots: &[P],
     ) -> Option<SerializedWorkspace> {
-        let workspace_location: WorkspaceLocation = worktree_roots.into();
+        let workspace_location = WorkspaceLocation::local(worktree_roots);
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
@@ -315,6 +314,7 @@ impl WorkspaceDb {
                 SELECT
                     workspace_id,
                     workspace_location,
+                    remote_project_json,
                     window_state,
                     window_x,
                     window_y,
@@ -332,7 +332,7 @@ impl WorkspaceDb {
                     bottom_dock_active_panel,
                     bottom_dock_zoom
                 FROM workspaces
-                WHERE workspace_location = ?
+                WHERE workspace_location = ? AND remote_project_json = ?
             })
             .and_then(|mut prepared_statement| (prepared_statement)(&workspace_location))
             .context("No workspaces found")
@@ -365,7 +365,7 @@ impl WorkspaceDb {
                 .context("Clearing old panes")?;
 
                 conn.exec_bound(sql!(
-                    DELETE FROM workspaces WHERE workspace_location = ? AND workspace_id != ?
+                    DELETE FROM workspaces WHERE workspace_location = ? AND remote_project_json = ? AND workspace_id != ?
                 ))?((&workspace.location, workspace.id))
                 .context("clearing out old locations")?;
 
@@ -374,6 +374,7 @@ impl WorkspaceDb {
                     INSERT INTO workspaces(
                         workspace_id,
                         workspace_location,
+                        remote_project_json,
                         left_dock_visible,
                         left_dock_active_panel,
                         left_dock_zoom,
@@ -383,26 +384,26 @@ impl WorkspaceDb {
                         bottom_dock_visible,
                         bottom_dock_active_panel,
                         bottom_dock_zoom,
-                        dev_server_name,
                         timestamp
                     )
                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
                         workspace_location = ?2,
-                        left_dock_visible = ?3,
-                        left_dock_active_panel = ?4,
-                        left_dock_zoom = ?5,
-                        right_dock_visible = ?6,
-                        right_dock_active_panel = ?7,
-                        right_dock_zoom = ?8,
-                        bottom_dock_visible = ?9,
-                        bottom_dock_active_panel = ?10,
-                        bottom_dock_zoom = ?11,
-                        dev_server_name = ?12,
+                        remote_project_json = ?3,
+                        left_dock_visible = ?4,
+                        left_dock_active_panel = ?5,
+                        left_dock_zoom = ?6,
+                        right_dock_visible = ?7,
+                        right_dock_active_panel = ?8,
+                        right_dock_zoom = ?9,
+                        bottom_dock_visible = ?10,
+                        bottom_dock_active_panel = ?11,
+                        bottom_dock_zoom = ?12,
                         timestamp = CURRENT_TIMESTAMP
                 ))?((workspace.id, &workspace.location, workspace.docks))
                 .context("Updating workspace")?;
+                dbg!("here!");
 
                 // Save center pane group
                 Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
@@ -423,7 +424,7 @@ impl WorkspaceDb {
 
     query! {
         fn recent_workspaces() -> Result<Vec<(WorkspaceId, WorkspaceLocation)>> {
-            SELECT workspace_id, workspace_location
+            SELECT workspace_id, workspace_location, remote_project_json
             FROM workspaces
             WHERE workspace_location IS NOT NULL
             ORDER BY timestamp DESC
@@ -764,7 +765,7 @@ mod tests {
 
         let mut workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: (["/tmp", "/tmp2"]).into(),
+            location: WorkspaceLocation::local(["/tmp", "/tmp2"]),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -774,7 +775,7 @@ mod tests {
 
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: (["/tmp"]).into(),
+            location: WorkspaceLocation::local(["/tmp"]),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -800,7 +801,7 @@ mod tests {
         })
         .await;
 
-        workspace_1.location = (["/tmp", "/tmp3"]).into();
+        workspace_1.location = WorkspaceLocation::local(["/tmp", "/tmp3"]);
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_1).await;
         db.save_workspace(workspace_2).await;
@@ -873,7 +874,7 @@ mod tests {
 
         let workspace = SerializedWorkspace {
             id: WorkspaceId(5),
-            location: (["/tmp", "/tmp2"]).into(),
+            location: WorkspaceLocation::local(["/tmp", "/tmp2"]),
             center_group,
             bounds: Default::default(),
             display: Default::default(),
@@ -902,7 +903,7 @@ mod tests {
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: (["/tmp", "/tmp2"]).into(),
+            location: WorkspaceLocation::local(["/tmp", "/tmp2"]),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -912,7 +913,7 @@ mod tests {
 
         let mut workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: (["/tmp"]).into(),
+            location: WorkspaceLocation::local(["/tmp"]),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -938,7 +939,7 @@ mod tests {
         assert_eq!(db.workspace_for_roots(&["/tmp3", "/tmp2", "/tmp4"]), None);
 
         // Test 'mutate' case of updating a pre-existing id
-        workspace_2.location = (["/tmp", "/tmp2"]).into();
+        workspace_2.location = WorkspaceLocation::local(["/tmp", "/tmp2"]);
 
         db.save_workspace(workspace_2.clone()).await;
         assert_eq!(
@@ -949,7 +950,7 @@ mod tests {
         // Test other mechanism for mutating
         let mut workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
-            location: (&["/tmp", "/tmp2"]).into(),
+            location: WorkspaceLocation::local(&["/tmp", "/tmp2"]),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -964,7 +965,7 @@ mod tests {
         );
 
         // Make sure that updating paths differently also works
-        workspace_3.location = (["/tmp3", "/tmp4", "/tmp2"]).into();
+        workspace_3.location = WorkspaceLocation::local(["/tmp3", "/tmp4", "/tmp2"]);
         db.save_workspace(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
         assert_eq!(
@@ -983,7 +984,7 @@ mod tests {
     ) -> SerializedWorkspace {
         SerializedWorkspace {
             id: WorkspaceId(4),
-            location: workspace_id.into(),
+            location: WorkspaceLocation::local(workspace_id),
             center_group: center_group.clone(),
             bounds: Default::default(),
             display: Default::default(),

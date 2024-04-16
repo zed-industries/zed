@@ -1,19 +1,17 @@
-mod dev_server_modal;
-
 use anyhow::Result;
-use dev_server_modal::DevServerModal;
-use gpui::{actions, AppContext, AsyncAppContext, Global, Model, ModelContext, Task};
+use gpui::{
+    actions, AppContext, AsyncAppContext, Context, Global, Model, ModelContext, SharedString, Task,
+};
 use rpc::{
     proto::{self, DevServerStatus},
     TypedEnvelope,
 };
 use std::{collections::HashMap, sync::Arc};
-use workspace::Workspace;
 
 actions!(projects, [OpenRemote]);
 
-use client::{Client, DevServerId, ProjectId, RemoteProjectId};
-use ui::{Context, SharedString};
+use client::{Client, ProjectId};
+pub use client::{DevServerId, RemoteProjectId};
 
 pub struct Store {
     remote_projects: HashMap<RemoteProjectId, RemoteProject>,
@@ -67,13 +65,6 @@ impl Global for GlobalStore {}
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let store = cx.new_model(|cx| Store::new(client, cx));
     cx.set_global(GlobalStore(store));
-
-    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
-        workspace.register_action(|workspace, _: &OpenRemote, cx| {
-            workspace.toggle_modal(cx, |cx| DevServerModal::new(cx));
-        });
-    })
-    .detach();
 }
 
 impl Store {

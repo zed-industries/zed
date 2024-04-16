@@ -3382,13 +3382,14 @@ impl Workspace {
         let project = self.project().read(cx);
 
         if project.is_local() {
-            Some(
+            Some(WorkspaceLocation::local(
                 project
                     .visible_worktrees(cx)
                     .map(|worktree| worktree.read(cx).abs_path())
-                    .collect::<Vec<_>>()
-                    .into(),
-            )
+                    .collect::<Vec<_>>(),
+            ))
+        } else if let Some(remote_project_id) = project.remote_project_id() {
+            Some(WorkspaceLocation::remote(remote_project_id, cx))
         } else {
             None
         }

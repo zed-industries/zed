@@ -18,18 +18,11 @@ fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
 ordered-float.workspace = true
-picker.workspace = true
 serde.workspace = true
 smol.workspace = true
-ui.workspace = true
-ui_text_field.workspace = true
 util.workspace = true
 client.workspace = true
-editor.workspace = true
 rpc.workspace = true
-workspace.workspace = true
 
 [dev-dependencies]
-editor = { workspace = true, features = ["test-support"] }
-language = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true

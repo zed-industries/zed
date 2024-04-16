@@ -1,3 +1,5 @@
+mod remote_projects;
+
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Result,
@@ -25,9 +27,12 @@ fn default_create_new_window() -> bool {
 }
 
 gpui::impl_actions!(projects, [OpenRecent]);
+gpui::actions!(projects, [OpenRemote]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(RecentProjects::register).detach();
+    cx.observe_new_views(remote_projects::RemoteProjects::register)
+        .detach();
 }
 
 pub struct RecentProjects {

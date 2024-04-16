@@ -320,6 +320,7 @@ impl<'a> Statement<'a> {
             this: &mut Statement,
             callback: impl FnOnce(&mut Statement) -> Result<R>,
         ) -> Result<R> {
+            println!("{:?}", std::any::type_name::<R>());
             if this.step()? != StepResult::Row {
                 return Err(anyhow!("single called with query that returns no rows."));
             }
@@ -351,6 +352,7 @@ impl<'a> Statement<'a> {
             callback: impl FnOnce(&mut Statement) -> Result<R>,
         ) -> Result<Option<R>> {
             if this.step().context("Failed on step call")? != StepResult::Row {
+                dbg!("OLA");
                 return Ok(None);
             }
 

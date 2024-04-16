@@ -7627,10 +7627,13 @@ dependencies = [
  "ordered-float 2.10.0",
  "picker",
  "project",
+ "remote_projects",
+ "rpc",
  "serde",
  "serde_json",
  "smol",
  "ui",
+ "ui_text_field",
  "util",
  "workspace",
 ]
@@ -7763,21 +7766,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "editor",
  "fuzzy",
  "gpui",
- "language",
  "menu",
  "ordered-float 2.10.0",
- "picker",
  "rpc",
  "serde",
  "serde_json",
  "smol",
- "ui",
- "ui_text_field",
  "util",
- "workspace",
 ]
 
 [[package]]
@@ -12227,6 +12224,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "project",
+ "remote_projects",
  "schemars",
  "serde",
  "serde_json",

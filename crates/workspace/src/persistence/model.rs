@@ -2,13 +2,14 @@ use super::SerializedAxis;
 use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
-use client::DevServerId;
+use client::RemoteProjectId;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Bounds, DevicePixels, Model, Task, View, WeakView};
+use gpui::{AppContext, AsyncWindowContext, Bounds, DevicePixels, Model, Task, View, WeakView};
 use project::Project;
+use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -16,17 +17,52 @@ use std::{
 use util::ResultExt;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct SerializedRemoteProject {
+    id: RemoteProjectId,
+    dev_server_name: String,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct WorkspaceLocation {
     paths: Arc<Vec<PathBuf>>,
-    dev_server: Option<(DevServerId, String)>,
+    remote_project: Option<SerializedRemoteProject>,
 }
 
 impl WorkspaceLocation {
-    pub fn local(paths: Arc<Vec<PathBuf>>) -> Self {
+    pub fn local<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
         Self {
-            paths,
-            dev_server: None,
+            paths: Arc::new(
+                paths
+                    .into_iter()
+                    .map(|p| p.as_ref().to_path_buf())
+                    .collect(),
+            ),
+            remote_project: None,
+        }
+    }
+
+    pub fn remote(remote_project_id: RemoteProjectId, cx: &AppContext) -> Self {
+        let store = remote_projects::Store::global(cx).read(cx);
+
+        let (paths, dev_server_name) =
+            if let Some(remote_project) = store.find_remote_project_by_id(remote_project_id) {
+                (
+                    vec![remote_project.path.to_string().into()],
+                    store
+                        .dev_server(remote_project.dev_server_id)
+                        .map(|dev_server| dev_server.name.to_string()),
+                )
+            } else {
+                (vec![], None)
+            };
+
+        Self {
+            paths: Arc::new(paths),
+            remote_project: Some(SerializedRemoteProject {
+                id: remote_project_id,
+                dev_server_name: dev_server_name.unwrap_or_default(),
+            }),
         }
     }
 
@@ -43,25 +79,25 @@ impl WorkspaceLocation {
                     .map(|p| p.as_ref().to_path_buf())
                     .collect(),
             ),
-            dev_server: None,
+            remote_project: None,
         }
     }
 }
 
-impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {
-    fn from(iterator: T) -> Self {
-        let mut roots = iterator
-            .into_iter()
-            .map(|p| p.as_ref().to_path_buf())
-            .collect::<Vec<_>>();
-        roots.sort();
-        Self::local(Arc::new(roots))
-    }
-}
+// impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {
+//     fn from(iterator: T) -> Self {
+//         let mut roots = iterator
+//             .into_iter()
+//             .map(|p| p.as_ref().to_path_buf())
+//             .collect::<Vec<_>>();
+//         roots.sort();
+//         Self::local(Arc::new(roots))
+//     }
+// }
 
 impl StaticColumnCount for WorkspaceLocation {
     fn column_count() -> usize {
-        1 //TODO should this be 2?
+        2
     }
 }
 
@@ -70,29 +106,32 @@ impl Bind for &WorkspaceLocation {
         bincode::serialize(&self.paths)
             .expect("Bincode serialization of paths should not fail")
             .bind(statement, start_index)
-        //TODO serialize dev_server
-        // bincode::serialize(&self.dev_server)
-        //     .expect("Bincode serialization of dev_server should not fail")
-        //     .bind(statement, start_index + 1)
+            .map_err(|e| dbg!(e))?;
+        dbg!(serde_json::to_string(&self.remote_project)
+            .expect("Json serialization of remote project should not fail"))
+        .bind(statement, start_index + 1)
+        .map_err(|e| dbg!(e))
+        .map(|ret| dbg!(ret))
     }
 }
 
 impl Column for WorkspaceLocation {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        dbg!("wut?");
         let path_blob = statement.column_blob(start_index)?;
         let paths =
             bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?;
-        //TODO deserialize dev_server
-        // let dev_server_blob = statement.column_blob(start_index + 1)?;
-        // let dev_server = bincode::deserialize(dev_server_blob)
-        //     .context("Bincode deserialization of dev_server failed")?;
+        let dev_server: Option<SerializedRemoteProject> = statement
+            .column_text(start_index + 1)
+            .and_then(|dev_server_json| Ok(serde_json::from_str(dev_server_json)?))
+            .context("Deserialization of remote project json failed")?;
 
         Ok((
             WorkspaceLocation {
                 paths,
-                dev_server: None,
+                remote_project: dev_server,
             },
-            start_index + 1,
+            start_index + 2,
         ))
     }
 }
@@ -117,9 +156,9 @@ pub struct DockStructure {
 
 impl Column for DockStructure {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (left, next_index) = DockData::column(statement, start_index)?;
-        let (right, next_index) = DockData::column(statement, next_index)?;
-        let (bottom, next_index) = DockData::column(statement, next_index)?;
+        let (left, next_index) = dbg!(DockData::column(statement, start_index))?;
+        let (right, next_index) = dbg!(DockData::column(statement, next_index))?;
+        let (bottom, next_index) = dbg!(DockData::column(statement, next_index))?;
         Ok((
             DockStructure {
                 left,
@@ -133,8 +172,8 @@ impl Column for DockStructure {
 
 impl Bind for DockStructure {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(&self.left, start_index)?;
-        let next_index = statement.bind(&self.right, next_index)?;
+        let next_index = dbg!(statement.bind(&self.left, start_index))?;
+        let next_index = dbg!(statement.bind(&self.right, next_index))?;
         statement.bind(&self.bottom, next_index)
     }
 }

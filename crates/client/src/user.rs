@@ -30,7 +30,9 @@ pub struct ProjectId(pub u64);
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct DevServerId(pub u64);
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
+)]
 pub struct RemoteProjectId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
