@@ -1,4 +1,4 @@
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
 
 use crate::{
@@ -9,6 +9,7 @@ use crate::{
 pub struct ModalHeader {
     id: ElementId,
     children: SmallVec<[AnyElement; 2]>,
+    show_dismiss_button: bool,
 }
 
 impl ModalHeader {
@@ -16,7 +17,13 @@ impl ModalHeader {
         Self {
             id: id.into(),
             children: SmallVec::new(),
+            show_dismiss_button: false,
         }
+    }
+
+    pub fn show_dismiss_button(mut self, show: bool) -> Self {
+        self.show_dismiss_button = show;
+        self
     }
 }
 
@@ -35,13 +42,15 @@ impl RenderOnce for ModalHeader {
             .py_1p5()
             .child(div().flex_1().children(self.children))
             .justify_between()
-            .child(
-                IconButton::new("dismiss", IconName::Close)
-                    .shape(IconButtonShape::Square)
-                    .on_click(|_, cx| {
-                        cx.dispatch_action(menu::Cancel.boxed_clone());
-                    }),
-            )
+            .when(self.show_dismiss_button, |this| {
+                this.child(
+                    IconButton::new("dismiss", IconName::Close)
+                        .shape(IconButtonShape::Square)
+                        .on_click(|_, cx| {
+                            cx.dispatch_action(menu::Cancel.boxed_clone());
+                        }),
+                )
+            })
     }
 }
 
