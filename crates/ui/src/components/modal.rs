@@ -1,7 +1,9 @@
 use gpui::*;
 use smallvec::SmallVec;
 
-use crate::{h_flex, IconButton, IconButtonShape, IconName, Label, LabelCommon, LabelSize};
+use crate::{
+    h_flex, Clickable, IconButton, IconButtonShape, IconName, Label, LabelCommon, LabelSize,
+};
 
 #[derive(IntoElement)]
 pub struct ModalHeader {
@@ -33,7 +35,13 @@ impl RenderOnce for ModalHeader {
             .py_1p5()
             .child(div().flex_1().children(self.children))
             .justify_between()
-            .child(IconButton::new("dismiss", IconName::Close).shape(IconButtonShape::Square))
+            .child(
+                IconButton::new("dismiss", IconName::Close)
+                    .shape(IconButtonShape::Square)
+                    .on_click(|_, cx| {
+                        cx.dispatch_action(menu::Cancel.boxed_clone());
+                    }),
+            )
     }
 }
 
