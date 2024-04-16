@@ -8920,14 +8920,16 @@ impl Editor {
     }
 
     fn start_git_blame_inline(&mut self, user_triggered: bool, cx: &mut ViewContext<Self>) {
-        if let Some(inline_blame_settings) = ProjectSettings::get_global(cx).git.inline_blame {
-            self.start_git_blame(user_triggered, cx);
+        self.start_git_blame(user_triggered, cx);
 
-            if inline_blame_settings.delay_ms.is_some() {
-                self.start_inline_blame_timer(cx);
-            } else {
-                self.show_git_blame_inline = true
-            }
+        if ProjectSettings::get_global(cx)
+            .git
+            .inline_blame_delay()
+            .is_some()
+        {
+            self.start_inline_blame_timer(cx);
+        } else {
+            self.show_git_blame_inline = true
         }
     }
 
