@@ -76,20 +76,20 @@ type AnyObserver = Box<dyn FnMut(&mut WindowContext) -> bool + 'static>;
 type AnyWindowFocusListener = Box<dyn FnMut(&FocusEvent, &mut WindowContext) -> bool + 'static>;
 
 struct FocusEvent {
-    previous_focus_path: SmallVec<[FocusId; 8]>,
-    current_focus_path: SmallVec<[FocusId; 8]>,
+    previous_focus_path: SmallVec<[FocusTargetId; 8]>,
+    current_focus_path: SmallVec<[FocusTargetId; 8]>,
 }
 
 slotmap::new_key_type! {
     /// A globally unique identifier for a focusable element.
-    pub struct FocusId;
+    pub struct FocusTargetId;
 }
 
 thread_local! {
     pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(8 * 1024 * 1024));
 }
 
-impl FocusId {
+impl FocusTargetId {
     /// Obtains whether the element associated with this handle is currently focused.
     pub fn is_focused(&self, cx: &WindowContext) -> bool {
         cx.window.focus == Some(*self)
@@ -120,8 +120,8 @@ impl FocusId {
 
 /// A handle which can be used to track and manipulate the focused element in a window.
 pub struct FocusHandle {
-    pub(crate) id: FocusId,
-    handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+    pub(crate) id: FocusTargetId,
+    handles: Arc<RwLock<SlotMap<FocusTargetId, AtomicUsize>>>,
 }
 
 impl std::fmt::Debug for FocusHandle {
@@ -131,7 +131,7 @@ impl std::fmt::Debug for FocusHandle {
 }
 
 impl FocusHandle {
-    pub(crate) fn new(handles: &Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>) -> Self {
+    pub(crate) fn new(handles: &Arc<RwLock<SlotMap<FocusTargetId, AtomicUsize>>>) -> Self {
         let id = handles.write().insert(AtomicUsize::new(1));
         Self {
             id,
@@ -140,8 +140,8 @@ impl FocusHandle {
     }
 
     pub(crate) fn for_id(
-        id: FocusId,
-        handles: &Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+        id: FocusTargetId,
+        handles: &Arc<RwLock<SlotMap<FocusTargetId, AtomicUsize>>>,
     ) -> Option<Self> {
         let lock = handles.read();
         let ref_count = lock.get(id)?;
@@ -219,8 +219,8 @@ impl Drop for FocusHandle {
 /// A weak reference to a focus handle.
 #[derive(Clone, Debug)]
 pub struct WeakFocusHandle {
-    pub(crate) id: FocusId,
-    handles: Weak<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+    pub(crate) id: FocusTargetId,
+    handles: Weak<RwLock<SlotMap<FocusTargetId, AtomicUsize>>>,
 }
 
 impl WeakFocusHandle {
@@ -291,7 +291,7 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
-    pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+    pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusTargetId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
@@ -309,7 +309,7 @@ pub struct Window {
     pub(crate) refreshing: bool,
     pub(crate) draw_phase: DrawPhase,
     activation_observers: SubscriberSet<(), AnyObserver>,
-    pub(crate) focus: Option<FocusId>,
+    pub(crate) focus: Option<FocusTargetId>,
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
     prompt: Option<RenderablePromptHandle>,
@@ -327,7 +327,7 @@ pub(crate) enum DrawPhase {
 struct PendingInput {
     keystrokes: SmallVec<[Keystroke; 1]>,
     bindings: SmallVec<[KeyBinding; 1]>,
-    focus: Option<FocusId>,
+    focus: Option<FocusTargetId>,
     timer: Option<Task<()>>,
 }
 
@@ -2808,7 +2808,7 @@ pub enum ElementId {
     /// A string based ID.
     Name(SharedString),
     /// An ID that's equated with a focus handle.
-    FocusHandle(FocusId),
+    FocusHandle(FocusTargetId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, usize),
 }

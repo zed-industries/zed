@@ -284,6 +284,10 @@ impl ListState {
         state.logical_scroll_top = Some(scroll_top);
     }
 
+    pub fn scroll_to_focused(&self) {
+        // state.requested_autoscroll = Some();
+    }
+
     /// Scroll the list to the given item index and top/bottom offset.
     /// If the given position is already visibile, this method won't scroll.
     pub fn scroll_to_fit(
@@ -609,7 +613,11 @@ impl StateInner {
         // and include it to be rendered after the visible items so keyboard interaction continues
         // to work for it.
         let mut focused_offscreen_element = None;
-        if !rendered_focused_item {
+        if self.scroll_to_focused_item {
+            self.scroll_to_focused_item = false;
+            // Are the focused item and its focus target bounds visible?
+            // If not, update the scroll position and call this method recursively?
+        } else if !rendered_focused_item {
             let mut cursor = self
                 .items
                 .filter::<_, Count>(|summary| summary.has_focus_handles);

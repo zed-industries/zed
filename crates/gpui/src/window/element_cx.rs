@@ -34,9 +34,9 @@ use crate::{
     hash, point, prelude::*, px, size, AnyElement, AnyTooltip, AppContext, Asset, AvailableSpace,
     Bounds, BoxShadow, ContentMask, Corners, CursorStyle, DevicePixels, DispatchNodeId,
     DispatchPhase, DispatchTree, DrawPhase, ElementId, ElementStateBox, EntityId, FocusHandle,
-    FocusId, FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero, KeyContext,
-    KeyEvent, LayoutId, LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite, MouseEvent,
-    PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
+    FocusTargetId, FontId, GlobalElementId, GlyphId, Hsla, ImageData, InputHandler, IsZero,
+    KeyContext, KeyEvent, LayoutId, LineLayoutIndex, ModifiersChangedEvent, MonochromeSprite,
+    MouseEvent, PaintQuad, Path, Pixels, PlatformInputHandler, Point, PolychromeSprite, Quad,
     RenderGlyphParams, RenderImageParams, RenderSvgParams, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, Task, TextStyleRefinement, TransformationMatrix, Underline,
     UnderlineStyle, Window, WindowContext, SUBPIXEL_VARIANTS,
@@ -126,7 +126,7 @@ pub(crate) struct DeferredDraw {
 }
 
 pub(crate) struct Frame {
-    pub(crate) focus: Option<FocusId>,
+    pub(crate) focus: Option<FocusTargetId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     accessed_element_states: Vec<(GlobalElementId, TypeId)>,
@@ -214,7 +214,7 @@ impl Frame {
         hit_test
     }
 
-    pub(crate) fn focus_path(&self) -> SmallVec<[FocusId; 8]> {
+    pub(crate) fn focus_path(&self) -> SmallVec<[FocusTargetId; 8]> {
         self.focus
             .map(|focus_id| self.dispatch_tree.focus_path(focus_id))
             .unwrap_or_default()
@@ -1426,11 +1426,16 @@ impl<'a> ElementContext<'a> {
 
     /// Sets the focus handle for the current element. This handle will be used to manage focus state
     /// and keyboard event dispatch for the element.
-    pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle) {
+    pub fn set_focus_target(&mut self, focus_handle: &FocusHandle, bounds: Option<Bounds<Pixels>>) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Layout,
+            "you must set the focus target during after_layout"
+        );
         self.window
             .next_frame
             .dispatch_tree
-            .set_focus_id(focus_handle.id);
+            .set_focus_target(focus_handle.id, bounds);
     }
 
     /// Sets the view id for the current element, which will be used to manage view caching.
@@ -1441,6 +1446,15 @@ impl<'a> ElementContext<'a> {
     /// Get the last view id for the current element
     pub fn parent_view_id(&mut self) -> Option<EntityId> {
         self.window.next_frame.dispatch_tree.parent_view_id()
+    }
+
+    /// Returns the bounds for the focus target if it is a descendant of the current element.
+    pub fn focus_target_bounds(&self) -> Option<Bounds<Pixels>> {
+        let focus_target_id = self.window.focus?;
+        self.window
+            .next_frame
+            .dispatch_tree
+            .focus_target_bounds(focus_target_id)
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the

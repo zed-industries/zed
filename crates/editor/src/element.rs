@@ -3884,6 +3884,20 @@ impl Element for EditorElement {
                     )
                     .unwrap();
 
+                let focus_handle = self.editor.focus_handle(cx);
+                let focus_target_bounds = newest_selection_head.and_then(|cursor| {
+                    if (start_row..end_row).contains(&cursor.row()) {
+                        let cursor_y = line_height
+                            * (cursor.row() as f32 - scroll_pixel_position.y / line_height);
+                        let cursor_origin =
+                            content_origin + gpui::point(-scroll_pixel_position.x, cursor_y);
+                        Some(Bounds::new(cursor_origin, size(em_width, line_height)))
+                    } else {
+                        None
+                    }
+                });
+                cx.set_focus_target(&focus_handle, focus_target_bounds);
+
                 EditorLayout {
                     mode: snapshot.mode,
                     position_map: Arc::new(PositionMap {
@@ -3936,7 +3950,6 @@ impl Element for EditorElement {
     ) {
         let focus_handle = self.editor.focus_handle(cx);
         let key_context = self.editor.read(cx).key_context(cx);
-        cx.set_focus_handle(&focus_handle);
         cx.set_key_context(key_context);
         cx.set_view_id(self.editor.entity_id());
         cx.handle_input(

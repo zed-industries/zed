@@ -50,9 +50,9 @@
 ///  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
 ///
 use crate::{
-    Action, ActionRegistry, DispatchPhase, ElementContext, EntityId, FocusId, KeyBinding,
-    KeyContext, Keymap, KeymatchResult, Keystroke, KeystrokeMatcher, ModifiersChangedEvent,
-    WindowContext,
+    Action, ActionRegistry, Bounds, DispatchPhase, ElementContext, EntityId, FocusTargetId,
+    KeyBinding, KeyContext, Keymap, KeymatchResult, Keystroke, KeystrokeMatcher,
+    ModifiersChangedEvent, Pixels, WindowContext,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -72,7 +72,7 @@ pub(crate) struct DispatchTree {
     pub(crate) context_stack: Vec<KeyContext>,
     view_stack: Vec<EntityId>,
     nodes: Vec<DispatchNode>,
-    focusable_node_ids: FxHashMap<FocusId, DispatchNodeId>,
+    focusable_node_ids: FxHashMap<FocusTargetId, DispatchNodeId>,
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
     keystroke_matchers: FxHashMap<SmallVec<[KeyContext; 4]>, KeystrokeMatcher>,
     keymap: Rc<RefCell<Keymap>>,
@@ -85,9 +85,15 @@ pub(crate) struct DispatchNode {
     pub action_listeners: Vec<DispatchActionListener>,
     pub modifiers_changed_listeners: Vec<ModifiersChangedListener>,
     pub context: Option<KeyContext>,
-    pub focus_id: Option<FocusId>,
+    focus_target: Option<FocusTarget>,
     view_id: Option<EntityId>,
     parent: Option<DispatchNodeId>,
+}
+
+#[derive(Clone)]
+struct FocusTarget {
+    id: FocusTargetId,
+    bounds: Option<Bounds<Pixels>>,
 }
 
 pub(crate) struct ReusedSubtree {
@@ -199,10 +205,34 @@ impl DispatchTree {
         self.context_stack.push(context);
     }
 
-    pub fn set_focus_id(&mut self, focus_id: FocusId) {
+    pub fn set_focus_target(&mut self, focus_id: FocusTargetId, bounds: Option<Bounds<Pixels>>) {
         let node_id = *self.node_stack.last().unwrap();
-        self.nodes[node_id.0].focus_id = Some(focus_id);
+        self.nodes[node_id.0].focus_target = Some(FocusTarget {
+            id: focus_id,
+            bounds,
+        });
         self.focusable_node_ids.insert(focus_id, node_id);
+    }
+
+    pub fn focus_target_bounds(&self, focus_id: FocusTargetId) -> Option<Bounds<Pixels>> {
+        let active_node_id = self.active_node_id()?;
+
+        let mut current_node_id = self.focusable_node_ids.get(&focus_id).copied()?;
+        let focus_target_bounds = self.node(current_node_id).focus_target.as_ref()?.bounds?;
+        loop {
+            // Only return the bounds if the focused node is within the active subtree.
+            if current_node_id == active_node_id {
+                return Some(focus_target_bounds);
+            }
+
+            if let Some(parent) = self.node(current_node_id).parent {
+                current_node_id = parent;
+            } else {
+                break;
+            }
+        }
+
+        None
     }
 
     pub fn parent_view_id(&mut self) -> Option<EntityId> {
@@ -234,8 +264,8 @@ impl DispatchTree {
         if let Some(context) = source.context.clone() {
             self.set_key_context(context);
         }
-        if let Some(focus_id) = source.focus_id {
-            self.set_focus_id(focus_id);
+        if let Some(focus) = source.focus_target.clone() {
+            self.set_focus_target(focus.id, focus.bounds);
         }
         if let Some(view_id) = source.view_id {
             self.set_view_id(view_id);
@@ -289,7 +319,11 @@ impl DispatchTree {
 
     /// Preserve keystroke matchers from previous frames to support multi-stroke
     /// bindings across multiple frames.
-    pub fn preserve_pending_keystrokes(&mut self, old_tree: &mut Self, focus_id: Option<FocusId>) {
+    pub fn preserve_pending_keystrokes(
+        &mut self,
+        old_tree: &mut Self,
+        focus_id: Option<FocusTargetId>,
+    ) {
         if let Some(node_id) = focus_id.and_then(|focus_id| self.focusable_node_id(focus_id)) {
             let dispatch_path = self.dispatch_path(node_id);
 
@@ -333,7 +367,7 @@ impl DispatchTree {
             });
     }
 
-    pub fn focus_contains(&self, parent: FocusId, child: FocusId) -> bool {
+    pub fn focus_contains(&self, parent: FocusTargetId, child: FocusTargetId) -> bool {
         if parent == child {
             return true;
         }
@@ -473,13 +507,13 @@ impl DispatchTree {
         dispatch_path
     }
 
-    pub fn focus_path(&self, focus_id: FocusId) -> SmallVec<[FocusId; 8]> {
-        let mut focus_path: SmallVec<[FocusId; 8]> = SmallVec::new();
+    pub fn focus_path(&self, focus_id: FocusTargetId) -> SmallVec<[FocusTargetId; 8]> {
+        let mut focus_path: SmallVec<[FocusTargetId; 8]> = SmallVec::new();
         let mut current_node_id = self.focusable_node_ids.get(&focus_id).copied();
         while let Some(node_id) = current_node_id {
             let node = self.node(node_id);
-            if let Some(focus_id) = node.focus_id {
-                focus_path.push(focus_id);
+            if let Some(focus) = node.focus_target.as_ref() {
+                focus_path.push(focus.id);
             }
             current_node_id = node.parent;
         }
@@ -510,7 +544,7 @@ impl DispatchTree {
         &mut self.nodes[active_node_id.0]
     }
 
-    pub fn focusable_node_id(&self, target: FocusId) -> Option<DispatchNodeId> {
+    pub fn focusable_node_id(&self, target: FocusTargetId) -> Option<DispatchNodeId> {
         self.focusable_node_ids.get(&target).copied()
     }
 

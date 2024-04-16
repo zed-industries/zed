@@ -1375,6 +1375,10 @@ impl Interactivity {
                             None
                         };
 
+                        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
+                            cx.set_focus_target(focus_handle, Some(bounds));
+                        }
+
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
                         let result = f(&style, scroll_offset, hitbox, cx);
                         (result, element_state)
@@ -1976,9 +1980,6 @@ impl Interactivity {
         let action_listeners = mem::take(&mut self.action_listeners);
         if let Some(context) = self.key_context.clone() {
             cx.set_key_context(context);
-        }
-        if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            cx.set_focus_handle(focus_handle);
         }
 
         for listener in key_down_listeners {
