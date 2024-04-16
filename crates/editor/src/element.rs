@@ -3101,7 +3101,9 @@ impl Render for BlameEntryTooltip {
                         .gap_4()
                         .child(
                             h_flex()
-                                .gap_2()
+                                .gap_x_2()
+                                .overflow_x_hidden()
+                                .flex_wrap()
                                 .child(author)
                                 .when_some(author_email, |this, author_email| {
                                     this.child(
