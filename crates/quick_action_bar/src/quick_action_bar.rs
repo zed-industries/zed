@@ -137,6 +137,9 @@ impl Render for QuickActionBar {
             },
         );
 
+        // TODO:
+        // - [ ] Handle case where there are no items in the list (probably hide the menu)
+        // - [ ] Add toggle git blame inline to menu
         let editor_settings_dropdown =
             IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
                 .size(ButtonSize::Compact)
@@ -146,24 +149,29 @@ impl Render for QuickActionBar {
                     let editor = editor.clone();
                     cx.listener(move |quick_action_bar, _, cx| {
                         let inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
+                        let supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
 
-                        let menu = ContextMenu::build(cx, |menu, _| {
-                            menu.toggleable_entry(
-                                "Inlay Hints",
-                                inlay_hints_enabled,
-                                Some(editor::actions::ToggleInlayHints.boxed_clone()),
-                                {
-                                    let editor = editor.clone();
-                                    move |cx| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.toggle_inlay_hints(
-                                                &editor::actions::ToggleInlayHints,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                },
-                            )
+                        let menu = ContextMenu::build(cx, |mut menu, _| {
+                            if supports_inlay_hints {
+                                menu = menu.toggleable_entry(
+                                    "Inlay Hints",
+                                    inlay_hints_enabled,
+                                    Some(editor::actions::ToggleInlayHints.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |cx| {
+                                            editor.update(cx, |editor, cx| {
+                                                editor.toggle_inlay_hints(
+                                                    &editor::actions::ToggleInlayHints,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    },
+                                );
+                            }
+
+                            menu
                         });
                         cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
                             quick_action_bar.toggle_settings_menu = None;
@@ -172,7 +180,7 @@ impl Render for QuickActionBar {
                         quick_action_bar.toggle_settings_menu = Some(menu);
                     })
                 })
-                .tooltip(|cx| Tooltip::text("Split Pane", cx));
+                .tooltip(|cx| Tooltip::text("Toggle Settings…", cx));
 
         h_flex()
             .id("quick action bar")
