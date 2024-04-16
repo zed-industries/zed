@@ -85,22 +85,6 @@ impl Render for QuickActionBar {
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
-        let inlay_hints_button = Some(QuickActionBarButton::new(
-            "toggle inlay hints",
-            IconName::InlayHint,
-            editor.read(cx).inlay_hints_enabled(),
-            Box::new(editor::actions::ToggleInlayHints),
-            "Toggle Inlay Hints",
-            {
-                let editor = editor.clone();
-                move |_, cx| {
-                    editor.update(cx, |editor, cx| {
-                        editor.toggle_inlay_hints(&editor::actions::ToggleInlayHints, cx);
-                    });
-                }
-            },
-        ))
-        .filter(|_| editor.read(cx).supports_inlay_hints(cx));
 
         let search_button = Some(QuickActionBarButton::new(
             "toggle buffer search",
