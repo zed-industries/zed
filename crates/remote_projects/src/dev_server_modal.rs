@@ -1,11 +1,11 @@
 use crate::{DevServer, DevServerId, RemoteProject, RemoteProjectId};
-use editor::Editor;
 use gpui::{
     AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     ScrollHandle, Task, View, ViewContext,
 };
 use rpc::proto::{self, CreateDevServerResponse, DevServerStatus};
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
+use ui_text_field::{FieldLabelLayout, TextField};
 use util::ResultExt;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView};
 
@@ -14,9 +14,9 @@ pub struct DevServerModal {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
     remote_project_store: Model<crate::Store>,
-    remote_project_name_editor: View<Editor>,
-    remote_project_path_editor: View<Editor>,
-    dev_server_name_editor: View<Editor>,
+    remote_project_name_editor: View<TextField>,
+    remote_project_path_editor: View<TextField>,
+    dev_server_name_editor: View<TextField>,
     _subscriptions: [gpui::Subscription; 2],
 }
 
@@ -40,13 +40,11 @@ enum Mode {
 
 impl DevServerModal {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let name_editor = cx.new_view(|cx| Editor::single_line(cx));
-        let path_editor = cx.new_view(|cx| Editor::single_line(cx));
-        let dev_server_name_editor = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text("Dev server name", cx);
-            editor
-        });
+        let name_editor =
+            cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Inline));
+        let path_editor =
+            cx.new_view(|cx| TextField::new(cx, "Path", "").with_label(FieldLabelLayout::Inline));
+        let dev_server_name_editor = cx.new_view(|cx| TextField::new(cx, "", "Dev server name"));
 
         let focus_handle = cx.focus_handle();
         let remote_project_store = crate::Store::global(cx);
@@ -78,11 +76,15 @@ impl DevServerModal {
         let name = self
             .remote_project_name_editor
             .read(cx)
+            .editor()
+            .read(cx)
             .text(cx)
             .trim()
             .to_string();
         let path = self
             .remote_project_path_editor
+            .read(cx)
+            .editor()
             .read(cx)
             .text(cx)
             .trim()
@@ -132,6 +134,8 @@ impl DevServerModal {
         let name = self
             .dev_server_name_editor
             .read(cx)
+            .editor()
+            .read(cx)
             .text(cx)
             .trim()
             .to_string();
@@ -177,6 +181,18 @@ impl DevServerModal {
             dev_server: None,
         });
         cx.notify()
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        match self.mode {
+            Mode::Default => {}
+            Mode::CreateRemoteProject(CreateRemoteProject { dev_server_id, .. }) => {
+                self.create_remote_project(dev_server_id, cx);
+            }
+            Mode::CreateDevServer(_) => {
+                self.create_dev_server(cx);
+            }
+        }
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -328,9 +344,12 @@ impl DevServerModal {
             unreachable!()
         };
 
-        self.dev_server_name_editor.update(cx, |editor, _| {
-            editor.set_read_only(creating.is_some() || dev_server.is_some())
+        self.dev_server_name_editor.update(cx, |input, cx| {
+            input.editor().update(cx, |editor, _| {
+                editor.set_read_only(creating.is_some() || dev_server.is_some())
+            });
         });
+
         v_flex()
             .px_1()
             .pt_0p5()
@@ -355,11 +374,7 @@ impl DevServerModal {
                 h_flex()
                     .ml_5()
                     .gap_2()
-                    .child("Name")
                     .child(self.dev_server_name_editor.clone())
-                    .on_action(
-                        cx.listener(|this, _: &menu::Confirm, cx| this.create_dev_server(cx)),
-                    )
                     .when(creating.is_none() && dev_server.is_none(), |div| {
                         div.child(
                             Button::new("create-dev-server", "Create").on_click(cx.listener(
@@ -533,7 +548,6 @@ impl DevServerModal {
                 h_flex()
                     .ml_5()
                     .gap_2()
-                    .child("Name")
                     .child(self.remote_project_name_editor.clone())
                     .on_action(cx.listener(|this, _: &menu::Confirm, cx| {
                         cx.focus_view(&this.remote_project_path_editor)
@@ -543,11 +557,7 @@ impl DevServerModal {
                 h_flex()
                     .ml_5()
                     .gap_2()
-                    .child("Path")
                     .child(self.remote_project_path_editor.clone())
-                    .on_action(
-                        cx.listener(|this, _: &menu::Confirm, cx| this.create_dev_server(cx)),
-                    )
                     .when(creating.is_none() && remote_project.is_none(), |div| {
                         div.child(Button::new("create-remote-server", "Create").on_click({
                             let dev_server_id = *dev_server_id;
@@ -610,6 +620,7 @@ impl Render for DevServerModal {
             .elevation_3(cx)
             .key_context("DevServerModal")
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
             .pb_4()
             .w(rems(34.))
             .min_h(rems(20.))

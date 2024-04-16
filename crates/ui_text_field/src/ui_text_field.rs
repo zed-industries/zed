@@ -84,6 +84,10 @@ impl TextField {
         self.with_label = layout;
         self
     }
+
+    pub fn editor(&self) -> &View<Editor> {
+        &self.editor
+    }
 }
 
 impl Render for TextField {

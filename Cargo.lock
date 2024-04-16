@@ -7775,6 +7775,7 @@ dependencies = [
  "serde_json",
  "smol",
  "ui",
+ "ui_text_field",
  "util",
  "workspace",
 ]
