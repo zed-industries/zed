@@ -281,14 +281,15 @@ define_connection! {
     sql!(
         ALTER TABLE workspaces ADD COLUMN fullscreen INTEGER; //bool
     ),
-    // Add centered_layout field to workspace
-    sql!(
-        ALTER TABLE workspaces ADD COLUMN centered_layout INTEGER; //bool
-    ),
     // Add preview field to items
     sql!(
         ALTER TABLE items ADD COLUMN preview INTEGER; //bool
     ),
+    // Add centered_layout field to workspace
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN centered_layout INTEGER; //bool
+    ),
+
     ];
 }
 
