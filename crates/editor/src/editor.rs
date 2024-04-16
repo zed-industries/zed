@@ -138,6 +138,7 @@ use workspace::{
 
 use crate::hover_links::find_url;
 
+pub const DEFAULT_MULTIBUFFER_CONTEXT: u32 = 2;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
@@ -3738,7 +3739,7 @@ impl Editor {
                         buffer
                             .edited_ranges_for_transaction::<usize>(transaction)
                             .collect(),
-                        1,
+                        DEFAULT_MULTIBUFFER_CONTEXT,
                         cx,
                     ),
                 );
@@ -8007,7 +8008,7 @@ impl Editor {
                 ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
                     location.buffer.clone(),
                     ranges_for_buffer,
-                    1,
+                    DEFAULT_MULTIBUFFER_CONTEXT,
                     cx,
                 ))
             }

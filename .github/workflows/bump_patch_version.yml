@@ -27,6 +27,7 @@ jobs:
       - name: Bump Patch Version
         run: |
           set -eux
+
           channel=$(cat crates/zed/RELEASE_CHANNEL)
 
           tag_suffix=""
