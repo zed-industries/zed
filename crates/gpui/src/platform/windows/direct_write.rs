@@ -7,33 +7,18 @@ use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use windows::{
-    core::{implement, HSTRING, PCWSTR},
+    core::*,
     Foundation::Numerics::Matrix3x2,
     Win32::{
-        Foundation::{BOOL, E_NOTIMPL},
+        Foundation::*,
         Globalization::GetUserDefaultLocaleName,
         Graphics::{
-            Direct2D::{
-                Common::{
-                    D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_ALPHA_MODE_STRAIGHT, D2D1_COLOR_F,
-                    D2D1_PIXEL_FORMAT, D2D_POINT_2F,
-                },
-                D2D1CreateFactory, ID2D1DeviceContext4, ID2D1Factory, D2D1_BRUSH_PROPERTIES,
-                D2D1_COLOR_BITMAP_GLYPH_SNAP_OPTION_DEFAULT, D2D1_FACTORY_TYPE_MULTI_THREADED,
-                D2D1_FEATURE_LEVEL_DEFAULT, D2D1_RENDER_TARGET_PROPERTIES,
-                D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
-            },
+            Direct2D::{Common::*, *},
             DirectWrite::*,
-            Dxgi::Common::{DXGI_FORMAT_A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM},
-            Imaging::{
-                CLSID_WICImagingFactory2, GUID_WICPixelFormat32bppPRGBA,
-                GUID_WICPixelFormat8bppAlpha, WICBitmapCacheOnLoad, D2D::IWICImagingFactory2,
-            },
+            Dxgi::Common::*,
+            Imaging::{D2D::IWICImagingFactory2, *},
         },
-        System::{
-            Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
-            SystemServices::LOCALE_NAME_MAX_LENGTH,
-        },
+        System::{Com::*, SystemServices::LOCALE_NAME_MAX_LENGTH},
     },
 };
 
