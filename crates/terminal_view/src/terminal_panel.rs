@@ -26,7 +26,7 @@ use workspace::{
     item::Item,
     pane,
     ui::IconName,
-    DraggedTab, NewTerminal, Pane, Workspace,
+    DraggedTab, NewTerminal, Pane, ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -98,8 +98,13 @@ impl TerminalPanel {
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&workspace::ToggleZoom, cx);
                             }))
+                            // TODO kb
                             .tooltip(move |cx| {
-                                Tooltip::text(if zoomed { "Zoom Out" } else { "Zoom In" }, cx)
+                                Tooltip::for_action(
+                                    if zoomed { "Zoom Out" } else { "Zoom In" },
+                                    &ToggleZoom,
+                                    cx,
+                                )
                             })
                     })
                     .into_any_element()
