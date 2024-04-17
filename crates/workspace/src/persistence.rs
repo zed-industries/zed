@@ -3,6 +3,7 @@ pub mod model;
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
+use client::RemoteProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds};
 
@@ -21,7 +22,7 @@ use model::{
     SerializedWorkspace,
 };
 
-use self::model::DockStructure;
+use self::model::{DockStructure, SerializedWorkspaceLocation};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
@@ -286,7 +287,7 @@ define_connection! {
     ),
     sql!(
         CREATE TABLE remote_projects (
-            remote_project_id INTEGER NOT NULL,
+            remote_project_id INTEGER NOT NULL UNIQUE,
             path TEXT,
             dev_server_name TEXT
         );
@@ -308,9 +309,10 @@ impl WorkspaceDb {
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, local_paths, bounds, display, fullscreen, docks): (
+        let (workspace_id, local_paths, remote_project_id, bounds, display, fullscreen, docks): (
             WorkspaceId,
-            LocalPaths,
+            Option<LocalPaths>,
+            Option<u64>,
             Option<SerializedWindowsBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -320,6 +322,7 @@ impl WorkspaceDb {
                 SELECT
                     workspace_id,
                     local_paths,
+                    remote_project_id,
                     window_state,
                     window_x,
                     window_y,
@@ -344,9 +347,31 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
+        let location = if let Some(remote_project_id) = remote_project_id {
+            let (path, dev_server_name): (String, String) = self
+                .select_row_bound(sql! {
+                    SELECT path, dev_server_name
+                    FROM remote_projects
+                    WHERE remote_project_id = ?
+                })
+                .and_then(|mut prepared_statement| (prepared_statement)(remote_project_id))
+                .context("No remote project found")
+                .warn_on_err()
+                .flatten()?;
+            SerializedWorkspaceLocation::Remote {
+                id: RemoteProjectId(remote_project_id),
+                path,
+                dev_server_name,
+            }
+        } else if let Some(local_paths) = local_paths {
+            SerializedWorkspaceLocation::Local(local_paths)
+        } else {
+            return None;
+        };
+
         Some(SerializedWorkspace {
             id: workspace_id,
-            local_paths: local_paths.clone(),
+            location,
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
@@ -369,43 +394,102 @@ impl WorkspaceDb {
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
 
-                conn.exec_bound(sql!(
-                    DELETE FROM workspaces WHERE local_paths = ? AND workspace_id != ?
-                ))?((&workspace.local_paths, workspace.id))
-                .context("clearing out old locations")?;
+                match workspace.location {
+                    SerializedWorkspaceLocation::Local(local_paths) => {
+                        conn.exec_bound(sql!(
+                            DELETE FROM workspaces WHERE local_paths = ? AND workspace_id != ?
+                        ))?((&local_paths, workspace.id))
+                        .context("clearing out old locations")?;
 
-                // Upsert
-                conn.exec_bound(sql!(
-                    INSERT INTO workspaces(
-                        workspace_id,
-                        local_paths,
-                        left_dock_visible,
-                        left_dock_active_panel,
-                        left_dock_zoom,
-                        right_dock_visible,
-                        right_dock_active_panel,
-                        right_dock_zoom,
-                        bottom_dock_visible,
-                        bottom_dock_active_panel,
-                        bottom_dock_zoom,
-                        timestamp
-                    )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
-                    ON CONFLICT DO
-                    UPDATE SET
-                        local_paths = ?2,
-                        left_dock_visible = ?3,
-                        left_dock_active_panel = ?4,
-                        left_dock_zoom = ?5,
-                        right_dock_visible = ?6,
-                        right_dock_active_panel = ?7,
-                        right_dock_zoom = ?8,
-                        bottom_dock_visible = ?9,
-                        bottom_dock_active_panel = ?10,
-                        bottom_dock_zoom = ?11,
-                        timestamp = CURRENT_TIMESTAMP
-                ))?((workspace.id, &workspace.local_paths, workspace.docks))
-                .context("Updating workspace")?;
+                        // Upsert
+                        conn.exec_bound(sql!(
+                            INSERT INTO workspaces(
+                                workspace_id,
+                                local_paths,
+                                left_dock_visible,
+                                left_dock_active_panel,
+                                left_dock_zoom,
+                                right_dock_visible,
+                                right_dock_active_panel,
+                                right_dock_zoom,
+                                bottom_dock_visible,
+                                bottom_dock_active_panel,
+                                bottom_dock_zoom,
+                                timestamp
+                            )
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+                            ON CONFLICT DO
+                            UPDATE SET
+                                local_paths = ?2,
+                                left_dock_visible = ?3,
+                                left_dock_active_panel = ?4,
+                                left_dock_zoom = ?5,
+                                right_dock_visible = ?6,
+                                right_dock_active_panel = ?7,
+                                right_dock_zoom = ?8,
+                                bottom_dock_visible = ?9,
+                                bottom_dock_active_panel = ?10,
+                                bottom_dock_zoom = ?11,
+                                timestamp = CURRENT_TIMESTAMP
+                        ))?((workspace.id, &local_paths, workspace.docks))
+                        .context("Updating workspace")?;
+                    }
+                    SerializedWorkspaceLocation::Remote {
+                        id,
+                        path,
+                        dev_server_name,
+                    } => {
+                        conn.exec_bound(sql!(
+                            DELETE FROM workspaces WHERE remote_project_id = ? AND workspace_id != ?
+                        ))?((id.0, workspace.id))
+                        .context("clearing out old locations")?;
+
+                        conn.exec_bound(sql!(
+                            INSERT INTO remote_projects(
+                                remote_project_id,
+                                path,
+                                dev_server_name
+                            ) VALUES (?1, ?2, ?3)
+                            ON CONFLICT DO
+                            UPDATE SET
+                                path = ?2,
+                                dev_server_name = ?3
+                        ))?((id.0, path, dev_server_name))?;
+
+                        // Upsert
+                        conn.exec_bound(sql!(
+                            INSERT INTO workspaces(
+                                workspace_id,
+                                remote_project_id,
+                                left_dock_visible,
+                                left_dock_active_panel,
+                                left_dock_zoom,
+                                right_dock_visible,
+                                right_dock_active_panel,
+                                right_dock_zoom,
+                                bottom_dock_visible,
+                                bottom_dock_active_panel,
+                                bottom_dock_zoom,
+                                timestamp
+                            )
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
+                            ON CONFLICT DO
+                            UPDATE SET
+                                remote_project_id = ?2,
+                                left_dock_visible = ?3,
+                                left_dock_active_panel = ?4,
+                                left_dock_zoom = ?5,
+                                right_dock_visible = ?6,
+                                right_dock_active_panel = ?7,
+                                right_dock_zoom = ?8,
+                                bottom_dock_visible = ?9,
+                                bottom_dock_active_panel = ?10,
+                                bottom_dock_zoom = ?11,
+                                timestamp = CURRENT_TIMESTAMP
+                        ))?((workspace.id, id.0, workspace.docks))
+                        .context("Updating workspace")?;
+                    }
+                }
 
                 // Save center pane group
                 Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)

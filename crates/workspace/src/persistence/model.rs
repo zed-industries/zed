@@ -65,9 +65,19 @@ impl Column for LocalPaths {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub(crate) enum SerializedWorkspaceLocation {
+    Local(LocalPaths),
+    Remote {
+        id: RemoteProjectId,
+        path: String,
+        dev_server_name: String,
+    },
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
-    pub(crate) local_paths: LocalPaths,
+    pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) center_group: SerializedPaneGroup,
     pub(crate) bounds: Option<Bounds<DevicePixels>>,
     pub(crate) fullscreen: bool,

@@ -82,17 +82,17 @@ use ui::{
     IntoElement, Label, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
     VisualContext as _, WindowContext,
 };
-use util::ResultExt;
+use util::{maybe, ResultExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
 };
 
-use crate::notifications::NotificationId;
 use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
     SerializedAxis,
 };
+use crate::{notifications::NotificationId, persistence::model::SerializedWorkspaceLocation};
 
 lazy_static! {
     static ref ZED_WINDOW_SIZE: Option<Size<DevicePixels>> = env::var("ZED_WINDOW_SIZE")
@@ -3525,24 +3525,42 @@ impl Workspace {
             }
         }
 
-        if let Some(location) = self.local_paths(cx) {
-            // Load bearing special case:
-            //  - with_local_workspace() relies on this to not have other stuff open
-            //    when you open your log
-            if !location.paths().is_empty() {
-                let center_group = build_serialized_pane_group(&self.center.root, cx);
-                let docks = build_serialized_docks(self, cx);
-                let serialized_workspace = SerializedWorkspace {
-                    id: self.database_id,
-                    local_paths: location,
-                    center_group,
-                    bounds: Default::default(),
-                    display: Default::default(),
-                    docks,
-                    fullscreen: cx.is_fullscreen(),
-                };
-                return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
+        let location = if let Some(local_paths) = self.local_paths(cx) {
+            if !local_paths.paths().is_empty() {
+                Some(SerializedWorkspaceLocation::Local(local_paths))
+            } else {
+                None
             }
+        } else if let Some(remote_project_id) = self.project().read(cx).remote_project_id() {
+            let store = remote_projects::Store::global(cx).read(cx);
+            maybe!({
+                let project = store.find_remote_project_by_id(remote_project_id)?;
+                let dev_server = store.dev_server(project.dev_server_id)?;
+
+                Some(persistence::model::SerializedWorkspaceLocation::Remote {
+                    id: remote_project_id,
+                    dev_server_name: dev_server.name.to_string(),
+                    path: project.path.to_string(),
+                })
+            })
+        } else {
+            None
+        };
+
+        // don't save workspace state for the empty workspace.
+        if let Some(location) = location {
+            let center_group = build_serialized_pane_group(&self.center.root, cx);
+            let docks = build_serialized_docks(self, cx);
+            let serialized_workspace = SerializedWorkspace {
+                id: self.database_id,
+                location,
+                center_group,
+                bounds: Default::default(),
+                display: Default::default(),
+                docks,
+                fullscreen: cx.is_fullscreen(),
+            };
+            return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }
         Task::ready(())
     }
