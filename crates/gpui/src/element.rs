@@ -282,6 +282,7 @@ enum ElementDrawPhase<BeforeLayout, AfterLayout, BeforePaint> {
     Painted,
 }
 
+#[derive(Default)]
 pub struct ElementMeasurement {
     pub size: Size<Pixels>,
     pub focus_target_bounds: Option<Bounds<Pixels>>,

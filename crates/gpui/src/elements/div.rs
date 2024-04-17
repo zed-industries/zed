@@ -1394,7 +1394,16 @@ impl Interactivity {
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
-                        let result = f(&style, scroll_offset, cx);
+                        let focus_target_bounds =
+                            self.tracked_focus_handle.as_ref().and_then(|focus_handle| {
+                                if focus_handle.is_focused(cx) {
+                                    Some(bounds)
+                                } else {
+                                    None
+                                }
+                            });
+
+                        let result = f(&style, scroll_offset, focus_target_bounds, cx);
                         (result, element_state)
                     })
                 })

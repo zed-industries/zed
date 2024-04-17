@@ -55,7 +55,7 @@ impl Element for Svg {
         cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
         self.interactivity
-            .after_layout(bounds, bounds.size, cx, |_, _, _| {});
+            .after_layout(bounds, bounds.size, cx, |_, _, _, _| {});
         (None, ())
     }
 

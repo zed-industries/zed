@@ -6,8 +6,9 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementContext,
-    ElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Render,
-    ScrollHandle, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
+    ElementId, ElementMeasurement, Hitbox, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, View, ViewContext,
+    WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -109,15 +110,17 @@ impl Element for UniformList {
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let max_items = self.item_count;
-        let item_size = self.measure_item(None, cx);
+        let item_measurement = self.measure_item(None, cx);
         let layout_id = self.interactivity.before_layout(cx, |style, cx| {
             cx.request_measured_layout(style, move |known_dimensions, available_space, _cx| {
-                let desired_height = item_size.height * max_items;
+                let desired_height = item_measurement.size.height * max_items;
                 let width = known_dimensions
                     .width
                     .unwrap_or(match available_space.width {
                         AvailableSpace::Definite(x) => x,
-                        AvailableSpace::MinContent | AvailableSpace::MaxContent => item_size.width,
+                        AvailableSpace::MinContent | AvailableSpace::MaxContent => {
+                            item_measurement.width
+                        }
                     });
 
                 let height = match available_space.height {
@@ -131,7 +134,7 @@ impl Element for UniformList {
         (
             layout_id,
             UniformListFrameState {
-                item_size,
+                item_size: item_measurement.size,
                 items: SmallVec::new(),
             },
         )
@@ -264,9 +267,13 @@ impl UniformList {
         self
     }
 
-    fn measure_item(&self, list_width: Option<Pixels>, cx: &mut ElementContext) -> Size<Pixels> {
+    fn measure_item(
+        &self,
+        list_width: Option<Pixels>,
+        cx: &mut ElementContext,
+    ) -> ElementMeasurement {
         if self.item_count == 0 {
-            return Size::default();
+            return ElementMeasurement::default();
         }
 
         let item_ix = cmp::min(self.item_to_measure_index, self.item_count - 1);
