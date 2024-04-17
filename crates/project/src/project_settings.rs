@@ -78,6 +78,8 @@ pub struct InlineBlameSettings {
     ///
     /// Default: 0
     pub delay_ms: Option<u64>,
+
+    pub min_column: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
