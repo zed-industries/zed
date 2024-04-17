@@ -314,7 +314,16 @@ impl WorkspaceDb {
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, local_paths, remote_project_id, bounds, display, fullscreen, centered_layout, docks): (
+        let (
+            workspace_id,
+            local_paths,
+            remote_project_id,
+            bounds,
+            display,
+            fullscreen,
+            centered_layout,
+            docks,
+        ): (
             WorkspaceId,
             Option<LocalPaths>,
             Option<u64>,
@@ -1063,23 +1072,6 @@ mod tests {
 
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_2.clone()).await;
-
-        let mut stmt = Statement::prepare(&db.0, "SELECT * FROM workspaces").unwrap();
-        stmt.map(|statement| {
-            for i in 0.. {
-                match statement.column_text(i) {
-                    Ok(s) => {
-                        dbg!(s);
-                    }
-                    Err(e) => {
-                        dbg!(e);
-                        break;
-                    }
-                }
-            }
-            Ok(())
-        })
-        .unwrap();
 
         // Test that paths are treated as a set
         assert_eq!(
