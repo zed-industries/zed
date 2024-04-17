@@ -78,7 +78,9 @@ pub struct InlineBlameSettings {
     ///
     /// Default: 0
     pub delay_ms: Option<u64>,
-
+    /// The minimum column number to show the inline blame information at
+    ///
+    /// Default: 0
     pub min_column: Option<u32>,
 }
 
