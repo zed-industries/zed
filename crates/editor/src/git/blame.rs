@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use collections::HashMap;
 use git::{
     blame::{Blame, BlameEntry},
@@ -8,11 +8,13 @@ use git::{
     Oid,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
+use itertools::Itertools;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
 use url::Url;
+use util::{github::fetch_github_commit_author, http::HttpClient, ResultExt};
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -52,6 +54,7 @@ pub struct CommitDetails {
     pub message: String,
     pub parsed_message: ParsedMarkdown,
     pub permalink: Option<Url>,
+    pub avatar_url: Option<Url>,
 }
 
 pub struct GitBlame {
@@ -62,6 +65,7 @@ pub struct GitBlame {
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
+    avatars_task: Task<Result<()>>,
     generated: bool,
     user_triggered: bool,
     regenerate_on_edit_task: Task<Result<()>>,
@@ -129,6 +133,7 @@ impl GitBlame {
             user_triggered,
             commit_details: HashMap::default(),
             task: Task::ready(Ok(())),
+            avatars_task: Task::ready(Ok(())),
             generated: false,
             regenerate_on_edit_task: Task::ready(Ok(())),
             _regenerate_subscriptions: vec![buffer_subscriptions, project_subscription],
@@ -307,6 +312,7 @@ impl GitBlame {
                     this.entries = entries;
                     this.commit_details = commit_details;
                     this.generated = true;
+                    this.fetch_avatars(cx);
                     cx.notify();
                 }
                 Err(error) => this.project.update(cx, |_, cx| {
@@ -337,11 +343,97 @@ impl GitBlame {
             this.update(&mut cx, |this, cx| {
                 this.generate(cx);
             })
+        })
+    }
+
+    fn fetch_avatars(&mut self, cx: &mut ModelContext<Self>) {
+        let repo_owner = "zed-industries";
+        let repo = "zed";
+
+        self.avatars_task = cx.spawn(|this, mut cx| async move {
+            let (http_client, commit_oids) = this.update(&mut cx, |this, cx| {
+                let http_client: Arc<dyn HttpClient> = this.project.read(cx).client().http_client();
+
+                let commit_oids = this
+                    .commit_details
+                    .iter()
+                    .filter_map(|(oid, details)| {
+                        details.avatar_url.is_none().then_some(oid.clone())
+                    })
+                    .collect::<Vec<_>>();
+
+                (http_client, commit_oids)
+            })?;
+
+            let urls = cx
+                .background_executor()
+                .spawn(async move {
+                    fetch_avatars_for_commits(repo_owner, repo, commit_oids, &http_client).await
+                })
+                .await?;
+
+            this.update(&mut cx, |this, cx| {
+                for (oid, url) in urls.into_iter() {
+                    if let Some(entry) = this.commit_details.get_mut(&oid) {
+                        entry.avatar_url.replace(url);
+                    }
+                }
+                cx.notify();
+            })
         });
     }
 }
 
 const REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(2);
+
+async fn fetch_avatars_for_commits(
+    repo_owner: &str,
+    repo: &str,
+    commit_oids: Vec<Oid>,
+    http_client: &Arc<dyn HttpClient>,
+) -> Result<HashMap<Oid, Url>> {
+    const WORKERS: usize = 4;
+
+    let chunk_size = commit_oids.len() / WORKERS;
+
+    let tasks = commit_oids
+        .chunks(chunk_size)
+        .into_iter()
+        .map(|oids| {
+            let http_client = http_client.clone();
+            async move {
+                let mut results = Vec::with_capacity(oids.len());
+
+                for oid in oids {
+                    let commit = oid.to_string();
+                    let user = fetch_github_commit_author(repo_owner, repo, &commit, &http_client)
+                        .await
+                        .context("fetching commit author failed")
+                        .log_err()
+                        .flatten();
+
+                    if let Some(url) =
+                        user.and_then(|user| Url::parse(user.avatar_url.as_str()).ok())
+                    {
+                        results.push((*oid, url));
+                    }
+                }
+
+                results
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let urls = futures::future::join_all(tasks)
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<HashMap<Oid, Url>>();
+
+    println!("done fetching");
+
+    anyhow::Ok(urls)
+}
 
 fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree<GitBlameEntry> {
     let mut current_row = 0;
@@ -414,6 +506,7 @@ async fn parse_commit_messages(
                 message,
                 parsed_message,
                 permalink,
+                avatar_url: None,
             },
         );
     }

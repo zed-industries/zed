@@ -53,7 +53,7 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor, ThemeSettings};
-use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
+use ui::{h_flex, Avatar, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
@@ -3133,6 +3133,16 @@ impl Render for BlameEntryTooltip {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
         let message_max_height = cx.line_height() * 12 + (ui_font_size / 0.4);
 
+        let avatar_url = self
+            .details
+            .as_ref()
+            .and_then(|details| details.avatar_url.clone())
+            .map(|mut url| {
+                // TODO: this is GitHub specific
+                url.set_query(Some("size=128"));
+                url
+            });
+
         tooltip_container(cx, move |this, cx| {
             this.occlude()
                 .on_mouse_move(|_, cx| cx.stop_propagation())
@@ -3145,6 +3155,9 @@ impl Render for BlameEntryTooltip {
                                 .gap_x_2()
                                 .overflow_x_hidden()
                                 .flex_wrap()
+                                .when_some(avatar_url, |this, url| {
+                                    this.child(Avatar::new(url.to_string()).size(rems(1.)))
+                                })
                                 .child(author)
                                 .when_some(author_email, |this, author_email| {
                                     this.child(
@@ -3153,7 +3166,6 @@ impl Render for BlameEntryTooltip {
                                             .child(author_email),
                                     )
                                 })
-                                .pb_1()
                                 .border_b_1()
                                 .border_color(cx.theme().colors().border),
                         )
