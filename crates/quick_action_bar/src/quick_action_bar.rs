@@ -155,7 +155,7 @@ impl Render for QuickActionBar {
                             }
 
                             menu = menu.toggleable_entry(
-                                "Show Git Blame",
+                                "Show Git Blame Inline",
                                 git_blame_inline_enabled,
                                 Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
                                 {
