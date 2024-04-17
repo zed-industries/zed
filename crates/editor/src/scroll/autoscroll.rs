@@ -97,7 +97,7 @@ impl Editor {
             self.set_scroll_position(scroll_position, cx);
         }
 
-        let Some((autoscroll, local)) = self.scroll_manager.take_autoscroll_request() else {
+        let Some((autoscroll, local)) = self.scroll_manager.autoscroll_request.take() else {
             return false;
         };
 
@@ -147,9 +147,9 @@ impl Editor {
         let strategy = match autoscroll {
             Autoscroll::Strategy(strategy) => strategy,
             Autoscroll::Next => {
-                let last_autoscroll = &self.scroll_manager.last_autoscroll();
+                let last_autoscroll = &self.scroll_manager.last_autoscroll;
                 if let Some(last_autoscroll) = last_autoscroll {
-                    if self.scroll_manager.anchor().offset == last_autoscroll.0
+                    if self.scroll_manager.anchor.offset == last_autoscroll.0
                         && target_top == last_autoscroll.1
                         && target_bottom == last_autoscroll.2
                     {
@@ -165,7 +165,7 @@ impl Editor {
 
         match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
-                let margin = margin.min(self.scroll_manager.vertical_scroll_margin());
+                let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
                 let target_top = (target_top - margin).max(0.0);
                 let target_bottom = target_bottom + margin;
                 let start_row = scroll_position.y;
@@ -189,7 +189,7 @@ impl Editor {
             }
             AutoscrollStrategy::Focused => {
                 scroll_position.y =
-                    (target_top - self.scroll_manager.vertical_scroll_margin()).max(0.0);
+                    (target_top - self.scroll_manager.vertical_scroll_margin).max(0.0);
                 self.set_scroll_position_internal(scroll_position, local, true, cx);
             }
             AutoscrollStrategy::Top => {
@@ -206,12 +206,12 @@ impl Editor {
             }
         }
 
-        self.scroll_manager.set_last_autoscroll(Some((
-            self.scroll_manager.anchor().offset,
+        self.scroll_manager.last_autoscroll = Some((
+            self.scroll_manager.anchor.offset,
             target_top,
             target_bottom,
             strategy,
-        )));
+        ));
 
         true
     }
@@ -263,15 +263,14 @@ impl Editor {
             return false;
         }
 
-        let scroll_left = self.scroll_manager.anchor().offset.x * max_glyph_width;
+        let scroll_left = self.scroll_manager.anchor.offset.x * max_glyph_width;
         let scroll_right = scroll_left + viewport_width;
 
         if target_left < scroll_left {
-            self.scroll_manager.anchor().offset.x = target_left / max_glyph_width;
+            self.scroll_manager.anchor.offset.x = target_left / max_glyph_width;
             true
         } else if target_right > scroll_right {
-            self.scroll_manager.anchor().offset.x =
-                (target_right - viewport_width) / max_glyph_width;
+            self.scroll_manager.anchor.offset.x = (target_right - viewport_width) / max_glyph_width;
             true
         } else {
             false
@@ -279,8 +278,7 @@ impl Editor {
     }
 
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
-        self.scroll_manager
-            .set_autoscroll_request(Some((autoscroll, true)));
+        self.scroll_manager.autoscroll_request = Some((autoscroll, true));
         cx.notify();
     }
 
@@ -289,8 +287,7 @@ impl Editor {
         autoscroll: Autoscroll,
         cx: &mut ViewContext<Self>,
     ) {
-        self.scroll_manager
-            .set_autoscroll_request(Some((autoscroll, false)));
+        self.scroll_manager.autoscroll_request = Some((autoscroll, false));
         cx.notify();
     }
 }

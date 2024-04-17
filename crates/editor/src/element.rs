@@ -11,7 +11,7 @@ use crate::{
     },
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MouseContextMenu},
-    scroll::{scroll_amount::ScrollAmount, ScrollManager},
+    scroll::scroll_amount::ScrollAmount,
     BlockDisposition, BlockProperties, CursorShape, DisplayPoint, DocumentHighlightRead,
     DocumentHighlightWrite, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
    ExpandExcerpts, GitRowHighlight, GutterDimensions, HalfPageDown, HalfPageUp, HoveredCursor, LineDown, LineUp,
@@ -3435,7 +3435,7 @@ fn render_deleted_block(
         editor.highlight_rows::<GitRowHighlight>(start..end, Some(deleted_color), cx);
         // TODO kb does not scroll through, fix
         // TODO kb disable wrapping
-        editor.scroll_manager = ScrollManager::fixed(height);
+        // editor.scroll_manager = ScrollManager::fixed(height);
         editor
     });
 
