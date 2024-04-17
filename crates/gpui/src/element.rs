@@ -45,8 +45,12 @@ use std::{any::Any, fmt::Debug, mem, ops::DerefMut};
 /// for more details.
 pub trait Element: 'static + IntoElement {
     /// The type of state returned from [`Element::before_layout`]. A mutable reference to this state is subsequently
-    /// provided to [`Element::before_paint`] and [`Element::paint`].
+    /// provided to [`Element::after_layout`], [`Element::before_paint`] and [`Element::paint`].
     type BeforeLayout: 'static;
+
+    /// The type of state returned from [`Element::after_layout`]. A mutable reference to this state is subsequently
+    /// provided to [`Element::before_paint`] and [`Element::paint`].
+    type AfterLayout: 'static;
 
     /// The type of state returned from [`Element::before_paint`]. A mutable reference to this state is subsequently
     /// provided to [`Element::paint`].
@@ -56,21 +60,30 @@ pub trait Element: 'static + IntoElement {
     /// Use this method to request a layout from Taffy and initialize the element's state.
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout);
 
-    /// After laying out an element, we need to commit its bounds to the current frame for hitbox
-    /// purposes. The state argument is the same state that was returned from [`Element::before_layout()`].
+    /// todo!()
+    fn after_layout(
+        &mut self,
+        size: Size<Pixels>,
+        before_layout: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout);
+
+    /// Before painting an element, we need to commit its bounds to the current frame for hitbox
+    /// purposes.
     fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
+        after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) -> Self::BeforePaint;
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
-    /// The state argument is the same state that was returned from [`Element::before_layout()`].
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
+        after_layout: &mut Self::AfterLayout,
         before_paint: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     );
@@ -162,6 +175,7 @@ impl<C: RenderOnce> Component<C> {
 
 impl<C: RenderOnce> Element for Component<C> {
     type BeforeLayout = AnyElement;
+    type AfterLayout = ();
     type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
@@ -175,10 +189,21 @@ impl<C: RenderOnce> Element for Component<C> {
         (layout_id, element)
     }
 
+    fn after_layout(
+        &mut self,
+        size: Size<Pixels>,
+        element: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        let bounds = element.after_layout(cx);
+        (bounds, ())
+    }
+
     fn before_paint(
         &mut self,
         _: Bounds<Pixels>,
         element: &mut AnyElement,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         element.before_paint(cx);
@@ -188,6 +213,7 @@ impl<C: RenderOnce> Element for Component<C> {
         &mut self,
         _: Bounds<Pixels>,
         element: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         _: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
@@ -212,6 +238,8 @@ trait ElementObject {
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> LayoutId;
 
+    fn after_layout(&mut self, cx: &mut ElementContext) -> Option<Bounds<Pixels>>;
+
     fn before_paint(&mut self, cx: &mut ElementContext);
 
     fn paint(&mut self, cx: &mut ElementContext);
@@ -220,36 +248,43 @@ trait ElementObject {
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
-    ) -> Size<Pixels>;
+    ) -> ElementMeasurement;
 }
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
 pub struct Drawable<E: Element> {
     /// The drawn element.
     pub element: E,
-    phase: ElementDrawPhase<E::BeforeLayout, E::BeforePaint>,
+    phase: ElementDrawPhase<E::BeforeLayout, E::AfterLayout, E::BeforePaint>,
 }
 
 #[derive(Default)]
-enum ElementDrawPhase<BeforeLayout, BeforePaint> {
+enum ElementDrawPhase<BeforeLayout, AfterLayout, BeforePaint> {
     #[default]
     Start,
     BeforeLayout {
         layout_id: LayoutId,
         before_layout: BeforeLayout,
     },
-    LayoutComputed {
+    AfterLayout {
         layout_id: LayoutId,
-        available_space: Size<AvailableSpace>,
+        available_space: Option<Size<AvailableSpace>>,
         before_layout: BeforeLayout,
+        after_layout: AfterLayout,
     },
     BeforePaint {
         node_id: DispatchNodeId,
         bounds: Bounds<Pixels>,
         before_layout: BeforeLayout,
+        after_layout: AfterLayout,
         before_paint: BeforePaint,
     },
     Painted,
+}
+
+pub struct ElementMeasurement {
+    size: Size<Pixels>,
+    focus_target_bounds: Option<Bounds<Pixels>>,
 }
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
@@ -275,29 +310,51 @@ impl<E: Element> Drawable<E> {
         }
     }
 
-    fn before_paint(&mut self, cx: &mut ElementContext) {
+    fn after_layout(&mut self, cx: &mut ElementContext) -> Option<Bounds<Pixels>> {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::BeforeLayout {
                 layout_id,
                 mut before_layout,
+            } => {
+                let size = cx.layout_bounds(layout_id).size;
+                let (focus_target_bounds, after_layout) =
+                    self.element.after_layout(size, &mut before_layout, cx);
+                self.phase = ElementDrawPhase::AfterLayout {
+                    layout_id,
+                    available_space: None,
+                    before_layout,
+                    after_layout,
+                };
+
+                focus_target_bounds
             }
-            | ElementDrawPhase::LayoutComputed {
+            _ => panic!("must call before_layout before after_layout"),
+        }
+    }
+
+    fn before_paint(&mut self, cx: &mut ElementContext) {
+        match mem::take(&mut self.phase) {
+            ElementDrawPhase::AfterLayout {
                 layout_id,
                 mut before_layout,
+                mut after_layout,
                 ..
             } => {
                 let bounds = cx.layout_bounds(layout_id);
                 let node_id = cx.window.next_frame.dispatch_tree.push_node();
-                let before_paint = self.element.before_paint(bounds, &mut before_layout, cx);
+                let before_paint =
+                    self.element
+                        .before_paint(bounds, &mut before_layout, &mut after_layout, cx);
                 self.phase = ElementDrawPhase::BeforePaint {
                     node_id,
                     bounds,
                     before_layout,
+                    after_layout,
                     before_paint,
                 };
                 cx.window.next_frame.dispatch_tree.pop_node();
             }
-            _ => panic!("must call before_layout before before_paint"),
+            _ => panic!("must call after_layout before before_paint"),
         }
     }
 
@@ -307,12 +364,18 @@ impl<E: Element> Drawable<E> {
                 node_id,
                 bounds,
                 mut before_layout,
+                mut after_layout,
                 mut before_paint,
                 ..
             } => {
                 cx.window.next_frame.dispatch_tree.set_active_node(node_id);
-                self.element
-                    .paint(bounds, &mut before_layout, &mut before_paint, cx);
+                self.element.paint(
+                    bounds,
+                    &mut before_layout,
+                    &mut after_layout,
+                    &mut before_paint,
+                    cx,
+                );
                 self.phase = ElementDrawPhase::Painted;
                 before_layout
             }
@@ -324,43 +387,56 @@ impl<E: Element> Drawable<E> {
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
-    ) -> Size<Pixels> {
+    ) -> ElementMeasurement {
         if matches!(&self.phase, ElementDrawPhase::Start) {
             self.before_layout(cx);
         }
 
-        let layout_id = match mem::take(&mut self.phase) {
+        match mem::take(&mut self.phase) {
             ElementDrawPhase::BeforeLayout {
                 layout_id,
-                before_layout,
+                mut before_layout,
             } => {
                 cx.compute_layout(layout_id, available_space);
-                self.phase = ElementDrawPhase::LayoutComputed {
+                let size = cx.layout_bounds(layout_id).size;
+                let (focus_target_bounds, after_layout) =
+                    self.element.after_layout(size, &mut before_layout, cx);
+                self.phase = ElementDrawPhase::AfterLayout {
                     layout_id,
-                    available_space,
+                    available_space: Some(available_space),
                     before_layout,
+                    after_layout,
                 };
-                layout_id
+                ElementMeasurement {
+                    size,
+                    focus_target_bounds,
+                }
             }
-            ElementDrawPhase::LayoutComputed {
+            ElementDrawPhase::AfterLayout {
                 layout_id,
                 available_space: prev_available_space,
-                before_layout,
+                mut before_layout,
+                ..
             } => {
-                if available_space != prev_available_space {
+                if Some(available_space) != prev_available_space {
                     cx.compute_layout(layout_id, available_space);
                 }
-                self.phase = ElementDrawPhase::LayoutComputed {
+                let size = cx.layout_bounds(layout_id).size;
+                let (focus_target_bounds, after_layout) =
+                    self.element.after_layout(size, &mut before_layout, cx);
+                self.phase = ElementDrawPhase::AfterLayout {
                     layout_id,
-                    available_space,
+                    available_space: Some(available_space),
                     before_layout,
+                    after_layout,
                 };
-                layout_id
+                ElementMeasurement {
+                    size,
+                    focus_target_bounds,
+                }
             }
             _ => panic!("cannot measure after painting"),
-        };
-
-        cx.layout_bounds(layout_id).size
+        }
     }
 }
 
@@ -377,6 +453,10 @@ where
         Drawable::before_layout(self, cx)
     }
 
+    fn after_layout(&mut self, cx: &mut ElementContext) -> Option<Bounds<Pixels>> {
+        Drawable::after_layout(self, cx)
+    }
+
     fn before_paint(&mut self, cx: &mut ElementContext) {
         Drawable::before_paint(self, cx);
     }
@@ -389,7 +469,7 @@ where
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
-    ) -> Size<Pixels> {
+    ) -> ElementMeasurement {
         Drawable::measure(self, available_space, cx)
     }
 }
@@ -420,6 +500,11 @@ impl AnyElement {
         self.0.before_layout(cx)
     }
 
+    /// todo!()
+    pub fn after_layout(&mut self, cx: &mut ElementContext) -> Option<Bounds<Pixels>> {
+        self.0.after_layout(cx)
+    }
+
     /// Commits the element bounds of this [AnyElement] for hitbox purposes.
     pub fn before_paint(&mut self, cx: &mut ElementContext) {
         self.0.before_paint(cx)
@@ -435,7 +520,7 @@ impl AnyElement {
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
-    ) -> Size<Pixels> {
+    ) -> ElementMeasurement {
         self.0.measure(available_space, cx)
     }
 
@@ -446,14 +531,15 @@ impl AnyElement {
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) -> Size<Pixels> {
-        let size = self.measure(available_space, cx);
+        let measurement = self.measure(available_space, cx);
         cx.with_absolute_element_offset(absolute_offset, |cx| self.before_paint(cx));
-        size
+        measurement.size
     }
 }
 
 impl Element for AnyElement {
     type BeforeLayout = ();
+    type AfterLayout = ();
     type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
@@ -461,10 +547,21 @@ impl Element for AnyElement {
         (layout_id, ())
     }
 
+    fn after_layout(
+        &mut self,
+        _: Size<Pixels>,
+        _: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        let bounds = self.after_layout(cx);
+        (bounds, ())
+    }
+
     fn before_paint(
         &mut self,
         _: Bounds<Pixels>,
         _: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         self.before_paint(cx)
@@ -474,6 +571,7 @@ impl Element for AnyElement {
         &mut self,
         _: Bounds<Pixels>,
         _: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         _: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
@@ -506,16 +604,27 @@ impl IntoElement for Empty {
 
 impl Element for Empty {
     type BeforeLayout = ();
+    type AfterLayout = ();
     type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         (cx.request_layout(&crate::Style::default(), None), ())
     }
 
+    fn after_layout(
+        &mut self,
+        _size: Size<Pixels>,
+        _before_layout: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        (None, ())
+    }
+
     fn before_paint(
         &mut self,
         _bounds: Bounds<Pixels>,
-        _state: &mut Self::BeforeLayout,
+        _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         _cx: &mut ElementContext,
     ) {
     }
@@ -524,6 +633,7 @@ impl Element for Empty {
         &mut self,
         _bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         _before_paint: &mut Self::BeforePaint,
         _cx: &mut ElementContext,
     ) {
