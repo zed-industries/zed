@@ -758,6 +758,10 @@ impl Terminal {
             InternalEvent::SetSelection(selection) => {
                 term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
 
+                if let Some(selection_text) = term.selection_to_string() {
+                    cx.write_to_primary(ClipboardItem::new(selection_text));
+                }
+
                 if let Some((_, head)) = selection {
                     self.selection_head = Some(*head);
                 }
@@ -773,6 +777,10 @@ impl Terminal {
 
                     selection.update(point, side);
                     term.selection = Some(selection);
+
+                    if let Some(selection_text) = term.selection_to_string() {
+                        cx.write_to_primary(ClipboardItem::new(selection_text));
+                    }
 
                     self.selection_head = Some(point);
                     cx.emit(Event::SelectionsChanged)
@@ -1200,7 +1208,12 @@ impl Terminal {
         Some(scroll_delta)
     }
 
-    pub fn mouse_down(&mut self, e: &MouseDownEvent, origin: Point<Pixels>) {
+    pub fn mouse_down(
+        &mut self,
+        e: &MouseDownEvent,
+        origin: Point<Pixels>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let position = e.position - origin;
         let point = grid_point(
             position,
@@ -1236,6 +1249,11 @@ impl Terminal {
             if let Some(sel) = selection {
                 self.events
                     .push_back(InternalEvent::SetSelection(Some((sel, point))));
+            }
+        } else if e.button == MouseButton::Middle {
+            if let Some(item) = cx.read_from_primary() {
+                let text = item.text().to_string();
+                self.input(text);
             }
         }
     }
