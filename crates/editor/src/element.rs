@@ -1147,8 +1147,6 @@ impl EditorElement {
             content_origin.x
                 + max(line_width, min as f32 * em_width)
                 + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS)
-
-            //  + line_width + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS)
         };
 
         let absolute_offset = point(start_x, start_y);
