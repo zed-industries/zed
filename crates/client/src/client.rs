@@ -1251,14 +1251,12 @@ impl Client {
     }
 
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncAppContext) {
-        // Clear the state to prevent wrongfully re-authentication
         self.state.write().credentials = None;
-        // If there is a keychain credential clear-it
+        self.disconnect(&cx);
+
         if self.has_keychain_credentials(cx).await {
             delete_credentials_from_keychain(cx).await.log_err();
         }
-        // Disconect from collab
-        self.disconnect(&cx);
     }
 
     pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
