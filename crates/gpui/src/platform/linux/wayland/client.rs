@@ -163,6 +163,15 @@ impl WaylandClientStatePtr {
                 state.mouse_focused_window = Some(window);
             }
         }
+        if state.windows.len() == 0 {
+            state
+                .common
+                .foreground_executor
+                .spawn(async {
+                    std::process::exit(0);
+                })
+                .detach();
+        }
     }
 }
 
