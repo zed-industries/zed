@@ -21,12 +21,13 @@ use uuid::Uuid;
 pub struct SerializedRemoteProject {
     id: RemoteProjectId,
     dev_server_name: String,
+    path: String,
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct WorkspaceLocation {
-    paths: Arc<Vec<PathBuf>>,
-    remote_project: Option<SerializedRemoteProject>,
+pub enum WorkspaceLocation {
+    Local(Arc<Vec<PathBuf>>)
+    Remote(SerializedRemoteProject)
 }
 
 impl WorkspaceLocation {
@@ -86,14 +87,20 @@ impl WorkspaceLocation {
 
 impl StaticColumnCount for WorkspaceLocation {
     fn column_count() -> usize {
-        2
+        1
     }
 }
 
 impl Bind for &WorkspaceLocation {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(&bincode::serialize(&self.paths)?, start_index)?;
-        statement.bind(&serde_json::to_string(&self.remote_project)?, next_index)
+        match self {
+            WorkspaceLocation::Local(paths) => {
+                statement.bind(&bincode::serialize(&paths)?, start_index)
+            }
+            WorkspaceLocation::Remote(serialized_project) => {
+                statement.bind(&serde_json::to_string(&serialized_project)?, next_index)
+            }
+        }
     }
 }
 
