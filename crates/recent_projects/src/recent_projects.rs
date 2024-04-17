@@ -10,12 +10,13 @@ use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
     Picker, PickerDelegate,
 };
+use rpc::proto::DevServerStatus;
 use serde::Deserialize;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{prelude::*, tooltip_container, ListItem, ListItemSpacing, Tooltip};
+use ui::{prelude::*, tooltip_container, Indicator, ListItem, ListItemSpacing, Tooltip};
 use util::{paths::PathExt, ResultExt};
 use workspace::{
     AppState, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId, WORKSPACE_DB,
@@ -303,6 +304,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     workspace.open_workspace_for_paths(false, paths, cx)
                                 }
                             }
+                            //TODO support opening remote projects in the same window
                             SerializedWorkspaceLocation::Remote(remote_project) => {
                                 let store = ::remote_projects::Store::global(cx).read(cx);
                                 let Some(project_id) = store
@@ -371,6 +373,16 @@ impl PickerDelegate for RecentProjectsDelegate {
         };
 
         let is_remote = matches!(location, SerializedWorkspaceLocation::Remote(_));
+        let dev_server_status =
+            if let SerializedWorkspaceLocation::Remote(remote_project) = location {
+                let store = ::remote_projects::Store::global(cx).read(cx);
+                store
+                    .find_remote_project_by_id(remote_project.id)
+                    .and_then(|p| store.dev_server(p.dev_server_id))
+                    .map(|s| s.status.clone())
+            } else {
+                None
+            };
 
         Some(
             ListItem::new(ix)
@@ -403,7 +415,15 @@ impl PickerDelegate for RecentProjectsDelegate {
                     if self.selected_index() == ix {
                         el.end_slot::<AnyElement>(delete_button)
                     } else {
-                        el.end_hover_slot::<AnyElement>(delete_button)
+                        el.end_hover_slot::<AnyElement>(delete_button).when_some(
+                            dev_server_status,
+                            |item, status| {
+                                item.end_slot(Indicator::dot().color(match status {
+                                    DevServerStatus::Online => Color::Created,
+                                    DevServerStatus::Offline => Color::Deleted,
+                                }))
+                            },
+                        )
                     }
                 })
                 .tooltip(move |cx| {
