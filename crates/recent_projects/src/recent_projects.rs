@@ -14,7 +14,9 @@ use serde::Deserialize;
 use std::{path::Path, sync::Arc};
 use ui::{prelude::*, tooltip_container, ListItem, ListItemSpacing, Tooltip};
 use util::paths::PathExt;
-use workspace::{LocalPaths, ModalView, Workspace, WorkspaceId, WORKSPACE_DB};
+use workspace::{
+    LocalPaths, ModalView, SerializedRemoteProject, Workspace, WorkspaceId, WORKSPACE_DB,
+};
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct OpenRecent {
@@ -148,7 +150,7 @@ impl Render for RecentProjects {
 
 pub struct RecentProjectsDelegate {
     workspace: WeakView<Workspace>,
-    workspaces: Vec<(WorkspaceId, LocalPaths)>,
+    workspaces: Vec<(WorkspaceId, LocalPaths, Option<SerializedRemoteProject>)>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
@@ -214,7 +216,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .map(|(id, (_, location))| {
+            .map(|(id, (_, location, _))| {
                 let combined_string = location
                     .paths()
                     .iter()
@@ -254,7 +256,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .get(self.selected_index())
             .zip(self.workspace.upgrade())
         {
-            let (candidate_workspace_id, candidate_workspace_location) =
+            let (candidate_workspace_id, candidate_workspace_location, _) =
                 &self.workspaces[selected_match.candidate_id];
             let replace_current_window = if self.create_new_window {
                 secondary
@@ -310,7 +312,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             return None;
         };
 
-        let (workspace_id, location) = &self.workspaces[hit.candidate_id];
+        let (workspace_id, location, _) = &self.workspaces[hit.candidate_id];
         let is_current_workspace = self.is_current_workspace(*workspace_id, cx);
 
         let mut path_start_offset = 0;
@@ -427,7 +429,7 @@ fn highlights_for_path(
 impl RecentProjectsDelegate {
     fn delete_recent_project(&self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(selected_match) = self.matches.get(ix) {
-            let (workspace_id, _) = self.workspaces[selected_match.candidate_id];
+            let (workspace_id, _, _) = self.workspaces[selected_match.candidate_id];
             cx.spawn(move |this, mut cx| async move {
                 let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
                 let workspaces = WORKSPACE_DB
@@ -544,8 +546,11 @@ mod tests {
                         positions: Vec::new(),
                         string: "fake candidate".to_string(),
                     }];
-                    delegate.workspaces =
-                        vec![(WorkspaceId::default(), LocalPaths::new(vec!["/test/path/"]))];
+                    delegate.workspaces = vec![(
+                        WorkspaceId::default(),
+                        LocalPaths::new(vec!["/test/path/"]),
+                        None,
+                    )];
                 });
             })
             .unwrap();

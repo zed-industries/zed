@@ -46,7 +46,7 @@ pub use pane::*;
 pub use pane_group::*;
 use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
 pub use persistence::{
-    model::{ItemId, LocalPaths},
+    model::{ItemId, LocalPaths, SerializedRemoteProject},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
@@ -3537,11 +3537,12 @@ impl Workspace {
                 let project = store.find_remote_project_by_id(remote_project_id)?;
                 let dev_server = store.dev_server(project.dev_server_id)?;
 
-                Some(persistence::model::SerializedWorkspaceLocation::Remote {
+                let remote_project = SerializedRemoteProject {
                     id: remote_project_id,
                     dev_server_name: dev_server.name.to_string(),
                     path: project.path.to_string(),
-                })
+                };
+                Some(SerializedWorkspaceLocation::Remote(remote_project))
             })
         } else {
             None

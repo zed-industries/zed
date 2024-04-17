@@ -19,9 +19,9 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct SerializedRemoteProject {
-    id: RemoteProjectId,
-    dev_server_name: String,
-    path: String,
+    pub id: RemoteProjectId,
+    pub dev_server_name: String,
+    pub path: String,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -49,7 +49,6 @@ impl From<LocalPaths> for SerializedWorkspaceLocation {
 }
 
 impl StaticColumnCount for LocalPaths {}
-
 impl Bind for &LocalPaths {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         statement.bind(&bincode::serialize(&self.0)?, start_index)
@@ -66,14 +65,41 @@ impl Column for LocalPaths {
     }
 }
 
+impl From<SerializedRemoteProject> for SerializedWorkspaceLocation {
+    fn from(remote_project: SerializedRemoteProject) -> Self {
+        Self::Remote(remote_project)
+    }
+}
+
+impl StaticColumnCount for SerializedRemoteProject {}
+impl Bind for &SerializedRemoteProject {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let next_index = statement.bind(&self.id.0, start_index)?;
+        let next_index = statement.bind(&self.dev_server_name, next_index)?;
+        statement.bind(&self.path, next_index)
+    }
+}
+
+impl Column for SerializedRemoteProject {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let id = statement.column_int64(start_index)?;
+        let dev_server_name = statement.column_text(start_index + 1)?.to_string();
+        let path = statement.column_text(start_index + 2)?.to_string();
+        Ok((
+            Self {
+                id: RemoteProjectId(id as u64),
+                dev_server_name,
+                path,
+            },
+            start_index + 3,
+        ))
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum SerializedWorkspaceLocation {
     Local(LocalPaths),
-    Remote {
-        id: RemoteProjectId,
-        path: String,
-        dev_server_name: String,
-    },
+    Remote(SerializedRemoteProject),
 }
 
 #[derive(Debug, PartialEq, Clone)]

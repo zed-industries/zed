@@ -22,7 +22,7 @@ use model::{
     SerializedWorkspace,
 };
 
-use self::model::{DockStructure, SerializedWorkspaceLocation};
+use self::model::{DockStructure, SerializedRemoteProject, SerializedWorkspaceLocation};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
@@ -348,9 +348,9 @@ impl WorkspaceDb {
             .flatten()?;
 
         let location = if let Some(remote_project_id) = remote_project_id {
-            let (path, dev_server_name): (String, String) = self
+            let remote_project: SerializedRemoteProject = self
                 .select_row_bound(sql! {
-                    SELECT path, dev_server_name
+                    SELECT remote_project_id, path, dev_server_name
                     FROM remote_projects
                     WHERE remote_project_id = ?
                 })
@@ -358,11 +358,7 @@ impl WorkspaceDb {
                 .context("No remote project found")
                 .warn_on_err()
                 .flatten()?;
-            SerializedWorkspaceLocation::Remote {
-                id: RemoteProjectId(remote_project_id),
-                path,
-                dev_server_name,
-            }
+            SerializedWorkspaceLocation::Remote(remote_project)
         } else if let Some(local_paths) = local_paths {
             SerializedWorkspaceLocation::Local(local_paths)
         } else {
@@ -434,14 +430,10 @@ impl WorkspaceDb {
                         ))?((workspace.id, &local_paths, workspace.docks))
                         .context("Updating workspace")?;
                     }
-                    SerializedWorkspaceLocation::Remote {
-                        id,
-                        path,
-                        dev_server_name,
-                    } => {
+                    SerializedWorkspaceLocation::Remote(remote_project) => {
                         conn.exec_bound(sql!(
                             DELETE FROM workspaces WHERE remote_project_id = ? AND workspace_id != ?
-                        ))?((id.0, workspace.id))
+                        ))?((remote_project.id.0, workspace.id))
                         .context("clearing out old locations")?;
 
                         conn.exec_bound(sql!(
@@ -454,7 +446,7 @@ impl WorkspaceDb {
                             UPDATE SET
                                 path = ?2,
                                 dev_server_name = ?3
-                        ))?((id.0, path, dev_server_name))?;
+                        ))?(&remote_project)?;
 
                         // Upsert
                         conn.exec_bound(sql!(
@@ -486,7 +478,11 @@ impl WorkspaceDb {
                                 bottom_dock_active_panel = ?10,
                                 bottom_dock_zoom = ?11,
                                 timestamp = CURRENT_TIMESTAMP
-                        ))?((workspace.id, id.0, workspace.docks))
+                        ))?((
+                            workspace.id,
+                            remote_project.id.0,
+                            workspace.docks,
+                        ))
                         .context("Updating workspace")?;
                     }
                 }
@@ -509,11 +505,18 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths)>> {
-            SELECT workspace_id, local_paths
+        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, Option<u64>)>> {
+            SELECT workspace_id, local_paths, remote_project_id
             FROM workspaces
             WHERE local_paths IS NOT NULL
             ORDER BY timestamp DESC
+        }
+    }
+
+    query! {
+        fn remote_projects() -> Result<Vec<SerializedRemoteProject>> {
+            SELECT remote_project_id, path, dev_server_name
+            FROM remote_projects
         }
     }
 
@@ -548,14 +551,29 @@ impl WorkspaceDb {
 
     // Returns the recent locations which are still valid on disk and deletes ones which no longer
     // exist.
-    pub async fn recent_workspaces_on_disk(&self) -> Result<Vec<(WorkspaceId, LocalPaths)>> {
+    pub async fn recent_workspaces_on_disk(
+        &self,
+    ) -> Result<Vec<(WorkspaceId, LocalPaths, Option<SerializedRemoteProject>)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
-        for (id, location) in self.recent_workspaces()? {
+        let remote_projects = self.remote_projects()?;
+
+        for (id, location, remote_project_id) in self.recent_workspaces()? {
+            if let Some(remote_project_id) = remote_project_id.map(RemoteProjectId) {
+                if let Some(remote_project) =
+                    remote_projects.iter().find(|rp| rp.id == remote_project_id)
+                {
+                    result.push((id, location, Some(remote_project.clone())));
+                } else {
+                    delete_tasks.push(self.delete_workspace_by_id(id));
+                }
+                continue;
+            }
+
             if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
-                result.push((id, location));
+                result.push((id, location, None));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -571,7 +589,7 @@ impl WorkspaceDb {
             .await?
             .into_iter()
             .next()
-            .map(|(_, location)| location))
+            .map(|(_, location, _)| location))
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {
