@@ -459,7 +459,6 @@ impl RemoteProjects {
 
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let dev_servers = self.remote_project_store.read(cx).dev_servers();
-        // let dev_servers = Vec::new();
 
         v_flex()
             .id("scroll-container")
