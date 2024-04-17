@@ -365,6 +365,8 @@ impl LinuxClient for WaylandClient {
                 |_| {},
             )
             .log_err();
+
+        self.0.borrow_mut().event_loop = Some(event_loop);
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
@@ -541,10 +543,13 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
             return;
         };
 
-        drop(state);
         let should_close = window.handle_toplevel_event(event);
 
         if should_close {
+            if state.windows.len() <= 1 {
+                state.common.signal.stop();
+            }
+            drop(state);
             this.drop_window(surface_id);
         }
     }

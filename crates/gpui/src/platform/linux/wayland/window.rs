@@ -311,13 +311,10 @@ impl WaylandWindowStatePtr {
             xdg_toplevel::Event::Close => {
                 let mut cb = self.callbacks.borrow_mut();
                 if let Some(mut should_close) = cb.should_close.take() {
-                    let result = (should_close)();
                     cb.should_close = Some(should_close);
-                    if result {
-                        drop(cb);
-                        self.close();
-                    }
-                    result
+                    drop(cb);
+                    self.close();
+                    true
                 } else {
                     false
                 }
