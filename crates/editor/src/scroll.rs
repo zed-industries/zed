@@ -137,6 +137,7 @@ pub struct ScrollManager {
     hide_scrollbar_task: Option<Task<()>>,
     dragging_scrollbar: bool,
     visible_line_count: Option<f32>,
+    forbid_vertical_scroll: bool,
 }
 
 impl ScrollManager {
@@ -151,6 +152,7 @@ impl ScrollManager {
             dragging_scrollbar: false,
             last_autoscroll: None,
             visible_line_count: None,
+            forbid_vertical_scroll: false,
         }
     }
 
@@ -297,6 +299,14 @@ impl ScrollManager {
         } else {
             false
         }
+    }
+
+    pub fn set_forbid_vertical_scroll(&mut self, forbid: bool) {
+        self.forbid_vertical_scroll = forbid;
+    }
+
+    pub fn forbid_vertical_scroll(&self) -> bool {
+        self.forbid_vertical_scroll
     }
 }
 

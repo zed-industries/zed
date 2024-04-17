@@ -3070,16 +3070,23 @@ impl EditorElement {
                             }
                         };
 
-                        let scroll_position = position_map.snapshot.scroll_position();
-                        let x = (scroll_position.x * max_glyph_width
+                        let current_scroll_position = position_map.snapshot.scroll_position();
+                        let x = (current_scroll_position.x * max_glyph_width
                             - (delta.x * scroll_sensitivity))
                             / max_glyph_width;
-                        let y = (scroll_position.y * line_height - (delta.y * scroll_sensitivity))
+                        let y = (current_scroll_position.y * line_height
+                            - (delta.y * scroll_sensitivity))
                             / line_height;
-                        let scroll_position =
+                        let mut scroll_position =
                             point(x, y).clamp(&point(0., 0.), &position_map.scroll_max);
+                        let forbid_vertical_scroll = editor.scroll_manager.forbid_vertical_scroll();
+                        if forbid_vertical_scroll {
+                            scroll_position.y = current_scroll_position.y;
+                            if scroll_position == current_scroll_position {
+                                return;
+                            }
+                        }
                         editor.scroll(scroll_position, axis, cx);
-                        // TODO kb add a setting to skip this: to scroll over fixed-height editors
                         cx.stop_propagation();
                     });
                 }
@@ -3418,14 +3425,19 @@ fn render_deleted_block(
 
     let removed_editor = cx.new_view(|cx| {
         let mut editor = Editor::multi_line(cx);
+        editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
+        editor.show_wrap_guides = Some(false);
+        editor.set_wrap_width(None, cx);
+        editor.show_gutter = false;
         if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_language(language, cx);
             })
         }
+        editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_text(deleted_text, cx);
-        editor.show_gutter = false;
         editor.set_read_only(true);
+
         let editor_snapshot = editor.snapshot(cx);
         let start = editor_snapshot.buffer_snapshot.anchor_before(0);
         let end = editor_snapshot
@@ -3433,9 +3445,7 @@ fn render_deleted_block(
             .anchor_after(editor.buffer.read(cx).len(cx));
 
         editor.highlight_rows::<GitRowHighlight>(start..end, Some(deleted_color), cx);
-        // TODO kb does not scroll through, fix
         // TODO kb disable wrapping
-        // editor.scroll_manager = ScrollManager::fixed(height);
         editor
     });
 
