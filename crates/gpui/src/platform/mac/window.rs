@@ -337,7 +337,6 @@ struct MacWindowState {
     handle: AnyWindowHandle,
     executor: ForegroundExecutor,
     native_window: id,
-    native_window_was_closed: bool,
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
@@ -605,6 +604,10 @@ impl MacWindow {
                 registerForDraggedTypes:
                     NSArray::arrayWithObject(nil, NSFilenamesPboardType)
             ];
+            let () = msg_send![
+                native_window,
+                setReleasedWhenClosed: NO
+            ];
 
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::init(native_view);
@@ -622,7 +625,6 @@ impl MacWindow {
                 handle,
                 executor,
                 native_window,
-                native_window_was_closed: false,
                 native_view: NonNull::new_unchecked(native_view),
                 display_link: None,
                 renderer: renderer::new_renderer(
@@ -770,19 +772,17 @@ impl Drop for MacWindow {
         this.renderer.destroy();
         let window = this.native_window;
         this.display_link.take();
-        if !this.native_window_was_closed {
-            unsafe {
-                this.native_window.setDelegate_(nil);
-            }
-
-            this.executor
-                .spawn(async move {
-                    unsafe {
-                        window.close();
-                    }
-                })
-                .detach();
+        unsafe {
+            this.native_window.setDelegate_(nil);
         }
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.close();
+                    window.autorelease();
+                }
+            })
+            .detach();
     }
 }
 
@@ -1592,7 +1592,6 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         let close_callback = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
-            lock.native_window_was_closed = true;
             lock.close_callback.take()
         };
 
