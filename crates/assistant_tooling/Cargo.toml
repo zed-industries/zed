@@ -8,10 +8,6 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
-[[bin]]
-name = "tooling"
-path = "src/main.rs"
-
 [lib]
 name = "assistant_tooling"
 path = "src/mod.rs"
