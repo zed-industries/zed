@@ -730,12 +730,13 @@ These values take in the same options as the root-level settings with the same n
 ## Preview tabs
 
 - Description:
+  (requires Zed `0.132.x`) \
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
 
   - Double-clicking on the file
   - Double-clicking on the tab header
-  - Using the 'project_panel::OpenPermanent' action
+  - Using the `project_panel::OpenPermanent` action
   - Editing the file
   - Dragging the file to a different pane
 
@@ -748,8 +749,6 @@ These values take in the same options as the root-level settings with the same n
   "enable_preview_from_file_finder": false
 }
 ```
-
-**Options**
 
 ### Enable preview from file finder
 
@@ -926,7 +925,7 @@ These values take in the same options as the root-level settings with the same n
   "font_features": null,
   "font_size": null,
   "option_as_meta": false,
-  "button": false
+  "button": false,
   "shell": {},
   "toolbar": {
     "title": true
@@ -1304,6 +1303,21 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 **Options**
 
 `boolean` values
+
+## Calls
+
+- Description: Customise behaviour when participating in a call
+- Setting: `calls`
+- Default:
+
+```json
+"calls": {
+  // Join calls with the microphone live by default
+  "mute_on_join": false,
+  // Share your project when you are the first to join a channel
+  "share_on_join": true
+},
+```
 
 ## An example configuration:
 
