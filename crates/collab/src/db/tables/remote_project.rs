@@ -9,7 +9,6 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: RemoteProjectId,
     pub dev_server_id: DevServerId,
-    pub name: String,
     pub path: String,
 }
 
@@ -45,7 +44,6 @@ impl Model {
             id: self.id.to_proto(),
             project_id: project.map(|p| p.id.to_proto()),
             dev_server_id: self.dev_server_id.to_proto(),
-            name: self.name.clone(),
             path: self.path.clone(),
         }
     }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui::{
     Action, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Model, ScrollHandle, Task, View, ViewContext,
@@ -14,7 +16,6 @@ pub struct RemoteProjects {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
     remote_project_store: Model<remote_projects::Store>,
-    remote_project_name_input: View<TextField>,
     remote_project_path_input: View<TextField>,
     dev_server_name_input: View<TextField>,
     _subscriptions: [gpui::Subscription; 2],
@@ -45,8 +46,6 @@ impl RemoteProjects {
         });
     }
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let name_editor =
-            cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Inline));
         let path_editor =
             cx.new_view(|cx| TextField::new(cx, "Path", "").with_label(FieldLabelLayout::Inline));
         let dev_server_name_editor = cx.new_view(|cx| TextField::new(cx, "", "Dev server name"));
@@ -58,7 +57,7 @@ impl RemoteProjects {
             cx.observe(&remote_project_store, |_, _, cx| {
                 cx.notify();
             }),
-            cx.on_focus_out(&focus_handle, |_, _cx| { /* cx.emit(DismissEvent) */ }),
+            cx.on_focus_out(&focus_handle, |_, _cx| cx.emit(DismissEvent)),
         ];
 
         Self {
@@ -66,7 +65,6 @@ impl RemoteProjects {
             focus_handle,
             scroll_handle: ScrollHandle::new(),
             remote_project_store,
-            remote_project_name_input: name_editor,
             remote_project_path_input: path_editor,
             dev_server_name_input: dev_server_name_editor,
             _subscriptions: subscriptions,
@@ -78,14 +76,6 @@ impl RemoteProjects {
         dev_server_id: DevServerId,
         cx: &mut ViewContext<Self>,
     ) {
-        let name = self
-            .remote_project_name_input
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
         let path = self
             .remote_project_path_input
             .read(cx)
@@ -95,15 +85,36 @@ impl RemoteProjects {
             .trim()
             .to_string();
 
-        if name == "" {
-            return;
-        }
         if path == "" {
             return;
         }
 
+        if self
+            .remote_project_store
+            .read(cx)
+            .remote_projects_for_server(dev_server_id)
+            .iter()
+            .find(|p| p.path == path)
+            .is_some()
+        {
+            cx.spawn(|_, mut cx| async move {
+                cx.prompt(
+                    gpui::PromptLevel::Critical,
+                    "Failed to create project",
+                    Some(&format!(
+                        "Project {} already exists for this dev server.",
+                        path
+                    )),
+                    &["Ok"],
+                )
+                .await
+            })
+            .detach_and_log_err(cx);
+            return;
+        }
+
         let create = self.remote_project_store.update(cx, |store, cx| {
-            store.create_remote_project(dev_server_id, name, path, cx)
+            store.create_remote_project(dev_server_id, path, cx)
         });
 
         let task = cx.spawn(|this, mut cx| async move {
@@ -127,6 +138,13 @@ impl RemoteProjects {
             })
             .log_err();
         });
+
+        self.remote_project_path_input
+            .read(cx)
+            .editor()
+            .update(cx, |editor, cx| {
+                editor.set_text("", cx);
+            });
 
         self.mode = Mode::CreateRemoteProject(CreateRemoteProject {
             dev_server_id,
@@ -180,6 +198,13 @@ impl RemoteProjects {
                 }
             }
         });
+
+        self.dev_server_name_input
+            .read(cx)
+            .editor()
+            .update(cx, |editor, cx| {
+                editor.set_text("", cx);
+            });
 
         self.mode = Mode::CreateDevServer(CreateDevServer {
             creating: Some(task),
@@ -282,7 +307,7 @@ impl RemoteProjects {
                                         creating: None,
                                         remote_project: None,
                                     });
-                                    this.remote_project_name_input
+                                    this.remote_project_path_input
                                         .read(cx)
                                         .focus_handle(cx)
                                         .focus(cx);
@@ -325,11 +350,7 @@ impl RemoteProjects {
         ListItem::new(("remote-project", remote_project_id.0))
             .start_slot(Icon::new(IconName::FileTree).when(!is_online, |icon| icon.color(Color::Muted)))
             .child(
-                h_flex()
-                    .child(Label::new(project.name.clone()).when(!is_online, |label| {
-                        label.color(Color::Muted)
-                    }))
-                    .child(Label::new(format!("({})", project.path.clone())).color(Color::Muted)),
+                    Label::new(project.path.clone())
             )
             .on_click(cx.listener(move |_, _, cx| {
                 if let Some(project_id) = project_id {
@@ -549,15 +570,6 @@ impl RemoteProjects {
                             }),
                     )
                     .child(dev_server_name.clone()),
-            )
-            .child(
-                h_flex()
-                    .ml_5()
-                    .gap_2()
-                    .child(self.remote_project_name_input.clone())
-                    .on_action(cx.listener(|this, _: &menu::Confirm, cx| {
-                        cx.focus_view(&this.remote_project_path_input)
-                    })),
             )
             .child(
                 h_flex()

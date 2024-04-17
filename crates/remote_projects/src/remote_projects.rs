@@ -24,7 +24,6 @@ pub struct Store {
 pub struct RemoteProject {
     pub id: RemoteProjectId,
     pub project_id: Option<ProjectId>,
-    pub name: SharedString,
     pub path: SharedString,
     pub dev_server_id: DevServerId,
 }
@@ -34,7 +33,6 @@ impl From<proto::RemoteProject> for RemoteProject {
         Self {
             id: RemoteProjectId(project.id),
             project_id: project.project_id.map(|id| ProjectId(id)),
-            name: project.name.into(),
             path: project.path.into(),
             dev_server_id: DevServerId(project.dev_server_id),
         }
@@ -90,7 +88,7 @@ impl Store {
             .filter(|project| project.dev_server_id == id)
             .cloned()
             .collect();
-        projects.sort_by_key(|p| (p.name.clone(), p.id));
+        projects.sort_by_key(|p| (p.path.clone(), p.id));
         projects
     }
 
@@ -140,7 +138,6 @@ impl Store {
     pub fn create_remote_project(
         &mut self,
         dev_server_id: DevServerId,
-        name: String,
         path: String,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<proto::CreateRemoteProjectResponse>> {
@@ -149,7 +146,6 @@ impl Store {
             client
                 .request(proto::CreateRemoteProject {
                     dev_server_id: dev_server_id.0,
-                    name,
                     path,
                 })
                 .await

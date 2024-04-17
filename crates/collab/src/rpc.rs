@@ -2214,7 +2214,6 @@ async fn create_remote_project(
         .await
         .create_remote_project(
             DevServerId(request.dev_server_id as i32),
-            &request.name,
             &request.path,
             session.user_id(),
         )

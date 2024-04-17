@@ -41,7 +41,6 @@ impl Database {
                 .map(|(remote_project, project)| proto::RemoteProject {
                     id: remote_project.id.to_proto(),
                     project_id: project.map(|p| p.id.to_proto()),
-                    name: remote_project.name,
                     dev_server_id: remote_project.dev_server_id.to_proto(),
                     path: remote_project.path,
                 })
@@ -87,7 +86,6 @@ impl Database {
     pub async fn create_remote_project(
         &self,
         dev_server_id: DevServerId,
-        name: &str,
         path: &str,
         user_id: UserId,
     ) -> crate::Result<(remote_project::Model, proto::RemoteProjectsUpdate)> {
@@ -101,7 +99,6 @@ impl Database {
             }
 
             let project = remote_project::Entity::insert(remote_project::ActiveModel {
-                name: ActiveValue::Set(name.to_string()),
                 id: ActiveValue::NotSet,
                 dev_server_id: ActiveValue::Set(dev_server_id),
                 path: ActiveValue::Set(path.to_string()),

@@ -455,7 +455,7 @@ message JoinHostedProject {
 }
 
 message CreateRemoteProject {
-    string name = 2;
+    reserved 2;
     uint64 dev_server_id = 3;
     string path = 4;
 }
@@ -1169,7 +1169,7 @@ message HostedProject {
 message RemoteProject {
     uint64 id = 1;
     optional uint64 project_id = 2;
-    string name = 4;
+    reserved 4;
     uint64 dev_server_id = 5;
     string path = 6;
 }
