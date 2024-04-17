@@ -599,7 +599,7 @@ impl ProjectPanel {
     }
 
     pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
-        self.expanded_dir_ids.clear();
+        self.expanded_dir_ids.values_mut().for_each(Vec::clear);
         self.update_visible_entries(None, cx);
         cx.notify();
     }
