@@ -234,7 +234,7 @@ message Envelope {
         RejoinRemoteProjects rejoin_remote_projects = 186;
         RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
 
-        RemoteProjectsUpdate remote_projects_update = 189; // current max
+        RemoteProjectsUpdate remote_projects_update = 193; // current max
     }
 
     reserved 158 to 161;
