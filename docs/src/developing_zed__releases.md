@@ -17,25 +17,31 @@ You will need write access to the Zed repository to do this:
 - Run `./script/bump-zed-minor-versions` and push the tags
   and branches as instructed.
 - Wait for the builds to appear at https://github.com/zed-industries/zed/releases (typically takes around 30 minutes)
-- Copy the release notes from the previous Preview release(s) to the current Stable release.
-- Write new release notes for Preview. `/script/get-preview-channel-changes` can help with this, but you'll need to edit and format the output to make it good.
-- Download the artifacts for each release and test that you can run them locally.
-- Publish the releases.
+- While you're waiting:
+  - Start creating the new release notes for preview. You can start with the output of `./script/get-preview-channel-changes`.
+  - Start drafting the release tweets.
+- Once the builds are ready:
+  - Copy the release notes from the previous Preview release(s) to the current Stable release.
+  - Download the artifacts for each release and test that you can run them locally.
+  - Publish the releases on GitHub.
+  - Tweet the tweets (Credentials are in 1password).
 
 ## Patch release process
 
-If your PR fixes a panic or a crash, you should cherry-pick it to the current stable and preview branches. If your PR fixes a regression in recently released code, you should cherry-pick it to the appropriate branch.
+If your PR fixes a panic or a crash, you should cherry-pick it to the current stable and preview branches. If your PR fixes a regression in recently released code, you should cherry-pick it to preview.
 
 You will need write access to the Zed repository to do this:
 
-- Cherry pick them onto the correct branch. You can either do this manually, or leave a comment of the form `/cherry-pick v0.XXX.x` on the PR, and the GitHub bot should do it for you.
-- Run `./script/trigger-release {preview|stable}`
+- Send a PR containing your change to `main` as normal.
+- Leave a comment on the PR `/cherry-pick v0.XXX.x`. Once your PR is merged, the Github bot will send a PR to the branch.
+  - In case of a merge conflict, you will have to cherry-pick manually and push the change to the `v0.XXX.x` branch.
+- After the commits are cherry-picked onto the branch, run `./script/trigger-release {preview|stable}`. This will bump the version numbers, create a new release tag, and kick off a release build.
 - Wait for the builds to appear at https://github.com/zed-industries/zed/releases (typically takes around 30 minutes)
-- Add release notes using the `Release notes:` section of each cherry-picked PR.
+- Proof-read and edit the release notes as needed.
 - Download the artifacts for each release and test that you can run them locally.
 - Publish the release.
 
 ## Nightly release process
 
-- Merge your changes to main
-- Run `./script/trigger-release {nightly}`
+In addition to the public releases, we also have a nightly build that we encourage employees to use.
+Nightly is released by cron once a day, and can be shipped as often as you'd like. There are no release notes or announcements, so you can just merge your changes to main and run `./script/trigger-release nightly`.
