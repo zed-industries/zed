@@ -1,0 +1,26 @@
+[package]
+name = "assistant_tooling"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tooling"
+path = "src/main.rs"
+
+[lib]
+name = "assistant_tooling"
+path = "src/mod.rs"
+
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+util.workspace = true
