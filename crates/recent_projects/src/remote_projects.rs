@@ -5,7 +5,7 @@ use gpui::{
 use remote_projects::{DevServer, DevServerId, OpenRemote, RemoteProject, RemoteProjectId};
 use rpc::proto::{self, CreateDevServerResponse, DevServerStatus};
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
-use ui_text_field::{FieldLabelLayout, TextField};
+use ui_text_field::TextField;
 use util::ResultExt;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace};
 
@@ -44,9 +44,8 @@ impl RemoteProjects {
         });
     }
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let path_editor =
-            cx.new_view(|cx| TextField::new(cx, "Path", "").with_label(FieldLabelLayout::Inline));
-        let dev_server_name_editor = cx.new_view(|cx| TextField::new(cx, "", "Dev server name"));
+        let remote_project_path_input = cx.new_view(|cx| TextField::new(cx, "", "Project path"));
+        let dev_server_name_input = cx.new_view(|cx| TextField::new(cx, "", "Dev server name"));
 
         let focus_handle = cx.focus_handle();
         let remote_project_store = remote_projects::Store::global(cx);
@@ -63,8 +62,8 @@ impl RemoteProjects {
             focus_handle,
             scroll_handle: ScrollHandle::new(),
             remote_project_store,
-            remote_project_path_input: path_editor,
-            dev_server_name_input: dev_server_name_editor,
+            remote_project_path_input,
+            dev_server_name_input,
             _subscriptions: subscriptions,
         }
     }
@@ -295,9 +294,13 @@ impl RemoteProjects {
                     )
                     .child(
                         h_flex().gap_1().child(
-                            IconButton::new("add-remote-project", IconName::Plus)
-                                .tooltip(|cx| Tooltip::text("Add a remote project", cx))
-                                .on_click(cx.listener(move |this, _, cx| {
+                            IconButton::new(
+                                ("add-remote-project", dev_server_id.0),
+                                IconName::Plus,
+                            )
+                            .tooltip(|cx| Tooltip::text("Add a remote project", cx))
+                            .on_click(cx.listener(
+                                move |this, _, cx| {
                                     this.mode = Mode::CreateRemoteProject(CreateRemoteProject {
                                         dev_server_id,
                                         creating: None,
@@ -308,7 +311,8 @@ impl RemoteProjects {
                                         .focus_handle(cx)
                                         .focus(cx);
                                     cx.notify();
-                                })),
+                                },
+                            )),
                         ),
                     ),
             )
