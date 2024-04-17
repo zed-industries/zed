@@ -79,6 +79,7 @@ pub async fn open_db<M: Migrator + 'static>(
 }
 
 async fn open_main_db<M: Migrator>(db_path: &PathBuf) -> Option<ThreadSafeConnection<M>> {
+    dbg!(&db_path);
     log::info!("Opening main db");
     ThreadSafeConnection::<M>::builder(db_path.to_string_lossy().as_ref(), true)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)

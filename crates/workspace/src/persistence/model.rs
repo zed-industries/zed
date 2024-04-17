@@ -48,17 +48,15 @@ impl<P: AsRef<Path>, T: IntoIterator<Item = P>> From<T> for WorkspaceLocation {
 impl StaticColumnCount for WorkspaceLocation {}
 impl Bind for &WorkspaceLocation {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        bincode::serialize(&self.0)
-            .expect("Bincode serialization of paths should not fail")
-            .bind(statement, start_index)
+        statement.bind(&dbg!(serde_json::to_string(&self.0)?), start_index)
     }
 }
 
 impl Column for WorkspaceLocation {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let blob = statement.column_blob(start_index)?;
+        let blob = statement.column_text(start_index)?;
         Ok((
-            WorkspaceLocation(bincode::deserialize(blob).context("Bincode failed")?),
+            WorkspaceLocation(serde_json::from_str(blob).context("JSON failed")?),
             start_index + 1,
         ))
     }

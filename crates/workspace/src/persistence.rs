@@ -125,7 +125,7 @@ define_connection! {
     //
     // workspaces(
     //   workspace_id: usize, // Primary key for workspaces
-    //   workspace_location: Bincode<Vec<PathBuf>>,
+    //   workspace_location: Vec<PathBuf>,
     //   dock_visible: bool, // Deprecated
     //   dock_anchor: DockAnchor, // Deprecated
     //   dock_pane: Option<usize>, // Deprecated
@@ -289,7 +289,64 @@ define_connection! {
     sql!(
         ALTER TABLE workspaces ADD COLUMN centered_layout INTEGER; //bool
     ),
-
+    // remove bincode
+    sql!(
+        CREATE TABLE workspaces_2(
+            workspace_id INTEGER PRIMARY KEY,
+            workspace_location TEXT UNIQUE,
+            dock_visible INTEGER,
+            dock_anchor TEXT,
+            dock_pane INTEGER,
+            left_sidebar_open INTEGER,
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            window_state TEXT,
+            window_x REAL,
+            window_y REAL,
+            window_width REAL,
+            window_height REAL,
+            display BLOB,
+            left_dock_visible INTEGER,
+            left_dock_active_panel TEXT,
+            right_dock_visible INTEGER,
+            right_dock_active_panel TEXT,
+            bottom_dock_visible INTEGER,
+            bottom_dock_active_panel TEXT,
+            left_dock_zoom INTEGER,
+            right_dock_zoom INTEGER,
+            bottom_dock_zoom INTEGER,
+            fullscreen INTEGER,
+            centered_layout INTEGER
+        ) STRICT;
+        INSERT INTO workspaces_2 SELECT
+            workspace_id,
+            json_array(cast(unhex(substr(hex(workspace_location), 33)) as text)) as workspace_location,
+            dock_visible,
+            dock_anchor,
+            dock_pane,
+            left_sidebar_open,
+            timestamp,
+            window_state,
+            window_x,
+            window_y,
+            window_width,
+            window_height,
+            display,
+            left_dock_visible,
+            left_dock_active_panel,
+            right_dock_visible,
+            right_dock_active_panel,
+            bottom_dock_visible,
+            bottom_dock_active_panel,
+            left_dock_zoom,
+            right_dock_zoom,
+            bottom_dock_zoom,
+            fullscreen,
+            centered_layout
+        FROM workspaces
+        WHERE substr(hex(workspace_location), 0, 17) == "0100000000000000";
+        DROP TABLE workspaces;
+        ALTER TABLE workspaces_2 RENAME TO workspaces;
+    ),
     ];
 }
 
