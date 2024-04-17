@@ -953,7 +953,6 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         bounds: Bounds<Pixels>,
         scroll_position: gpui::Point<f32>,
-        row_height: Pixels,
         rows_per_page: f32,
         cx: &mut ElementContext,
     ) -> Option<ScrollbarLayout> {
@@ -1003,16 +1002,13 @@ impl EditorElement {
         let height = bounds.size.height;
         let total_rows = snapshot.max_point().row() as f32 + rows_per_page;
         let px_per_row = height / total_rows;
-        let thumb_height = (rows_per_page * px_per_row).max(px(25.0));
-        let height = bounds.size.height - thumb_height;
-        let px_per_row = height / snapshot.max_point().row() as f32;
+        let thumb_height = (rows_per_page * px_per_row).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
+        let row_height = (height - thumb_height) / snapshot.max_point().row() as f32;
 
         Some(ScrollbarLayout {
             hitbox: cx.insert_hitbox(track_bounds, false),
             visible_row_range,
-            height,
-            scroll_height: total_rows,
-            row_height: px_per_row,
+            row_height,
             visible: show_scrollbars,
             thumb_height,
         })
@@ -2465,8 +2461,7 @@ impl EditorElement {
 
         cx.set_cursor_style(CursorStyle::Arrow, &scrollbar_layout.hitbox);
 
-        let scroll_height = scrollbar_layout.scroll_height;
-        let height = scrollbar_layout.height;
+        let row_height = scrollbar_layout.row_height;
         let row_range = scrollbar_layout.visible_row_range.clone();
 
         cx.on_mouse_event({
@@ -2486,7 +2481,7 @@ impl EditorElement {
                         let new_y = event.position.y;
                         if (hitbox.top()..hitbox.bottom()).contains(&y) {
                             let mut position = editor.scroll_position(cx);
-                            position.y += (new_y - y) * scroll_height / height;
+                            position.y += (new_y - y) / row_height;
                             if position.y < 0.0 {
                                 position.y = 0.0;
                             }
@@ -2533,8 +2528,7 @@ impl EditorElement {
 
                         let y = event.position.y;
                         if y < thumb_bounds.top() || thumb_bounds.bottom() < y {
-                            let center_row =
-                                ((y - hitbox.top()) * scroll_height / height).round() as u32;
+                            let center_row = ((y - hitbox.top()) / row_height).round() as u32;
                             let top_row = center_row
                                 .saturating_sub((row_range.end - row_range.start) as u32 / 2);
                             let mut position = editor.scroll_position(cx);
@@ -3773,14 +3767,8 @@ impl Element for EditorElement {
                     cx,
                 );
 
-                let scrollbar_layout = self.layout_scrollbar(
-                    &snapshot,
-                    bounds,
-                    scroll_position,
-                    line_height,
-                    height_in_lines,
-                    cx,
-                );
+                let scrollbar_layout =
+                    self.layout_scrollbar(&snapshot, bounds, scroll_position, height_in_lines, cx);
 
                 let folds = cx.with_element_id(Some("folds"), |cx| {
                     self.layout_folds(
@@ -4038,8 +4026,6 @@ struct ScrollbarLayout {
     hitbox: Hitbox,
     visible_row_range: Range<f32>,
     visible: bool,
-    height: Pixels,
-    scroll_height: f32,
     row_height: Pixels,
     thumb_height: Pixels,
 }
@@ -4047,6 +4033,7 @@ struct ScrollbarLayout {
 impl ScrollbarLayout {
     const BORDER_WIDTH: Pixels = px(1.0);
     const MIN_MARKER_HEIGHT: Pixels = px(2.0);
+    const MIN_THUMB_HEIGHT: Pixels = px(20.0);
 
     fn thumb_bounds(&self) -> Bounds<Pixels> {
         let thumb_top = self.y_for_row(self.visible_row_range.start);
