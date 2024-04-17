@@ -591,7 +591,7 @@ impl RemoteProjects {
                 let status = self
                     .remote_project_store
                     .read(cx)
-                    .find_remote_project_by_id(RemoteProjectId(remote_project.id))
+                    .remote_project(RemoteProjectId(remote_project.id))
                     .map(|project| {
                         if project.project_id.is_some() {
                             DevServerStatus::Online

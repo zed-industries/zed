@@ -108,7 +108,13 @@ impl Store {
             .unwrap_or(DevServerStatus::Offline)
     }
 
-    pub fn find_remote_project_by_id(&self, id: RemoteProjectId) -> Option<&RemoteProject> {
+    pub fn remote_projects(&self) -> Vec<RemoteProject> {
+        let mut projects: Vec<RemoteProject> = self.remote_projects.values().cloned().collect();
+        projects.sort_by_key(|p| (p.path.clone(), p.id));
+        projects
+    }
+
+    pub fn remote_project(&self, id: RemoteProjectId) -> Option<&RemoteProject> {
         self.remote_projects.get(&id)
     }
 

@@ -3547,7 +3547,7 @@ impl Workspace {
         } else if let Some(remote_project_id) = self.project().read(cx).remote_project_id() {
             let store = remote_projects::Store::global(cx).read(cx);
             maybe!({
-                let project = store.find_remote_project_by_id(remote_project_id)?;
+                let project = store.remote_project(remote_project_id)?;
                 let dev_server = store.dev_server(project.dev_server_id)?;
 
                 let remote_project = SerializedRemoteProject {

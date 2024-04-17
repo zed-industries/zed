@@ -308,7 +308,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             SerializedWorkspaceLocation::Remote(remote_project) => {
                                 let store = ::remote_projects::Store::global(cx).read(cx);
                                 let Some(project_id) = store
-                                    .find_remote_project_by_id(remote_project.id)
+                                    .remote_project(remote_project.id)
                                     .and_then(|p| p.project_id)
                                 else {
                                     let dev_server_name = remote_project.dev_server_name.clone();
@@ -370,7 +370,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             if let SerializedWorkspaceLocation::Remote(remote_project) = location {
                 let store = ::remote_projects::Store::global(cx).read(cx);
                 store
-                    .find_remote_project_by_id(remote_project.id)
+                    .remote_project(remote_project.id)
                     .and_then(|p| store.dev_server(p.dev_server_id))
                     .map(|s| s.status.clone())
             } else {

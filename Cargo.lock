@@ -2253,6 +2253,7 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "release_channel",
+ "remote_projects",
  "reqwest",
  "rpc",
  "rustc-demangle",

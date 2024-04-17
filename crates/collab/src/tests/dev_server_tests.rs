@@ -12,34 +12,25 @@ use crate::tests::TestServer;
 async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppContext) {
     let (server, client) = TestServer::start1(cx).await;
 
-    let channel_id = server
-        .make_channel("test", None, (&client, cx), &mut [])
-        .await;
+    let store = cx.update(|cx| remote_projects::Store::global(cx).clone());
 
-    let resp = client
-        .channel_store()
+    let resp = store
         .update(cx, |store, cx| {
-            store.create_dev_server(channel_id, "server-1".to_string(), cx)
+            store.create_dev_server("server-1".to_string(), cx)
         })
         .await
         .unwrap();
 
-    client.channel_store().update(cx, |store, _| {
-        assert_eq!(store.dev_servers_for_id(channel_id).len(), 1);
-        assert_eq!(store.dev_servers_for_id(channel_id)[0].name, "server-1");
-        assert_eq!(
-            store.dev_servers_for_id(channel_id)[0].status,
-            DevServerStatus::Offline
-        );
+    store.update(cx, |store, _| {
+        assert_eq!(store.dev_servers().len(), 1);
+        assert_eq!(store.dev_servers()[0].name, "server-1");
+        assert_eq!(store.dev_servers()[0].status, DevServerStatus::Offline);
     });
 
     let dev_server = server.create_dev_server(resp.access_token, cx2).await;
     cx.executor().run_until_parked();
-    client.channel_store().update(cx, |store, _| {
-        assert_eq!(
-            store.dev_servers_for_id(channel_id)[0].status,
-            DevServerStatus::Online
-        );
+    store.update(cx, |store, _| {
+        assert_eq!(store.dev_servers()[0].status, DevServerStatus::Online);
     });
 
     dev_server
@@ -54,13 +45,10 @@ async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppC
         )
         .await;
 
-    client
-        .channel_store()
+    store
         .update(cx, |store, cx| {
             store.create_remote_project(
-                channel_id,
                 client::DevServerId(resp.dev_server_id),
-                "project-1".to_string(),
                 "/remote".to_string(),
                 cx,
             )
@@ -70,12 +58,11 @@ async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppC
 
     cx.executor().run_until_parked();
 
-    let remote_workspace = client
-        .channel_store()
+    let remote_workspace = store
         .update(cx, |store, cx| {
-            let projects = store.remote_projects_for_id(channel_id);
+            let projects = store.remote_projects();
             assert_eq!(projects.len(), 1);
-            assert_eq!(projects[0].name, "project-1");
+            assert_eq!(projects[0].path, "/remote");
             workspace::join_remote_project(
                 projects[0].project_id.unwrap(),
                 client.app_state.clone(),
