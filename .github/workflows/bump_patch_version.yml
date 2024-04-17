@@ -1,4 +1,4 @@
-name: Bump Patch Version
+name: bump_patch_version
 
 on:
   workflow_dispatch:
@@ -22,10 +22,12 @@ jobs:
         uses: actions/checkout@v2
         with:
           ref: ${{ github.event.inputs.branch }}
+          ssh-key: ${{ secrets.ZED_BOT_DEPLOY_KEY }}
 
       - name: Bump Patch Version
         run: |
-          set -eu
+          set -eux
+
           channel=$(cat crates/zed/RELEASE_CHANNEL)
 
           tag_suffix=""
@@ -40,9 +42,8 @@ jobs:
               exit 1
               ;;
           esac
-          which cargo-set-version > /dev/null || cargo install cargo-edit
+          which cargo-set-version > /dev/null || cargo install cargo-edit --features vendored-openssl
           output=$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')
-          cargo check --quiet
-          git commit -am "Bump to $output for $GITHUB_ACTOR"
-          git tag v${output}${suffix}
-          git push origin HEAD v${output}${suffix}
+          git commit -am "Bump to $output for @$GITHUB_ACTOR" --author "Zed Bot <hi@zed.dev>"
+          git tag v${output}${tag_suffix}
+          git push origin HEAD v${output}${tag_suffix}

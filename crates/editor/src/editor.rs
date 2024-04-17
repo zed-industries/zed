@@ -8946,7 +8946,7 @@ impl Editor {
     }
 
     pub fn render_git_blame_inline(&mut self, cx: &mut WindowContext) -> bool {
-        self.show_git_blame_inline && self.has_blame_entries(cx)
+        self.focus_handle.is_focused(cx) && self.show_git_blame_inline && self.has_blame_entries(cx)
     }
 
     fn has_blame_entries(&self, cx: &mut WindowContext) -> bool {
