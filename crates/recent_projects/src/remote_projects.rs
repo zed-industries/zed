@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use gpui::{
     Action, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Model, ScrollHandle, Task, View, ViewContext,
@@ -57,7 +55,7 @@ impl RemoteProjects {
             cx.observe(&remote_project_store, |_, _, cx| {
                 cx.notify();
             }),
-            cx.on_focus_out(&focus_handle, |_, _cx| cx.emit(DismissEvent)),
+            cx.on_focus_out(&focus_handle, |_, cx| cx.emit(DismissEvent)),
         ];
 
         Self {
@@ -139,12 +137,11 @@ impl RemoteProjects {
             .log_err();
         });
 
-        self.remote_project_path_input
-            .read(cx)
-            .editor()
-            .update(cx, |editor, cx| {
+        self.remote_project_path_input.update(cx, |input, cx| {
+            input.editor().update(cx, |editor, cx| {
                 editor.set_text("", cx);
             });
+        });
 
         self.mode = Mode::CreateRemoteProject(CreateRemoteProject {
             dev_server_id,
@@ -199,12 +196,11 @@ impl RemoteProjects {
             }
         });
 
-        self.dev_server_name_input
-            .read(cx)
-            .editor()
-            .update(cx, |editor, cx| {
+        self.dev_server_name_input.update(cx, |input, cx| {
+            input.editor().update(cx, |editor, cx| {
                 editor.set_text("", cx);
             });
+        });
 
         self.mode = Mode::CreateDevServer(CreateDevServer {
             creating: Some(task),
