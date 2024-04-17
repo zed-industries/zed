@@ -594,6 +594,7 @@
     "C": {
       "format_on_save": "off"
     },
+    // Note: This entry can be removed once v0.1.0 of the Gleam extension sees decent adoption.
     "Gleam": {
       "tab_size": 2
     },
@@ -602,9 +603,12 @@
         "source.organizeImports": true
       }
     },
+    // Note: This entry can be removed once https://github.com/caius/zed-make/pull/5 lands
+    // and a new version of the Make extension sees decent adoption.
     "Make": {
       "hard_tabs": true
     },
+    // Note: This entry can be removed once v0.0.2 of the Prisma extension sees decent adoption.
     "Prisma": {
       "tab_size": 2
     }
