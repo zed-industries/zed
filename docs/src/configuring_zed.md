@@ -572,7 +572,9 @@ To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
 
 ```json
 {
-  "git_gutter": "tracked_files"
+  "git": {
+    "git_gutter": "tracked_files"
+  }
 }
 ```
 
@@ -580,7 +582,52 @@ To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
 
 ```json
 {
-  "git_gutter": "hide"
+  "git": {
+    "git_gutter": "hide"
+  }
+}
+```
+
+### Inline Git Blame
+
+- Description: Whether or not to show git blame information inline, on the currently focused line (requires Zed `0.132.0`).
+- Setting: `inline_blame`
+- Default:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true
+    }
+  }
+}
+```
+
+**Options**
+
+1. Disable inline git blame:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": false
+    }
+  }
+}
+```
+
+2. Only show inline git blame after a delay (that starts after cursor stops moving):
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": false,
+      "delay_ms": 500
+    }
+  }
 }
 ```
 
