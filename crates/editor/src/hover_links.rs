@@ -11,8 +11,7 @@ use project::{
     HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink,
     ResolveState,
 };
-use std::{cmp, ops::Range};
-use text::Point;
+use std::ops::Range;
 use theme::ActiveTheme as _;
 use util::{maybe, ResultExt, TryFutureExt};
 
@@ -132,28 +131,12 @@ impl Editor {
         modifiers: Modifiers,
         cx: &mut ViewContext<Editor>,
     ) {
-        let selection_before_revealing = self.selections.newest::<Point>(cx);
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let before_revealing_head = selection_before_revealing.head();
-        let before_revealing_tail = selection_before_revealing.tail();
-        let before_revealing = match before_revealing_tail.cmp(&before_revealing_head) {
-            cmp::Ordering::Equal | cmp::Ordering::Less => {
-                multi_buffer_snapshot.anchor_after(before_revealing_head)
-                    ..multi_buffer_snapshot.anchor_before(before_revealing_tail)
-            }
-            cmp::Ordering::Greater => {
-                multi_buffer_snapshot.anchor_before(before_revealing_tail)
-                    ..multi_buffer_snapshot.anchor_after(before_revealing_head)
-            }
-        };
-        drop(multi_buffer_snapshot);
-
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, cx);
         cx.spawn(|editor, mut cx| async move {
             let definition_revealed = reveal_task.await.log_err().unwrap_or(false);
             let find_references = editor
                 .update(&mut cx, |editor, cx| {
-                    if definition_revealed && revealed_elsewhere(editor, before_revealing, cx) {
+                    if definition_revealed {
                         return None;
                     }
                     editor.find_all_references(&FindAllReferences, cx)
@@ -210,46 +193,6 @@ impl Editor {
             Task::ready(Ok(false))
         }
     }
-}
-
-fn revealed_elsewhere(
-    editor: &mut Editor,
-    before_revealing: Range<Anchor>,
-    cx: &mut ViewContext<'_, Editor>,
-) -> bool {
-    let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-
-    let selection_after_revealing = editor.selections.newest::<Point>(cx);
-    let after_revealing_head = selection_after_revealing.head();
-    let after_revealing_tail = selection_after_revealing.tail();
-    let after_revealing = match after_revealing_tail.cmp(&after_revealing_head) {
-        cmp::Ordering::Equal | cmp::Ordering::Less => {
-            multi_buffer_snapshot.anchor_after(after_revealing_tail)
-                ..multi_buffer_snapshot.anchor_before(after_revealing_head)
-        }
-        cmp::Ordering::Greater => {
-            multi_buffer_snapshot.anchor_after(after_revealing_head)
-                ..multi_buffer_snapshot.anchor_before(after_revealing_tail)
-        }
-    };
-
-    let before_intersects_after_range = (before_revealing
-        .start
-        .cmp(&after_revealing.start, &multi_buffer_snapshot)
-        .is_ge()
-        && before_revealing
-            .start
-            .cmp(&after_revealing.end, &multi_buffer_snapshot)
-            .is_le())
-        || (before_revealing
-            .end
-            .cmp(&after_revealing.start, &multi_buffer_snapshot)
-            .is_ge()
-            && before_revealing
-                .end
-                .cmp(&after_revealing.end, &multi_buffer_snapshot)
-                .is_le());
-    !before_intersects_after_range
 }
 
 pub fn update_inlay_link_and_hover_points(
@@ -508,6 +451,7 @@ pub fn show_link_definition(
     let project = editor.project.clone();
 
     let snapshot = snapshot.buffer_snapshot.clone();
+    let anchor_buffer_snapshot = buffer.read(cx).snapshot();
     hovered_link_state.task = Some(cx.spawn(|this, mut cx| {
         async move {
             let result = match &trigger_point {
@@ -524,6 +468,16 @@ pub fn show_link_definition(
                         })
                         .ok()
                     } else if let Some(project) = project {
+                        // exclude definition links returned by lsp pointing to the current anchor
+                        let exclude_links_to_origin = |location: &project::LocationLink| {
+                            project::Project::exclude_link_to_position(
+                                &buffer,
+                                &anchor_buffer_snapshot,
+                                &buffer_position,
+                                location,
+                            )
+                        };
+
                         // query the LSP for definition info
                         project
                             .update(&mut cx, |project, cx| match preferred_kind {
@@ -539,18 +493,27 @@ pub fn show_link_definition(
                             .ok()
                             .map(|definition_result| {
                                 (
-                                    definition_result.iter().find_map(|link| {
-                                        link.origin.as_ref().and_then(|origin| {
-                                            let start = snapshot.anchor_in_excerpt(
-                                                excerpt_id,
-                                                origin.range.start,
-                                            )?;
-                                            let end = snapshot
-                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
-                                            Some(RangeInEditor::Text(start..end))
-                                        })
-                                    }),
-                                    definition_result.into_iter().map(HoverLink::Text).collect(),
+                                    definition_result
+                                        .iter()
+                                        .filter(|&link| exclude_links_to_origin(link))
+                                        .find_map(|link| {
+                                            link.origin.as_ref().and_then(|origin| {
+                                                let start = snapshot.anchor_in_excerpt(
+                                                    excerpt_id,
+                                                    origin.range.start,
+                                                )?;
+                                                let end = snapshot.anchor_in_excerpt(
+                                                    excerpt_id,
+                                                    origin.range.end,
+                                                )?;
+                                                Some(RangeInEditor::Text(start..end))
+                                            })
+                                        }),
+                                    definition_result
+                                        .into_iter()
+                                        .filter(exclude_links_to_origin)
+                                        .map(HoverLink::Text)
+                                        .collect(),
                                 )
                             })
                     } else {

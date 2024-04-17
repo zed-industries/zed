@@ -4937,6 +4937,23 @@ impl Project {
         }
     }
 
+    pub fn exclude_link_to_position(
+        buffer: &Model<Buffer>,
+        snapshot: &BufferSnapshot,
+        current_position: &Anchor,
+        location: &LocationLink,
+    ) -> bool {
+        // Exclude definition links that points back to cursor position.
+        // (i.e., currently cursor upon definition).
+        !(buffer == &location.target.buffer
+            && current_position
+                .cmp(&location.target.range.start, &snapshot)
+                .is_ge()
+            && current_position
+                .cmp(&location.target.range.end, &snapshot)
+                .is_le())
+    }
+
     #[inline(never)]
     fn definition_impl(
         &self,
@@ -4951,6 +4968,7 @@ impl Project {
             cx,
         )
     }
+
     pub fn definition<T: ToPointUtf16>(
         &self,
         buffer: &Model<Buffer>,

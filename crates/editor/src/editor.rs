@@ -7674,13 +7674,21 @@ impl Editor {
             GotoDefinitionKind::Implementation => project.implementation(&buffer, head, cx),
         });
 
+        let snapshot = buffer.read(cx).snapshot();
         cx.spawn(|editor, mut cx| async move {
             let definitions = definitions.await?;
+            let exclude_links_to_origin = |location: &project::LocationLink| {
+                Project::exclude_link_to_position(&buffer, &snapshot, &head, location)
+            };
             let navigated = editor
                 .update(&mut cx, |editor, cx| {
                     editor.navigate_to_hover_links(
                         Some(kind),
-                        definitions.into_iter().map(HoverLink::Text).collect(),
+                        definitions
+                            .into_iter()
+                            .filter(exclude_links_to_origin)
+                            .map(HoverLink::Text)
+                            .collect::<Vec<_>>(),
                         split,
                         cx,
                     )
