@@ -388,28 +388,44 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         Some(
             ListItem::new(ix)
+                .selected(selected)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .child(if is_remote {
-                    let indicator_color = match dev_server_status {
-                        Some(DevServerStatus::Online) => Color::Created,
-                        Some(DevServerStatus::Offline) => Color::Hidden,
-                        _ => unreachable!(),
-                    };
-                    IconWithIndicator::new(Icon::new(IconName::Server), Some(Indicator::dot()))
-                        .indicator_color(indicator_color)
-                        .into_any_element()
-                } else {
-                    Icon::new(IconName::Screen).into_any_element()
-                })
-                .selected(selected)
-                .child({
-                    let mut highlighted = highlighted_match.clone();
-                    if !self.render_paths {
-                        highlighted.paths.clear();
-                    }
-                    highlighted.render(cx)
-                })
+                .child(
+                    h_flex()
+                        .flex_grow()
+                        .gap_3()
+                        .child(if is_remote {
+                            // if disabled, Color::Disabled
+                            let indicator_color = match dev_server_status {
+                                Some(DevServerStatus::Online) => Color::Created,
+                                Some(DevServerStatus::Offline) => Color::Hidden,
+                                _ => unreachable!(),
+                            };
+                            IconWithIndicator::new(
+                                Icon::new(IconName::Server).color(Color::Muted),
+                                Some(Indicator::dot()),
+                            )
+                            .indicator_color(indicator_color)
+                            .indicator_border_color(if selected {
+                                Some(cx.theme().colors().element_selected)
+                            } else {
+                                None
+                            })
+                            .into_any_element()
+                        } else {
+                            Icon::new(IconName::Screen)
+                                .color(Color::Muted)
+                                .into_any_element()
+                        })
+                        .child({
+                            let mut highlighted = highlighted_match.clone();
+                            if !self.render_paths {
+                                highlighted.paths.clear();
+                            }
+                            highlighted.render(cx)
+                        }),
+                )
                 .when(!is_current_workspace, |el| {
                     let delete_button = div()
                         .child(
@@ -428,15 +444,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     if self.selected_index() == ix {
                         el.end_slot::<AnyElement>(delete_button)
                     } else {
-                        el.end_hover_slot::<AnyElement>(delete_button).when_some(
-                            dev_server_status,
-                            |item, status| {
-                                item.end_slot(Indicator::dot().color(match status {
-                                    DevServerStatus::Online => Color::Created,
-                                    DevServerStatus::Offline => Color::Hidden,
-                                }))
-                            },
-                        )
+                        el.end_hover_slot::<AnyElement>(delete_button)
                     }
                 })
                 .tooltip(move |cx| {
