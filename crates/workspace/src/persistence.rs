@@ -508,7 +508,7 @@ impl WorkspaceDb {
         fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, Option<u64>)>> {
             SELECT workspace_id, local_paths, remote_project_id
             FROM workspaces
-            WHERE local_paths IS NOT NULL
+            WHERE local_paths IS NOT NULL OR remote_project_id IS NOT NULL
             ORDER BY timestamp DESC
         }
     }

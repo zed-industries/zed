@@ -13,7 +13,7 @@ use picker::{
 use serde::Deserialize;
 use std::{path::Path, sync::Arc};
 use ui::{prelude::*, tooltip_container, ListItem, ListItemSpacing, Tooltip};
-use util::paths::PathExt;
+use util::{paths::PathExt, ResultExt};
 use workspace::{
     LocalPaths, ModalView, SerializedRemoteProject, Workspace, WorkspaceId, WORKSPACE_DB,
 };
@@ -62,6 +62,7 @@ impl RecentProjects {
             let workspaces = WORKSPACE_DB
                 .recent_workspaces_on_disk()
                 .await
+                .log_err()
                 .unwrap_or_default();
             this.update(&mut cx, move |this, cx| {
                 this.picker.update(cx, move |picker, cx| {

@@ -58,8 +58,11 @@ impl Bind for &LocalPaths {
 impl Column for LocalPaths {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let path_blob = statement.column_blob(start_index)?;
-        let paths: Arc<Vec<PathBuf>> =
-            bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?;
+        let paths: Arc<Vec<PathBuf>> = if path_blob.is_empty() {
+            Default::default()
+        } else {
+            bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?
+        };
 
         Ok((Self(paths), start_index + 1))
     }
