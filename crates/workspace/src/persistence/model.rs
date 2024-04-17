@@ -100,7 +100,7 @@ impl Column for SerializedRemoteProject {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) enum SerializedWorkspaceLocation {
+pub enum SerializedWorkspaceLocation {
     Local(LocalPaths),
     Remote(SerializedRemoteProject),
 }

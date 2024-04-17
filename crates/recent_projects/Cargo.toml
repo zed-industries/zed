@@ -13,6 +13,7 @@ path = "src/recent_projects.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true

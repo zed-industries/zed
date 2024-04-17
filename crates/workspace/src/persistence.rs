@@ -553,7 +553,7 @@ impl WorkspaceDb {
     // exist.
     pub async fn recent_workspaces_on_disk(
         &self,
-    ) -> Result<Vec<(WorkspaceId, LocalPaths, Option<SerializedRemoteProject>)>> {
+    ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
         let remote_projects = self.remote_projects()?;
@@ -563,7 +563,7 @@ impl WorkspaceDb {
                 if let Some(remote_project) =
                     remote_projects.iter().find(|rp| rp.id == remote_project_id)
                 {
-                    result.push((id, location, Some(remote_project.clone())));
+                    result.push((id, remote_project.clone().into()));
                 } else {
                     delete_tasks.push(self.delete_workspace_by_id(id));
                 }
@@ -573,7 +573,7 @@ impl WorkspaceDb {
             if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
-                result.push((id, location, None));
+                result.push((id, location.into()));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -588,8 +588,11 @@ impl WorkspaceDb {
             .recent_workspaces_on_disk()
             .await?
             .into_iter()
-            .next()
-            .map(|(_, location, _)| location))
+            .filter_map(|(_, location)| match location {
+                SerializedWorkspaceLocation::Local(local_paths) => Some(local_paths),
+                SerializedWorkspaceLocation::Remote(_) => None,
+            })
+            .next())
     }
 
     fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {

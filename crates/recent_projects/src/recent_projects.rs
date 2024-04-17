@@ -11,11 +11,14 @@ use picker::{
     Picker, PickerDelegate,
 };
 use serde::Deserialize;
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use ui::{prelude::*, tooltip_container, ListItem, ListItemSpacing, Tooltip};
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    LocalPaths, ModalView, SerializedRemoteProject, Workspace, WorkspaceId, WORKSPACE_DB,
+    AppState, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId, WORKSPACE_DB,
 };
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -151,7 +154,7 @@ impl Render for RecentProjects {
 
 pub struct RecentProjectsDelegate {
     workspace: WeakView<Workspace>,
-    workspaces: Vec<(WorkspaceId, LocalPaths, Option<SerializedRemoteProject>)>,
+    workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation)>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
@@ -217,13 +220,19 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .map(|(id, (_, location, _))| {
-                let combined_string = location
-                    .paths()
-                    .iter()
-                    .map(|path| path.compact().to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .join("");
+            .map(|(id, (_, location))| {
+                let combined_string = match location {
+                    SerializedWorkspaceLocation::Local(paths) => paths
+                        .paths()
+                        .iter()
+                        .map(|path| path.compact().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join(""),
+                    SerializedWorkspaceLocation::Remote(remote_project) => {
+                        format!("{}{}", remote_project.dev_server_name, remote_project.path)
+                    }
+                };
+
                 StringMatchCandidate::new(id, combined_string)
             })
             .collect::<Vec<_>>();
@@ -257,7 +266,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .get(self.selected_index())
             .zip(self.workspace.upgrade())
         {
-            let (candidate_workspace_id, candidate_workspace_location, _) =
+            let (candidate_workspace_id, candidate_workspace_location) =
                 &self.workspaces[selected_match.candidate_id];
             let replace_current_window = if self.create_new_window {
                 secondary
@@ -269,30 +278,50 @@ impl PickerDelegate for RecentProjectsDelegate {
                     if workspace.database_id() == *candidate_workspace_id {
                         Task::ready(Ok(()))
                     } else {
-                        let candidate_paths = candidate_workspace_location.paths().as_ref().clone();
-                        if replace_current_window {
-                            cx.spawn(move |workspace, mut cx| async move {
-                                let continue_replacing = workspace
-                                    .update(&mut cx, |workspace, cx| {
-                                        workspace.prepare_to_close(true, cx)
-                                    })?
-                                    .await?;
-                                if continue_replacing {
-                                    workspace
-                                        .update(&mut cx, |workspace, cx| {
-                                            workspace.open_workspace_for_paths(
-                                                true,
-                                                candidate_paths,
-                                                cx,
-                                            )
-                                        })?
-                                        .await
+                        match candidate_workspace_location {
+                            SerializedWorkspaceLocation::Local(paths) => {
+                                let paths = paths.paths().as_ref().clone();
+                                if replace_current_window {
+                                    cx.spawn(move |workspace, mut cx| async move {
+                                        let continue_replacing = workspace
+                                            .update(&mut cx, |workspace, cx| {
+                                                workspace.prepare_to_close(true, cx)
+                                            })?
+                                            .await?;
+                                        if continue_replacing {
+                                            workspace
+                                                .update(&mut cx, |workspace, cx| {
+                                                    workspace
+                                                        .open_workspace_for_paths(true, paths, cx)
+                                                })?
+                                                .await
+                                        } else {
+                                            Ok(())
+                                        }
+                                    })
                                 } else {
-                                    Ok(())
+                                    workspace.open_workspace_for_paths(false, paths, cx)
                                 }
-                            })
-                        } else {
-                            workspace.open_workspace_for_paths(false, candidate_paths, cx)
+                            }
+                            SerializedWorkspaceLocation::Remote(remote_project) => {
+                                let store = ::remote_projects::Store::global(cx).read(cx);
+                                let Some(project_id) = store
+                                    .find_remote_project_by_id(remote_project.id)
+                                    .and_then(|p| p.project_id)
+                                else {
+                                    return Task::ready(Err(anyhow::anyhow!("Project not found")));
+                                };
+                                if let Some(app_state) = AppState::global(cx).upgrade() {
+                                    let task =
+                                        workspace::join_remote_project(project_id, app_state, cx);
+                                    cx.spawn(|_, _| async move {
+                                        task.await?;
+                                        Ok(())
+                                    })
+                                } else {
+                                    Task::ready(Err(anyhow::anyhow!("App state not found")))
+                                }
+                            }
                         }
                     }
                 })
@@ -313,12 +342,18 @@ impl PickerDelegate for RecentProjectsDelegate {
             return None;
         };
 
-        let (workspace_id, location, _) = &self.workspaces[hit.candidate_id];
+        let (workspace_id, location) = &self.workspaces[hit.candidate_id];
         let is_current_workspace = self.is_current_workspace(*workspace_id, cx);
 
         let mut path_start_offset = 0;
-        let (match_labels, paths): (Vec<_>, Vec<_>) = location
-            .paths()
+        let paths = match location {
+            SerializedWorkspaceLocation::Local(paths) => paths.paths(),
+            SerializedWorkspaceLocation::Remote(remote_project) => {
+                Arc::new(vec![PathBuf::from(remote_project.path.clone())])
+            }
+        };
+
+        let (match_labels, paths): (Vec<_>, Vec<_>) = paths
             .iter()
             .map(|path| {
                 let path = path.compact();
@@ -335,10 +370,13 @@ impl PickerDelegate for RecentProjectsDelegate {
             paths,
         };
 
+        let is_remote = matches!(location, SerializedWorkspaceLocation::Remote(_));
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
+                .when(is_remote, |this| this.child(Icon::new(IconName::FileTree)))
                 .selected(selected)
                 .child({
                     let mut highlighted = highlighted_match.clone();
@@ -430,7 +468,7 @@ fn highlights_for_path(
 impl RecentProjectsDelegate {
     fn delete_recent_project(&self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(selected_match) = self.matches.get(ix) {
-            let (workspace_id, _, _) = self.workspaces[selected_match.candidate_id];
+            let (workspace_id, _) = self.workspaces[selected_match.candidate_id];
             cx.spawn(move |this, mut cx| async move {
                 let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
                 let workspaces = WORKSPACE_DB
@@ -483,7 +521,7 @@ mod tests {
     use gpui::{TestAppContext, WindowHandle};
     use project::Project;
     use serde_json::json;
-    use workspace::{open_paths, AppState};
+    use workspace::{open_paths, AppState, LocalPaths};
 
     use super::*;
 
@@ -549,8 +587,7 @@ mod tests {
                     }];
                     delegate.workspaces = vec![(
                         WorkspaceId::default(),
-                        LocalPaths::new(vec!["/test/path/"]),
-                        None,
+                        LocalPaths::new(vec!["/test/path/"]).into(),
                     )];
                 });
             })
