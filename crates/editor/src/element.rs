@@ -1053,7 +1053,7 @@ impl EditorElement {
                     AvailableSpace::MinContent,
                     AvailableSpace::Definite(line_height * 0.55),
                 );
-                let fold_indicator_size = fold_indicator.measure(available_space, cx);
+                let fold_indicator_size = fold_indicator.layout(available_space, cx);
 
                 let position = point(
                     gutter_dimensions.width - gutter_dimensions.right_padding,
@@ -1240,7 +1240,7 @@ impl EditorElement {
             AvailableSpace::MinContent,
             AvailableSpace::Definite(line_height),
         );
-        let indicator_size = button.measure(available_space, cx);
+        let indicator_size = button.layout(available_space, cx);
 
         let blame_width = gutter_dimensions
             .git_blame_entries_width
@@ -1750,7 +1750,7 @@ impl EditorElement {
                 }
             };
 
-            let size = element.measure(available_space, cx);
+            let size = element.layout(available_space, cx);
             (element, size)
         };
 
@@ -1852,7 +1852,7 @@ impl EditorElement {
         };
 
         let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
-        let context_menu_size = context_menu.measure(available_space, cx);
+        let context_menu_size = context_menu.layout(available_space, cx);
 
         let cursor_row_layout = &line_layouts[(position.row() - start_row) as usize].line;
         let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
@@ -1949,7 +1949,7 @@ impl EditorElement {
         let mut overall_height = Pixels::ZERO;
         let mut measured_hover_popovers = Vec::new();
         for mut hover_popover in hover_popovers {
-            let size = hover_popover.measure(available_space, cx);
+            let size = hover_popover.layout(available_space, cx);
             let horizontal_offset =
                 (text_hitbox.upper_right().x - (hovered_point.x + size.width)).min(Pixels::ZERO);
 
@@ -1969,7 +1969,7 @@ impl EditorElement {
                 .occlude()
                 .on_mouse_move(|_, cx| cx.stop_propagation())
                 .into_any_element();
-            occlusion.measure(size(width, HOVER_POPOVER_GAP).into(), cx);
+            occlusion.layout(size(width, HOVER_POPOVER_GAP).into(), cx);
             cx.defer_draw(occlusion, origin, 2);
         }
 

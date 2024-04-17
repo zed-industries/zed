@@ -27,6 +27,7 @@ impl Deferred {
 
 impl Element for Deferred {
     type BeforeLayout = ();
+    type AfterLayout = ();
     type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, ()) {
@@ -34,10 +35,21 @@ impl Element for Deferred {
         (layout_id, ())
     }
 
+    fn after_layout(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        _before_layout: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        let bounds = self.child.as_mut().unwrap().after_layout(cx);
+        (bounds, ())
+    }
+
     fn before_paint(
         &mut self,
         _bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         let child = self.child.take().unwrap();
@@ -49,6 +61,7 @@ impl Element for Deferred {
         &mut self,
         _bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         _before_paint: &mut Self::BeforePaint,
         _cx: &mut ElementContext,
     ) {

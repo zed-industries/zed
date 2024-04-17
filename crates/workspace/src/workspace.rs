@@ -4006,12 +4006,9 @@ impl Render for Workspace {
                     .border_color(colors.border)
                     .child({
                         let this = cx.view().clone();
-                        canvas(
-                            move |bounds, cx| this.update(cx, |this, _cx| this.bounds = bounds),
-                            |_, _, _| {},
-                        )
-                        .absolute()
-                        .size_full()
+                        canvas(move |bounds, cx| this.update(cx, |this, _cx| this.bounds = bounds))
+                            .absolute()
+                            .size_full()
                     })
                     .when(self.zoomed.is_none(), |this| {
                         this.on_drag_move(cx.listener(

@@ -91,6 +91,7 @@ impl<V: 'static> View<V> {
 
 impl<V: Render> Element for View<V> {
     type BeforeLayout = AnyElement;
+    type AfterLayout = ();
     type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
@@ -101,10 +102,20 @@ impl<V: Render> Element for View<V> {
         })
     }
 
+    fn after_layout(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        element: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        (element.after_layout(cx), ())
+    }
+
     fn before_paint(
         &mut self,
         _: Bounds<Pixels>,
         element: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         cx.set_view_id(self.entity_id());
@@ -117,6 +128,7 @@ impl<V: Render> Element for View<V> {
         &mut self,
         _: Bounds<Pixels>,
         element: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
         _: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
@@ -229,7 +241,8 @@ impl AnyView {
     /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [ViewContext::notify] has not been called since it was rendered.
     /// The one exception is when [WindowContext::refresh] is called, in which case caching is ignored.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
-        self.cached_style = Some(style);
+        // todo!("re-enable caching")
+        // self.cached_style = Some(style);
         self
     }
 
@@ -277,7 +290,8 @@ impl<V: Render> From<View<V>> for AnyView {
 
 impl Element for AnyView {
     type BeforeLayout = Option<AnyElement>;
-    type BeforePaint = Option<AnyElement>;
+    type AfterLayout = ();
+    type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         if let Some(style) = self.cached_style.as_ref() {
@@ -294,61 +308,76 @@ impl Element for AnyView {
         }
     }
 
-    fn before_paint(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         element: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Option<AnyElement> {
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        if let Some(style) = self.cached_style.as_ref() {
+            todo!()
+        } else {
+            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
+                let bounds = element.as_mut().unwrap().after_layout(cx);
+                (bounds, ())
+            })
+        }
+    }
+
+    fn before_paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        element: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
+        cx: &mut ElementContext,
+    ) {
         cx.set_view_id(self.entity_id());
         if self.cached_style.is_some() {
             cx.with_element_state::<AnyViewState, _>(
                 Some(ElementId::View(self.entity_id())),
                 |element_state, cx| {
-                    let mut element_state = element_state.unwrap();
+                    todo!()
+                    // let mut element_state = element_state.unwrap();
 
-                    let content_mask = cx.content_mask();
-                    let text_style = cx.text_style();
+                    // let content_mask = cx.content_mask();
+                    // let text_style = cx.text_style();
 
-                    if let Some(mut element_state) = element_state {
-                        if element_state.cache_key.bounds == bounds
-                            && element_state.cache_key.content_mask == content_mask
-                            && element_state.cache_key.text_style == text_style
-                            && !cx.window.dirty_views.contains(&self.entity_id())
-                            && !cx.window.refreshing
-                        {
-                            let before_paint_start = cx.before_paint_index();
-                            cx.reuse_before_paint(element_state.before_paint_range.clone());
-                            let before_paint_end = cx.before_paint_index();
-                            element_state.before_paint_range = before_paint_start..before_paint_end;
-                            return (None, Some(element_state));
-                        }
-                    }
+                    // if let Some(mut element_state) = element_state {
+                    //     if element_state.cache_key.bounds == bounds
+                    //         && element_state.cache_key.content_mask == content_mask
+                    //         && element_state.cache_key.text_style == text_style
+                    //         && !cx.window.dirty_views.contains(&self.entity_id())
+                    //         && !cx.window.refreshing
+                    //     {
+                    //         let before_paint_start = cx.before_paint_index();
+                    //         cx.reuse_before_paint(element_state.before_paint_range.clone());
+                    //         let before_paint_end = cx.before_paint_index();
+                    //         element_state.before_paint_range = before_paint_start..before_paint_end;
+                    //         return (None, Some(element_state));
+                    //     }
+                    // }
 
-                    let before_paint_start = cx.before_paint_index();
-                    let mut element = (self.render)(self, cx);
-                    element.layout(bounds.origin, bounds.size.into(), cx);
-                    let before_paint_end = cx.before_paint_index();
+                    // let before_paint_start = cx.before_paint_index();
+                    // let element = element.get_or_insert((self.render)(self, cx));
+                    // element.layout(bounds.origin, bounds.size.into(), cx);
 
-                    (
-                        Some(element),
-                        Some(AnyViewState {
-                            before_paint_range: before_paint_start..before_paint_end,
-                            paint_range: PaintIndex::default()..PaintIndex::default(),
-                            cache_key: ViewCacheKey {
-                                bounds,
-                                content_mask,
-                                text_style,
-                            },
-                        }),
-                    )
+                    // let before_paint_end = cx.before_paint_index();
+
+                    // let view_state = AnyViewState {
+                    //     before_paint_range: before_paint_start..before_paint_end,
+                    //     paint_range: PaintIndex::default()..PaintIndex::default(),
+                    //     cache_key: ViewCacheKey {
+                    //         bounds,
+                    //         content_mask,
+                    //         text_style,
+                    //     },
+                    // };
+                    // ((), Some(view_state))
                 },
             )
         } else {
             cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                let mut element = element.take().unwrap();
-                element.before_paint(cx);
-                Some(element)
+                element.as_mut().unwrap().before_paint(cx)
             })
         }
     }
@@ -356,8 +385,9 @@ impl Element for AnyView {
     fn paint(
         &mut self,
         _bounds: Bounds<Pixels>,
-        _: &mut Self::BeforeLayout,
-        element: &mut Self::BeforePaint,
+        element: &mut Self::BeforeLayout,
+        _: &mut Self::AfterLayout,
+        _: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
         if self.cached_style.is_some() {

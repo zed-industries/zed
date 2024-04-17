@@ -8,6 +8,7 @@ use crate::{
 
 /// The state that the anchored element element uses to track its children.
 pub struct AnchoredState {
+    layout_id: LayoutId,
     child_layout_ids: SmallVec<[LayoutId; 4]>,
 }
 
@@ -70,6 +71,7 @@ impl ParentElement for Anchored {
 
 impl Element for Anchored {
     type BeforeLayout = AnchoredState;
+    type AfterLayout = ();
     type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::BeforeLayout) {
@@ -87,13 +89,37 @@ impl Element for Anchored {
 
         let layout_id = cx.request_layout(&anchored_style, child_layout_ids.iter().copied());
 
-        (layout_id, AnchoredState { child_layout_ids })
+        (
+            layout_id,
+            AnchoredState {
+                layout_id,
+                child_layout_ids,
+            },
+        )
+    }
+
+    fn after_layout(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        before_layout: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        let mut focus_target_bounds = None;
+        for child in &mut self.children {
+            if let Some(child_focus_target_bounds) = child.after_layout(cx) {
+                if focus_target_bounds.is_none() {
+                    focus_target_bounds = Some(child_focus_target_bounds);
+                }
+            }
+        }
+        (focus_target_bounds, ())
     }
 
     fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         if before_layout.child_layout_ids.is_empty() {
@@ -176,6 +202,7 @@ impl Element for Anchored {
         &mut self,
         _bounds: crate::Bounds<crate::Pixels>,
         _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         _before_paint: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {

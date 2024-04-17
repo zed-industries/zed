@@ -363,14 +363,15 @@ impl Render for SyntaxTreeView {
             .text_bg(cx.theme().colors().background).into_any_element();
 
             rendered = rendered.child(
-                canvas(
-                    move |bounds, cx| {
-                        list.layout(bounds.origin, bounds.size.into(), cx);
-                        list
-                    },
-                    |_, mut list, cx| list.paint(cx),
-                )
-                .size_full(),
+                // canvas(
+                //     move |bounds, cx| {
+                //         list.layout(bounds.origin, bounds.size.into(), cx);
+                //         list
+                //     },
+                //     |_, mut list, cx| list.paint(cx),
+                // )
+                // .size_full(),
+                todo!("replace canvas"),
             );
         }
 

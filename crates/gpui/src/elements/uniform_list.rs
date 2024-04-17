@@ -278,7 +278,7 @@ impl UniformList {
             }),
             AvailableSpace::MinContent,
         );
-        item_to_measure.measure(available_space, cx)
+        item_to_measure.layout(available_space, cx)
     }
 
     /// Track and render scroll state of this list with reference to the given scroll handle.

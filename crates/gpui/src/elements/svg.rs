@@ -38,6 +38,7 @@ impl Svg {
 
 impl Element for Svg {
     type BeforeLayout = ();
+    type AfterLayout = ();
     type BeforePaint = Option<Hitbox>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
@@ -47,20 +48,33 @@ impl Element for Svg {
         (layout_id, ())
     }
 
+    fn after_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        before_layout: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        self.interactivity
+            .after_layout(bounds, bounds.size, cx, |_, _, _| {});
+        (None, ())
+    }
+
     fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) -> Option<Hitbox> {
         self.interactivity
-            .before_paint(bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
+            .before_paint(bounds, cx, |_, _, hitbox, _| hitbox)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         hitbox: &mut Option<Hitbox>,
         cx: &mut ElementContext,
     ) where

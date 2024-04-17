@@ -1121,6 +1121,7 @@ impl ParentElement for Div {
 
 impl Element for Div {
     type BeforeLayout = DivFrameState;
+    type AfterLayout = ();
     type BeforePaint = Option<Hitbox>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
@@ -1138,12 +1139,12 @@ impl Element for Div {
         (layout_id, DivFrameState { child_layout_ids })
     }
 
-    fn before_paint(
+    fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Option<Hitbox> {
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         let content_size = if before_layout.child_layout_ids.is_empty() {
@@ -1177,25 +1178,49 @@ impl Element for Div {
             (child_max - child_min).into()
         };
 
-        self.interactivity.before_paint(
+        let focus_target_bounds = self.interactivity.after_layout(
             bounds,
             content_size,
             cx,
-            |_style, scroll_offset, hitbox, cx| {
+            |_, scroll_offset, mut focus_target_bounds, cx| {
+                cx.with_element_offset(scroll_offset, |cx| {
+                    for child in &mut self.children {
+                        if let Some(child_focus_bounds) = child.after_layout(cx) {
+                            focus_target_bounds = Some(child_focus_bounds);
+                        }
+                    }
+
+                    focus_target_bounds
+                })
+            },
+        );
+
+        (focus_target_bounds, ())
+    }
+
+    fn before_paint(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
+        cx: &mut ElementContext,
+    ) -> Option<Hitbox> {
+        self.interactivity
+            .before_paint(bounds, cx, |_style, scroll_offset, hitbox, cx| {
                 cx.with_element_offset(scroll_offset, |cx| {
                     for child in &mut self.children {
                         child.before_paint(cx);
                     }
                 });
                 hitbox
-            },
-        )
+            })
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         hitbox: &mut Option<Hitbox>,
         cx: &mut ElementContext,
     ) {
@@ -1336,13 +1361,12 @@ impl Interactivity {
         )
     }
 
-    /// Commit the bounds of this element according to this interactivity state's configured styles.
-    pub fn before_paint<R>(
+    pub fn after_layout<R>(
         &mut self,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         cx: &mut ElementContext,
-        f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut ElementContext) -> R,
+        f: impl FnOnce(&Style, Point<Pixels>, Option<Bounds<Pixels>>, &mut ElementContext) -> R,
     ) -> R {
         self.content_size = content_size;
         cx.with_element_state::<InteractiveElementState, _>(
@@ -1369,13 +1393,43 @@ impl Interactivity {
 
                 cx.with_text_style(style.text_style().cloned(), |cx| {
                     cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
+                        let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
+                        let result = f(&style, scroll_offset, cx);
+                        (result, element_state)
+                    })
+                })
+            },
+        )
+    }
+
+    // self.content_size = content_size;
+    /// Commit the bounds of this element according to this interactivity state's configured styles.
+    pub fn before_paint<R>(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        cx: &mut ElementContext,
+        f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut ElementContext) -> R,
+    ) -> R {
+        cx.with_element_state::<InteractiveElementState, _>(
+            self.element_id.clone(),
+            |element_state, cx| {
+                let mut element_state =
+                    element_state.map(|element_state| element_state.unwrap_or_default());
+                let style = self.compute_style_internal(None, element_state.as_mut(), cx);
+
+                cx.with_text_style(style.text_style().cloned(), |cx| {
+                    cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                         let hitbox = if self.should_insert_hitbox(&style) {
                             Some(cx.insert_hitbox(bounds, self.occlude_mouse))
                         } else {
                             None
                         };
 
-                        let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
+                        let scroll_offset = self
+                            .scroll_offset
+                            .as_ref()
+                            .map(|scroll_offset| *scroll_offset.borrow())
+                            .unwrap_or_default();
                         let result = f(&style, scroll_offset, hitbox, cx);
                         (result, element_state)
                     })
@@ -2262,29 +2316,43 @@ where
     E: Element,
 {
     type BeforeLayout = E::BeforeLayout;
+    type AfterLayout = E::AfterLayout;
     type BeforePaint = E::BeforePaint;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         self.element.before_layout(cx)
     }
 
+    fn after_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        before_layout: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        self.element.after_layout(bounds, before_layout, cx)
+    }
+
     fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::BeforeLayout,
+        before_layout: &mut Self::BeforeLayout,
+        after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) -> E::BeforePaint {
-        self.element.before_paint(bounds, state, cx)
+        self.element
+            .before_paint(bounds, before_layout, after_layout, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
+        after_layout: &mut Self::AfterLayout,
         before_paint: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
-        self.element.paint(bounds, before_layout, before_paint, cx)
+        self.element
+            .paint(bounds, before_layout, after_layout, before_paint, cx)
     }
 }
 
@@ -2345,29 +2413,43 @@ where
     E: Element,
 {
     type BeforeLayout = E::BeforeLayout;
+    type AfterLayout = E::AfterLayout;
     type BeforePaint = E::BeforePaint;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         self.element.before_layout(cx)
     }
 
+    fn after_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        before_layout: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        self.element.after_layout(bounds, before_layout, cx)
+    }
+
     fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::BeforeLayout,
+        before_layout: &mut Self::BeforeLayout,
+        after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) -> E::BeforePaint {
-        self.element.before_paint(bounds, state, cx)
+        self.element
+            .before_paint(bounds, before_layout, after_layout, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
+        after_layout: &mut Self::AfterLayout,
         before_paint: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
-        self.element.paint(bounds, before_layout, before_paint, cx);
+        self.element
+            .paint(bounds, before_layout, after_layout, before_paint, cx);
     }
 }
 

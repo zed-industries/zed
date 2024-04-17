@@ -155,7 +155,7 @@ impl FocusableView for ImageView {
 
 impl Render for ImageView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let checkered_background = |bounds: Bounds<Pixels>, _, cx: &mut ElementContext| {
+        let checkered_background = |bounds: Bounds<Pixels>, cx: &mut ElementContext| {
             let square_size = 32.0;
 
             let start_y = bounds.origin.y.0;
@@ -190,7 +190,7 @@ impl Render for ImageView {
             }
         };
 
-        let checkered_background = canvas(|_, _| (), checkered_background)
+        let checkered_background = canvas(checkered_background)
             .border_2()
             .border_color(cx.theme().styles.colors.border)
             .size_full()

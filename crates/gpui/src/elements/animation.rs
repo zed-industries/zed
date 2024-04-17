@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::{AnyElement, Element, ElementId, IntoElement};
+use crate::{AnyElement, Bounds, Element, ElementId, IntoElement, Pixels};
 
 pub use easing::*;
 
@@ -86,7 +86,7 @@ struct AnimationState {
 
 impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     type BeforeLayout = AnyElement;
-
+    type AfterLayout = ();
     type BeforePaint = ();
 
     fn before_layout(
@@ -134,10 +134,20 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         })
     }
 
+    fn after_layout(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        element: &mut Self::BeforeLayout,
+        cx: &mut crate::ElementContext,
+    ) -> (Option<Bounds<Pixels>>, ()) {
+        (element.after_layout(cx), ())
+    }
+
     fn before_paint(
         &mut self,
-        _bounds: crate::Bounds<crate::Pixels>,
+        _bounds: Bounds<Pixels>,
         element: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         cx: &mut crate::ElementContext,
     ) -> Self::BeforePaint {
         element.before_paint(cx);
@@ -145,9 +155,10 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
 
     fn paint(
         &mut self,
-        _bounds: crate::Bounds<crate::Pixels>,
+        _bounds: Bounds<Pixels>,
         element: &mut Self::BeforeLayout,
-        _: &mut Self::BeforePaint,
+        _after_layout: &mut Self::AfterLayout,
+        _before_paint: &mut Self::BeforePaint,
         cx: &mut crate::ElementContext,
     ) {
         element.paint(cx);

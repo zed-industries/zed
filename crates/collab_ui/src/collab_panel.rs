@@ -2834,34 +2834,31 @@ fn render_tree_branch(is_last: bool, overdraw: bool, cx: &mut WindowContext) -> 
     let thickness = px(1.);
     let color = cx.theme().colors().text;
 
-    canvas(
-        |_, _| {},
-        move |bounds, _, cx| {
-            let start_x = (bounds.left() + bounds.right() - thickness) / 2.;
-            let start_y = (bounds.top() + bounds.bottom() - thickness) / 2.;
-            let right = bounds.right();
-            let top = bounds.top();
+    canvas(move |bounds, cx| {
+        let start_x = (bounds.left() + bounds.right() - thickness) / 2.;
+        let start_y = (bounds.top() + bounds.bottom() - thickness) / 2.;
+        let right = bounds.right();
+        let top = bounds.top();
 
-            cx.paint_quad(fill(
-                Bounds::from_corners(
-                    point(start_x, top),
-                    point(
-                        start_x + thickness,
-                        if is_last {
-                            start_y
-                        } else {
-                            bounds.bottom() + if overdraw { px(1.) } else { px(0.) }
-                        },
-                    ),
+        cx.paint_quad(fill(
+            Bounds::from_corners(
+                point(start_x, top),
+                point(
+                    start_x + thickness,
+                    if is_last {
+                        start_y
+                    } else {
+                        bounds.bottom() + if overdraw { px(1.) } else { px(0.) }
+                    },
                 ),
-                color,
-            ));
-            cx.paint_quad(fill(
-                Bounds::from_corners(point(start_x, start_y), point(right, start_y + thickness)),
-                color,
-            ));
-        },
-    )
+            ),
+            color,
+        ));
+        cx.paint_quad(fill(
+            Bounds::from_corners(point(start_x, start_y), point(right, start_y + thickness)),
+            color,
+        ));
+    })
     .w(width)
     .h(line_height)
 }

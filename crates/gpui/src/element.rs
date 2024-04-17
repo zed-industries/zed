@@ -33,7 +33,7 @@
 
 use crate::{
     util::FluentBuilder, ArenaBox, AvailableSpace, Bounds, DispatchNodeId, ElementContext,
-    ElementId, LayoutId, Pixels, Point, Size, ViewContext, WindowContext, ELEMENT_ARENA,
+    ElementId, LayoutId, Pixels, Size, ViewContext, WindowContext, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -63,7 +63,7 @@ pub trait Element: 'static + IntoElement {
     /// todo!()
     fn after_layout(
         &mut self,
-        size: Size<Pixels>,
+        bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout);
@@ -191,7 +191,7 @@ impl<C: RenderOnce> Element for Component<C> {
 
     fn after_layout(
         &mut self,
-        size: Size<Pixels>,
+        _bounds: Bounds<Pixels>,
         element: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
@@ -244,7 +244,7 @@ trait ElementObject {
 
     fn paint(&mut self, cx: &mut ElementContext);
 
-    fn measure(
+    fn layout(
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
@@ -283,8 +283,8 @@ enum ElementDrawPhase<BeforeLayout, AfterLayout, BeforePaint> {
 }
 
 pub struct ElementMeasurement {
-    size: Size<Pixels>,
-    focus_target_bounds: Option<Bounds<Pixels>>,
+    pub size: Size<Pixels>,
+    pub focus_target_bounds: Option<Bounds<Pixels>>,
 }
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
@@ -316,9 +316,9 @@ impl<E: Element> Drawable<E> {
                 layout_id,
                 mut before_layout,
             } => {
-                let size = cx.layout_bounds(layout_id).size;
+                let bounds = cx.layout_bounds(layout_id);
                 let (focus_target_bounds, after_layout) =
-                    self.element.after_layout(size, &mut before_layout, cx);
+                    self.element.after_layout(bounds, &mut before_layout, cx);
                 self.phase = ElementDrawPhase::AfterLayout {
                     layout_id,
                     available_space: None,
@@ -383,7 +383,7 @@ impl<E: Element> Drawable<E> {
         }
     }
 
-    fn measure(
+    fn layout(
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
@@ -398,9 +398,9 @@ impl<E: Element> Drawable<E> {
                 mut before_layout,
             } => {
                 cx.compute_layout(layout_id, available_space);
-                let size = cx.layout_bounds(layout_id).size;
+                let bounds = cx.layout_bounds(layout_id);
                 let (focus_target_bounds, after_layout) =
-                    self.element.after_layout(size, &mut before_layout, cx);
+                    self.element.after_layout(bounds, &mut before_layout, cx);
                 self.phase = ElementDrawPhase::AfterLayout {
                     layout_id,
                     available_space: Some(available_space),
@@ -408,7 +408,7 @@ impl<E: Element> Drawable<E> {
                     after_layout,
                 };
                 ElementMeasurement {
-                    size,
+                    size: bounds.size,
                     focus_target_bounds,
                 }
             }
@@ -421,9 +421,9 @@ impl<E: Element> Drawable<E> {
                 if Some(available_space) != prev_available_space {
                     cx.compute_layout(layout_id, available_space);
                 }
-                let size = cx.layout_bounds(layout_id).size;
+                let bounds = cx.layout_bounds(layout_id);
                 let (focus_target_bounds, after_layout) =
-                    self.element.after_layout(size, &mut before_layout, cx);
+                    self.element.after_layout(bounds, &mut before_layout, cx);
                 self.phase = ElementDrawPhase::AfterLayout {
                     layout_id,
                     available_space: Some(available_space),
@@ -431,11 +431,11 @@ impl<E: Element> Drawable<E> {
                     after_layout,
                 };
                 ElementMeasurement {
-                    size,
+                    size: bounds.size,
                     focus_target_bounds,
                 }
             }
-            _ => panic!("cannot measure after painting"),
+            _ => panic!("cannot layout after painting"),
         }
     }
 }
@@ -465,12 +465,12 @@ where
         Drawable::paint(self, cx);
     }
 
-    fn measure(
+    fn layout(
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) -> ElementMeasurement {
-        Drawable::measure(self, available_space, cx)
+        Drawable::layout(self, available_space, cx)
     }
 }
 
@@ -516,24 +516,12 @@ impl AnyElement {
     }
 
     /// Initializes this element and performs layout within the given available space to determine its size.
-    pub fn measure(
+    pub fn layout(
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) -> ElementMeasurement {
-        self.0.measure(available_space, cx)
-    }
-
-    /// Initializes this element, performs layout if needed and commits its bounds for hitbox purposes.
-    pub fn layout(
-        &mut self,
-        absolute_offset: Point<Pixels>,
-        available_space: Size<AvailableSpace>,
-        cx: &mut ElementContext,
-    ) -> Size<Pixels> {
-        let measurement = self.measure(available_space, cx);
-        cx.with_absolute_element_offset(absolute_offset, |cx| self.before_paint(cx));
-        measurement.size
+        self.0.layout(available_space, cx)
     }
 }
 
@@ -549,7 +537,7 @@ impl Element for AnyElement {
 
     fn after_layout(
         &mut self,
-        _: Size<Pixels>,
+        _: Bounds<Pixels>,
         _: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
@@ -613,7 +601,7 @@ impl Element for Empty {
 
     fn after_layout(
         &mut self,
-        _size: Size<Pixels>,
+        _bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {

@@ -734,7 +734,8 @@ impl VisualTestContext {
         self.update(|cx| {
             cx.with_element_context(|cx| {
                 let mut element = f(cx);
-                element.layout(origin, space, cx);
+                element.layout(space, cx);
+                cx.with_element_offset(origin, |cx| element.before_paint(cx));
                 element.paint(cx);
             });
 

@@ -1094,31 +1094,37 @@ impl AssistantPanel {
                     let view = cx.view().clone();
                     let scroll_handle = self.saved_conversations_scroll_handle.clone();
                     let conversation_count = self.saved_conversations.len();
-                    canvas(
-                        move |bounds, cx| {
-                            let mut saved_conversations = uniform_list(
-                                view,
-                                "saved_conversations",
-                                conversation_count,
-                                |this, range, cx| {
-                                    range
-                                        .map(|ix| this.render_saved_conversation(ix, cx))
-                                        .collect()
-                                },
-                            )
-                            .track_scroll(scroll_handle)
-                            .into_any_element();
-                            saved_conversations.layout(
-                                bounds.origin,
-                                bounds.size.map(AvailableSpace::Definite),
-                                cx,
-                            );
-                            saved_conversations
-                        },
-                        |_bounds, mut saved_conversations, cx| saved_conversations.paint(cx),
-                    )
-                    .size_full()
-                    .into_any_element()
+                    todo!("replace canvas")
+                    // canvas(
+                    //     move |_, cx| {
+                    //         let saved_conversations = uniform_list(
+                    //             view.clone(),
+                    //             "saved_conversations",
+                    //             conversation_count,
+                    //             |this, range, cx| {
+                    //                 range
+                    //                     .map(|ix| this.render_saved_conversation(ix, cx))
+                    //                     .collect()
+                    //             },
+                    //         )
+                    //         .track_scroll(scroll_handle.clone())
+                    //         .into_any_element();
+                    //         saved_conversations.layout(absolute_offset, available_space, cx)
+                    //         // compute layout for saved conversations
+                    //         saved_conversations
+                    //     },
+                    //     move |bounds, saved_conversations, cx| {
+                    //         saved_conversations.layout(
+                    //             bounds.origin,
+                    //             bounds.size.map(AvailableSpace::Definite),
+                    //             cx,
+                    //         );
+                    //         saved_conversations
+                    //     },
+                    //     |_bounds, mut saved_conversations, cx| saved_conversations.paint(cx),
+                    // )
+                    // .size_full()
+                    // .into_any_element()
                 } else if let Some(editor) = self.active_conversation_editor() {
                     let editor = editor.clone();
                     let conversation = editor.read(cx).conversation.clone();

@@ -936,24 +936,25 @@ impl Render for ExtensionsPage {
                 let view = cx.view().clone();
                 let scroll_handle = self.list.clone();
                 this.child(
-                    canvas(
-                        move |bounds, cx| {
-                            let mut list = uniform_list::<_, ExtensionCard, _>(
-                                view,
-                                "entries",
-                                count,
-                                Self::render_extensions,
-                            )
-                            .size_full()
-                            .pb_4()
-                            .track_scroll(scroll_handle)
-                            .into_any_element();
-                            list.layout(bounds.origin, bounds.size.into(), cx);
-                            list
-                        },
-                        |_bounds, mut list, cx| list.paint(cx),
-                    )
-                    .size_full(),
+                    // canvas(
+                    //     move |bounds, cx| {
+                    //         let mut list = uniform_list::<_, ExtensionCard, _>(
+                    //             view,
+                    //             "entries",
+                    //             count,
+                    //             Self::render_extensions,
+                    //         )
+                    //         .size_full()
+                    //         .pb_4()
+                    //         .track_scroll(scroll_handle)
+                    //         .into_any_element();
+                    //         list.layout(bounds.origin, bounds.size.into(), cx);
+                    //         list
+                    //     },
+                    //     |_bounds, mut list, cx| list.paint(cx),
+                    // )
+                    // .size_full(),
+                    todo!("replace canvas"),
                 )
             }))
     }
