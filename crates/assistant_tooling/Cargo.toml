@@ -16,7 +16,6 @@ path = "src/mod.rs"
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
-lazy_static.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

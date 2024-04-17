@@ -23,7 +23,7 @@ impl FunctionCall for CodebaseQuery {
 
         Box::pin(async move {
             // Placeholder until semantic index hooked up
-            Ok(format!("Results for query: '{}'", query))
+            Ok(format!("No results for query: '{}'", query))
         })
     }
 }

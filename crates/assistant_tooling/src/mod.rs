@@ -63,8 +63,6 @@ mod tests {
 
     use gpui::TestAppContext;
 
-    use lazy_static::lazy_static;
-
     #[gpui::test]
     async fn test_openai_weather_example(cx: &mut TestAppContext) {
         cx.background_executor.run_until_parked();
@@ -80,12 +78,6 @@ mod tests {
             location: String,
             temperature: f64,
             unit: String,
-        }
-
-        lazy_static! {
-            static ref SCHEMA: RootSchema = schema_for!(WeatherQuery).into();
-            static ref PARAMETERS: serde_json::Value =
-                serde_json::to_value(&*SCHEMA).expect("Schema serialization must not fail");
         }
 
         impl FunctionCall for WeatherQuery {
