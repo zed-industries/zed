@@ -158,7 +158,7 @@ For example, to disable ligatures for a given font you can add the following to 
 **Options**
 
 The `left_padding` and `right_padding` options define the relative width of the
-left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.45`.
+left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
 
 ## Copilot
 
