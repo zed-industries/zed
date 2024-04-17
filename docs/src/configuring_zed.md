@@ -555,9 +555,14 @@ To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
 - Default:
 
 ```json
-"git": {
-  "git_gutter": "tracked_files"
-},
+{
+  "git": {
+    "git_gutter": "tracked_files",
+    "inline_blame": {
+      "enabled": true
+    }
+  }
+}
 ```
 
 ### Git Gutter
