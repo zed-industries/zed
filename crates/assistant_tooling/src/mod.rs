@@ -1,23 +1,17 @@
-use schemars::{schema::RootSchema, schema_for, JsonSchema};
+use futures::Future;
+use schemars::{schema::RootSchema, JsonSchema};
 use serde::{Deserialize, Serialize};
-
 use serde_json::{json, Value};
+use std::pin::Pin;
 
-pub trait FunctionCall {
-    type Input: Serialize + for<'de> Deserialize<'de> + JsonSchema;
-
+pub trait FunctionCall: Serialize + for<'de> Deserialize<'de> + JsonSchema {
     type Output: Serialize;
 
     fn name() -> &'static str;
     fn description() -> &'static str;
 
-    fn schema() -> RootSchema;
-
-    fn extract(args: &Value) -> Result<Self::Input, serde_json::Error> {
-        serde_json::from_value(args.clone())
-    }
-
-    fn execute(args: Self::Input) -> Result<String, serde_json::Error>;
+    fn parameters() -> &'static serde_json::Value;
+    fn schema() -> &'static RootSchema;
 
     fn definition() -> Value {
         json!({
@@ -25,18 +19,34 @@ pub trait FunctionCall {
             "function": {
                 "name": Self::name(),
                 "description": Self::description(),
-                "schema": Self::schema()
+                "schema": Self::parameters()
             }
         })
     }
+
+    fn extract(args: &Value) -> Result<Self, serde_json::Error> {
+        serde_json::from_value(args.clone())
+    }
+
+    fn execute(
+        args: Self,
+    ) -> Pin<Box<dyn Future<Output = Result<String, serde_json::Error>> + Send>>;
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_openai_weather_example() {
-        #[derive(Serialize, Deserialize, JsonSchema)]
+    use gpui::TestAppContext;
+
+    use lazy_static::lazy_static;
+    use schemars::schema_for;
+
+    #[gpui::test]
+    async fn test_openai_weather_example(cx: &mut TestAppContext) {
+        cx.background_executor.run_until_parked();
+
+        #[derive(Deserialize, Serialize, JsonSchema)]
         struct WeatherQuery {
             location: String,
             unit: String,
@@ -49,10 +59,13 @@ mod tests {
             unit: String,
         }
 
-        struct GetWeather;
+        lazy_static! {
+            static ref SCHEMA: RootSchema = schema_for!(WeatherQuery).into();
+            static ref PARAMETERS: serde_json::Value =
+                serde_json::to_value(&*SCHEMA).expect("Schema serialization must not fail");
+        }
 
-        impl FunctionCall for GetWeather {
-            type Input = WeatherQuery;
+        impl FunctionCall for WeatherQuery {
             type Output = WeatherResult;
 
             fn name() -> &'static str {
@@ -63,27 +76,66 @@ mod tests {
                 "Fetches the current weather for a given location."
             }
 
-            // Could/should this be created at compile time?
-            fn schema() -> RootSchema {
-                schema_for!(WeatherQuery).into()
+            fn parameters() -> &'static serde_json::Value {
+                &PARAMETERS
             }
 
-            fn execute(args: WeatherQuery) -> Result<String, serde_json::Error> {
-                let result = WeatherResult {
-                    location: args.location,
-                    temperature: 21.0,
-                    unit: args.unit,
-                };
-                serde_json::to_string(&result)
+            fn schema() -> &'static RootSchema {
+                &SCHEMA
+            }
+
+            fn execute(
+                args: Self,
+            ) -> Pin<Box<dyn Future<Output = Result<String, serde_json::Error>> + Send>>
+            {
+                Box::pin(async move {
+                    let result = WeatherResult {
+                        location: args.location,
+                        temperature: 21.0,
+                        unit: args.unit,
+                    };
+                    Ok(serde_json::to_string(&result)?)
+                })
             }
         }
-    }
 
-    #[test]
-    fn test_function_tool() {
-        #[derive(Deserialize, Serialize, JsonSchema)]
-        struct CodebaseQuery {
-            query: String,
-        }
+        let tools = vec![WeatherQuery::definition()];
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools,
+            vec![json!({
+                "type": "function",
+                "function": {
+                    "name": "get_current_weather",
+                    "description": "Fetches the current weather for a given location.",
+                    "schema": {
+                        // TODO: Check if OpenAI can ignore this field
+                        "$schema": "http://json-schema.org/draft-07/schema#",
+                        // TODO: Check if OpenAI can ignore this field
+                        "title": "WeatherQuery",
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string"
+                            },
+                            "unit": {
+                                "type": "string"
+                            }
+                        },
+                        "required": ["location", "unit"]
+                    }
+                }
+            })]
+        );
+
+        // Now let's test having "the model" pass in args, get back a result, and then return the result
+        let args = json!({
+            "location": "San Francisco",
+            "unit": "Celsius"
+        });
+
+        let input = WeatherQuery::extract(&args).unwrap();
+        let result = WeatherQuery::execute(input).await.unwrap();
+        println!("Result: {}", result);
     }
 }
