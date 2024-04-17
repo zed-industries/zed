@@ -68,7 +68,7 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),
-                MenuItem::action("Find In Project", workspace::NewSearch),
+                MenuItem::action("Find In Project", workspace::DeploySearch::find()),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Toggle Line Comment",
@@ -177,6 +177,12 @@ pub fn app_menus() -> Vec<Menu<'static>> {
                     "Zed Twitter",
                     super::OpenBrowser {
                         url: "https://twitter.com/zeddotdev".into(),
+                    },
+                ),
+                MenuItem::action(
+                    "Join the Team",
+                    super::OpenBrowser {
+                        url: "https://zed.dev/jobs".into(),
                     },
                 ),
             ],

@@ -965,11 +965,11 @@ impl EditorElement {
                 // Git
                 (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
                     ||
-                    // Selections
-                    (is_singleton && scrollbar_settings.selections && editor.has_background_highlights::<BufferSearchHighlights>())
+                    // Buffer Search Results
+                    (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
                     ||
-                    // Symbols Selections
-                    (is_singleton && scrollbar_settings.symbols_selections && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+                    // Selected Symbol Occurrences
+                    (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
                     ||
                     // Diagnostics
                     (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
@@ -1099,9 +1099,9 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn layout_inline_blame(
         &self,
-        start_row: u32,
-        row: u32,
-        line_layouts: &[LineWithInvisibles],
+        display_row: u32,
+        display_snapshot: &DisplaySnapshot,
+        line_layout: &LineWithInvisibles,
         em_width: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
@@ -1115,27 +1115,32 @@ impl EditorElement {
             return None;
         }
 
-        let blame = self.editor.read(cx).blame.clone()?;
         let workspace = self
             .editor
             .read(cx)
             .workspace
             .as_ref()
             .map(|(w, _)| w.clone());
+
+        let display_point = DisplayPoint::new(display_row, 0);
+        let buffer_row = display_point.to_point(display_snapshot).row;
+
+        let blame = self.editor.read(cx).blame.clone()?;
         let blame_entry = blame
-            .update(cx, |blame, cx| blame.blame_for_rows([Some(row)], cx).next())
+            .update(cx, |blame, cx| {
+                blame.blame_for_rows([Some(buffer_row)], cx).next()
+            })
             .flatten()?;
 
         let mut element =
             render_inline_blame_entry(&blame, blame_entry, &self.style, workspace, cx);
 
-        let start_y =
-            content_origin.y + line_height * (row as f32 - scroll_pixel_position.y / line_height);
+        let start_y = content_origin.y
+            + line_height * (display_row as f32 - scroll_pixel_position.y / line_height);
 
         let start_x = {
             const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
 
-            let line_layout = &line_layouts[(row - start_row) as usize];
             let line_width = line_layout.line.width;
 
             let project_settings = ProjectSettings::get_global(cx);
@@ -1147,6 +1152,7 @@ impl EditorElement {
             content_origin.x
                 + max(line_width, min as f32 * em_width)
                 + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS)
+9
         };
 
         let absolute_offset = point(start_x, start_y);
@@ -2628,10 +2634,14 @@ impl EditorElement {
                             for (background_highlight_id, (_, background_ranges)) in
                                 background_highlights.iter()
                             {
-                                if (*background_highlight_id
-                                    == TypeId::of::<BufferSearchHighlights>()
-                                    && scrollbar_settings.selections)
-                                    || scrollbar_settings.symbols_selections
+                                let is_search_highlights = *background_highlight_id
+                                    == TypeId::of::<BufferSearchHighlights>();
+                                let is_symbol_occurrences = *background_highlight_id
+                                    == TypeId::of::<DocumentHighlightRead>()
+                                    || *background_highlight_id
+                                        == TypeId::of::<DocumentHighlightWrite>();
+                                if (is_search_highlights && scrollbar_settings.search_results)
+                                    || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
                                 {
                                     let marker_row_ranges =
                                         background_ranges.into_iter().map(|range| {
@@ -3101,7 +3111,9 @@ impl Render for BlameEntryTooltip {
                         .gap_4()
                         .child(
                             h_flex()
-                                .gap_2()
+                                .gap_x_2()
+                                .overflow_x_hidden()
+                                .flex_wrap()
                                 .child(author)
                                 .when_some(author_email, |this, author_email| {
                                     this.child(
@@ -3701,11 +3713,13 @@ impl Element for EditorElement {
 
                 let mut inline_blame = None;
                 if let Some(newest_selection_head) = newest_selection_head {
-                    if (start_row..end_row).contains(&newest_selection_head.row()) {
+                    let display_row = newest_selection_head.row();
+                    if (start_row..end_row).contains(&display_row) {
+                        let line_layout = &line_layouts[(display_row - start_row) as usize];
                         inline_blame = self.layout_inline_blame(
-                            start_row,
-                            newest_selection_head.row(),
-                            &line_layouts,
+                            display_row,
+                            &snapshot.display_snapshot,
+                            line_layout,
                             em_width,
                             content_origin,
                             scroll_pixel_position,

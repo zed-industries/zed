@@ -132,7 +132,7 @@ pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
         move |_: &SignOut, cx| {
             if let Some(client) = client.upgrade() {
                 cx.spawn(|cx| async move {
-                    client.disconnect(&cx);
+                    client.sign_out(&cx).await;
                 })
                 .detach();
             }
@@ -1248,6 +1248,15 @@ impl Client {
             user_id: response.user.id,
             access_token: api_token,
         })
+    }
+
+    pub async fn sign_out(self: &Arc<Self>, cx: &AsyncAppContext) {
+        self.state.write().credentials = None;
+        self.disconnect(&cx);
+
+        if self.has_keychain_credentials(cx).await {
+            delete_credentials_from_keychain(cx).await.log_err();
+        }
     }
 
     pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) {

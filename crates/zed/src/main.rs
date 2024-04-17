@@ -151,7 +151,7 @@ fn init_headless(dev_server_token: DevServerToken) {
     })
 }
 
-fn init_ui() {
+fn init_ui(args: Args) {
     menu::init();
     zed_actions::init();
 
@@ -381,7 +381,6 @@ fn init_ui() {
 
         cx.activate(true);
 
-        let args = Args::parse();
         let mut triggered_authentication = false;
         let urls: Vec<_> = args
             .paths_or_urls
@@ -436,7 +435,7 @@ fn main() {
         let dev_server_token = DevServerToken(dev_server_token);
         init_headless(dev_server_token)
     } else {
-        init_ui()
+        init_ui(args)
     }
 }
 

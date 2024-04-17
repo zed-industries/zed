@@ -18,7 +18,10 @@ use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
     FakeLspAdapter,
 };
-use project::SERVER_PROGRESS_DEBOUNCE_TIMEOUT;
+use project::{
+    project_settings::{InlineBlameSettings, ProjectSettings},
+    SERVER_PROGRESS_DEBOUNCE_TIMEOUT,
+};
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::SettingsStore;
@@ -1999,6 +2002,25 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
 
     cx_a.update(editor::init);
     cx_b.update(editor::init);
+    // Turn inline-blame-off by default so no state is transferred without us explicitly doing so
+    let inline_blame_off_settings = Some(InlineBlameSettings {
+        enabled: false,
+        delay_ms: None,
+    });
+    cx_a.update(|cx| {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |settings| {
+                settings.git.inline_blame = inline_blame_off_settings;
+            });
+        });
+    });
+    cx_b.update(|cx| {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |settings| {
+                settings.git.inline_blame = inline_blame_off_settings;
+            });
+        });
+    });
 
     client_a
         .fs()

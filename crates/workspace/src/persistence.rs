@@ -138,6 +138,7 @@ define_connection! {
     //   window_height: Option<f32>, // WindowBounds::Fixed RectF height
     //   display: Option<Uuid>, // Display id
     //   fullscreen: Option<bool>, // Is the window fullscreen?
+    //   centered_layout: Option<bool>, // Is the Centered Layout mode activated?
     // )
     //
     // pane_groups(
@@ -284,6 +285,11 @@ define_connection! {
     sql!(
         ALTER TABLE items ADD COLUMN preview INTEGER; //bool
     ),
+    // Add centered_layout field to workspace
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN centered_layout INTEGER; //bool
+    ),
+
     ];
 }
 
@@ -299,11 +305,12 @@ impl WorkspaceDb {
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, workspace_location, bounds, display, fullscreen, docks): (
+        let (workspace_id, workspace_location, bounds, display, fullscreen, centered_layout, docks): (
             WorkspaceId,
             WorkspaceLocation,
             Option<SerializedWindowsBounds>,
             Option<Uuid>,
+            Option<bool>,
             Option<bool>,
             DockStructure,
         ) = self
@@ -318,6 +325,7 @@ impl WorkspaceDb {
                     window_height,
                     display,
                     fullscreen,
+                    centered_layout,
                     left_dock_visible,
                     left_dock_active_panel,
                     left_dock_zoom,
@@ -344,6 +352,7 @@ impl WorkspaceDb {
                 .log_err()?,
             bounds: bounds.map(|bounds| bounds.0),
             fullscreen: fullscreen.unwrap_or(false),
+            centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
         })
@@ -678,6 +687,14 @@ impl WorkspaceDb {
             WHERE workspace_id = ?1
         }
     }
+
+    query! {
+        pub(crate) async fn set_centered_layout(workspace_id: WorkspaceId, centered_layout: bool) -> Result<()> {
+            UPDATE workspaces
+            SET centered_layout = ?2
+            WHERE workspace_id = ?1
+        }
+    }
 }
 
 #[cfg(test)]
@@ -764,6 +781,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -774,6 +792,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -873,6 +892,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -902,6 +922,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -912,6 +933,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -949,6 +971,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -983,6 +1006,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         }
     }
 

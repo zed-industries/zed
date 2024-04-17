@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use collections::HashMap;
@@ -63,7 +63,8 @@ pub struct GitBlame {
     task: Task<Result<()>>,
     generated: bool,
     user_triggered: bool,
-    _refresh_subscription: Subscription,
+    regenerate_on_edit_task: Task<Result<()>>,
+    _regenerate_subscriptions: Vec<Subscription>,
 }
 
 impl GitBlame {
@@ -81,7 +82,19 @@ impl GitBlame {
             &(),
         );
 
-        let refresh_subscription = cx.subscribe(&project, {
+        let buffer_subscriptions = cx.subscribe(&buffer, |this, buffer, event, cx| match event {
+            language::Event::DirtyChanged => {
+                if !buffer.read(cx).is_dirty() {
+                    this.generate(cx);
+                }
+            }
+            language::Event::Edited => {
+                this.regenerate_on_edit(cx);
+            }
+            _ => {}
+        });
+
+        let project_subscription = cx.subscribe(&project, {
             let buffer = buffer.clone();
 
             move |this, _, event, cx| match event {
@@ -116,7 +129,8 @@ impl GitBlame {
             commit_details: HashMap::default(),
             task: Task::ready(Ok(())),
             generated: false,
-            _refresh_subscription: refresh_subscription,
+            regenerate_on_edit_task: Task::ready(Ok(())),
+            _regenerate_subscriptions: vec![buffer_subscriptions, project_subscription],
         };
         this.generate(cx);
         this
@@ -310,7 +324,21 @@ impl GitBlame {
             })
         });
     }
+
+    fn regenerate_on_edit(&mut self, cx: &mut ModelContext<Self>) {
+        self.regenerate_on_edit_task = cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
+                .await;
+
+            this.update(&mut cx, |this, cx| {
+                this.generate(cx);
+            })
+        });
+    }
 }
+
+const REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(2);
 
 fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree<GitBlameEntry> {
     let mut current_row = 0;

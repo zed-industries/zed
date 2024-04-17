@@ -13,15 +13,14 @@ impl LuaExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<String> {
+        if let Some(path) = worktree.which("lua-language-server") {
+            return Ok(path);
+        }
+
         if let Some(path) = &self.cached_binary_path {
             if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
                 return Ok(path.clone());
             }
-        }
-
-        if let Some(path) = worktree.which("lua-language-server") {
-            self.cached_binary_path = Some(path.clone());
-            return Ok(path);
         }
 
         zed::set_language_server_installation_status(
@@ -47,7 +46,7 @@ impl LuaExtension {
             },
             arch = match arch {
                 zed::Architecture::Aarch64 => "arm64",
-                zed::Architecture::X8664 => "x86_64",
+                zed::Architecture::X8664 => "x64",
                 zed::Architecture::X86 => return Err("unsupported platform x86".into()),
             },
         );
