@@ -793,7 +793,7 @@ mod element {
 
     impl Element for PaneAxisElement {
         type BeforeLayout = ();
-        type AfterLayout = PaneAxisLayout;
+        type BeforePaint = PaneAxisLayout;
 
         fn before_layout(
             &mut self,
@@ -808,7 +808,7 @@ mod element {
             (cx.request_layout(&style, None), ())
         }
 
-        fn after_layout(
+        fn before_paint(
             &mut self,
             bounds: Bounds<Pixels>,
             _state: &mut Self::BeforeLayout,
@@ -898,7 +898,7 @@ mod element {
             &mut self,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::BeforeLayout,
-            layout: &mut Self::AfterLayout,
+            layout: &mut Self::BeforePaint,
             cx: &mut ui::prelude::ElementContext,
         ) {
             for child in &mut layout.children {

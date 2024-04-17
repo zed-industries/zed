@@ -18,7 +18,7 @@ use util::ResultExt;
 
 impl Element for &'static str {
     type BeforeLayout = TextState;
-    type AfterLayout = ();
+    type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut state = TextState::default();
@@ -26,7 +26,7 @@ impl Element for &'static str {
         (layout_id, state)
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         _bounds: Bounds<Pixels>,
         _text_state: &mut Self::BeforeLayout,
@@ -63,7 +63,7 @@ impl IntoElement for String {
 
 impl Element for SharedString {
     type BeforeLayout = TextState;
-    type AfterLayout = ();
+    type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut state = TextState::default();
@@ -71,7 +71,7 @@ impl Element for SharedString {
         (layout_id, state)
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         _bounds: Bounds<Pixels>,
         _text_state: &mut Self::BeforeLayout,
@@ -83,7 +83,7 @@ impl Element for SharedString {
         &mut self,
         bounds: Bounds<Pixels>,
         text_state: &mut Self::BeforeLayout,
-        _: &mut Self::AfterLayout,
+        _: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
         let text_str: &str = self.as_ref();
@@ -149,7 +149,7 @@ impl StyledText {
 
 impl Element for StyledText {
     type BeforeLayout = TextState;
-    type AfterLayout = ();
+    type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut state = TextState::default();
@@ -157,7 +157,7 @@ impl Element for StyledText {
         (layout_id, state)
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         _bounds: Bounds<Pixels>,
         _state: &mut Self::BeforeLayout,
@@ -169,7 +169,7 @@ impl Element for StyledText {
         &mut self,
         bounds: Bounds<Pixels>,
         text_state: &mut Self::BeforeLayout,
-        _: &mut Self::AfterLayout,
+        _: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
         text_state.paint(bounds, &self.text, cx)
@@ -403,13 +403,13 @@ impl InteractiveText {
 
 impl Element for InteractiveText {
     type BeforeLayout = TextState;
-    type AfterLayout = Hitbox;
+    type BeforePaint = Hitbox;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         self.text.before_layout(cx)
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut Self::BeforeLayout,
@@ -430,7 +430,7 @@ impl Element for InteractiveText {
                     }
                 }
 
-                self.text.after_layout(bounds, state, cx);
+                self.text.before_paint(bounds, state, cx);
                 let hitbox = cx.insert_hitbox(bounds, false);
                 (hitbox, interactive_state)
             },

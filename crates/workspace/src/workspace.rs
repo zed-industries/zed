@@ -4971,7 +4971,7 @@ struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
     type BeforeLayout = AnyElement;
-    type AfterLayout = ();
+    type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut background = cx.theme().colors().elevated_surface_background;
@@ -4994,21 +4994,21 @@ impl Element for DisconnectedOverlay {
         (overlay.before_layout(cx), overlay)
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         overlay: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) {
         cx.insert_hitbox(bounds, true);
-        overlay.after_layout(cx);
+        overlay.before_paint(cx);
     }
 
     fn paint(
         &mut self,
         _: Bounds<Pixels>,
         overlay: &mut Self::BeforeLayout,
-        _: &mut Self::AfterLayout,
+        _: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
         overlay.paint(cx)

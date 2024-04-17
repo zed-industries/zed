@@ -27,14 +27,14 @@ impl Deferred {
 
 impl Element for Deferred {
     type BeforeLayout = ();
-    type AfterLayout = ();
+    type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, ()) {
         let layout_id = self.child.as_mut().unwrap().before_layout(cx);
         (layout_id, ())
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         _bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
@@ -49,7 +49,7 @@ impl Element for Deferred {
         &mut self,
         _bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
-        _after_layout: &mut Self::AfterLayout,
+        _before_paint: &mut Self::BeforePaint,
         _cx: &mut ElementContext,
     ) {
     }

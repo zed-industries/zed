@@ -87,7 +87,7 @@ struct AnimationState {
 impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     type BeforeLayout = AnyElement;
 
-    type AfterLayout = ();
+    type BeforePaint = ();
 
     fn before_layout(
         &mut self,
@@ -134,20 +134,20 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         })
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::BeforeLayout,
         cx: &mut crate::ElementContext,
-    ) -> Self::AfterLayout {
-        element.after_layout(cx);
+    ) -> Self::BeforePaint {
+        element.before_paint(cx);
     }
 
     fn paint(
         &mut self,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::BeforeLayout,
-        _: &mut Self::AfterLayout,
+        _: &mut Self::BeforePaint,
         cx: &mut crate::ElementContext,
     ) {
         element.paint(cx);

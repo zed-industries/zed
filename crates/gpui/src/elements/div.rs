@@ -1121,7 +1121,7 @@ impl ParentElement for Div {
 
 impl Element for Div {
     type BeforeLayout = DivFrameState;
-    type AfterLayout = Option<Hitbox>;
+    type BeforePaint = Option<Hitbox>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let mut child_layout_ids = SmallVec::new();
@@ -1138,7 +1138,7 @@ impl Element for Div {
         (layout_id, DivFrameState { child_layout_ids })
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
@@ -1177,14 +1177,14 @@ impl Element for Div {
             (child_max - child_min).into()
         };
 
-        self.interactivity.after_layout(
+        self.interactivity.before_paint(
             bounds,
             content_size,
             cx,
             |_style, scroll_offset, hitbox, cx| {
                 cx.with_element_offset(scroll_offset, |cx| {
                     for child in &mut self.children {
-                        child.after_layout(cx);
+                        child.before_paint(cx);
                     }
                 });
                 hitbox
@@ -1337,7 +1337,7 @@ impl Interactivity {
     }
 
     /// Commit the bounds of this element according to this interactivity state's configured styles.
-    pub fn after_layout<R>(
+    pub fn before_paint<R>(
         &mut self,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
@@ -2262,29 +2262,29 @@ where
     E: Element,
 {
     type BeforeLayout = E::BeforeLayout;
-    type AfterLayout = E::AfterLayout;
+    type BeforePaint = E::BeforePaint;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         self.element.before_layout(cx)
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> E::AfterLayout {
-        self.element.after_layout(bounds, state, cx)
+    ) -> E::BeforePaint {
+        self.element.before_paint(bounds, state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        after_layout: &mut Self::AfterLayout,
+        before_paint: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
-        self.element.paint(bounds, before_layout, after_layout, cx)
+        self.element.paint(bounds, before_layout, before_paint, cx)
     }
 }
 
@@ -2345,29 +2345,29 @@ where
     E: Element,
 {
     type BeforeLayout = E::BeforeLayout;
-    type AfterLayout = E::AfterLayout;
+    type BeforePaint = E::BeforePaint;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         self.element.before_layout(cx)
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         state: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> E::AfterLayout {
-        self.element.after_layout(bounds, state, cx)
+    ) -> E::BeforePaint {
+        self.element.before_paint(bounds, state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        after_layout: &mut Self::AfterLayout,
+        before_paint: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
-        self.element.paint(bounds, before_layout, after_layout, cx);
+        self.element.paint(bounds, before_layout, before_paint, cx);
     }
 }
 

@@ -542,7 +542,7 @@ impl TerminalElement {
 
 impl Element for TerminalElement {
     type BeforeLayout = ();
-    type AfterLayout = LayoutState;
+    type BeforePaint = LayoutState;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         self.interactivity.occlude_mouse();
@@ -556,14 +556,14 @@ impl Element for TerminalElement {
         (layout_id, ())
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         _: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> Self::AfterLayout {
+    ) -> Self::BeforePaint {
         self.interactivity
-            .after_layout(bounds, bounds.size, cx, |_, _, hitbox, cx| {
+            .before_paint(bounds, bounds.size, cx, |_, _, hitbox, cx| {
                 let hitbox = hitbox.unwrap();
                 let settings = ThemeSettings::get_global(cx).clone();
 
@@ -776,7 +776,7 @@ impl Element for TerminalElement {
         &mut self,
         bounds: Bounds<Pixels>,
         _: &mut Self::BeforeLayout,
-        layout: &mut Self::AfterLayout,
+        layout: &mut Self::BeforePaint,
         cx: &mut ElementContext<'_>,
     ) {
         cx.paint_quad(fill(bounds, layout.background_color));

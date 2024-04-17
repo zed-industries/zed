@@ -70,7 +70,7 @@ impl ParentElement for Anchored {
 
 impl Element for Anchored {
     type BeforeLayout = AnchoredState;
-    type AfterLayout = ();
+    type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::BeforeLayout) {
         let child_layout_ids = self
@@ -90,7 +90,7 @@ impl Element for Anchored {
         (layout_id, AnchoredState { child_layout_ids })
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
@@ -167,7 +167,7 @@ impl Element for Anchored {
 
         cx.with_element_offset(offset, |cx| {
             for child in &mut self.children {
-                child.after_layout(cx);
+                child.before_paint(cx);
             }
         })
     }
@@ -176,7 +176,7 @@ impl Element for Anchored {
         &mut self,
         _bounds: crate::Bounds<crate::Pixels>,
         _before_layout: &mut Self::BeforeLayout,
-        _after_layout: &mut Self::AfterLayout,
+        _before_paint: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
         for child in &mut self.children {
