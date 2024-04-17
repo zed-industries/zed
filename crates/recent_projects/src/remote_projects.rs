@@ -237,7 +237,7 @@ impl RemoteProjects {
                                         div().absolute().bottom_0().left(rems_from_px(8.0)).child(
                                             Indicator::dot().color(match status {
                                                 DevServerStatus::Online => Color::Created,
-                                                DevServerStatus::Offline => Color::Deleted,
+                                                DevServerStatus::Offline => Color::Hidden,
                                             }),
                                         ),
                                     )
@@ -535,7 +535,7 @@ impl RemoteProjects {
                             .child(div().absolute().bottom_0().left(rems_from_px(12.0)).child(
                                 Indicator::dot().color(match dev_server_status {
                                     DevServerStatus::Online => Color::Created,
-                                    DevServerStatus::Offline => Color::Deleted,
+                                    DevServerStatus::Offline => Color::Hidden,
                                 }),
                             ))
                             .tooltip(move |cx| {

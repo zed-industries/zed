@@ -16,7 +16,9 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{prelude::*, tooltip_container, Indicator, ListItem, ListItemSpacing, Tooltip};
+use ui::{
+    prelude::*, tooltip_container, IconWithIndicator, Indicator, ListItem, ListItemSpacing, Tooltip,
+};
 use util::{paths::PathExt, ResultExt};
 use workspace::{
     AppState, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId, WORKSPACE_DB,
@@ -388,7 +390,18 @@ impl PickerDelegate for RecentProjectsDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .when(is_remote, |this| this.child(Icon::new(IconName::FileTree)))
+                .child(if is_remote {
+                    let indicator_color = match dev_server_status {
+                        Some(DevServerStatus::Online) => Color::Created,
+                        Some(DevServerStatus::Offline) => Color::Hidden,
+                        _ => unreachable!(),
+                    };
+                    IconWithIndicator::new(Icon::new(IconName::Server), Some(Indicator::dot()))
+                        .indicator_color(indicator_color)
+                        .into_any_element()
+                } else {
+                    Icon::new(IconName::Screen).into_any_element()
+                })
                 .selected(selected)
                 .child({
                     let mut highlighted = highlighted_match.clone();
@@ -420,7 +433,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             |item, status| {
                                 item.end_slot(Indicator::dot().color(match status {
                                     DevServerStatus::Online => Color::Created,
-                                    DevServerStatus::Offline => Color::Deleted,
+                                    DevServerStatus::Offline => Color::Hidden,
                                 }))
                             },
                         )

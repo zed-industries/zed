@@ -1,7 +1,7 @@
 use gpui::{svg, IntoElement, Rems, Transformation};
 use strum::EnumIter;
 
-use crate::prelude::*;
+use crate::{prelude::*, Indicator};
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
@@ -273,5 +273,51 @@ impl RenderOnce for Icon {
             .flex_none()
             .path(self.path)
             .text_color(self.color.color(cx))
+    }
+}
+
+#[derive(IntoElement)]
+pub struct IconWithIndicator {
+    icon: Icon,
+    indicator: Option<Indicator>,
+}
+
+impl IconWithIndicator {
+    pub fn new(icon: Icon, indicator: Option<Indicator>) -> Self {
+        Self { icon, indicator }
+    }
+
+    pub fn indicator(mut self, indicator: Option<Indicator>) -> Self {
+        self.indicator = indicator;
+        self
+    }
+
+    pub fn indicator_color(mut self, color: Color) -> Self {
+        if let Some(indicator) = self.indicator.as_mut() {
+            indicator.color = color;
+        }
+        self
+    }
+}
+
+impl RenderOnce for IconWithIndicator {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        div()
+            .relative()
+            .child(self.icon)
+            .when_some(self.indicator, |this, indicator| {
+                this.child(
+                    div()
+                        .absolute()
+                        .w_1p5()
+                        .h_1p5()
+                        .border()
+                        .border_color(cx.theme().colors().elevated_surface_background)
+                        .rounded_full()
+                        .neg_bottom_1()
+                        .neg_right_1()
+                        .child(indicator),
+                )
+            })
     }
 }
