@@ -39,8 +39,8 @@ enum Mode {
 }
 
 impl RemoteProjects {
-    pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, open_recent: &OpenRemote, cx| {
+    pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
+        workspace.register_action(|workspace, _: &OpenRemote, cx| {
             workspace.toggle_modal(cx, |cx| Self::new(cx))
         });
     }

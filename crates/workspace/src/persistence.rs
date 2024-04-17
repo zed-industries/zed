@@ -790,7 +790,6 @@ mod tests {
     use super::*;
     use db::open_test_db;
     use gpui;
-    use sqlez::statement;
 
     #[gpui::test]
     async fn test_next_id_stability() {
@@ -864,7 +863,7 @@ mod tests {
 
         let mut workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            local_paths: LocalPaths::new(["/tmp", "/tmp2"]),
+            location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -874,7 +873,7 @@ mod tests {
 
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            local_paths: LocalPaths::new(["/tmp"]),
+            location: LocalPaths::new(["/tmp"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -900,7 +899,7 @@ mod tests {
         })
         .await;
 
-        workspace_1.local_paths = LocalPaths::new(["/tmp", "/tmp3"]);
+        workspace_1.location = LocalPaths::new(["/tmp", "/tmp3"]).into();
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_1).await;
         db.save_workspace(workspace_2).await;
@@ -973,7 +972,7 @@ mod tests {
 
         let workspace = SerializedWorkspace {
             id: WorkspaceId(5),
-            local_paths: LocalPaths::new(["/tmp", "/tmp2"]),
+            location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group,
             bounds: Default::default(),
             display: Default::default(),
@@ -1002,7 +1001,7 @@ mod tests {
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            local_paths: LocalPaths::new(["/tmp", "/tmp2"]),
+            location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -1012,7 +1011,7 @@ mod tests {
 
         let mut workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            local_paths: LocalPaths::new(["/tmp"]),
+            location: LocalPaths::new(["/tmp"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -1055,7 +1054,7 @@ mod tests {
         assert_eq!(db.workspace_for_roots(&["/tmp3", "/tmp2", "/tmp4"]), None);
 
         // Test 'mutate' case of updating a pre-existing id
-        workspace_2.local_paths = LocalPaths::new(["/tmp", "/tmp2"]);
+        workspace_2.location = LocalPaths::new(["/tmp", "/tmp2"]).into();
 
         db.save_workspace(workspace_2.clone()).await;
         assert_eq!(
@@ -1066,7 +1065,7 @@ mod tests {
         // Test other mechanism for mutating
         let mut workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
-            local_paths: LocalPaths::new(&["/tmp", "/tmp2"]),
+            location: LocalPaths::new(&["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -1081,7 +1080,7 @@ mod tests {
         );
 
         // Make sure that updating paths differently also works
-        workspace_3.local_paths = LocalPaths::new(["/tmp3", "/tmp4", "/tmp2"]);
+        workspace_3.location = LocalPaths::new(["/tmp3", "/tmp4", "/tmp2"]).into();
         db.save_workspace(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
         assert_eq!(
@@ -1100,7 +1099,7 @@ mod tests {
     ) -> SerializedWorkspace {
         SerializedWorkspace {
             id: WorkspaceId(4),
-            local_paths: LocalPaths::new(workspace_id),
+            location: LocalPaths::new(workspace_id).into(),
             center_group: center_group.clone(),
             bounds: Default::default(),
             display: Default::default(),
