@@ -1,4 +1,4 @@
-use gpui::{svg, IntoElement, Rems, Transformation};
+use gpui::{svg, Hsla, IntoElement, Rems, Transformation};
 use strum::EnumIter;
 
 use crate::{prelude::*, Indicator};
@@ -280,11 +280,16 @@ impl RenderOnce for Icon {
 pub struct IconWithIndicator {
     icon: Icon,
     indicator: Option<Indicator>,
+    indicator_border_color: Option<Hsla>,
 }
 
 impl IconWithIndicator {
     pub fn new(icon: Icon, indicator: Option<Indicator>) -> Self {
-        Self { icon, indicator }
+        Self {
+            icon,
+            indicator,
+            indicator_border_color: None,
+        }
     }
 
     pub fn indicator(mut self, indicator: Option<Indicator>) -> Self {
@@ -298,10 +303,19 @@ impl IconWithIndicator {
         }
         self
     }
+
+    pub fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
+        self.indicator_border_color = color;
+        self
+    }
 }
 
 impl RenderOnce for IconWithIndicator {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let indicator_border_color = self
+            .indicator_border_color
+            .unwrap_or_else(|| cx.theme().colors().elevated_surface_background);
+
         div()
             .relative()
             .child(self.icon)
@@ -309,12 +323,12 @@ impl RenderOnce for IconWithIndicator {
                 this.child(
                     div()
                         .absolute()
-                        .w_1p5()
-                        .h_1p5()
+                        .w_2()
+                        .h_2()
                         .border()
-                        .border_color(cx.theme().colors().elevated_surface_background)
+                        .border_color(indicator_border_color)
                         .rounded_full()
-                        .neg_bottom_1()
+                        .neg_bottom_0p5()
                         .neg_right_1()
                         .child(indicator),
                 )
