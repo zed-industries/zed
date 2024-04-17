@@ -164,10 +164,14 @@ impl Drop for WaylandWindow {
         state.surface.destroy();
 
         let state_ptr = self.0.clone();
-        state.globals.executor.spawn(async move {
-            state_ptr.close();
-            client.drop_window(&surface_id)
-        });
+        state
+            .globals
+            .executor
+            .spawn(async move {
+                state_ptr.close();
+                client.drop_window(&surface_id)
+            })
+            .detach();
         drop(state);
     }
 }
@@ -319,7 +323,7 @@ impl WaylandWindowStatePtr {
                     }
                     result
                 } else {
-                    false
+                    true
                 }
             }
             _ => false,
