@@ -557,6 +557,7 @@ mod tests {
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
+    use project::Project;
     use rpc::proto;
     use settings::SettingsStore;
     use util::{http::FakeHttpClient, test::marked_text_ranges};
@@ -631,6 +632,7 @@ mod tests {
             let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
             workspace::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
+            Project::init_settings(cx);
             language::init(cx);
             editor::init(cx);
             client::init(&client, cx);

@@ -39,6 +39,20 @@ pub struct TaskTemplate {
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.
     #[serde(default)]
     pub allow_concurrent_runs: bool,
+    // Tasks like "execute the selection" better have the constant labels (to avoid polluting the history with temporary tasks),
+    // and always use the latest context with the latest selection.
+    //
+    // Current impl will always pick previously spawned tasks on full label conflict in the tasks modal and terminal tabs, never
+    // getting the latest selection for them.
+    // This flag inverts the behavior, effectively removing all previously spawned tasks from history,
+    // if their full labels are the same as the labels of the newly resolved tasks.
+    // Such tasks are still re-runnable, and will use the old context in that case (unless the rerun task forces this).
+    //
+    // Current approach is relatively hacky, a better way is understand when the new resolved tasks needs a rerun,
+    // and replace the historic task accordingly.
+    #[doc(hidden)]
+    #[serde(default)]
+    pub ignore_previously_resolved: bool,
     /// What to do with the terminal pane and tab, after the command was started:
     /// * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
     /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
@@ -114,12 +128,22 @@ impl TaskTemplate {
         }
         .map(PathBuf::from)
         .or(cx.cwd.clone());
-        let shortened_label = substitute_all_template_variables_in_str(
+        let human_readable_label = substitute_all_template_variables_in_str(
             &self.label,
             &truncated_variables,
             &variable_names,
             &mut substituted_variables,
-        )?;
+        )?
+        .lines()
+        .fold(String::new(), |mut string, line| {
+            if string.is_empty() {
+                string.push_str(line);
+            } else {
+                string.push_str("\\n");
+                string.push_str(line);
+            }
+            string
+        });
         let full_label = substitute_all_template_variables_in_str(
             &self.label,
             &task_variables,
@@ -162,7 +186,7 @@ impl TaskTemplate {
                 id,
                 cwd,
                 full_label,
-                label: shortened_label,
+                label: human_readable_label,
                 command,
                 args,
                 env,

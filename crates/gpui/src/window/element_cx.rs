@@ -66,11 +66,13 @@ impl HitboxId {
 /// See [ElementContext::insert_hitbox] for more details.
 #[derive(Clone, Debug, Deref)]
 pub struct Hitbox {
-    /// A unique identifier for the hitbox
+    /// A unique identifier for the hitbox.
     pub id: HitboxId,
-    /// The bounds of the hitbox
+    /// The bounds of the hitbox.
     #[deref]
     pub bounds: Bounds<Pixels>,
+    /// The content mask when the hitbox was inserted.
+    pub content_mask: ContentMask<Pixels>,
     /// Whether the hitbox occludes other hitboxes inserted prior.
     pub opaque: bool,
 }
@@ -201,7 +203,8 @@ impl Frame {
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
         let mut hit_test = HitTest::default();
         for hitbox in self.hitboxes.iter().rev() {
-            if hitbox.bounds.contains(&position) {
+            let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
+            if bounds.contains(&position) {
                 hit_test.0.push(hitbox.id);
                 if hitbox.opaque {
                     break;
@@ -1404,7 +1407,8 @@ impl<'a> ElementContext<'a> {
         window.next_hitbox_id.0 += 1;
         let hitbox = Hitbox {
             id,
-            bounds: bounds.intersect(&content_mask.bounds),
+            bounds,
+            content_mask,
             opaque,
         };
         window.next_frame.hitboxes.push(hitbox.clone());

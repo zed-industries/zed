@@ -71,6 +71,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) center_group: SerializedPaneGroup,
     pub(crate) bounds: Option<Bounds<DevicePixels>>,
     pub(crate) fullscreen: bool,
+    pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
 }

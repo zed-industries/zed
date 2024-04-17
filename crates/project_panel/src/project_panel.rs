@@ -1642,7 +1642,10 @@ impl ProjectPanel {
                     .child(if let Some(icon) = &icon {
                         h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
-                        h_flex().size(IconSize::default().rems()).invisible()
+                        h_flex()
+                            .size(IconSize::default().rems())
+                            .invisible()
+                            .flex_none()
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
