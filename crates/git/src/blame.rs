@@ -63,6 +63,9 @@ impl Blame {
     }
 }
 
+const GIT_BLAME_NO_COMMIT_ERROR: &'static str = "fatal: no such ref: HEAD";
+const GIT_BLAME_NO_PATH: &'static str = "fatal: no such path";
+
 fn run_git_blame(
     git_binary: &Path,
     working_directory: &Path,
@@ -98,6 +101,10 @@ fn run_git_blame(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let trimmed = stderr.trim();
+        if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
+            return Ok(String::new());
+        }
         return Err(anyhow!("git blame process failed: {}", stderr));
     }
 
