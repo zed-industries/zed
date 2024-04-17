@@ -1,8 +1,36 @@
-use futures::Future;
-use schemars::{schema::RootSchema, JsonSchema};
+use anyhow::Result;
+use futures::{future::BoxFuture, Future};
+use schemars::{schema::RootSchema, schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::pin::Pin;
+use std::{collections::HashMap, pin::Pin};
+
+pub struct FunctionRegistry {
+    function_calls: HashMap<String, Box<dyn Fn(String) -> BoxFuture<'static, Result<String>>>>,
+    tools: Vec<Value>,
+}
+
+impl FunctionRegistry {
+    pub fn register<F: FunctionCall + 'static + Send>(&mut self) -> Result<()> {
+        let name = F::name().to_string();
+        self.function_calls.insert(
+            name,
+            Box::new(move |args: String| -> BoxFuture<'static, Result<String>> {
+                Box::pin(async move {
+                    let query: F = serde_json::from_str(&args)?;
+                    let result = query.execute().await?;
+                    Ok(serde_json::to_string(&result)?)
+                })
+            }),
+        );
+
+        self.tools.push(F::definition());
+
+        Ok(())
+    }
+}
+
+pub type FunctionCallTask<'a, T> = Pin<Box<dyn Future<Output = anyhow::Result<T>> + Send + 'a>>;
 
 pub trait FunctionCall: Serialize + for<'de> Deserialize<'de> + JsonSchema {
     type Output: Serialize;
@@ -10,8 +38,10 @@ pub trait FunctionCall: Serialize + for<'de> Deserialize<'de> + JsonSchema {
     fn name() -> &'static str;
     fn description() -> &'static str;
 
-    fn parameters() -> &'static serde_json::Value;
-    fn schema() -> &'static RootSchema;
+    fn schema() -> serde_json::Value {
+        let schema: RootSchema = schema_for!(Self).into();
+        serde_json::to_value(schema).unwrap()
+    }
 
     fn definition() -> Value {
         json!({
@@ -19,18 +49,12 @@ pub trait FunctionCall: Serialize + for<'de> Deserialize<'de> + JsonSchema {
             "function": {
                 "name": Self::name(),
                 "description": Self::description(),
-                "schema": Self::parameters()
+                "schema": Self::schema()
             }
         })
     }
 
-    fn extract(args: &Value) -> Result<Self, serde_json::Error> {
-        serde_json::from_value(args.clone())
-    }
-
-    fn execute(
-        args: Self,
-    ) -> Pin<Box<dyn Future<Output = Result<String, serde_json::Error>> + Send>>;
+    fn execute(&self) -> FunctionCallTask<Self::Output>;
 }
 
 #[cfg(test)]
@@ -40,7 +64,6 @@ mod tests {
     use gpui::TestAppContext;
 
     use lazy_static::lazy_static;
-    use schemars::schema_for;
 
     #[gpui::test]
     async fn test_openai_weather_example(cx: &mut TestAppContext) {
@@ -52,7 +75,7 @@ mod tests {
             unit: String,
         }
 
-        #[derive(Serialize)]
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
         struct WeatherResult {
             location: String,
             temperature: f64,
@@ -76,25 +99,17 @@ mod tests {
                 "Fetches the current weather for a given location."
             }
 
-            fn parameters() -> &'static serde_json::Value {
-                &PARAMETERS
-            }
-
-            fn schema() -> &'static RootSchema {
-                &SCHEMA
-            }
-
-            fn execute(
-                args: Self,
-            ) -> Pin<Box<dyn Future<Output = Result<String, serde_json::Error>> + Send>>
-            {
+            fn execute(&self) -> FunctionCallTask<WeatherResult> {
                 Box::pin(async move {
+                    let location = self.location.clone();
+                    let unit = self.unit.clone();
+
                     let result = WeatherResult {
-                        location: args.location,
+                        location,
                         temperature: 21.0,
-                        unit: args.unit,
+                        unit,
                     };
-                    Ok(serde_json::to_string(&result)?)
+                    Ok(result)
                 })
             }
         }
@@ -128,14 +143,22 @@ mod tests {
             })]
         );
 
-        // Now let's test having "the model" pass in args, get back a result, and then return the result
         let args = json!({
             "location": "San Francisco",
             "unit": "Celsius"
         });
 
-        let input = WeatherQuery::extract(&args).unwrap();
-        let result = WeatherQuery::execute(input).await.unwrap();
-        println!("Result: {}", result);
+        let query: WeatherQuery = serde_json::from_value(args).unwrap();
+
+        let result = query.execute().await.unwrap();
+
+        assert_eq!(
+            result,
+            WeatherResult {
+                location: "San Francisco".to_string(),
+                temperature: 21.0,
+                unit: "Celsius".to_string()
+            }
+        );
     }
 }
