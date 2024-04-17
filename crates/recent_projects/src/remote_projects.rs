@@ -91,8 +91,7 @@ impl RemoteProjects {
             .read(cx)
             .remote_projects_for_server(dev_server_id)
             .iter()
-            .find(|p| p.path == path)
-            .is_some()
+            .any(|p| p.path == path)
         {
             cx.spawn(|_, mut cx| async move {
                 cx.prompt(

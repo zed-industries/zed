@@ -372,7 +372,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 store
                     .remote_project(remote_project.id)
                     .and_then(|p| store.dev_server(p.dev_server_id))
-                    .map(|s| s.status.clone())
+                    .map(|s| s.status)
             } else {
                 None
             };
