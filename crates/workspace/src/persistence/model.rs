@@ -25,109 +25,49 @@ pub struct SerializedRemoteProject {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum WorkspaceLocation {
-    Local(Arc<Vec<PathBuf>>)
-    Remote(SerializedRemoteProject)
-}
+pub struct LocalPaths(Arc<Vec<PathBuf>>);
 
-impl WorkspaceLocation {
-    pub fn local<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
+impl LocalPaths {
+    pub fn new<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
         let mut paths: Vec<PathBuf> = paths
             .into_iter()
             .map(|p| p.as_ref().to_path_buf())
             .collect();
         paths.sort();
-        Self {
-            paths: Arc::new(paths),
-            remote_project: None,
-        }
-    }
-
-    pub fn remote(remote_project_id: RemoteProjectId, cx: &AppContext) -> Self {
-        let store = remote_projects::Store::global(cx).read(cx);
-
-        let (paths, dev_server_name) =
-            if let Some(remote_project) = store.find_remote_project_by_id(remote_project_id) {
-                (
-                    vec![remote_project.path.to_string().into()],
-                    store
-                        .dev_server(remote_project.dev_server_id)
-                        .map(|dev_server| dev_server.name.to_string()),
-                )
-            } else {
-                (vec![], None)
-            };
-
-        Self {
-            paths: Arc::new(paths),
-            remote_project: Some(SerializedRemoteProject {
-                id: remote_project_id,
-                dev_server_name: dev_server_name.unwrap_or_default(),
-            }),
-        }
+        Self(Arc::new(paths))
     }
 
     pub fn paths(&self) -> Arc<Vec<PathBuf>> {
-        self.paths.clone()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_local_paths<P: AsRef<Path>>(paths: Vec<P>) -> Self {
-        Self {
-            paths: Arc::new(
-                paths
-                    .into_iter()
-                    .map(|p| p.as_ref().to_path_buf())
-                    .collect(),
-            ),
-            remote_project: None,
-        }
+        self.0.clone()
     }
 }
 
-impl StaticColumnCount for WorkspaceLocation {
+impl StaticColumnCount for LocalPaths {
     fn column_count() -> usize {
         1
     }
 }
 
-impl Bind for &WorkspaceLocation {
+impl Bind for &LocalPaths {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        match self {
-            WorkspaceLocation::Local(paths) => {
-                statement.bind(&bincode::serialize(&paths)?, start_index)
-            }
-            WorkspaceLocation::Remote(serialized_project) => {
-                statement.bind(&serde_json::to_string(&serialized_project)?, next_index)
-            }
-        }
+        statement.bind(&bincode::serialize(&self.0)?, start_index)
     }
 }
 
-impl Column for WorkspaceLocation {
+impl Column for LocalPaths {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let path_blob = statement.column_blob(start_index)?;
-        let paths =
+        let paths: Arc<Vec<PathBuf>> =
             bincode::deserialize(path_blob).context("Bincode deserialization of paths failed")?;
-        let dev_server: Option<SerializedRemoteProject> = statement
-            .column_text(start_index + 1)
-            .and_then(|dev_server_json| Ok(serde_json::from_str(dev_server_json)?))
-            .context("Deserialization of remote project json failed")?;
 
-        Ok((
-            WorkspaceLocation {
-                paths,
-                remote_project: dev_server,
-            },
-            start_index + 2,
-        ))
+        Ok((Self(paths), start_index + 1))
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
-    pub(crate) location: WorkspaceLocation,
+    pub(crate) local_paths: LocalPaths,
     pub(crate) center_group: SerializedPaneGroup,
     pub(crate) bounds: Option<Bounds<DevicePixels>>,
     pub(crate) fullscreen: bool,

@@ -46,7 +46,7 @@ pub use pane::*;
 pub use pane_group::*;
 use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
 pub use persistence::{
-    model::{ItemId, WorkspaceLocation},
+    model::{ItemId, LocalPaths},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
@@ -3378,18 +3378,16 @@ impl Workspace {
         self.database_id
     }
 
-    fn location(&self, cx: &AppContext) -> Option<WorkspaceLocation> {
+    fn local_paths(&self, cx: &AppContext) -> Option<LocalPaths> {
         let project = self.project().read(cx);
 
         if project.is_local() {
-            Some(WorkspaceLocation::local(
+            Some(LocalPaths::new(
                 project
                     .visible_worktrees(cx)
                     .map(|worktree| worktree.read(cx).abs_path())
                     .collect::<Vec<_>>(),
             ))
-        } else if let Some(remote_project_id) = project.remote_project_id() {
-            Some(WorkspaceLocation::remote(remote_project_id, cx))
         } else {
             None
         }
@@ -3527,7 +3525,7 @@ impl Workspace {
             }
         }
 
-        if let Some(location) = self.location(cx) {
+        if let Some(location) = self.local_paths(cx) {
             // Load bearing special case:
             //  - with_local_workspace() relies on this to not have other stuff open
             //    when you open your log
@@ -3536,7 +3534,7 @@ impl Workspace {
                 let docks = build_serialized_docks(self, cx);
                 let serialized_workspace = SerializedWorkspace {
                     id: self.database_id,
-                    location,
+                    local_paths: location,
                     center_group,
                     bounds: Default::default(),
                     display: Default::default(),
@@ -4243,7 +4241,7 @@ pub fn activate_workspace_for_project(
     None
 }
 
-pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
+pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
     DB.last_workspace().await.log_err().flatten()
 }
 

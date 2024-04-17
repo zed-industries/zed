@@ -14,7 +14,7 @@ use serde::Deserialize;
 use std::{path::Path, sync::Arc};
 use ui::{prelude::*, tooltip_container, ListItem, ListItemSpacing, Tooltip};
 use util::paths::PathExt;
-use workspace::{ModalView, Workspace, WorkspaceId, WorkspaceLocation, WORKSPACE_DB};
+use workspace::{LocalPaths, ModalView, Workspace, WorkspaceId, WORKSPACE_DB};
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct OpenRecent {
@@ -148,7 +148,7 @@ impl Render for RecentProjects {
 
 pub struct RecentProjectsDelegate {
     workspace: WeakView<Workspace>,
-    workspaces: Vec<(WorkspaceId, WorkspaceLocation)>,
+    workspaces: Vec<(WorkspaceId, LocalPaths)>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
@@ -544,10 +544,8 @@ mod tests {
                         positions: Vec::new(),
                         string: "fake candidate".to_string(),
                     }];
-                    delegate.workspaces = vec![(
-                        WorkspaceId::default(),
-                        WorkspaceLocation::from_local_paths(vec!["/test/path/"]),
-                    )];
+                    delegate.workspaces =
+                        vec![(WorkspaceId::default(), LocalPaths::new(vec!["/test/path/"]))];
                 });
             })
             .unwrap();

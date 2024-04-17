@@ -17,8 +17,8 @@ use uuid::Uuid;
 use crate::WorkspaceId;
 
 use model::{
-    GroupId, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
-    WorkspaceLocation,
+    GroupId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
+    SerializedWorkspace,
 };
 
 use self::model::DockStructure;
@@ -125,7 +125,7 @@ define_connection! {
     //
     // workspaces(
     //   workspace_id: usize, // Primary key for workspaces
-    //   workspace_location: Bincode<Vec<PathBuf>>,
+    //   local_paths: Bincode<Vec<PathBuf>>,
     //   dock_visible: bool, // Deprecated
     //   dock_anchor: DockAnchor, // Deprecated
     //   dock_pane: Option<usize>, // Deprecated
@@ -285,8 +285,14 @@ define_connection! {
         ALTER TABLE items ADD COLUMN preview INTEGER; //bool
     ),
     sql!(
-        ALTER TABLE workspaces ADD COLUMN remote_project_json TEXT;
-    )
+        CREATE TABLE remote_projects (
+            remote_project_id INTEGER NOT NULL,
+            path TEXT,
+            dev_server_name TEXT
+        );
+        ALTER TABLE workspaces ADD COLUMN remote_project_id INTEGER;
+        ALTER TABLE workspaces RENAME COLUMN workspace_location TO local_paths;
+    ),
     ];
 }
 
@@ -298,13 +304,13 @@ impl WorkspaceDb {
         &self,
         worktree_roots: &[P],
     ) -> Option<SerializedWorkspace> {
-        let workspace_location = WorkspaceLocation::local(worktree_roots);
+        let local_paths = LocalPaths::new(worktree_roots);
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, workspace_location, bounds, display, fullscreen, docks): (
+        let (workspace_id, local_paths, bounds, display, fullscreen, docks): (
             WorkspaceId,
-            WorkspaceLocation,
+            LocalPaths,
             Option<SerializedWindowsBounds>,
             Option<Uuid>,
             Option<bool>,
@@ -313,8 +319,7 @@ impl WorkspaceDb {
             .select_row_bound(sql! {
                 SELECT
                     workspace_id,
-                    workspace_location,
-                    remote_project_json,
+                    local_paths,
                     window_state,
                     window_x,
                     window_y,
@@ -332,16 +337,16 @@ impl WorkspaceDb {
                     bottom_dock_active_panel,
                     bottom_dock_zoom
                 FROM workspaces
-                WHERE workspace_location = ? AND remote_project_id = ? // remote_project_json = ?
+                WHERE local_paths = ?
             })
-            .and_then(|mut prepared_statement| (prepared_statement)(&workspace_location))
+            .and_then(|mut prepared_statement| (prepared_statement)(&local_paths))
             .context("No workspaces found")
             .warn_on_err()
             .flatten()?;
 
         Some(SerializedWorkspace {
             id: workspace_id,
-            location: workspace_location.clone(),
+            local_paths: local_paths.clone(),
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
@@ -365,16 +370,15 @@ impl WorkspaceDb {
                 .context("Clearing old panes")?;
 
                 conn.exec_bound(sql!(
-                    DELETE FROM workspaces WHERE workspace_location = ? AND remote_project_json = ? AND workspace_id != ?
-                ))?((&workspace.location, workspace.id))
+                    DELETE FROM workspaces WHERE local_paths = ? AND workspace_id != ?
+                ))?((&workspace.local_paths, workspace.id))
                 .context("clearing out old locations")?;
 
                 // Upsert
                 conn.exec_bound(sql!(
                     INSERT INTO workspaces(
                         workspace_id,
-                        workspace_location,
-                        remote_project_json,
+                        local_paths,
                         left_dock_visible,
                         left_dock_active_panel,
                         left_dock_zoom,
@@ -386,22 +390,21 @@ impl WorkspaceDb {
                         bottom_dock_zoom,
                         timestamp
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
                     ON CONFLICT DO
                     UPDATE SET
-                        workspace_location = ?2,
-                        remote_project_json = ?3,
-                        left_dock_visible = ?4,
-                        left_dock_active_panel = ?5,
-                        left_dock_zoom = ?6,
-                        right_dock_visible = ?7,
-                        right_dock_active_panel = ?8,
-                        right_dock_zoom = ?9,
-                        bottom_dock_visible = ?10,
-                        bottom_dock_active_panel = ?11,
-                        bottom_dock_zoom = ?12,
+                        local_paths = ?2,
+                        left_dock_visible = ?3,
+                        left_dock_active_panel = ?4,
+                        left_dock_zoom = ?5,
+                        right_dock_visible = ?6,
+                        right_dock_active_panel = ?7,
+                        right_dock_zoom = ?8,
+                        bottom_dock_visible = ?9,
+                        bottom_dock_active_panel = ?10,
+                        bottom_dock_zoom = ?11,
                         timestamp = CURRENT_TIMESTAMP
-                ))?((workspace.id, &workspace.location, workspace.docks))
+                ))?((workspace.id, &workspace.local_paths, workspace.docks))
                 .context("Updating workspace")?;
 
                 // Save center pane group
@@ -422,22 +425,34 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces() -> Result<Vec<(WorkspaceId, WorkspaceLocation)>> {
-            SELECT workspace_id, workspace_location, remote_project_json
+        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths)>> {
+            SELECT workspace_id, local_paths
             FROM workspaces
-            WHERE workspace_location IS NOT NULL
+            WHERE local_paths IS NOT NULL
             ORDER BY timestamp DESC
         }
     }
 
-    query! {
-        pub fn last_window() -> Result<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)> {
-            SELECT display, window_state, window_x, window_y, window_width, window_height, fullscreen
-            FROM workspaces
-            WHERE workspace_location IS NOT NULL
-            ORDER BY timestamp DESC
-            LIMIT 1
-        }
+    pub(crate) fn last_window(
+        &self,
+    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)> {
+        let mut prepared_query =
+            self.select::<(Option<Uuid>, Option<SerializedWindowsBounds>, Option<bool>)>(sql!(
+                SELECT
+                display,
+                window_state, window_x, window_y, window_width, window_height,
+                fullscreen
+                FROM workspaces
+                WHERE local_paths
+                IS NOT NULL
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ))?;
+        let result = prepared_query()?;
+        Ok(result
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| (None, None, None)))
     }
 
     query! {
@@ -449,7 +464,7 @@ impl WorkspaceDb {
 
     // Returns the recent locations which are still valid on disk and deletes ones which no longer
     // exist.
-    pub async fn recent_workspaces_on_disk(&self) -> Result<Vec<(WorkspaceId, WorkspaceLocation)>> {
+    pub async fn recent_workspaces_on_disk(&self) -> Result<Vec<(WorkspaceId, LocalPaths)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
         for (id, location) in self.recent_workspaces()? {
@@ -466,7 +481,7 @@ impl WorkspaceDb {
         Ok(result)
     }
 
-    pub async fn last_workspace(&self) -> Result<Option<WorkspaceLocation>> {
+    pub async fn last_workspace(&self) -> Result<Option<LocalPaths>> {
         Ok(self
             .recent_workspaces_on_disk()
             .await?
@@ -765,7 +780,7 @@ mod tests {
 
         let mut workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: WorkspaceLocation::local(["/tmp", "/tmp2"]),
+            local_paths: LocalPaths::new(["/tmp", "/tmp2"]),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -775,7 +790,7 @@ mod tests {
 
         let workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: WorkspaceLocation::local(["/tmp"]),
+            local_paths: LocalPaths::new(["/tmp"]),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -801,7 +816,7 @@ mod tests {
         })
         .await;
 
-        workspace_1.location = WorkspaceLocation::local(["/tmp", "/tmp3"]);
+        workspace_1.local_paths = LocalPaths::new(["/tmp", "/tmp3"]);
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_1).await;
         db.save_workspace(workspace_2).await;
@@ -874,7 +889,7 @@ mod tests {
 
         let workspace = SerializedWorkspace {
             id: WorkspaceId(5),
-            location: WorkspaceLocation::local(["/tmp", "/tmp2"]),
+            local_paths: LocalPaths::new(["/tmp", "/tmp2"]),
             center_group,
             bounds: Default::default(),
             display: Default::default(),
@@ -903,7 +918,7 @@ mod tests {
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
-            location: WorkspaceLocation::local(["/tmp", "/tmp2"]),
+            local_paths: LocalPaths::new(["/tmp", "/tmp2"]),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -913,7 +928,7 @@ mod tests {
 
         let mut workspace_2 = SerializedWorkspace {
             id: WorkspaceId(2),
-            location: WorkspaceLocation::local(["/tmp"]),
+            local_paths: LocalPaths::new(["/tmp"]),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -956,7 +971,7 @@ mod tests {
         assert_eq!(db.workspace_for_roots(&["/tmp3", "/tmp2", "/tmp4"]), None);
 
         // Test 'mutate' case of updating a pre-existing id
-        workspace_2.location = WorkspaceLocation::local(["/tmp", "/tmp2"]);
+        workspace_2.local_paths = LocalPaths::new(["/tmp", "/tmp2"]);
 
         db.save_workspace(workspace_2.clone()).await;
         assert_eq!(
@@ -967,7 +982,7 @@ mod tests {
         // Test other mechanism for mutating
         let mut workspace_3 = SerializedWorkspace {
             id: WorkspaceId(3),
-            location: WorkspaceLocation::local(&["/tmp", "/tmp2"]),
+            local_paths: LocalPaths::new(&["/tmp", "/tmp2"]),
             center_group: Default::default(),
             bounds: Default::default(),
             display: Default::default(),
@@ -982,7 +997,7 @@ mod tests {
         );
 
         // Make sure that updating paths differently also works
-        workspace_3.location = WorkspaceLocation::local(["/tmp3", "/tmp4", "/tmp2"]);
+        workspace_3.local_paths = LocalPaths::new(["/tmp3", "/tmp4", "/tmp2"]);
         db.save_workspace(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
         assert_eq!(
@@ -1001,7 +1016,7 @@ mod tests {
     ) -> SerializedWorkspace {
         SerializedWorkspace {
             id: WorkspaceId(4),
-            location: WorkspaceLocation::local(workspace_id),
+            local_paths: LocalPaths::new(workspace_id),
             center_group: center_group.clone(),
             bounds: Default::default(),
             display: Default::default(),
