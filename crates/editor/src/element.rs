@@ -1149,10 +1149,10 @@ impl EditorElement {
             if inline_blame.is_some() && inline_blame.unwrap().min_column.is_some() {
                 min = inline_blame.unwrap().min_column.unwrap();
             }
+
             content_origin.x
                 + max(line_width, min as f32 * em_width)
                 + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS)
-9
         };
 
         let absolute_offset = point(start_x, start_y);
