@@ -3426,15 +3426,15 @@ fn render_deleted_block(
     let removed_editor = cx.new_view(|cx| {
         let mut editor = Editor::multi_line(cx);
         editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
-        editor.show_wrap_guides = Some(false);
-        editor.set_wrap_width(None, cx);
+        // editor.show_wrap_guides = Some(false);
+        // editor.set_wrap_width(None, cx);
         editor.show_gutter = false;
         if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_language(language, cx);
             })
         }
-        editor.scroll_manager.set_forbid_vertical_scroll(true);
+        // editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_text(deleted_text, cx);
         editor.set_read_only(true);
 

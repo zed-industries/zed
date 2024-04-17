@@ -111,7 +111,7 @@ impl WrapMap {
         } else {
             self.edits_since_sync = self
                 .edits_since_sync
-                .compose(&self.snapshot.interpolate(tab_snapshot, &edits));
+                .compose(&self.snapshot.interpolate(tab_snapshot, dbg!(&edits)));
             self.snapshot.interpolated = false;
         }
 
@@ -322,7 +322,7 @@ impl WrapSnapshot {
     fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> Patch<u32> {
         let mut new_transforms;
         if tab_edits.is_empty() {
-            new_transforms = self.transforms.clone();
+            new_transforms = dbg!(self.transforms.clone());
         } else {
             let mut old_cursor = self.transforms.cursor::<TabPoint>();
 
@@ -398,7 +398,7 @@ impl WrapSnapshot {
             new_rows: Range<u32>,
         }
 
-        let mut tab_edits_iter = tab_edits.iter().peekable();
+        let mut tab_edits_iter = dbg!(tab_edits).iter().peekable();
         let mut row_edits = Vec::new();
         while let Some(edit) = tab_edits_iter.next() {
             let mut row_edit = RowEdit {
@@ -419,6 +419,7 @@ impl WrapSnapshot {
             row_edits.push(row_edit);
         }
 
+        dbg!("????????", &row_edits, row_edits.len());
         let mut new_transforms;
         if row_edits.is_empty() {
             new_transforms = self.transforms.clone();
@@ -523,6 +524,7 @@ impl WrapSnapshot {
             }
         }
 
+        dbg!(new_transforms.iter().count());
         let old_snapshot = mem::replace(
             self,
             WrapSnapshot {
@@ -585,12 +587,23 @@ impl WrapSnapshot {
         if transforms.item().map_or(false, |t| t.is_isomorphic()) {
             input_start.0 += output_start.0 - transforms.start().0 .0;
         }
-        let input_end = self
-            .to_tab_point(output_end)
-            .min(self.tab_snapshot.max_point());
+        // TODO kb apparently here it should convert the output_end differently? Or that one should not have a row 2, but row 1?
+        // let input_end = self
+        //     .to_tab_point(output_end)
+        //     .min(self.tab_snapshot.max_point());
+        let mut subst = self.to_tab_point(dbg!(output_end));
+        if output_end.0.row == 2 {
+            if subst.0.row == 0 && subst.0.column == 529 {
+                let mut output_end_2 = output_end;
+                output_end_2.0.row = 1;
+                dbg!("!@!!!!", output_end_2, self.to_tab_point(output_end_2));
+            }
+            subst = self.tab_snapshot.max_point();
+        }
+        let input_end = dbg!(subst).min(dbg!(self.tab_snapshot.max_point()));
         WrapChunks {
             input_chunks: self.tab_snapshot.chunks(
-                input_start..input_end,
+                dbg!(input_start..input_end),
                 language_aware,
                 highlights,
             ),
@@ -608,21 +621,26 @@ impl WrapSnapshot {
     pub fn line_len(&self, row: u32) -> u32 {
         let mut cursor = self.transforms.cursor::<(WrapPoint, TabPoint)>();
         cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Left, &());
-        if cursor
+        let len = if cursor
             .item()
             .map_or(false, |transform| transform.is_isomorphic())
         {
             let overshoot = row - cursor.start().0.row();
             let tab_row = cursor.start().1.row() + overshoot;
             let tab_line_len = self.tab_snapshot.line_len(tab_row);
+            dbg!(overshoot, tab_line_len);
             if overshoot == 0 {
+                dbg!("isomorphic, no overshoot");
                 cursor.start().0.column() + (tab_line_len - cursor.start().1.column())
             } else {
+                dbg!("isomorphic, overshoot");
                 tab_line_len
             }
         } else {
+            dbg!("non_isomorphic");
             cursor.start().0.column()
-        }
+        };
+        dbg!(len)
     }
 
     pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
