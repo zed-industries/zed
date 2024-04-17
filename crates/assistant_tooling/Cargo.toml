@@ -20,7 +20,6 @@ lazy_static.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-util.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
