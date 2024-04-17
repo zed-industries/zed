@@ -212,15 +212,18 @@ impl WaylandWindow {
         }
 
         // Attempt to set up window decorations based on the requested configuration
-        let mut decoration = None;
-        if let Some(decoration_manager) = globals.decoration_manager.as_ref() {
-            let decoration_ =
-                decoration_manager.get_toplevel_decoration(&toplevel, &globals.qh, surface.id());
-
-            // Request client side decorations if possible
-            decoration_.set_mode(zxdg_toplevel_decoration_v1::Mode::ClientSide);
-            decoration = Some(decoration_);
-        }
+        let decoration = globals
+            .decoration_manager
+            .as_ref()
+            .map(|decoration_manager| {
+                let decoration = decoration_manager.get_toplevel_decoration(
+                    &toplevel,
+                    &globals.qh,
+                    surface.id(),
+                );
+                decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ClientSide);
+                decoration
+            });
 
         let viewport = globals
             .viewporter
