@@ -88,7 +88,7 @@ impl super::LspAdapter for GoLspAdapter {
             })
         } else {
             let env = delegate.shell_env().await;
-            let path = delegate.which("gopls".as_ref()).await?;
+            let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
             Some(LanguageServerBinary {
                 path,
                 arguments: server_binary_arguments(),

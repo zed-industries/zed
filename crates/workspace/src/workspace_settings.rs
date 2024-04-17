@@ -7,6 +7,7 @@ use settings::{Settings, SettingsSources};
 #[derive(Deserialize)]
 pub struct WorkspaceSettings {
     pub active_pane_magnification: f32,
+    pub centered_layout: CenteredLayoutSettings,
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
@@ -31,6 +32,8 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: `1.0`
     pub active_pane_magnification: Option<f32>,
+    // Centered layout related settings.
+    pub centered_layout: Option<CenteredLayoutSettings>,
     /// Whether or not to prompt the user to confirm before closing the application.
     ///
     /// Default: false
@@ -73,6 +76,21 @@ pub enum AutosaveSetting {
     OnFocusChange,
     /// Autosave when the active window changes.
     OnWindowChange,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct CenteredLayoutSettings {
+    /// The relative width of the left padding of the central pane from the
+    /// workspace when the centered layout is used.
+    ///
+    /// Default: 0.2
+    pub left_padding: Option<f32>,
+    // The relative width of the right padding of the central pane from the
+    // workspace when the centered layout is used.
+    ///
+    /// Default: 0.2
+    pub right_padding: Option<f32>,
 }
 
 impl Settings for WorkspaceSettings {

@@ -204,6 +204,11 @@ message Envelope {
         LanguageModelResponse language_model_response = 167;
         CountTokensWithLanguageModel count_tokens_with_language_model = 168;
         CountTokensResponse count_tokens_response = 169;
+        GetCachedEmbeddings get_cached_embeddings = 189;
+        GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
+        ComputeEmbeddings compute_embeddings = 191;
+        ComputeEmbeddingsResponse compute_embeddings_response = 192; // current max
+
         UpdateChannelMessage update_channel_message = 170;
         ChannelMessageUpdate channel_message_update = 171;
 
@@ -756,7 +761,7 @@ message BufferSaved {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
-    string fingerprint = 5;
+    reserved 5;
 }
 
 message BufferReloaded {
@@ -764,7 +769,7 @@ message BufferReloaded {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
-    string fingerprint = 5;
+    reserved 5;
     LineEnding line_ending = 6;
 }
 
@@ -1603,7 +1608,7 @@ message BufferState {
     optional string diff_base = 4;
     LineEnding line_ending = 5;
     repeated VectorClockEntry saved_version = 6;
-    string saved_version_fingerprint = 7;
+    reserved 7;
     Timestamp saved_mtime = 8;
 }
 
@@ -1888,6 +1893,29 @@ message CountTokensWithLanguageModel {
 
 message CountTokensResponse {
     uint32 token_count = 1;
+}
+
+message GetCachedEmbeddings {
+    string model = 1;
+    repeated bytes digests = 2;
+}
+
+message GetCachedEmbeddingsResponse {
+    repeated Embedding embeddings = 1;
+}
+
+message ComputeEmbeddings {
+    string model = 1;
+    repeated string texts = 2;
+}
+
+message ComputeEmbeddingsResponse {
+    repeated Embedding embeddings = 1;
+}
+
+message Embedding {
+    bytes digest = 1;
+    repeated float dimensions = 2;
 }
 
 message BlameBuffer {

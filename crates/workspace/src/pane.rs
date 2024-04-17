@@ -365,7 +365,11 @@ impl Pane {
                                 pane.toggle_zoom(&crate::ToggleZoom, cx);
                             }))
                             .tooltip(move |cx| {
-                                Tooltip::text(if zoomed { "Zoom Out" } else { "Zoom In" }, cx)
+                                Tooltip::for_action(
+                                    if zoomed { "Zoom Out" } else { "Zoom In" },
+                                    &ToggleZoom,
+                                    cx,
+                                )
                             })
                     })
                     .when_some(pane.split_item_menu.as_ref(), |el, split_item_menu| {
@@ -818,11 +822,10 @@ impl Pane {
                 if let Some(prev_item) = self.items.get(prev_active_item_ix) {
                     prev_item.deactivated(cx);
                 }
-
-                cx.emit(Event::ActivateItem {
-                    local: activate_pane,
-                });
             }
+            cx.emit(Event::ActivateItem {
+                local: activate_pane,
+            });
 
             if let Some(newly_active_item) = self.items.get(index) {
                 self.activation_history

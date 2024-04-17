@@ -239,7 +239,7 @@ pub fn move_to_internal(
                     };
                     let mut query = regex::escape(&query);
                     if whole_word {
-                        query = format!(r"\b{}\b", query);
+                        query = format!(r"\<{}\>", query);
                     }
                     Some(search_bar.search(&query, Some(options), cx))
                 });

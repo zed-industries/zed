@@ -5,10 +5,10 @@ use std::{ops::Range, path::PathBuf};
 
 use crate::{HighlightId, Language, LanguageRegistry};
 use gpui::{px, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, UnderlineStyle};
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
 /// Parsed Markdown content.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ParsedMarkdown {
     /// The Markdown text.
     pub text: String,
@@ -165,7 +165,10 @@ pub async fn parse_markdown_block(
     let mut current_language = None;
     let mut list_stack = Vec::new();
 
-    for event in Parser::new_ext(markdown, Options::all()) {
+    let mut options = pulldown_cmark::Options::all();
+    options.remove(pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+
+    for event in Parser::new_ext(markdown, options) {
         let prev_len = text.len();
         match event {
             Event::Text(t) => {
@@ -249,7 +252,7 @@ pub async fn parse_markdown_block(
                     new_paragraph(text, &mut list_stack);
                     current_language = if let CodeBlockKind::Fenced(language) = kind {
                         language_registry
-                            .language_for_name(language.as_ref())
+                            .language_for_name_or_extension(language.as_ref())
                             .await
                             .ok()
                     } else {
@@ -355,5 +358,37 @@ pub fn new_paragraph(text: &mut String, list_stack: &mut Vec<(Option<u64>, bool)
     }
     if is_subsequent_paragraph_of_list {
         text.push_str("  ");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_dividers() {
+        let input = r#"
+### instance-method `format`
+
+---
+→ `void`
+Parameters:
+- `const int &`
+- `const std::tm &`
+- `int & dest`
+
+---
+```cpp
+// In my_formatter_flag
+public: void format(const int &, const std::tm &, int &dest)
+```
+"#;
+
+        let mut options = pulldown_cmark::Options::all();
+        options.remove(pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+
+        let parser = pulldown_cmark::Parser::new_ext(input, options);
+        for event in parser.into_iter() {
+            println!("{:?}", event);
+        }
     }
 }

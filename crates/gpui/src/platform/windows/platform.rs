@@ -687,8 +687,10 @@ impl Platform for WindowsPlatform {
     }
 
     fn write_to_clipboard(&self, item: ClipboardItem) {
-        let mut ctx = ClipboardContext::new().unwrap();
-        ctx.set_contents(item.text().to_owned()).unwrap();
+        if item.text.len() > 0 {
+            let mut ctx = ClipboardContext::new().unwrap();
+            ctx.set_contents(item.text().to_owned()).unwrap();
+        }
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {

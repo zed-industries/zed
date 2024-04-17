@@ -98,7 +98,7 @@ use std::{
 };
 use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
-use text::{Anchor, BufferId, RopeFingerprint};
+use text::{Anchor, BufferId};
 use util::{
     debug_panic, defer,
     http::{HttpClient, Url},
@@ -988,6 +988,50 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub async fn example(
+        root_paths: impl IntoIterator<Item = &Path>,
+        cx: &mut AsyncAppContext,
+    ) -> Model<Project> {
+        use clock::FakeSystemClock;
+
+        let fs = Arc::new(RealFs::default());
+        let languages = LanguageRegistry::test(cx.background_executor().clone());
+        let clock = Arc::new(FakeSystemClock::default());
+        let http_client = util::http::FakeHttpClient::with_404_response();
+        let client = cx
+            .update(|cx| client::Client::new(clock, http_client.clone(), cx))
+            .unwrap();
+        let user_store = cx
+            .new_model(|cx| UserStore::new(client.clone(), cx))
+            .unwrap();
+        let project = cx
+            .update(|cx| {
+                Project::local(
+                    client,
+                    node_runtime::FakeNodeRuntime::new(),
+                    user_store,
+                    Arc::new(languages),
+                    fs,
+                    cx,
+                )
+            })
+            .unwrap();
+        for path in root_paths {
+            let (tree, _) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_local_worktree(path, true, cx)
+                })
+                .unwrap()
+                .await
+                .unwrap();
+            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+                .unwrap()
+                .await;
+        }
+        project
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn test(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1153,6 +1197,10 @@ impl Project {
 
     pub fn user_store(&self) -> Model<UserStore> {
         self.user_store.clone()
+    }
+
+    pub fn node_runtime(&self) -> Option<&Arc<dyn NodeRuntime>> {
+        self.node.as_ref()
     }
 
     pub fn opened_buffers(&self) -> Vec<Model<Buffer>> {
@@ -7738,13 +7786,20 @@ impl Project {
                     .as_local()
                     .context("worktree was not local")?
                     .snapshot();
-                let (work_directory, repo) = worktree
-                    .repository_and_work_directory_for_path(&buffer_project_path.path)
-                    .context("failed to get repo for blamed buffer")?;
 
-                let repo_entry = worktree
-                    .get_local_repo(&repo)
-                    .context("failed to get repo for blamed buffer")?;
+                let (work_directory, repo) = match worktree
+                    .repository_and_work_directory_for_path(&buffer_project_path.path)
+                {
+                    Some(work_dir_repo) => work_dir_repo,
+                    None => anyhow::bail!(NoRepositoryError {}),
+                };
+
+                let repo_entry = match worktree.get_local_repo(&repo) {
+                    Some(repo_entry) => repo_entry,
+                    None => anyhow::bail!(NoRepositoryError {}),
+                };
+
+                let repo = repo_entry.repo().clone();
 
                 let relative_path = buffer_project_path
                     .path
@@ -7755,7 +7810,6 @@ impl Project {
                     Some(version) => buffer.rope_for_version(&version).clone(),
                     None => buffer.as_rope().clone(),
                 };
-                let repo = repo_entry.repo().clone();
 
                 anyhow::Ok((repo, relative_path, content))
             });
@@ -8556,7 +8610,6 @@ impl Project {
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: buffer.saved_mtime().map(|time| time.into()),
-            fingerprint: language::proto::serialize_fingerprint(buffer.saved_version_fingerprint()),
         })
     }
 
@@ -8649,9 +8702,6 @@ impl Project {
                             buffer_id: buffer_id.into(),
                             version: language::proto::serialize_version(buffer.saved_version()),
                             mtime: buffer.saved_mtime().map(|time| time.into()),
-                            fingerprint: language::proto::serialize_fingerprint(
-                                buffer.saved_version_fingerprint(),
-                            ),
                             line_ending: language::proto::serialize_line_ending(
                                 buffer.line_ending(),
                             ) as i32,
@@ -9640,7 +9690,6 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let fingerprint = Default::default();
         let version = deserialize_version(&envelope.payload.version);
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let mtime = envelope.payload.mtime.map(|time| time.into());
@@ -9653,7 +9702,7 @@ impl Project {
                 .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned());
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(version, fingerprint, mtime, cx);
+                    buffer.did_save(version, mtime, cx);
                 });
             }
             Ok(())
@@ -9668,7 +9717,6 @@ impl Project {
     ) -> Result<()> {
         let payload = envelope.payload;
         let version = deserialize_version(&payload.version);
-        let fingerprint = RopeFingerprint::default();
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(payload.line_ending)
                 .ok_or_else(|| anyhow!("missing line ending"))?,
@@ -9683,7 +9731,7 @@ impl Project {
                 .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned());
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
+                    buffer.did_reload(version, line_ending, mtime, cx);
                 });
             }
             Ok(())
@@ -10770,3 +10818,14 @@ fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
         Some(hover)
     }
 }
+
+#[derive(Debug)]
+pub struct NoRepositoryError {}
+
+impl std::fmt::Display for NoRepositoryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no git repository for worktree found")
+    }
+}
+
+impl std::error::Error for NoRepositoryError {}

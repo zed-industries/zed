@@ -40,7 +40,7 @@ impl<V: 'static> TodoList<V> {
 
 All of this is relatively straightforward.
 
-We use [gpui::SharedString] in components instead of [std::string::String]. This allows us to [TODO: someone who actually knows please explain why we use SharedString].
+We use [gpui::SharedString] in components instead of [std::string::String]. This allows us to efficiently handle shared string data across multiple components and threads without the performance overhead of copying strings.
 
 When we want to pass an action we pass a `ClickHandler`. Whenever we want to add an action, the struct it belongs to needs to be generic over the view type `V`.
 

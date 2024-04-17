@@ -190,6 +190,15 @@ impl ExtensionsPage {
         }
     }
 
+    /// Returns whether a dev extension currently exists for the extension with the given ID.
+    fn dev_extension_exists(extension_id: &str, cx: &mut ViewContext<Self>) -> bool {
+        let extension_store = ExtensionStore::global(cx).read(cx);
+
+        extension_store
+            .dev_extensions()
+            .any(|dev_extension| dev_extension.id.as_ref() == extension_id)
+    }
+
     fn extension_status(extension_id: &str, cx: &mut ViewContext<Self>) -> ExtensionStatus {
         let extension_store = ExtensionStore::global(cx).read(cx);
 
@@ -417,13 +426,21 @@ impl ExtensionsPage {
     ) -> ExtensionCard {
         let this = cx.view().clone();
         let status = Self::extension_status(&extension.id, cx);
+        let has_dev_extension = Self::dev_extension_exists(&extension.id, cx);
 
         let extension_id = extension.id.clone();
         let (install_or_uninstall_button, upgrade_button) =
-            self.buttons_for_entry(extension, &status, cx);
+            self.buttons_for_entry(extension, &status, has_dev_extension, cx);
+        let version = extension.manifest.version.clone();
         let repository_url = extension.manifest.repository.clone();
 
+        let installed_version = match status {
+            ExtensionStatus::Installed(installed_version) => Some(installed_version),
+            _ => None,
+        };
+
         ExtensionCard::new()
+            .overridden_by_dev_extension(has_dev_extension)
             .child(
                 h_flex()
                     .justify_between()
@@ -435,9 +452,14 @@ impl ExtensionsPage {
                                 Headline::new(extension.manifest.name.clone())
                                     .size(HeadlineSize::Medium),
                             )
-                            .child(
-                                Headline::new(format!("v{}", extension.manifest.version))
-                                    .size(HeadlineSize::XSmall),
+                            .child(Headline::new(format!("v{version}")).size(HeadlineSize::XSmall))
+                            .children(
+                                installed_version
+                                    .filter(|installed_version| *installed_version != version)
+                                    .map(|installed_version| {
+                                        Headline::new(format!("(v{installed_version} installed)",))
+                                            .size(HeadlineSize::XSmall)
+                                    }),
                             ),
                     )
                     .child(
@@ -577,16 +599,24 @@ impl ExtensionsPage {
         &self,
         extension: &ExtensionMetadata,
         status: &ExtensionStatus,
+        has_dev_extension: bool,
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
         let is_compatible = extension::is_version_compatible(&extension);
-        let disabled = !is_compatible;
+
+        if has_dev_extension {
+            // If we have a dev extension for the given extension, just treat it as uninstalled.
+            // The button here is a placeholder, as it won't be interactable anyways.
+            return (
+                Button::new(SharedString::from(extension.id.clone()), "Install"),
+                None,
+            );
+        }
 
         match status.clone() {
             ExtensionStatus::NotInstalled => (
-                Button::new(SharedString::from(extension.id.clone()), "Install")
-                    .disabled(disabled)
-                    .on_click(cx.listener({
+                Button::new(SharedString::from(extension.id.clone()), "Install").on_click(
+                    cx.listener({
                         let extension_id = extension.id.clone();
                         move |this, _, cx| {
                             this.telemetry
@@ -595,7 +625,8 @@ impl ExtensionsPage {
                                 store.install_latest_extension(extension_id.clone(), cx)
                             });
                         }
-                    })),
+                    }),
+                ),
                 None,
             ),
             ExtensionStatus::Installing => (
@@ -626,7 +657,20 @@ impl ExtensionsPage {
                 } else {
                     Some(
                         Button::new(SharedString::from(extension.id.clone()), "Upgrade")
-                            .disabled(disabled)
+                            .when(!is_compatible, |upgrade_button| {
+                                upgrade_button.disabled(true).tooltip({
+                                    let version = extension.manifest.version.clone();
+                                    move |cx| {
+                                        Tooltip::text(
+                                            format!(
+                                                "v{version} is not compatible with this version of Zed.",
+                                            ),
+                                            cx,
+                                        )
+                                    }
+                                })
+                            })
+                            .disabled(!is_compatible)
                             .on_click(cx.listener({
                                 let extension_id = extension.id.clone();
                                 let version = extension.manifest.version.clone();

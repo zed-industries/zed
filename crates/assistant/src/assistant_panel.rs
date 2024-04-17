@@ -1119,8 +1119,8 @@ impl AssistantPanel {
                     )
                     .size_full()
                     .into_any_element()
-                } else {
-                    let editor = self.active_conversation_editor().unwrap();
+                } else if let Some(editor) = self.active_conversation_editor() {
+                    let editor = editor.clone();
                     let conversation = editor.read(cx).conversation.clone();
                     div()
                         .size_full()
@@ -1135,6 +1135,8 @@ impl AssistantPanel {
                                 .children(self.render_remaining_tokens(&conversation, cx)),
                         )
                         .into_any_element()
+                } else {
+                    div().into_any_element()
                 },
             ))
     }
@@ -2065,7 +2067,7 @@ impl ConversationEditor {
             workspace: workspace.downgrade(),
             _subscriptions,
         };
-        this.update_active_buffer(workspace, cx);
+        cx.defer(|this, cx| this.update_active_buffer(workspace, cx));
         this.update_message_headers(cx);
         this
     }

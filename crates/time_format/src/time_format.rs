@@ -9,6 +9,8 @@ pub enum TimestampFormat {
     /// If the message is from today or yesterday the date will be replaced with "Today at x" or "Yesterday at x" respectively.
     /// E.g. "Today at 12:00 PM", "Yesterday at 11:00 AM", "2021-12-31 3:00AM".
     EnhancedAbsolute,
+    /// Formats the timestamp as an absolute time, using month name, day of month, year. e.g. "Feb. 24, 2024".
+    MediumAbsolute,
     /// Formats the timestamp as a relative time, e.g. "just now", "1 minute ago", "2 hours ago", "2 months ago".
     Relative,
 }
@@ -29,6 +31,9 @@ pub fn format_localized_timestamp(
         }
         TimestampFormat::EnhancedAbsolute => {
             format_absolute_timestamp(timestamp_local, reference_local, true)
+        }
+        TimestampFormat::MediumAbsolute => {
+            format_absolute_timestamp_medium(timestamp_local, reference_local)
         }
         TimestampFormat::Relative => format_relative_time(timestamp_local, reference_local)
             .unwrap_or_else(|| format_relative_date(timestamp_local, reference_local)),
@@ -63,6 +68,22 @@ fn format_absolute_timestamp(
                 macos::format_time(&timestamp)
             )
         }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // todo(linux) respect user's date/time preferences
+        // todo(windows) respect user's date/time preferences
+        format_timestamp_fallback(timestamp, reference)
+    }
+}
+
+fn format_absolute_timestamp_medium(
+    timestamp: OffsetDateTime,
+    #[allow(unused_variables)] reference: OffsetDateTime,
+) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        macos::format_date_medium(&timestamp)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -253,7 +274,8 @@ mod macos {
     use core_foundation_sys::{
         base::kCFAllocatorDefault,
         date_formatter::{
-            kCFDateFormatterNoStyle, kCFDateFormatterShortStyle, CFDateFormatterCreate,
+            kCFDateFormatterMediumStyle, kCFDateFormatterNoStyle, kCFDateFormatterShortStyle,
+            CFDateFormatterCreate,
         },
         locale::CFLocaleCopyCurrent,
     };
@@ -264,6 +286,10 @@ mod macos {
 
     pub fn format_date(timestamp: &time::OffsetDateTime) -> String {
         format_with_date_formatter(timestamp, DATE_FORMATTER.with(|f| *f))
+    }
+
+    pub fn format_date_medium(timestamp: &time::OffsetDateTime) -> String {
+        format_with_date_formatter(timestamp, MEDIUM_DATE_FORMATTER.with(|f| *f))
     }
 
     fn format_with_date_formatter(
@@ -299,6 +325,15 @@ mod macos {
                 kCFAllocatorDefault,
                 CURRENT_LOCALE.with(|locale| *locale),
                 kCFDateFormatterShortStyle,
+                kCFDateFormatterNoStyle,
+            )
+        };
+
+        static MEDIUM_DATE_FORMATTER: CFDateFormatterRef = unsafe {
+            CFDateFormatterCreate(
+                kCFAllocatorDefault,
+                CURRENT_LOCALE.with(|locale| *locale),
+                kCFDateFormatterMediumStyle,
                 kCFDateFormatterNoStyle,
             )
         };

@@ -1,12 +1,16 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use ::settings::Settings;
+use anyhow::Context;
 use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
-use language::{Language, Point};
+use language::{BasicContextProvider, ContextProvider, Language};
 use modal::{Spawn, TasksModal};
 use project::{Location, TaskSourceKind, WorktreeId};
-use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables, VariableName};
+use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -29,20 +33,19 @@ pub fn init(cx: &mut AppContext) {
                         })
                     {
                         if action.reevaluate_context {
-                            let mut original_task = last_scheduled_task.original_task;
+                            let mut original_task = last_scheduled_task.original_task().clone();
                             if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
                                 original_task.allow_concurrent_runs = allow_concurrent_runs;
                             }
                             if let Some(use_new_terminal) = action.use_new_terminal {
                                 original_task.use_new_terminal = use_new_terminal;
                             }
-                            let cwd = task_cwd(workspace, cx).log_err().flatten();
-                            let task_context = task_context(workspace, cwd, cx);
+                            let task_context = task_context(workspace, cx);
                             schedule_task(
                                 workspace,
                                 task_source_kind,
                                 &original_task,
-                                task_context,
+                                &task_context,
                                 false,
                                 cx,
                             )
@@ -77,8 +80,7 @@ fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewC
         None => {
             let inventory = workspace.project().read(cx).task_inventory().clone();
             let workspace_handle = workspace.weak_handle();
-            let cwd = task_cwd(workspace, cx).log_err().flatten();
-            let task_context = task_context(workspace, cwd, cx);
+            let task_context = task_context(workspace, cx);
             workspace.toggle_modal(cx, |cx| {
                 TasksModal::new(inventory, task_context, workspace_handle, cx)
             })
@@ -98,13 +100,12 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
                 });
                 let (task_source_kind, target_task) =
                     tasks.into_iter().find(|(_, task)| task.label == name)?;
-                let cwd = task_cwd(workspace, cx).log_err().flatten();
-                let task_context = task_context(workspace, cwd, cx);
+                let task_context = task_context(workspace, cx);
                 schedule_task(
                     workspace,
                     task_source_kind,
                     &target_task,
-                    task_context,
+                    &task_context,
                     false,
                     cx,
                 );
@@ -148,104 +149,89 @@ fn active_item_selection_properties(
     (worktree_id, language)
 }
 
-fn task_context(
-    workspace: &Workspace,
-    cwd: Option<PathBuf>,
-    cx: &mut WindowContext<'_>,
-) -> TaskContext {
-    let current_editor = workspace
-        .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx));
-    if let Some(current_editor) = current_editor {
-        (|| {
-            let editor = current_editor.read(cx);
+fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskContext {
+    fn task_context_impl(workspace: &Workspace, cx: &mut WindowContext<'_>) -> Option<TaskContext> {
+        let cwd = task_cwd(workspace, cx).log_err().flatten();
+        let editor = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))?;
+
+        let (selection, buffer, editor_snapshot) = editor.update(cx, |editor, cx| {
             let selection = editor.selections.newest::<usize>(cx);
             let (buffer, _, _) = editor
                 .buffer()
                 .read(cx)
                 .point_to_buffer_offset(selection.start, cx)?;
+            let snapshot = editor.snapshot(cx);
+            Some((selection, buffer, snapshot))
+        })?;
+        let language_context_provider = buffer
+            .read(cx)
+            .language()
+            .and_then(|language| language.context_provider())?;
 
-            current_editor.update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(cx);
-                let selection_range = selection.range();
-                let start = snapshot
-                    .display_snapshot
-                    .buffer_snapshot
-                    .anchor_after(selection_range.start)
-                    .text_anchor;
-                let end = snapshot
-                    .display_snapshot
-                    .buffer_snapshot
-                    .anchor_after(selection_range.end)
-                    .text_anchor;
-                let Point { row, column } = snapshot
-                    .display_snapshot
-                    .buffer_snapshot
-                    .offset_to_point(selection_range.start);
-                let row = row + 1;
-                let column = column + 1;
-                let location = Location {
-                    buffer: buffer.clone(),
-                    range: start..end,
-                };
-
-                let current_file = location
-                    .buffer
+        let selection_range = selection.range();
+        let start = editor_snapshot
+            .display_snapshot
+            .buffer_snapshot
+            .anchor_after(selection_range.start)
+            .text_anchor;
+        let end = editor_snapshot
+            .display_snapshot
+            .buffer_snapshot
+            .anchor_after(selection_range.end)
+            .text_anchor;
+        let worktree_abs_path = buffer
+            .read(cx)
+            .file()
+            .map(|file| WorktreeId::from_usize(file.worktree_id()))
+            .and_then(|worktree_id| {
+                workspace
+                    .project()
                     .read(cx)
-                    .file()
-                    .and_then(|file| file.as_local())
-                    .map(|file| file.abs_path(cx).to_string_lossy().to_string());
-                let worktree_id = location
-                    .buffer
-                    .read(cx)
-                    .file()
-                    .map(|file| WorktreeId::from_usize(file.worktree_id()));
-                let context = buffer
-                    .read(cx)
-                    .language()
-                    .and_then(|language| language.context_provider())
-                    .and_then(|provider| provider.build_context(location, cx).ok());
-
-                let worktree_path = worktree_id.and_then(|worktree_id| {
-                    workspace
-                        .project()
-                        .read(cx)
-                        .worktree_for_id(worktree_id, cx)
-                        .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
-                });
-
-                let selected_text = buffer.read(cx).chars_for_range(selection_range).collect();
-
-                let mut task_variables = TaskVariables::from_iter([
-                    (VariableName::Row, row.to_string()),
-                    (VariableName::Column, column.to_string()),
-                    (VariableName::SelectedText, selected_text),
-                ]);
-                if let Some(path) = current_file {
-                    task_variables.insert(VariableName::File, path);
-                }
-                if let Some(worktree_path) = worktree_path {
-                    task_variables.insert(VariableName::WorktreeRoot, worktree_path);
-                }
-                if let Some(language_context) = context {
-                    task_variables.extend(language_context);
-                }
-
-                Some(TaskContext {
-                    cwd: cwd.clone(),
-                    task_variables,
-                })
-            })
-        })()
-        .unwrap_or_else(|| TaskContext {
+                    .worktree_for_id(worktree_id, cx)
+                    .map(|worktree| worktree.read(cx).abs_path())
+            });
+        let location = Location {
+            buffer,
+            range: start..end,
+        };
+        let task_variables = combine_task_variables(
+            worktree_abs_path.as_deref(),
+            location,
+            language_context_provider.as_ref(),
+            cx,
+        )
+        .log_err()?;
+        Some(TaskContext {
             cwd,
-            task_variables: Default::default(),
+            task_variables,
         })
+    }
+
+    task_context_impl(workspace, cx).unwrap_or_default()
+}
+
+fn combine_task_variables(
+    worktree_abs_path: Option<&Path>,
+    location: Location,
+    context_provider: &dyn ContextProvider,
+    cx: &mut WindowContext<'_>,
+) -> anyhow::Result<TaskVariables> {
+    if context_provider.is_basic() {
+        context_provider
+            .build_context(worktree_abs_path, &location, cx)
+            .context("building basic provider context")
     } else {
-        TaskContext {
-            cwd,
-            task_variables: Default::default(),
-        }
+        let mut basic_context = BasicContextProvider
+            .build_context(worktree_abs_path, &location, cx)
+            .context("building basic default context")?;
+        basic_context.extend(
+            context_provider
+                .build_context(worktree_abs_path, &location, cx)
+                .context("building provider context ")?,
+        );
+        Ok(basic_context)
     }
 }
 
@@ -253,7 +239,7 @@ fn schedule_task(
     workspace: &Workspace,
     task_source_kind: TaskSourceKind,
     task_to_resolve: &TaskTemplate,
-    task_cx: TaskContext,
+    task_cx: &TaskContext,
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
@@ -331,14 +317,14 @@ mod tests {
 
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
-    use language::{Language, LanguageConfig, SymbolContextProvider};
+    use language::{BasicContextProvider, Language, LanguageConfig};
     use project::{FakeFs, Project};
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
     use workspace::{AppState, Workspace};
 
-    use crate::{task_context, task_cwd};
+    use crate::task_context;
 
     #[gpui::test]
     async fn test_default_language_context(cx: &mut TestAppContext) {
@@ -381,7 +367,7 @@ mod tests {
             name: (_) @name) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(SymbolContextProvider))),
+            .with_context_provider(Some(Arc::new(BasicContextProvider))),
         );
 
         let typescript_language = Arc::new(
@@ -399,7 +385,7 @@ mod tests {
                       ")" @context)) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(SymbolContextProvider))),
+            .with_context_provider(Some(Arc::new(BasicContextProvider))),
         );
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
         let worktree_id = project.update(cx, |project, cx| {
@@ -433,7 +419,7 @@ mod tests {
             this.add_item_to_center(Box::new(editor2.clone()), cx);
             assert_eq!(this.active_item(cx).unwrap().item_id(), editor2.entity_id());
             assert_eq!(
-                task_context(this, task_cwd(this, cx).unwrap(), cx),
+                task_context(this, cx),
                 TaskContext {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
@@ -441,7 +427,6 @@ mod tests {
                         (VariableName::WorktreeRoot, "/dir".into()),
                         (VariableName::Row, "1".into()),
                         (VariableName::Column, "1".into()),
-                        (VariableName::SelectedText, "".into())
                     ])
                 }
             );
@@ -450,7 +435,7 @@ mod tests {
                 this.change_selections(None, cx, |selections| selections.select_ranges([14..18]))
             });
             assert_eq!(
-                task_context(this, task_cwd(this, cx).unwrap(), cx),
+                task_context(this, cx),
                 TaskContext {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
@@ -467,7 +452,7 @@ mod tests {
             // Now, let's switch the active item to .ts file.
             this.activate_item(&editor1, cx);
             assert_eq!(
-                task_context(this, task_cwd(this, cx).unwrap(), cx),
+                task_context(this, cx),
                 TaskContext {
                     cwd: Some("/dir".into()),
                     task_variables: TaskVariables::from_iter([
@@ -475,7 +460,6 @@ mod tests {
                         (VariableName::WorktreeRoot, "/dir".into()),
                         (VariableName::Row, "1".into()),
                         (VariableName::Column, "1".into()),
-                        (VariableName::SelectedText, "".into()),
                         (VariableName::Symbol, "this_is_a_test".into()),
                     ])
                 }

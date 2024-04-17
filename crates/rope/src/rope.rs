@@ -4,7 +4,6 @@ mod point_utf16;
 mod unclipped;
 
 use arrayvec::ArrayString;
-use bromberg_sl2::HashMatrix;
 use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
@@ -26,12 +25,6 @@ const CHUNK_BASE: usize = 6;
 #[cfg(not(test))]
 const CHUNK_BASE: usize = 64;
 
-/// Type alias to [`HashMatrix`], an implementation of a homomorphic hash function. Two [`Rope`] instances
-/// containing the same text will produce the same fingerprint. This hash function is special in that
-/// it allows us to hash individual chunks and aggregate them up the [`Rope`]'s tree, with the resulting
-/// hash being equivalent to hashing all the text contained in the [`Rope`] at once.
-pub type RopeFingerprint = HashMatrix;
-
 #[derive(Clone, Default)]
 pub struct Rope {
     chunks: SumTree<Chunk>,
@@ -40,10 +33,6 @@ pub struct Rope {
 impl Rope {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn text_fingerprint(text: &str) -> RopeFingerprint {
-        bromberg_sl2::hash_strict(text.as_bytes())
     }
 
     pub fn append(&mut self, rope: Rope) {
@@ -423,10 +412,6 @@ impl Rope {
     pub fn line_len(&self, row: u32) -> u32 {
         self.clip_point(Point::new(row, u32::MAX), Bias::Left)
             .column
-    }
-
-    pub fn fingerprint(&self) -> RopeFingerprint {
-        self.chunks.summary().fingerprint
     }
 }
 
@@ -994,14 +979,12 @@ impl sum_tree::Item for Chunk {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ChunkSummary {
     text: TextSummary,
-    fingerprint: RopeFingerprint,
 }
 
 impl<'a> From<&'a str> for ChunkSummary {
     fn from(text: &'a str) -> Self {
         Self {
             text: TextSummary::from(text),
-            fingerprint: Rope::text_fingerprint(text),
         }
     }
 }
@@ -1011,7 +994,6 @@ impl sum_tree::Summary for ChunkSummary {
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
         self.text += &summary.text;
-        self.fingerprint = self.fingerprint * summary.fingerprint;
     }
 }
 

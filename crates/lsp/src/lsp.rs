@@ -138,8 +138,16 @@ struct AnyResponse<'a> {
 struct Response<T> {
     jsonrpc: &'static str,
     id: RequestId,
-    result: Option<T>,
-    error: Option<Error>,
+    #[serde(flatten)]
+    value: LspResult<T>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LspResult<T> {
+    #[serde(rename = "result")]
+    Ok(Option<T>),
+    Error(Option<Error>),
 }
 
 /// Language server protocol RPC notification message.
@@ -867,16 +875,14 @@ impl LanguageServer {
                                             Ok(result) => Response {
                                                 jsonrpc: JSON_RPC_VERSION,
                                                 id,
-                                                result: Some(result),
-                                                error: None,
+                                                value: LspResult::Ok(Some(result)),
                                             },
                                             Err(error) => Response {
                                                 jsonrpc: JSON_RPC_VERSION,
                                                 id,
-                                                result: None,
-                                                error: Some(Error {
+                                                value: LspResult::Error(Some(Error {
                                                     message: error.to_string(),
-                                                }),
+                                                })),
                                             },
                                         };
                                         if let Some(response) =
@@ -1502,5 +1508,28 @@ mod tests {
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Int(2);
         assert_eq!(notification.id, Some(expected_id));
+    }
+
+    #[test]
+    fn test_serialize_has_no_nulls() {
+        // Ensure we're not setting both result and error variants. (ticket #10595)
+        let no_tag = Response::<u32> {
+            jsonrpc: "",
+            id: RequestId::Int(0),
+            value: LspResult::Ok(None),
+        };
+        assert_eq!(
+            serde_json::to_string(&no_tag).unwrap(),
+            "{\"jsonrpc\":\"\",\"id\":0,\"result\":null}"
+        );
+        let no_tag = Response::<u32> {
+            jsonrpc: "",
+            id: RequestId::Int(0),
+            value: LspResult::Error(None),
+        };
+        assert_eq!(
+            serde_json::to_string(&no_tag).unwrap(),
+            "{\"jsonrpc\":\"\",\"id\":0,\"error\":null}"
+        );
     }
 }

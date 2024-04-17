@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use text::{BufferId, Selection};
-use theme::Theme;
+use theme::{Theme, ThemeSettings};
 use ui::{h_flex, prelude::*, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent, FollowableItemHandle};
@@ -735,9 +735,8 @@ impl Item for Editor {
                     buffer
                         .update(&mut cx, |buffer, cx| {
                             let version = buffer.saved_version().clone();
-                            let fingerprint = buffer.saved_version_fingerprint();
                             let mtime = buffer.saved_mtime();
-                            buffer.did_save(version, fingerprint, mtime, cx);
+                            buffer.did_save(version, mtime, cx);
                         })
                         .ok();
                 }
@@ -828,13 +827,18 @@ impl Item for Editor {
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
 
+        let settings = ThemeSettings::get_global(cx);
+
         let mut breadcrumbs = vec![BreadcrumbText {
             text: filename,
             highlights: None,
+            font: Some(settings.buffer_font.clone()),
         }];
+
         breadcrumbs.extend(symbols.into_iter().map(|symbol| BreadcrumbText {
             text: symbol.text,
             highlights: Some(symbol.highlight_ranges),
+            font: Some(settings.buffer_font.clone()),
         }));
         Some(breadcrumbs)
     }

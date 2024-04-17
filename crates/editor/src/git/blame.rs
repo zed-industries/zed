@@ -1,3 +1,5 @@
+use std::{sync::Arc, time::Duration};
+
 use anyhow::Result;
 use collections::HashMap;
 use git::{
@@ -5,7 +7,7 @@ use git::{
     Oid,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
-use language::{Bias, Buffer, BufferSnapshot, Edit};
+use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
@@ -44,23 +46,32 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CommitDetails {
+    pub message: String,
+    pub parsed_message: ParsedMarkdown,
+    pub permalink: Option<Url>,
+}
+
 pub struct GitBlame {
     project: Model<Project>,
     buffer: Model<Buffer>,
     entries: SumTree<GitBlameEntry>,
-    permalinks: HashMap<Oid, Url>,
-    messages: HashMap<Oid, String>,
+    commit_details: HashMap<Oid, CommitDetails>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
     generated: bool,
-    _refresh_subscription: Subscription,
+    user_triggered: bool,
+    regenerate_on_edit_task: Task<Result<()>>,
+    _regenerate_subscriptions: Vec<Subscription>,
 }
 
 impl GitBlame {
     pub fn new(
         buffer: Model<Buffer>,
         project: Model<Project>,
+        user_triggered: bool,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let entries = SumTree::from_item(
@@ -71,7 +82,19 @@ impl GitBlame {
             &(),
         );
 
-        let refresh_subscription = cx.subscribe(&project, {
+        let buffer_subscriptions = cx.subscribe(&buffer, |this, buffer, event, cx| match event {
+            language::Event::DirtyChanged => {
+                if !buffer.read(cx).is_dirty() {
+                    this.generate(cx);
+                }
+            }
+            language::Event::Edited => {
+                this.regenerate_on_edit(cx);
+            }
+            _ => {}
+        });
+
+        let project_subscription = cx.subscribe(&project, {
             let buffer = buffer.clone();
 
             move |this, _, event, cx| match event {
@@ -102,11 +125,12 @@ impl GitBlame {
             buffer_snapshot,
             entries,
             buffer_edits,
-            permalinks: HashMap::default(),
-            messages: HashMap::default(),
+            user_triggered,
+            commit_details: HashMap::default(),
             task: Task::ready(Ok(())),
             generated: false,
-            _refresh_subscription: refresh_subscription,
+            regenerate_on_edit_task: Task::ready(Ok(())),
+            _regenerate_subscriptions: vec![buffer_subscriptions, project_subscription],
         };
         this.generate(cx);
         this
@@ -116,12 +140,8 @@ impl GitBlame {
         self.generated
     }
 
-    pub fn permalink_for_entry(&self, entry: &BlameEntry) -> Option<Url> {
-        self.permalinks.get(&entry.sha).cloned()
-    }
-
-    pub fn message_for_entry(&self, entry: &BlameEntry) -> Option<String> {
-        self.messages.get(&entry.sha).cloned()
+    pub fn details_for_entry(&self, entry: &BlameEntry) -> Option<CommitDetails> {
+        self.commit_details.get(&entry.sha).cloned()
     }
 
     pub fn blame_for_rows<'a>(
@@ -254,6 +274,7 @@ impl GitBlame {
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
+        let languages = self.project.read(cx).languages().clone();
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx
@@ -267,63 +288,133 @@ impl GitBlame {
                             messages,
                         } = blame.await?;
 
-                        let mut current_row = 0;
-                        let mut entries = SumTree::from_iter(
-                            entries.into_iter().flat_map(|entry| {
-                                let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
+                        let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
+                        let commit_details =
+                            parse_commit_messages(messages, &permalinks, &languages).await;
 
-                                if entry.range.start > current_row {
-                                    let skipped_rows = entry.range.start - current_row;
-                                    entries.push(GitBlameEntry {
-                                        rows: skipped_rows,
-                                        blame: None,
-                                    });
-                                }
-                                entries.push(GitBlameEntry {
-                                    rows: entry.range.len() as u32,
-                                    blame: Some(entry.clone()),
-                                });
-
-                                current_row = entry.range.end;
-                                entries
-                            }),
-                            &(),
-                        );
-
-                        let max_row = snapshot.max_point().row;
-                        if max_row >= current_row {
-                            entries.push(
-                                GitBlameEntry {
-                                    rows: (max_row + 1) - current_row,
-                                    blame: None,
-                                },
-                                &(),
-                            );
-                        }
-
-                        anyhow::Ok((entries, permalinks, messages))
+                        anyhow::Ok((entries, commit_details))
                     }
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| match result {
-                Ok((entries, permalinks, messages)) => {
+                Ok((entries, commit_details)) => {
                     this.buffer_edits = buffer_edits;
                     this.buffer_snapshot = snapshot;
                     this.entries = entries;
-                    this.permalinks = permalinks;
-                    this.messages = messages;
+                    this.commit_details = commit_details;
                     this.generated = true;
                     cx.notify();
                 }
                 Err(error) => this.project.update(cx, |_, cx| {
-                    log::error!("failed to get git blame data: {error:?}");
-                    let notification = format!("{:#}", error).trim().to_string();
-                    cx.emit(project::Event::Notification(notification));
+                    if this.user_triggered {
+                        log::error!("failed to get git blame data: {error:?}");
+                        let notification = format!("{:#}", error).trim().to_string();
+                        cx.emit(project::Event::Notification(notification));
+                    } else {
+                        // If we weren't triggered by a user, we just log errors in the background, instead of sending
+                        // notifications.
+                        // Except for `NoRepositoryError`, which can  happen often if a user has inline-blame turned on
+                        // and opens a non-git file.
+                        if error.downcast_ref::<project::NoRepositoryError>().is_none() {
+                            log::error!("failed to get git blame data: {error:?}");
+                        }
+                    }
                 }),
             })
         });
     }
+
+    fn regenerate_on_edit(&mut self, cx: &mut ModelContext<Self>) {
+        self.regenerate_on_edit_task = cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
+                .await;
+
+            this.update(&mut cx, |this, cx| {
+                this.generate(cx);
+            })
+        });
+    }
+}
+
+const REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(2);
+
+fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree<GitBlameEntry> {
+    let mut current_row = 0;
+    let mut entries = SumTree::from_iter(
+        entries.into_iter().flat_map(|entry| {
+            let mut entries = SmallVec::<[GitBlameEntry; 2]>::new();
+
+            if entry.range.start > current_row {
+                let skipped_rows = entry.range.start - current_row;
+                entries.push(GitBlameEntry {
+                    rows: skipped_rows,
+                    blame: None,
+                });
+            }
+            entries.push(GitBlameEntry {
+                rows: entry.range.len() as u32,
+                blame: Some(entry.clone()),
+            });
+
+            current_row = entry.range.end;
+            entries
+        }),
+        &(),
+    );
+
+    if max_row >= current_row {
+        entries.push(
+            GitBlameEntry {
+                rows: (max_row + 1) - current_row,
+                blame: None,
+            },
+            &(),
+        );
+    }
+
+    entries
+}
+
+async fn parse_commit_messages(
+    messages: impl IntoIterator<Item = (Oid, String)>,
+    permalinks: &HashMap<Oid, Url>,
+    languages: &Arc<LanguageRegistry>,
+) -> HashMap<Oid, CommitDetails> {
+    let mut commit_details = HashMap::default();
+    for (oid, message) in messages {
+        let parsed_message = parse_markdown(&message, &languages).await;
+        let permalink = permalinks.get(&oid).cloned();
+
+        commit_details.insert(
+            oid,
+            CommitDetails {
+                message,
+                parsed_message,
+                permalink,
+            },
+        );
+    }
+
+    commit_details
+}
+
+async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -> ParsedMarkdown {
+    let mut parsed_message = ParsedMarkdown::default();
+
+    markdown::parse_markdown_block(
+        text,
+        language_registry,
+        None,
+        &mut parsed_message.text,
+        &mut parsed_message.highlights,
+        &mut parsed_message.region_ranges,
+        &mut parsed_message.regions,
+    )
+    .await;
+
+    parsed_message
 }
 
 #[cfg(test)]
@@ -394,9 +485,9 @@ mod tests {
             .await
             .unwrap();
 
-        let blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), cx));
+        let blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), true, cx));
 
-        let event = project.next_event(cx);
+        let event = project.next_event(cx).await;
         assert_eq!(
             event,
             project::Event::Notification(
@@ -463,7 +554,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
 
         cx.executor().run_until_parked();
 
@@ -543,7 +634,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
 
         cx.executor().run_until_parked();
 
@@ -692,7 +783,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, cx));
+        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, cx));
         cx.executor().run_until_parked();
         git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
 

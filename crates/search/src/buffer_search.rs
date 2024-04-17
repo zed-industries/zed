@@ -272,28 +272,21 @@ impl Render for BufferSearchBar {
                         "Select previous match",
                         &SelectPrevMatch,
                     ))
-                    .when(!narrow_mode, |this| {
-                        this.child(
-                            h_flex()
-                                .mx(rems_from_px(-4.0))
-                                .min_w(rems_from_px(40.))
-                                .justify_center()
-                                .items_center()
-                                .child(Label::new(match_text).color(
-                                    if self.active_match_index.is_some() {
-                                        Color::Default
-                                    } else {
-                                        Color::Disabled
-                                    },
-                                )),
-                        )
-                    })
                     .child(render_nav_button(
                         ui::IconName::ChevronRight,
                         self.active_match_index.is_some(),
                         "Select next match",
                         &SelectNextMatch,
-                    )),
+                    ))
+                    .when(!narrow_mode, |this| {
+                        this.child(h_flex().min_w(rems_from_px(40.)).child(
+                            Label::new(match_text).color(if self.active_match_index.is_some() {
+                                Color::Default
+                            } else {
+                                Color::Disabled
+                            }),
+                        ))
+                    }),
             );
 
         let replace_line = should_show_replace_input.then(|| {
@@ -1103,6 +1096,7 @@ mod tests {
     use editor::{DisplayPoint, Editor};
     use gpui::{Context, Hsla, TestAppContext, VisualTestContext};
     use language::Buffer;
+    use project::Project;
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -1113,6 +1107,7 @@ mod tests {
             editor::init(cx);
 
             language::init(cx);
+            Project::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }

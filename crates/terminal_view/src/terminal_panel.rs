@@ -1,4 +1,4 @@
-use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
+use std::{borrow::Cow, ops::ControlFlow, path::PathBuf, sync::Arc};
 
 use crate::TerminalView;
 use collections::{HashMap, HashSet};
@@ -26,7 +26,7 @@ use workspace::{
     item::Item,
     pane,
     ui::IconName,
-    DraggedTab, NewTerminal, Pane, Workspace,
+    DraggedTab, NewTerminal, Pane, ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -98,8 +98,13 @@ impl TerminalPanel {
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&workspace::ToggleZoom, cx);
                             }))
+                            // TODO kb
                             .tooltip(move |cx| {
-                                Tooltip::text(if zoomed { "Zoom Out" } else { "Zoom In" }, cx)
+                                Tooltip::for_action(
+                                    if zoomed { "Zoom Out" } else { "Zoom In" },
+                                    &ToggleZoom,
+                                    cx,
+                                )
                             })
                     })
                     .into_any_element()
@@ -319,6 +324,7 @@ impl TerminalPanel {
         let args = std::mem::take(&mut spawn_task.args);
         for arg in args {
             command.push(' ');
+            let arg = shlex::try_quote(&arg).unwrap_or(Cow::Borrowed(&arg));
             command.push_str(&arg);
         }
         spawn_task.command = shell;
@@ -725,8 +731,10 @@ impl Panel for TerminalPanel {
         "TerminalPanel"
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
-        Some(IconName::Terminal)
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        TerminalSettings::get_global(cx)
+            .button
+            .then(|| IconName::Terminal)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

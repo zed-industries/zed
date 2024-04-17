@@ -8,24 +8,25 @@ use smol::stream::StreamExt;
 use std::{str, sync::Arc};
 use util::{asset_str, ResultExt};
 
-use crate::{elixir::elixir_task_context, rust::RustContextProvider};
+use crate::{
+    bash::bash_task_context, elixir::elixir_task_context, python::python_task_context,
+    rust::RustContextProvider,
+};
 
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
+mod bash;
 mod c;
 mod css;
 mod deno;
 mod elixir;
 mod go;
 mod json;
-mod nu;
 mod python;
 mod ruby;
 mod rust;
 mod tailwind;
-mod terraform;
 mod typescript;
-mod vue;
 mod yaml;
 
 // 1. Add tree-sitter-{language} parser to zed crate
@@ -63,12 +64,10 @@ pub fn init(
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
-        ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("markdown", tree_sitter_markdown::language()),
-        ("nu", tree_sitter_nu::language()),
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
         ("regex", tree_sitter_regex::language()),
@@ -76,7 +75,6 @@ pub fn init(
         ("rust", tree_sitter_rust::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
-        ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
     ]);
 
@@ -91,7 +89,7 @@ pub fn init(
                     Ok((
                         config.clone(),
                         load_queries($name),
-                        Some(Arc::new(language::SymbolContextProvider)),
+                        Some(Arc::new(language::BasicContextProvider)),
                     ))
                 },
             );
@@ -111,7 +109,7 @@ pub fn init(
                     Ok((
                         config.clone(),
                         load_queries($name),
-                        Some(Arc::new(language::SymbolContextProvider)),
+                        Some(Arc::new(language::BasicContextProvider)),
                     ))
                 },
             );
@@ -137,7 +135,7 @@ pub fn init(
             );
         };
     }
-    language!("bash");
+    language!("bash", Vec::new(), bash_task_context());
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language!("cpp", vec![Arc::new(c::CLspAdapter)]);
     language!(
@@ -199,7 +197,8 @@ pub fn init(
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
-        ))]
+        ))],
+        python_task_context()
     );
     language!(
         "rust",
@@ -271,21 +270,7 @@ pub fn init(
         "yaml",
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
-    language!("nu", vec![Arc::new(nu::NuLanguageServer {})]);
-    language!(
-        "vue",
-        vec![
-            Arc::new(vue::VueLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
     language!("proto");
-    language!("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
-    language!(
-        "terraform-vars",
-        vec![Arc::new(terraform::TerraformLspAdapter)]
-    );
-    language!("hcl", vec![]);
 
     languages.register_secondary_lsp_adapter(
         "Astro".into(),
@@ -301,6 +286,10 @@ pub fn init(
     );
     languages.register_secondary_lsp_adapter(
         "Svelte".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
+    languages.register_secondary_lsp_adapter(
+        "Vue.js".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
     );
 

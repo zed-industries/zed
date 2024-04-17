@@ -106,8 +106,12 @@ async fn get_extension_versions(
 }
 
 #[derive(Debug, Deserialize)]
-struct DownloadLatestExtensionParams {
+struct DownloadLatestExtensionPathParams {
     extension_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DownloadLatestExtensionQueryParams {
     min_schema_version: Option<i32>,
     max_schema_version: Option<i32>,
     min_wasm_api_version: Option<SemanticVersion>,
@@ -116,13 +120,14 @@ struct DownloadLatestExtensionParams {
 
 async fn download_latest_extension(
     Extension(app): Extension<Arc<AppState>>,
-    Path(params): Path<DownloadLatestExtensionParams>,
+    Path(params): Path<DownloadLatestExtensionPathParams>,
+    Query(query): Query<DownloadLatestExtensionQueryParams>,
 ) -> Result<Redirect> {
     let constraints = maybe!({
-        let min_schema_version = params.min_schema_version?;
-        let max_schema_version = params.max_schema_version?;
-        let min_wasm_api_version = params.min_wasm_api_version?;
-        let max_wasm_api_version = params.max_wasm_api_version?;
+        let min_schema_version = query.min_schema_version?;
+        let max_schema_version = query.max_schema_version?;
+        let min_wasm_api_version = query.min_wasm_api_version?;
+        let max_wasm_api_version = query.max_wasm_api_version?;
 
         Some(ExtensionVersionConstraints {
             schema_versions: min_schema_version..=max_schema_version,

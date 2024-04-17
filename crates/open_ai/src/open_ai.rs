@@ -1,8 +1,10 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::convert::TryFrom;
+use std::{convert::TryFrom, future::Future};
 use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+
+pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -185,6 +187,71 @@ pub async fn stream_completion(
                 response.status(),
                 body,
             )),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Serialize, Deserialize)]
+pub enum OpenAiEmbeddingModel {
+    #[serde(rename = "text-embedding-3-small")]
+    TextEmbedding3Small,
+    #[serde(rename = "text-embedding-3-large")]
+    TextEmbedding3Large,
+}
+
+#[derive(Serialize)]
+struct OpenAiEmbeddingRequest<'a> {
+    model: OpenAiEmbeddingModel,
+    input: Vec<&'a str>,
+}
+
+#[derive(Deserialize)]
+pub struct OpenAiEmbeddingResponse {
+    pub data: Vec<OpenAiEmbedding>,
+}
+
+#[derive(Deserialize)]
+pub struct OpenAiEmbedding {
+    pub embedding: Vec<f32>,
+}
+
+pub fn embed<'a>(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    model: OpenAiEmbeddingModel,
+    texts: impl IntoIterator<Item = &'a str>,
+) -> impl 'static + Future<Output = Result<OpenAiEmbeddingResponse>> {
+    let uri = format!("{api_url}/embeddings");
+
+    let request = OpenAiEmbeddingRequest {
+        model,
+        input: texts.into_iter().collect(),
+    };
+    let body = AsyncBody::from(serde_json::to_string(&request).unwrap());
+    let request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .body(body)
+        .map(|request| client.send(request));
+
+    async move {
+        let mut response = request?.await?;
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
+        if response.status().is_success() {
+            let response: OpenAiEmbeddingResponse =
+                serde_json::from_str(&body).context("failed to parse OpenAI embedding response")?;
+            Ok(response)
+        } else {
+            Err(anyhow!(
+                "error during embedding, status: {:?}, body: {:?}",
+                response.status(),
+                body
+            ))
         }
     }
 }

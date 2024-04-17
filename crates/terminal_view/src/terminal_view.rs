@@ -861,6 +861,7 @@ impl Item for TerminalView {
         Some(vec![BreadcrumbText {
             text: self.terminal().read(cx).breadcrumb_text.clone(),
             highlights: None,
+            font: None,
         }])
     }
 

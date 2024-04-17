@@ -1,0 +1,21 @@
+#!/bin/bash
+
+channel="$1"
+
+query=""
+case $channel in
+  stable)
+    ;;
+  preview)
+    query="&preview=1"
+    ;;
+  nightly)
+    query="&nightly=1"
+    ;;
+  *)
+    echo "this must be run on either of stable|preview|nightly release branches" >&2
+    exit 1
+    ;;
+esac
+
+curl -s https://zed.dev/api/releases/latest?asset=Zed.dmg$query | jq -r .version
