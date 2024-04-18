@@ -12,6 +12,7 @@ pub struct WorkspaceSettings {
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
     pub restore_on_startup: RestoreOnStartupBehaviour,
+    pub drop_target_size: f32,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -50,6 +51,11 @@ pub struct WorkspaceSettingsContent {
     /// Values: none, last_workspace
     /// Default: last_workspace
     pub restore_on_startup: Option<RestoreOnStartupBehaviour>,
+    /// The size of the workspace split drop targets on the outer edges.
+    /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
+    ///
+    /// Default: `0.2` (20% of the smaller dimension of the workspace)
+    pub drop_target_size: Option<f32>,
 }
 
 #[derive(Deserialize)]
