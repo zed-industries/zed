@@ -1,4 +1,4 @@
-use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt};
+use feature_flags::FeatureFlagViewExt;
 use gpui::{
     Action, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Model, ScrollHandle, Task, View, ViewContext,
@@ -41,8 +41,8 @@ enum Mode {
 }
 
 impl RemoteProjects {
-    pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        cx.observe_flag::<feature_flags::Remoting, _>(|enabled, workspace, cx| {
+    pub fn register(_: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        cx.observe_flag::<feature_flags::Remoting, _>(|enabled, workspace, _| {
             if enabled {
                 workspace.register_action(|workspace, _: &OpenRemote, cx| {
                     workspace.toggle_modal(cx, |cx| Self::new(cx))
