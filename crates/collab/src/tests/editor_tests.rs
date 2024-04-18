@@ -3,6 +3,7 @@ use crate::{
     tests::{rust_lang, TestServer},
 };
 use call::ActiveCall;
+use collections::HashMap;
 use editor::{
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Redo, Rename, RevertSelectedHunks,
@@ -2041,15 +2042,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             blame_entry("3a3a3a", 2..3),
             blame_entry("4c4c4c", 3..4),
         ],
-        permalinks: [
-            ("1b1b1b", "http://example.com/codehost/idx-0"),
-            ("0d0d0d", "http://example.com/codehost/idx-1"),
-            ("3a3a3a", "http://example.com/codehost/idx-2"),
-            ("4c4c4c", "http://example.com/codehost/idx-3"),
-        ]
-        .into_iter()
-        .map(|(sha, url)| (sha.parse().unwrap(), url.parse().unwrap()))
-        .collect(),
+        permalinks: HashMap::default(), // This field is deprecrated
         messages: [
             ("1b1b1b", "message for idx-0"),
             ("0d0d0d", "message for idx-1"),
@@ -2059,6 +2052,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .into_iter()
         .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
         .collect(),
+        remote_url: Some("git@github.com:zed-industries/zed.git".to_string()),
     };
     client_a.fs().set_blame_for_repo(
         Path::new("/my-repo/.git"),
@@ -2127,7 +2121,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
                 assert_eq!(details.message, format!("message for idx-{}", idx));
                 assert_eq!(
                     details.permalink.unwrap().to_string(),
-                    format!("http://example.com/codehost/idx-{}", idx)
+                    format!("https://github.com/zed-industries/zed/commit/{}", entry.sha)
                 );
             }
         });
