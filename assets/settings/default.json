@@ -162,7 +162,9 @@
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
     // Whether to show diagnostic indicators in the scrollbar.
-    "diagnostics": true
+    "diagnostics": true,
+    // Whether to show cursor positions in the scrollbar.
+    "cursors": true
   },
   // What to do when multibuffer is double clicked in some of its excerpts
   // (parts of singleton buffers).

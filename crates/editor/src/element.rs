@@ -2467,11 +2467,12 @@ impl EditorElement {
                     cx.theme().colors().scrollbar_track_border,
                 ));
 
-                // Refresh scrollbar markers in the background. Below, we paint whatever markers have already been computed.
-                self.refresh_scrollbar_markers(layout, scrollbar_layout, cx);
+                let fast_markers = self.collect_fast_scrollbar_markers();
+                // Refresh slow scrollbar markers in the background. Below, we paint whatever markers have already been computed.
+                self.refresh_slow_scrollbar_markers(layout, scrollbar_layout, cx);
 
                 let markers = self.editor.read(cx).scrollbar_marker_state.markers.clone();
-                for marker in markers.iter() {
+                for marker in markers.iter().chain(&fast_markers) {
                     let mut marker = marker.clone();
                     marker.bounds.origin += scrollbar_layout.hitbox.origin;
                     cx.paint_quad(marker);
@@ -2578,7 +2579,11 @@ impl EditorElement {
         }
     }
 
-    fn refresh_scrollbar_markers(
+    fn collect_fast_scrollbar_markers(&self) -> Vec<PaintQuad> {
+        vec![]
+    }
+
+    fn refresh_slow_scrollbar_markers(
         &self,
         layout: &EditorLayout,
         scrollbar_layout: &ScrollbarLayout,
@@ -2638,7 +2643,8 @@ impl EditorElement {
                                     });
 
                                 marker_quads.extend(
-                                    scrollbar_layout.marker_quads_for_ranges(marker_row_ranges, 0),
+                                    scrollbar_layout
+                                        .marker_quads_for_ranges(marker_row_ranges, Some(0)),
                                 );
                             }
 
@@ -2670,7 +2676,7 @@ impl EditorElement {
                                         });
                                     marker_quads.extend(
                                         scrollbar_layout
-                                            .marker_quads_for_ranges(marker_row_ranges, 1),
+                                            .marker_quads_for_ranges(marker_row_ranges, Some(1)),
                                     );
                                 }
                             }
@@ -2712,7 +2718,24 @@ impl EditorElement {
                                     }
                                 });
                                 marker_quads.extend(
-                                    scrollbar_layout.marker_quads_for_ranges(marker_row_ranges, 2),
+                                    scrollbar_layout
+                                        .marker_quads_for_ranges(marker_row_ranges, Some(2)),
+                                );
+                            }
+
+                            if scrollbar_settings.cursors {
+                                let cursors =
+                                    snapshot.selection_anchors.into_iter().map(|anchor| {
+                                        let point =
+                                            anchor.to_display_point(&snapshot.display_snapshot);
+                                        ColoredRange {
+                                            start: point.row(),
+                                            end: point.row(),
+                                            color: theme.players().local().cursor,
+                                        }
+                                    });
+                                marker_quads.extend(
+                                    scrollbar_layout.marker_quads_for_ranges(cursors, None),
                                 );
                             }
 
@@ -3914,7 +3937,8 @@ struct ScrollbarLayout {
 
 impl ScrollbarLayout {
     const BORDER_WIDTH: Pixels = px(1.0);
-    const MIN_MARKER_HEIGHT: Pixels = px(2.0);
+    const LINE_MARKER_HEIGHT: Pixels = px(2.0);
+    const MIN_MARKER_HEIGHT: Pixels = px(4.0);
     const MIN_THUMB_HEIGHT: Pixels = px(20.0);
 
     fn thumb_bounds(&self) -> Bounds<Pixels> {
@@ -3933,13 +3957,31 @@ impl ScrollbarLayout {
     fn marker_quads_for_ranges(
         &self,
         row_ranges: impl IntoIterator<Item = ColoredRange<u32>>,
-        column: usize,
+        column: Option<usize>,
     ) -> Vec<PaintQuad> {
-        let column_width =
-            px(((self.hitbox.size.width - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
-
-        let left_x = ScrollbarLayout::BORDER_WIDTH + (column as f32 * column_width);
-        let right_x = left_x + column_width;
+        let (x_range, height_limits) = if let Some(column) = column {
+            let column_width = px(((self.hitbox.size.width - Self::BORDER_WIDTH).0 / 3.0).floor());
+            let start = Self::BORDER_WIDTH + (column as f32 * column_width);
+            let end = start + column_width;
+            (
+                Range { start, end },
+                Range {
+                    start: Self::MIN_MARKER_HEIGHT,
+                    end: px(f32::MAX),
+                },
+            )
+        } else {
+            (
+                Range {
+                    start: Self::BORDER_WIDTH,
+                    end: self.hitbox.size.width,
+                },
+                Range {
+                    start: Self::LINE_MARKER_HEIGHT,
+                    end: Self::LINE_MARKER_HEIGHT,
+                },
+            )
+        };
 
         let mut background_pixel_ranges = row_ranges
             .into_iter()
@@ -3958,9 +4000,10 @@ impl ScrollbarLayout {
         while let Some(mut pixel_range) = background_pixel_ranges.next() {
             pixel_range.end = pixel_range
                 .end
-                .max(pixel_range.start + Self::MIN_MARKER_HEIGHT);
+                .max(pixel_range.start + height_limits.start)
+                .min(pixel_range.start + height_limits.end);
             while let Some(next_pixel_range) = background_pixel_ranges.peek() {
-                if pixel_range.end >= next_pixel_range.start
+                if pixel_range.end >= next_pixel_range.start - px(1.0)
                     && pixel_range.color == next_pixel_range.color
                 {
                     pixel_range.end = next_pixel_range.end.max(pixel_range.end);
@@ -3971,8 +4014,8 @@ impl ScrollbarLayout {
             }
 
             let bounds = Bounds::from_corners(
-                point(left_x, pixel_range.start),
-                point(right_x, pixel_range.end),
+                point(x_range.start, pixel_range.start),
+                point(x_range.end, pixel_range.end),
             );
             quads.push(quad(
                 bounds,
