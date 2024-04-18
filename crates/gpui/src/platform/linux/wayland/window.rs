@@ -481,13 +481,12 @@ impl WaylandWindowStatePtr {
             }
         }
         if let PlatformInput::KeyDown(event) = input {
-            let mut state = self.state.borrow_mut();
-            if let Some(mut input_handler) = state.input_handler.take() {
-                if let Some(ime_key) = &event.keystroke.ime_key {
+            if let Some(ime_key) = &event.keystroke.ime_key {
+                let mut state = self.state.borrow_mut();
+                if let Some(mut input_handler) = state.input_handler.take() {
                     drop(state);
                     input_handler.replace_text_in_range(None, ime_key);
-                    let mut state = self.state.borrow_mut();
-                    state.input_handler = Some(input_handler);
+                    self.state.borrow_mut().input_handler = Some(input_handler);
                 }
             }
         }
