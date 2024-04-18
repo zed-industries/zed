@@ -1,54 +1,66 @@
-import os
-import re
-import collections
+from collections import defaultdict
 from pathlib import Path
+import argparse
+import re
 
 # Initialize a regular expression to match @ instances
-pattern = re.compile(r'(@[a-zA-Z.]+)')
+pattern = re.compile(r'(@[a-zA-Z_.]+)')
+
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description='Analyze highlight.scm files for unique instances and their languages.')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Include a list of languages for each tag.')
+    return parser.parse_args()
 
 def find_highlight_files(root_dir):
     """Find all highlight.scm files within a specified root directory."""
-    for path in Path(root_dir).rglob('**/highlights.scm'):
+    for path in Path(root_dir).rglob('highlights.scm'):
         yield path
 
 def count_instances(files):
-    """Count all unique instances of @{name} in the given files."""
-    instances = collections.Counter()
+    """Count all unique instances of @{name} and their languages in the given files."""
+    # Use a defaultdict to automatically handle keys that aren't yet in the dictionary
+    instances = defaultdict(lambda: {'count': 0, 'languages': set()})
     for file_path in files:
+        # Correctly identify the language by getting the directory name one level up
+        language = file_path.parent.name
         with open(file_path, "r") as file:
             text = file.read()
             matches = pattern.findall(text)
-            instances.update(matches)
+            for match in matches:
+                instances[match]['count'] += 1
+                instances[match]['languages'].add(language)
     return instances
 
-def main():
-    # Navigate up one directory from the script location
-    base_dir = Path(__file__).parent.parent
+def print_instances(instances, verbose=False):
+    """Print the instances along with count and, if verbose, languages."""
+    for item, details in sorted(instances.items(), key=lambda x: x[0]):
+        languages = ', '.join(sorted(details['languages']))
+        if verbose:
+            print(f"{item} ({details['count']}) - [{languages}]")
+        else:
+            print(f"{item} ({details['count']})")
 
-    # Define paths to core languages and extensions
+def main():
+    args = parse_arguments()
+
+    base_dir = Path(__file__).parent.parent
     core_path = base_dir / 'crates/languages/src'
     extension_path = base_dir / 'extensions/astro/languages'
 
-    # Find and count occurrences in core and extension highlight files
-    core_files = find_highlight_files(core_path)
-    extension_files = find_highlight_files(extension_path)
+    core_instances = count_instances(find_highlight_files(core_path))
+    extension_instances = count_instances(find_highlight_files(extension_path))
 
-    core_instances = count_instances(core_files)
-    extension_instances = count_instances(extension_files)
+    # Determine instances unique to extensions
+    unique_extension_instances = {k: v for k, v in extension_instances.items() if k not in core_instances}
 
-    # Calculate the instances unique to extensions
-    unique_extension_instances = extension_instances - core_instances
-
-    # Sort and display the shared instances
+    # Print shared and extension-only instances
     print('Shared:\n')
-    for item, count in sorted(core_instances.items()):
-        print(f"{item} ({count})")
+    print_instances(core_instances, args.verbose)
 
-    # If there are any unique extension instances, display them
     if unique_extension_instances:
         print('\nExtension-only:\n')
-        for item, count in sorted(unique_extension_instances.items()):
-            print(f"{item} ({count})")
+        print_instances(unique_extension_instances, args.verbose)
 
 if __name__ == '__main__':
     main()
