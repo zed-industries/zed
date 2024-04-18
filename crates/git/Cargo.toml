@@ -24,6 +24,7 @@ text.workspace = true
 time.workspace = true
 url.workspace = true
 serde.workspace = true
+windows.workspace = true
 
 [dev-dependencies]
 unindent.workspace = true

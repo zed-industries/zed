@@ -4327,6 +4327,7 @@ dependencies = [
  "time",
  "unindent",
  "url",
+ "windows 0.53.0",
 ]
 
 [[package]]
