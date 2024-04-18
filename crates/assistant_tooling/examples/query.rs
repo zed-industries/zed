@@ -17,16 +17,18 @@ impl ProjectIndex {
         ProjectIndex {}
     }
 
-    fn search(&self, _query: &str, _limit: usize, cx: &AppContext) -> Task<Result<Vec<String>>> {
-        cx.spawn(|_cx| async {
-            Ok(vec![r#"// crates/gpui/src/gpui.rs
+    fn search(&self, _query: &str, _limit: usize, _cx: &AppContext) -> Task<Result<Vec<String>>> {
+        // Instead of hooking up a real index, we're going to fake it
+        if _query.contains("gpui") {
+            return Task::ready(Ok(vec![r#"// crates/gpui/src/gpui.rs
     //! # Welcome to GPUI!
     //!
     //! GPUI is a hybrid immediate and retained mode, GPU accelerated, UI framework
     //! for Rust, designed to support a wide variety of applications
     "#
-            .to_string()])
-        })
+            .to_string()]));
+        }
+        return Task::ready(Ok(vec![]));
     }
 }
 

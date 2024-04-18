@@ -1,14 +1,16 @@
-# Tooling
+# Assistant Tooling
 
-Bringing OpenAI compatible tool calling to Rust.
+Bringing OpenAI compatible tool calling to GPUI.
 
-- Structured Extraction
-- Validation and Healing
-- Execution
+This unlocks:
+
+- **Structured Extraction** of model responses
+- **Validation** of model inputs
+- **Execution** of chosen toolsn
 
 ## Overview
 
-Language Models can produce structured outputs that are perfect for calling functions. The most famous of these is OpenAI's tool calling. When you call out to make a chat completion you can pass a list of tools available to the model. The model will choose `0..n` tools to help them complete a user's task.
+Language Models can produce structured outputs that are perfect for calling functions. The most famous of these is OpenAI's tool calling. When make a chat completion you can pass a list of tools available to the model. The model will choose `0..n` tools to help them complete a user's task. It's up to _you_ to create the tools that the model can call.
 
 > **User**: "Hey I need help with implementing a collapsible panel in GPUI"
 >
@@ -28,23 +30,23 @@ Let's expose querying a semantic index directly by the model. First, we'll set u
 
 ```rust
 use anyhow::Result;
-use futures::Future;
+use assistant_tooling::{LanguageModelTool, ToolRegistry};
+use gpui::{App, AppContext, Task};
 use schemars::JsonSchema;
 use serde::Deserialize;
-
-use assistant_tooling::LanguageModelTool;
+use serde_json::json;
 ```
 
 Then we'll define the query structure the model must fill in. This _must_ derive `Deserialize` from `serde` and `JsonSchema` from the `schemars` crate.
 
 ```rust
-#[derive(Deserialize, Serialize, JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
 struct CodebaseQuery {
     query: String,
 }
 ```
 
-After that we can define our tool, its input type (`CodebaseQuery`) and its output. We'll make a fake `ProjectIndex` for now just to make an illustrative example.
+After that we can define our tool, with the expectation that it will need a `ProjectIndex` to search against. For this example, the index uses the same interface as `semantic_index::ProjectIndex`.
 
 ```rust
 struct ProjectIndex {}
@@ -54,16 +56,34 @@ impl ProjectIndex {
         ProjectIndex {}
     }
 
-    fn search(&self, _query: &str, _limit: usize) -> impl Future<Output = Result<Vec<String>>> {
-        async move { Ok(vec![]) }
+    fn search(&self, _query: &str, _limit: usize, _cx: &AppContext) -> Task<Result<Vec<String>>> {
+        // Instead of hooking up a real index, we're going to fake it
+        if _query.contains("gpui") {
+            return Task::ready(Ok(vec![r#"// crates/gpui/src/gpui.rs
+    //! # Welcome to GPUI!
+    //!
+    //! GPUI is a hybrid immediate and retained mode, GPU accelerated, UI framework
+    //! for Rust, designed to support a wide variety of applications
+    "#
+            .to_string()]));
+        }
+        return Task::ready(Ok(vec![]));
     }
 }
-
 
 struct ProjectIndexTool {
     project_index: ProjectIndex,
 }
+```
 
+Now we can implement the `LanguageModelTool` trait for our tool by:
+
+- Defining the `Input` from the model, which is `CodebaseQuery`
+- Defining the `Output`
+- Implementing the `name` and `description` functions to provide the model information when it's choosing a tool
+- Implementing the `execute` function to run the tool
+
+```rust
 impl LanguageModelTool for ProjectIndexTool {
     type Input = CodebaseQuery;
     type Output = String;
@@ -76,49 +96,113 @@ impl LanguageModelTool for ProjectIndexTool {
         "Executes a query against the codebase, returning excerpts related to the query".to_string()
     }
 
-    fn execute(&self, query: Self::Input) -> impl 'static + Future<Output = Result<Self::Output>> {
-        let results = self.project_index.search(query.query.as_str(), 10);
+    fn execute(&self, query: Self::Input, cx: &AppContext) -> Task<Result<Self::Output>> {
+        let results = self.project_index.search(query.query.as_str(), 10, cx);
 
-        async move {
+        cx.spawn(|_cx| async move {
             let results = results.await?;
 
             if !results.is_empty() {
                 Ok(results.join("\n"))
             } else {
-                Ok(format!("No results"))
+                Ok("No results".to_string())
             }
-        }
+        })
     }
 }
 ```
 
-The model will use the `name` and `description` to determine which tool, amongst potentially several, to use to help complete tasks. Once that's determined, it's up to us to run the code based on the `Input` passed in, using that `execute`.
-
-As an example, we'll set up a `ToolRegistry` and register our new tool.
+For the sake of this example, let's look at the types that OpenAI will be passing to us
 
 ```rust
-let tool = ProjectIndexTool {
-    project_index: ProjectIndex::new(),
-};
+// OpenAI definitions, shown here for demonstration
+#[derive(Deserialize)]
+struct FunctionCall {
+    name: String,
+    args: String,
+}
 
-let mut registry = ToolRegistry::new();
+#[derive(Deserialize, Eq, PartialEq)]
+enum ToolCallType {
+    #[serde(rename = "function")]
+    Function,
+    Other,
+}
 
-let registered = registry.register(tool);
-assert!(registered.is_ok());
+#[derive(Deserialize, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+struct ToolCallId(String);
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ToolCall {
+    Function {
+        #[allow(dead_code)]
+        id: ToolCallId,
+        function: FunctionCall,
+    },
+    Other {
+        #[allow(dead_code)]
+        id: ToolCallId,
+    },
+}
+
+#[derive(Deserialize)]
+struct AssistantMessage {
+    role: String,
+    content: Option<String>,
+    tool_calls: Option<Vec<ToolCall>>,
+}
 ```
 
-When OpenAI says it wants to use one of our tools it will pass us an object with `name` and `arguments`. We pass those into `registry.call` which gives us a future.
+When the model wants to call tools, it will pass a list of `ToolCall`s. When those are `function`s that we can handle, we'll pass them to our `ToolRegistry` to get a future that we can await.
+
+```rust
+// Inside `fn main()`
+App::new().run(|cx: &mut AppContext| {
+    let tool = ProjectIndexTool {
+        project_index: ProjectIndex::new(),
+    };
+
+    let mut registry = ToolRegistry::new();
+    let registered = registry.register(tool);
+    assert!(registered.is_ok());
+```
+
+Let's pretend the model sent us back a message requesting
+
+```rust
+let model_response = json!({
+    "role": "assistant",
+    "tool_calls": [
+        {
+            "id": "call_1",
+            "function": {
+                "name": "query_codebase",
+                "args": r#"{"query":"GPUI Task background_executor"}"#
+            },
+            "type": "function"
+        }
+    ]
+});
+
+let message: AssistantMessage = serde_json::from_value(model_response).unwrap();
+
+// We know there's a tool call, so let's skip straight to it for this example
+let tool_calls = message.tool_calls.as_ref().unwrap();
+let tool_call = tool_calls.get(0).unwrap();
+```
+
+We can now use our registry to call the tool.
 
 ```rust
 let task = registry.call(
-    "query_codebase",
-    r#"{"query":"GPUI Task background_executor"}"#,
+    tool_call.name,
+    tool_call.args,
 );
-```
 
-Given that we're targeting GPUI, I wanted to leave this open to different kinds of executors. Here's it being consumed by the `futures::executor`:
-
-```rust
-let result = futures::executor::block_on(task);
-println!("{}", result.unwrap())
+cx.spawn(|_cx| async move {
+    let result = task.await?;
+    println!("{}", result.unwrap());
+    Ok(())
+})
 ```
