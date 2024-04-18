@@ -4968,6 +4968,7 @@ struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
     type BeforeLayout = AnyElement;
+    type AfterLayout = ();
     type BeforePaint = ();
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
@@ -4991,10 +4992,20 @@ impl Element for DisconnectedOverlay {
         (overlay.before_layout(cx), overlay)
     }
 
+    fn after_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        overlay: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        (overlay.after_layout(cx), ())
+    }
+
     fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         overlay: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) {
         cx.insert_hitbox(bounds, true);
@@ -5005,6 +5016,7 @@ impl Element for DisconnectedOverlay {
         &mut self,
         _: Bounds<Pixels>,
         overlay: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         _: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
