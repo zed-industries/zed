@@ -1141,18 +1141,17 @@ impl EditorElement {
         let start_x = {
             const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
 
-            let line_width = line_layout.line.width;
+            let padded_line_width =
+                line_layout.line.width + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS);
 
-            let project_settings = ProjectSettings::get_global(cx);
-            let inline_blame = project_settings.git.inline_blame;
-            let mut min = 0;
-            if inline_blame.is_some() && inline_blame.unwrap().min_column.is_some() {
-                min = inline_blame.unwrap().min_column.unwrap();
-            }
+            let min_column = ProjectSettings::get_global(cx)
+                .git
+                .inline_blame
+                .and_then(|settings| settings.min_column)
+                .map(|col| self.column_pixels(col as usize, cx))
+                .unwrap_or(px(0.));
 
-            content_origin.x
-                + max(line_width, min as f32 * em_width)
-                + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS)
+            content_origin.x + max(padded_line_width, min_column)
         };
 
         let absolute_offset = point(start_x, start_y);
