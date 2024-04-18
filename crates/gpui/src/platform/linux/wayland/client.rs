@@ -377,8 +377,24 @@ impl LinuxClient for WaylandClient {
             .log_err();
     }
 
+    fn write_to_primary(&self, item: crate::ClipboardItem) {
+        self.0.borrow_mut().primary.set_contents(item.text);
+    }
+
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
         self.0.borrow_mut().clipboard.set_contents(item.text);
+    }
+
+    fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
+        self.0
+            .borrow_mut()
+            .primary
+            .get_contents()
+            .ok()
+            .map(|s| crate::ClipboardItem {
+                text: s,
+                metadata: None,
+            })
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {

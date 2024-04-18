@@ -603,8 +603,24 @@ impl LinuxClient for X11Client {
     //todo(linux)
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
+    fn write_to_primary(&self, item: crate::ClipboardItem) {
+        self.0.borrow_mut().primary.set_contents(item.text);
+    }
+
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
         self.0.borrow_mut().clipboard.set_contents(item.text);
+    }
+
+    fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
+        self.0
+            .borrow_mut()
+            .primary
+            .get_contents()
+            .ok()
+            .map(|text| crate::ClipboardItem {
+                text,
+                metadata: None,
+            })
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
