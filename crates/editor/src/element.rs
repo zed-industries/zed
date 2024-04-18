@@ -3042,7 +3042,7 @@ impl CodeHostAvatarUrlForSha {
 
 impl Asset for CodeHostAvatarUrlForSha {
     type Source = Self;
-    type Output = Result<Option<SharedString>, Arc<anyhow::Error>>;
+    type Output = Option<SharedString>;
 
     fn load(
         source: Self::Source,
@@ -3062,13 +3062,12 @@ impl Asset for CodeHostAvatarUrlForSha {
                         &client,
                     )
                     .await
-                    .map_err(Arc::from)?;
+                    .ok()
+                    .flatten();
 
-                    let url =
-                        github_commit_author.map(|author| SharedString::from(author.avatar_url));
-                    Ok(url)
+                    github_commit_author.map(|author| SharedString::from(author.avatar_url))
                 }
-                _ => Ok(None),
+                _ => None,
             }
         }
     }
@@ -3115,8 +3114,7 @@ fn blame_entry_avatar_url(
     let remote = details.remote.as_ref().map(|remote| remote.clone())?;
     let avatar_url = CodeHostAvatarUrlForSha::new(sha, remote);
 
-    cx.use_cached_asset::<CodeHostAvatarUrlForSha>(&avatar_url)?
-        .ok()
+    cx.use_cached_asset::<CodeHostAvatarUrlForSha>(&avatar_url)
         .flatten()
 }
 
