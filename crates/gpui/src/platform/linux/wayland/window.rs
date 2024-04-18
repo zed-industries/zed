@@ -68,6 +68,7 @@ unsafe impl HasRawDisplayHandle for RawWindow {
 pub struct WaylandWindowState {
     xdg_surface: xdg_surface::XdgSurface,
     pub surface: wl_surface::WlSurface,
+    decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashSet<ObjectId>,
@@ -90,11 +91,13 @@ pub struct WaylandWindowStatePtr {
 }
 
 impl WaylandWindowState {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         surface: wl_surface::WlSurface,
         xdg_surface: xdg_surface::XdgSurface,
-        viewport: Option<wp_viewport::WpViewport>,
         toplevel: xdg_toplevel::XdgToplevel,
+        decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+        viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
         options: WindowParams,
@@ -132,6 +135,7 @@ impl WaylandWindowState {
         Self {
             xdg_surface,
             surface,
+            decoration,
             toplevel,
             viewport,
             globals,
@@ -158,16 +162,27 @@ impl Drop for WaylandWindow {
         let mut state = self.0.state.borrow_mut();
         let surface_id = state.surface.id();
         let client = state.client.clone();
+
         state.renderer.destroy();
+        if let Some(decoration) = &state.decoration {
+            decoration.destroy();
+        }
         state.toplevel.destroy();
+        if let Some(viewport) = &state.viewport {
+            viewport.destroy();
+        }
         state.xdg_surface.destroy();
         state.surface.destroy();
 
         let state_ptr = self.0.clone();
-        state.globals.executor.spawn(async move {
-            state_ptr.close();
-            client.drop_window(&surface_id)
-        });
+        state
+            .globals
+            .executor
+            .spawn(async move {
+                state_ptr.close();
+                client.drop_window(&surface_id)
+            })
+            .detach();
         drop(state);
     }
 }
@@ -197,13 +212,18 @@ impl WaylandWindow {
         }
 
         // Attempt to set up window decorations based on the requested configuration
-        if let Some(decoration_manager) = globals.decoration_manager.as_ref() {
-            let decoration =
-                decoration_manager.get_toplevel_decoration(&toplevel, &globals.qh, surface.id());
-
-            // Request client side decorations if possible
-            decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ClientSide);
-        }
+        let decoration = globals
+            .decoration_manager
+            .as_ref()
+            .map(|decoration_manager| {
+                let decoration = decoration_manager.get_toplevel_decoration(
+                    &toplevel,
+                    &globals.qh,
+                    surface.id(),
+                );
+                decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ClientSide);
+                decoration
+            });
 
         let viewport = globals
             .viewporter
@@ -216,8 +236,9 @@ impl WaylandWindow {
             state: Rc::new(RefCell::new(WaylandWindowState::new(
                 surface.clone(),
                 xdg_surface,
-                viewport,
                 toplevel,
+                decoration,
+                viewport,
                 client,
                 globals,
                 params,
@@ -319,7 +340,7 @@ impl WaylandWindowStatePtr {
                     }
                     result
                 } else {
-                    false
+                    true
                 }
             }
             _ => false,

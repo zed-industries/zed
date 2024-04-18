@@ -118,8 +118,8 @@ pub(crate) struct WaylandClientState {
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_icon_name: String,
     cursor: Cursor,
-    clipboard: Clipboard,
-    primary: Primary,
+    clipboard: Option<Clipboard>,
+    primary: Option<Primary>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
 }
@@ -162,6 +162,12 @@ impl WaylandClientStatePtr {
             if !window.ptr_eq(&closed_window) {
                 state.mouse_focused_window = Some(window);
             }
+        }
+        if state.windows.is_empty() {
+            // Drop the clipboard to prevent a seg fault after we've closed all Wayland connections.
+            state.clipboard = None;
+            state.primary = None;
+            state.common.signal.stop();
         }
     }
 }
@@ -278,8 +284,8 @@ impl WaylandClient {
             cursor_icon_name: "arrow".to_string(),
             enter_token: None,
             cursor,
-            clipboard,
-            primary,
+            clipboard: Some(clipboard),
+            primary: Some(primary),
             event_loop: Some(event_loop),
         }));
 
@@ -378,17 +384,29 @@ impl LinuxClient for WaylandClient {
     }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
-        self.0.borrow_mut().primary.set_contents(item.text);
+        self.0
+            .borrow_mut()
+            .primary
+            .as_mut()
+            .unwrap()
+            .set_contents(item.text);
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
-        self.0.borrow_mut().clipboard.set_contents(item.text);
+        self.0
+            .borrow_mut()
+            .clipboard
+            .as_mut()
+            .unwrap()
+            .set_contents(item.text);
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         self.0
             .borrow_mut()
             .primary
+            .as_mut()
+            .unwrap()
             .get_contents()
             .ok()
             .map(|s| crate::ClipboardItem {
@@ -401,6 +419,8 @@ impl LinuxClient for WaylandClient {
         self.0
             .borrow_mut()
             .clipboard
+            .as_mut()
+            .unwrap()
             .get_contents()
             .ok()
             .map(|s| crate::ClipboardItem {
