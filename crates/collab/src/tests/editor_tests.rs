@@ -2006,6 +2006,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     let inline_blame_off_settings = Some(InlineBlameSettings {
         enabled: false,
         delay_ms: None,
+        min_column: None,
     });
     cx_a.update(|cx| {
         cx.update_global(|store: &mut SettingsStore, cx| {
