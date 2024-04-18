@@ -5,6 +5,8 @@
 
 (trait_item name: (type_identifier) @type.interface)
 (impl_item trait: (type_identifier) @type.interface)
+(abstract_type trait: (type_identifier) @type.interface)
+(dynamic_type trait: (type_identifier) @type.interface)
 (trait_bounds (type_identifier) @type.interface)
 
 (call_expression
