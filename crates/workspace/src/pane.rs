@@ -1621,7 +1621,6 @@ impl Pane {
                             .flatten();
 
                         let entry_id = entry.to_proto();
-
                         menu = menu
                             .separator()
                             .entry(
@@ -2018,27 +2017,6 @@ impl Render for Pane {
                     }
                 }),
             )
-            .on_action(cx.listener(|pane, _: &OpenInTerminal, cx| {
-                if let Some(working_directory) = pane
-                    .active_item()
-                    .and_then(|item| item.project_path(cx))
-                    .and_then(|project_path| {
-                        let project = pane.project.read(cx);
-                        let entry = project.entry_for_path(&project_path, cx)?;
-                        let abs_path = project.absolute_path(&project_path, cx)?;
-                        let parent = if entry.is_symlink {
-                            abs_path.canonicalize().ok()?
-                        } else {
-                            abs_path
-                        }
-                        .parent()?
-                        .to_path_buf();
-                        Some(parent)
-                    })
-                {
-                    cx.dispatch_action(OpenTerminal { working_directory }.boxed_clone())
-                }
-            }))
             .when(self.active_item().is_some(), |pane| {
                 pane.child(self.render_tab_bar(cx))
             })
