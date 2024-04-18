@@ -433,9 +433,18 @@ impl TerminalPanel {
         _: &workspace::NewTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
+        let has_no_terminals = workspace
+            .panel::<Self>(cx)
+            .map(|terminal_panel| terminal_panel.update(cx, |panel, cx| panel.has_no_terminals(cx)))
+            .unwrap_or(true);
         let Some(this) = workspace.focus_panel::<Self>(cx) else {
             return;
         };
+        if has_no_terminals {
+            // `set_active` on focus, will already add a new terminal
+            // into an empty terminal pane, no need to add another one
+            return;
+        }
 
         this.update(cx, |this, cx| this.add_terminal(None, None, cx))
     }
@@ -598,8 +607,13 @@ impl TerminalPanel {
 
         Some(())
     }
+
     pub fn pane(&self) -> &View<Pane> {
         &self.pane
+    }
+
+    fn has_no_terminals(&mut self, cx: &mut ViewContext<'_, Self>) -> bool {
+        self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
     }
 }
 
@@ -713,7 +727,7 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active && self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0 {
+        if active && self.has_no_terminals(cx) {
             self.add_terminal(None, None, cx)
         }
     }
