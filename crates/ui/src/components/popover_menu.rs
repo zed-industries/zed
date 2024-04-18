@@ -169,6 +169,7 @@ pub struct PopoverMenuFrameState {
 
 impl<M: ManagedView> Element for PopoverMenu<M> {
     type BeforeLayout = PopoverMenuFrameState;
+    type AfterLayout = ();
     type BeforePaint = Option<HitboxId>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::BeforeLayout) {
@@ -214,10 +215,34 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         })
     }
 
+    fn after_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        before_layout: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        let mut focus_target_bounds = None;
+
+        if let Some(child) = before_layout.child_element.as_mut() {
+            if let Some(child_focus_target_bounds) = child.after_layout(cx) {
+                focus_target_bounds = Some(child_focus_target_bounds);
+            }
+        }
+
+        if let Some(menu) = before_layout.menu_element.as_mut() {
+            if let Some(menu_focus_target_bounds) = menu.after_layout(cx) {
+                focus_target_bounds = Some(menu_focus_target_bounds);
+            }
+        }
+
+        (focus_target_bounds, ())
+    }
+
     fn before_paint(
         &mut self,
         _bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) -> Option<HitboxId> {
         self.with_element_state(cx, |_this, element_state, cx| {
@@ -241,6 +266,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         &mut self,
         _: Bounds<gpui::Pixels>,
         before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         child_hitbox: &mut Option<HitboxId>,
         cx: &mut ElementContext,
     ) {
