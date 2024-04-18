@@ -1,34 +1,38 @@
 use crate::{
-    assistant_settings::OpenAiModel, CompletionProvider, LanguageModel, LanguageModelRequest, Role,
+    assistant_settings::YandexGptModel, CompletionProvider, LanguageModel, LanguageModelRequest,
+    Role,
 };
 use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, AppContext, FontStyle, FontWeight, Task, TextStyle, View, WhiteSpace};
-use open_ai::{stream_completion, Request, RequestMessage, Role as OpenAiRole};
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{env, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
 use util::{http::HttpClient, ResultExt};
+use yandex_gpt::{stream_completion, Request, RequestMessage, Role as YandexGptRole};
 
-pub struct OpenAiCompletionProvider {
+pub struct YandexGptCompletionProvider {
     api_key: Option<String>,
+    folder_id: Option<String>,
     api_url: String,
-    default_model: OpenAiModel,
+    default_model: YandexGptModel,
     http_client: Arc<dyn HttpClient>,
     settings_version: usize,
 }
 
-impl OpenAiCompletionProvider {
+impl YandexGptCompletionProvider {
     pub fn new(
-        default_model: OpenAiModel,
+        default_model: YandexGptModel,
         api_url: String,
         http_client: Arc<dyn HttpClient>,
         settings_version: usize,
     ) -> Self {
         Self {
             api_key: None,
+            folder_id: None,
             api_url,
             default_model,
             http_client,
@@ -36,7 +40,12 @@ impl OpenAiCompletionProvider {
         }
     }
 
-    pub fn update(&mut self, default_model: OpenAiModel, api_url: String, settings_version: usize) {
+    pub fn update(
+        &mut self,
+        default_model: YandexGptModel,
+        api_url: String,
+        settings_version: usize,
+    ) {
         self.default_model = default_model;
         self.api_url = api_url;
         self.settings_version = settings_version;
@@ -56,18 +65,27 @@ impl OpenAiCompletionProvider {
         } else {
             let api_url = self.api_url.clone();
             cx.spawn(|mut cx| async move {
-                let api_key = if let Ok(api_key) = env::var("OPENAI_API_KEY") {
-                    api_key
+                let (api_key, folder_id) = if let Some((api_key, folder_id)) =
+                    env::var("YANDEX_GPT_API_KEY")
+                        .into_iter()
+                        .zip(env::var("YANDEX_GPT_FOLDER_ID").into_iter())
+                        .next()
+                {
+                    (api_key, folder_id)
                 } else {
-                    let (_, api_key) = cx
+                    let (_, creds) = cx
                         .update(|cx| cx.read_credentials(&api_url))?
                         .await?
                         .ok_or_else(|| anyhow!("credentials not found"))?;
-                    String::from_utf8(api_key)?
+                    let YdxCredential(api_key, folder_id) =
+                        YdxCredential::from_slice(creds.as_slice())?;
+                    (api_key, folder_id)
                 };
+
                 cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                    if let CompletionProvider::OpenAi(provider) = provider {
+                    if let CompletionProvider::YandexGpt(provider) = provider {
                         provider.api_key = Some(api_key);
+                        provider.folder_id = Some(folder_id);
                     }
                 })
             })
@@ -79,7 +97,7 @@ impl OpenAiCompletionProvider {
         cx.spawn(|mut cx| async move {
             delete_credentials.await.log_err();
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let CompletionProvider::OpenAi(provider) = provider {
+                if let CompletionProvider::YandexGpt(provider) = provider {
                     provider.api_key = None;
                 }
             })
@@ -91,7 +109,7 @@ impl OpenAiCompletionProvider {
             .into()
     }
 
-    pub fn default_model(&self) -> OpenAiModel {
+    pub fn default_model(&self) -> YandexGptModel {
         self.default_model.clone()
     }
 
@@ -100,14 +118,25 @@ impl OpenAiCompletionProvider {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        count_open_ai_tokens(request, cx.background_executor())
+        let request = self.to_yandex_gpt_request(request);
+        let http_client = self.http_client.clone();
+        let api_key = self.api_key.clone().unwrap_or_default();
+        let api_url = self.api_url.clone();
+
+        count_yandex_gpt_tokens(
+            http_client,
+            api_key,
+            api_url,
+            request,
+            cx.background_executor(),
+        )
     }
 
     pub fn complete(
         &self,
         request: LanguageModelRequest,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let request = self.to_open_ai_request(request);
+        let request = self.to_yandex_gpt_request(request);
 
         let http_client = self.http_client.clone();
         let api_key = self.api_key.clone();
@@ -119,7 +148,7 @@ impl OpenAiCompletionProvider {
             let stream = response
                 .filter_map(|response| async move {
                     match response {
-                        Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
+                        Ok(mut response) => Some(Ok(response.alternatives.pop()?.message.text?)),
                         Err(error) => Some(Err(error)),
                     }
                 })
@@ -129,68 +158,86 @@ impl OpenAiCompletionProvider {
         .boxed()
     }
 
-    fn to_open_ai_request(&self, request: LanguageModelRequest) -> Request {
+    fn to_yandex_gpt_request(&self, request: LanguageModelRequest) -> Request {
         let model = match request.model {
             LanguageModel::ZedDotDev(_) => self.default_model(),
-            LanguageModel::YandexGpt(_) => self.default_model(),
-            LanguageModel::OpenAi(model) => model,
+            LanguageModel::OpenAi(_) => self.default_model(),
+            LanguageModel::YandexGpt(model) => model,
         };
 
         Request {
-            model,
+            model_uri: model.get_uri(self.folder_id.clone().unwrap_or_default()),
             messages: request
                 .messages
                 .into_iter()
-                .map(|msg| RequestMessage {
-                    role: msg.role.into(),
-                    content: msg.content,
+                .filter_map(|msg| {
+                    if msg.content.is_empty() {
+                        None
+                    } else {
+                        Some(RequestMessage {
+                            role: msg.role.into(),
+                            text: msg.content,
+                        })
+                    }
                 })
                 .collect(),
-            stream: true,
-            stop: request.stop,
-            temperature: request.temperature,
+            completion_options: yandex_gpt::CompletionOptions {
+                stream: true,
+                temperature: request.temperature,
+                max_tokens: model.max_token_count(),
+            },
         }
     }
 }
 
-pub fn count_open_ai_tokens(
-    request: LanguageModelRequest,
+pub fn count_yandex_gpt_tokens(
+    client: Arc<dyn HttpClient>,
+    api_key: String,
+    api_url: String,
+    request: Request,
     background_executor: &gpui::BackgroundExecutor,
 ) -> BoxFuture<'static, Result<usize>> {
     background_executor
         .spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.content),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
-
-            tiktoken_rs::num_tokens_from_messages(request.model.id(), &messages)
+            yandex_gpt::tokenize_completion(
+                client.as_ref(),
+                api_url.as_ref(),
+                api_key.as_ref(),
+                request,
+            )
+            .await
+            .map(|r| r.tokens.len())
         })
         .boxed()
 }
 
-impl From<Role> for open_ai::Role {
+impl From<Role> for yandex_gpt::Role {
     fn from(val: Role) -> Self {
         match val {
-            Role::User => OpenAiRole::User,
-            Role::Assistant => OpenAiRole::Assistant,
-            Role::System => OpenAiRole::System,
+            Role::User => YandexGptRole::User,
+            Role::Assistant => YandexGptRole::Assistant,
+            Role::System => YandexGptRole::System,
         }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct YdxCredential(String, String);
+
+impl YdxCredential {
+    pub fn as_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("serialize credentials")
+    }
+
+    pub fn from_slice(bytes: &[u8]) -> Result<Self> {
+        let creds = serde_json::from_slice(bytes)?;
+        Ok(creds)
     }
 }
 
 struct AuthenticationPrompt {
     api_key: View<Editor>,
+    folder_id: View<Editor>,
     api_url: String,
 }
 
@@ -199,10 +246,12 @@ impl AuthenticationPrompt {
         Self {
             api_key: cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
-                editor.set_placeholder_text(
-                    "sk-000000000000000000000000000000000000000000000000",
-                    cx,
-                );
+                editor.set_placeholder_text("XXXX0_00000000000000000000000000000000000", cx);
+                editor
+            }),
+            folder_id: cx.new_view(|cx| {
+                let mut editor = Editor::single_line(cx);
+                editor.set_placeholder_text("000000000000000000", cx);
                 editor
             }),
             api_url,
@@ -215,12 +264,21 @@ impl AuthenticationPrompt {
             return;
         }
 
-        let write_credentials = cx.write_credentials(&self.api_url, "Bearer", api_key.as_bytes());
+        let folder_id = self.folder_id.read(cx).text(cx);
+        if folder_id.is_empty() {
+            return;
+        }
+
+        let cred = YdxCredential(api_key.clone(), folder_id.clone());
+
+        let write_credentials =
+            cx.write_credentials(&self.api_url, "Api-Key", cred.as_bytes().as_slice());
         cx.spawn(|_, mut cx| async move {
             write_credentials.await?;
             cx.update_global::<CompletionProvider, _>(|provider, _cx| {
-                if let CompletionProvider::OpenAi(provider) = provider {
+                if let CompletionProvider::YandexGpt(provider) = provider {
                     provider.api_key = Some(api_key);
+                    provider.folder_id = Some(folder_id);
                 }
             })
         })
@@ -252,17 +310,42 @@ impl AuthenticationPrompt {
             },
         )
     }
+
+    fn render_folder_id_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features,
+            font_size: rems(0.875).into(),
+            font_weight: FontWeight::NORMAL,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            white_space: WhiteSpace::Normal,
+        };
+        EditorElement::new(
+            &self.folder_id,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
 }
 
 impl Render for AuthenticationPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const INSTRUCTIONS: [&str; 6] = [
-            "To use the assistant panel or inline assistant, you need to add your OpenAI API key.",
-            " - You can create an API key at: platform.openai.com/api-keys",
-            " - Make sure your OpenAI account has credits",
-            " - Having a subscription for another service like GitHub Copilot won't work.",
+        const INSTRUCTIONS: [&str; 5] = [
+            "To use the assistant panel or inline assistant, you need to add your YandexGPT API key and Folder ID.",
+            " - You can create an API key. See: yandex.cloud/docs/foundation-models/api-ref/authentication",
+            " - You can get an existing folder ID or create a new one. See: yandex.cloud/docs/resource-manager/operations/folder/get-id",
+            " - Make sure your Yandex Cloud account has credits",
             "",
-            "Paste your OpenAI API key below and hit enter to use the assistant:",
         ];
 
         v_flex()
@@ -272,6 +355,7 @@ impl Render for AuthenticationPrompt {
             .children(
                 INSTRUCTIONS.map(|instruction| Label::new(instruction).size(LabelSize::Small)),
             )
+            .child(Label::new("Paste your Yandex GPT API key:").size(LabelSize::Small))
             .child(
                 h_flex()
                     .w_full()
@@ -282,9 +366,20 @@ impl Render for AuthenticationPrompt {
                     .rounded_md()
                     .child(self.render_api_key_editor(cx)),
             )
+            .child(Label::new("Paste your Yandex Cloud Folder ID and hit enter:").size(LabelSize::Small))
+            .child(
+                h_flex()
+                    .w_full()
+                    .my_2()
+                    .px_2()
+                    .py_1()
+                    .bg(cx.theme().colors().editor_background)
+                    .rounded_md()
+                    .child(self.render_folder_id_editor(cx)),
+            )
             .child(
                 Label::new(
-                    "You can also assign the OPENAI_API_KEY environment variable and restart Zed.",
+                    "You can also assign the YANDEX_GPT_API_KEY and YANDEX_GPT_FOLDER_ID environment variables and restart Zed.",
                 )
                 .size(LabelSize::Small),
             )

@@ -56,6 +56,7 @@ members = [
     "crates/node_runtime",
     "crates/notifications",
     "crates/open_ai",
+    "crates/yandex_gpt",
     "crates/outline",
     "crates/picker",
     "crates/prettier",
@@ -187,6 +188,7 @@ multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 open_ai = { path = "crates/open_ai" }
+yandex_gpt = { path = "crates/yandex_gpt" }
 outline = { path = "crates/outline" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }

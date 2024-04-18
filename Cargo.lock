@@ -369,6 +369,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "yandex_gpt",
 ]
 
 [[package]]
@@ -12430,6 +12431,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap 4.4.4",
+]
+
+[[package]]
+name = "yandex_gpt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "schemars",
+ "serde",
+ "serde_json",
+ "util",
 ]
 
 [[package]]

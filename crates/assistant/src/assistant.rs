@@ -9,7 +9,7 @@ mod streaming_diff;
 mod embedded_scope;
 
 pub use assistant_panel::AssistantPanel;
-use assistant_settings::{AssistantSettings, OpenAiModel, ZedDotDevModel};
+use assistant_settings::{AssistantSettings, OpenAiModel, YandexGptModel, ZedDotDevModel};
 use chrono::{DateTime, Local};
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
@@ -75,6 +75,7 @@ impl Display for Role {
 pub enum LanguageModel {
     ZedDotDev(ZedDotDevModel),
     OpenAi(OpenAiModel),
+    YandexGpt(YandexGptModel),
 }
 
 impl Default for LanguageModel {
@@ -87,6 +88,7 @@ impl LanguageModel {
     pub fn telemetry_id(&self) -> String {
         match self {
             LanguageModel::OpenAi(model) => format!("openai/{}", model.id()),
+            LanguageModel::YandexGpt(model) => format!("yandex.gpt/{}", model.id()),
             LanguageModel::ZedDotDev(model) => format!("zed.dev/{}", model.id()),
         }
     }
@@ -94,6 +96,7 @@ impl LanguageModel {
     pub fn display_name(&self) -> String {
         match self {
             LanguageModel::OpenAi(model) => format!("openai/{}", model.display_name()),
+            LanguageModel::YandexGpt(model) => format!("yandex.gpt/{}", model.display_name()),
             LanguageModel::ZedDotDev(model) => format!("zed.dev/{}", model.display_name()),
         }
     }
@@ -101,6 +104,7 @@ impl LanguageModel {
     pub fn max_token_count(&self) -> usize {
         match self {
             LanguageModel::OpenAi(model) => model.max_token_count(),
+            LanguageModel::YandexGpt(model) => model.max_token_count(),
             LanguageModel::ZedDotDev(model) => model.max_token_count(),
         }
     }
@@ -108,6 +112,7 @@ impl LanguageModel {
     pub fn id(&self) -> &str {
         match self {
             LanguageModel::OpenAi(model) => model.id(),
+            LanguageModel::YandexGpt(model) => model.id(),
             LanguageModel::ZedDotDev(model) => model.id(),
         }
     }

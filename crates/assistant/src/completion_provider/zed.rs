@@ -79,6 +79,7 @@ impl ZedDotDevCompletionProvider {
     ) -> BoxFuture<'static, Result<usize>> {
         match request.model {
             LanguageModel::OpenAi(_) => future::ready(Err(anyhow!("invalid model"))).boxed(),
+            LanguageModel::YandexGpt(_) => future::ready(Err(anyhow!("invalid model"))).boxed(),
             LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4)
             | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt4Turbo)
             | LanguageModel::ZedDotDev(ZedDotDevModel::Gpt3Point5Turbo) => {

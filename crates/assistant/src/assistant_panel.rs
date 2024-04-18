@@ -772,6 +772,10 @@ impl AssistantPanel {
                 open_ai::Model::Four => open_ai::Model::FourTurbo,
                 open_ai::Model::FourTurbo => open_ai::Model::ThreePointFiveTurbo,
             }),
+            LanguageModel::YandexGpt(model) => LanguageModel::YandexGpt(match &model {
+                yandex_gpt::Model::YandexGptPro => yandex_gpt::Model::YandexGptLite,
+                yandex_gpt::Model::YandexGptLite => yandex_gpt::Model::YandexGptPro,
+            }),
             LanguageModel::ZedDotDev(model) => LanguageModel::ZedDotDev(match &model {
                 ZedDotDevModel::Gpt3Point5Turbo => ZedDotDevModel::Gpt4,
                 ZedDotDevModel::Gpt4 => ZedDotDevModel::Gpt4Turbo,

@@ -1,11 +1,13 @@
 #[cfg(test)]
 mod fake;
 mod open_ai;
+mod yandex_gpt;
 mod zed;
 
 #[cfg(test)]
 pub use fake::*;
 pub use open_ai::*;
+pub use yandex_gpt::*;
 pub use zed::*;
 
 use crate::{
@@ -39,6 +41,15 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
             client.http_client(),
             settings_version,
         )),
+        AssistantProvider::YandexGPT {
+            default_model,
+            api_url,
+        } => CompletionProvider::YandexGpt(YandexGptCompletionProvider::new(
+            default_model.clone(),
+            api_url.clone(),
+            client.http_client(),
+            settings_version,
+        )),
     };
     cx.set_global(provider);
 
@@ -56,12 +67,18 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                     provider.update(default_model.clone(), api_url.clone(), settings_version);
                 }
                 (
-                    CompletionProvider::ZedDotDev(provider),
+                    CompletionProvider::YandexGpt(provider),
+                    AssistantProvider::YandexGPT {
+                        default_model,
+                        api_url,
+                    },
+                ) => {
+                    provider.update(default_model.clone(), api_url.clone(), settings_version);
+                }
+                (
+                    CompletionProvider::YandexGpt(_),
                     AssistantProvider::ZedDotDev { default_model },
                 ) => {
-                    provider.update(default_model.clone(), settings_version);
-                }
-                (CompletionProvider::OpenAi(_), AssistantProvider::ZedDotDev { default_model }) => {
                     *provider = CompletionProvider::ZedDotDev(ZedDotDevCompletionProvider::new(
                         default_model.clone(),
                         client.clone(),
@@ -70,7 +87,15 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                     ));
                 }
                 (
-                    CompletionProvider::ZedDotDev(_),
+                    CompletionProvider::ZedDotDev(provider),
+                    AssistantProvider::ZedDotDev { default_model },
+                ) => {
+                    provider.update(default_model.clone(), settings_version);
+                }
+                #[cfg(test)]
+                (CompletionProvider::Fake(_), _) => unimplemented!(),
+                (
+                    _,
                     AssistantProvider::OpenAi {
                         default_model,
                         api_url,
@@ -83,8 +108,28 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                         settings_version,
                     ));
                 }
-                #[cfg(test)]
-                (CompletionProvider::Fake(_), _) => unimplemented!(),
+                (_, AssistantProvider::ZedDotDev { default_model }) => {
+                    *provider = CompletionProvider::ZedDotDev(ZedDotDevCompletionProvider::new(
+                        default_model.clone(),
+                        client.clone(),
+                        settings_version,
+                        cx,
+                    ));
+                }
+                (
+                    _,
+                    AssistantProvider::YandexGPT {
+                        default_model,
+                        api_url,
+                    },
+                ) => {
+                    *provider = CompletionProvider::YandexGpt(YandexGptCompletionProvider::new(
+                        default_model.clone(),
+                        api_url.clone(),
+                        client.http_client(),
+                        settings_version,
+                    ));
+                }
             }
         })
     })
@@ -93,6 +138,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 
 pub enum CompletionProvider {
     OpenAi(OpenAiCompletionProvider),
+    YandexGpt(YandexGptCompletionProvider),
     ZedDotDev(ZedDotDevCompletionProvider),
     #[cfg(test)]
     Fake(FakeCompletionProvider),
@@ -108,6 +154,7 @@ impl CompletionProvider {
     pub fn settings_version(&self) -> usize {
         match self {
             CompletionProvider::OpenAi(provider) => provider.settings_version(),
+            CompletionProvider::YandexGpt(provider) => provider.settings_version(),
             CompletionProvider::ZedDotDev(provider) => provider.settings_version(),
             #[cfg(test)]
             CompletionProvider::Fake(_) => unimplemented!(),
@@ -117,6 +164,7 @@ impl CompletionProvider {
     pub fn is_authenticated(&self) -> bool {
         match self {
             CompletionProvider::OpenAi(provider) => provider.is_authenticated(),
+            CompletionProvider::YandexGpt(provider) => provider.is_authenticated(),
             CompletionProvider::ZedDotDev(provider) => provider.is_authenticated(),
             #[cfg(test)]
             CompletionProvider::Fake(_) => true,
@@ -126,6 +174,7 @@ impl CompletionProvider {
     pub fn authenticate(&self, cx: &AppContext) -> Task<Result<()>> {
         match self {
             CompletionProvider::OpenAi(provider) => provider.authenticate(cx),
+            CompletionProvider::YandexGpt(provider) => provider.authenticate(cx),
             CompletionProvider::ZedDotDev(provider) => provider.authenticate(cx),
             #[cfg(test)]
             CompletionProvider::Fake(_) => Task::ready(Ok(())),
@@ -135,6 +184,7 @@ impl CompletionProvider {
     pub fn authentication_prompt(&self, cx: &mut WindowContext) -> AnyView {
         match self {
             CompletionProvider::OpenAi(provider) => provider.authentication_prompt(cx),
+            CompletionProvider::YandexGpt(provider) => provider.authentication_prompt(cx),
             CompletionProvider::ZedDotDev(provider) => provider.authentication_prompt(cx),
             #[cfg(test)]
             CompletionProvider::Fake(_) => unimplemented!(),
@@ -144,6 +194,7 @@ impl CompletionProvider {
     pub fn reset_credentials(&self, cx: &AppContext) -> Task<Result<()>> {
         match self {
             CompletionProvider::OpenAi(provider) => provider.reset_credentials(cx),
+            CompletionProvider::YandexGpt(provider) => provider.reset_credentials(cx),
             CompletionProvider::ZedDotDev(_) => Task::ready(Ok(())),
             #[cfg(test)]
             CompletionProvider::Fake(_) => Task::ready(Ok(())),
@@ -153,6 +204,9 @@ impl CompletionProvider {
     pub fn default_model(&self) -> LanguageModel {
         match self {
             CompletionProvider::OpenAi(provider) => LanguageModel::OpenAi(provider.default_model()),
+            CompletionProvider::YandexGpt(provider) => {
+                LanguageModel::YandexGpt(provider.default_model())
+            }
             CompletionProvider::ZedDotDev(provider) => {
                 LanguageModel::ZedDotDev(provider.default_model())
             }
@@ -168,6 +222,7 @@ impl CompletionProvider {
     ) -> BoxFuture<'static, Result<usize>> {
         match self {
             CompletionProvider::OpenAi(provider) => provider.count_tokens(request, cx),
+            CompletionProvider::YandexGpt(provider) => provider.count_tokens(request, cx),
             CompletionProvider::ZedDotDev(provider) => provider.count_tokens(request, cx),
             #[cfg(test)]
             CompletionProvider::Fake(_) => unimplemented!(),
@@ -180,6 +235,7 @@ impl CompletionProvider {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         match self {
             CompletionProvider::OpenAi(provider) => provider.complete(request),
+            CompletionProvider::YandexGpt(provider) => provider.complete(request),
             CompletionProvider::ZedDotDev(provider) => provider.complete(request),
             #[cfg(test)]
             CompletionProvider::Fake(provider) => provider.complete(),

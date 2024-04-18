@@ -11,6 +11,7 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use settings::{Settings, SettingsSources};
+pub use yandex_gpt::Model as YandexGptModel;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum ZedDotDevModel {
@@ -154,6 +155,13 @@ pub enum AssistantProvider {
         #[serde(default = "open_ai_url")]
         api_url: String,
     },
+    #[serde(rename = "yandex.gpt")]
+    YandexGPT {
+        #[serde(default)]
+        default_model: YandexGptModel,
+        #[serde(default = "yandex_gpt_url")]
+        api_url: String,
+    },
 }
 
 impl Default for AssistantProvider {
@@ -166,6 +174,10 @@ impl Default for AssistantProvider {
 
 fn open_ai_url() -> String {
     "https://api.openai.com/v1".into()
+}
+
+fn yandex_gpt_url() -> String {
+    "https://llm.api.cloud.yandex.net/foundationModels/v1".into()
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
