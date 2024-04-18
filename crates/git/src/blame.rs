@@ -21,6 +21,7 @@ pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
     pub permalinks: HashMap<Oid, Url>,
+    pub remote_url: Option<String>,
 }
 
 impl Blame {
@@ -41,6 +42,8 @@ impl Blame {
 
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);
+            // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
+            // now do the parsing.
             if let Some(remote) = parsed_remote_url.as_ref() {
                 permalinks.entry(entry.sha).or_insert_with(|| {
                     build_commit_permalink(BuildCommitPermalinkParams {
@@ -59,9 +62,13 @@ impl Blame {
             entries,
             permalinks,
             messages,
+            remote_url,
         })
     }
 }
+
+const GIT_BLAME_NO_COMMIT_ERROR: &'static str = "fatal: no such ref: HEAD";
+const GIT_BLAME_NO_PATH: &'static str = "fatal: no such path";
 
 fn run_git_blame(
     git_binary: &Path,
@@ -98,6 +105,10 @@ fn run_git_blame(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let trimmed = stderr.trim();
+        if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
+            return Ok(String::new());
+        }
         return Err(anyhow!("git blame process failed: {}", stderr));
     }
 

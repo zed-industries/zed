@@ -10727,6 +10727,7 @@ fn serialize_blame_buffer_response(blame: git::blame::Blame) -> proto::BlameBuff
         entries,
         messages,
         permalinks,
+        remote_url: blame.remote_url,
     }
 }
 
@@ -10775,6 +10776,7 @@ fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> gi
         entries,
         permalinks,
         messages,
+        remote_url: response.remote_url,
     }
 }
 

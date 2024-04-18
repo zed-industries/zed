@@ -45,7 +45,7 @@ use smallvec::SmallVec;
 use std::{
     any::TypeId,
     borrow::Cow,
-    cmp::{self, Ordering},
+    cmp::{self, max, Ordering},
     fmt::Write,
     iter, mem,
     ops::Range,
@@ -1141,8 +1141,17 @@ impl EditorElement {
         let start_x = {
             const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
 
-            let line_width = line_layout.line.width;
-            content_origin.x + line_width + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS)
+            let padded_line_width =
+                line_layout.line.width + (em_width * INLINE_BLAME_PADDING_EM_WIDTHS);
+
+            let min_column = ProjectSettings::get_global(cx)
+                .git
+                .inline_blame
+                .and_then(|settings| settings.min_column)
+                .map(|col| self.column_pixels(col as usize, cx))
+                .unwrap_or(px(0.));
+
+            content_origin.x + max(padded_line_width, min_column)
         };
 
         let absolute_offset = point(start_x, start_y);
