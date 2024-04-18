@@ -284,7 +284,6 @@ impl WindowsWindowInner {
             WM_CHAR => self.handle_char_msg(msg, wparam, lparam),
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(),
             WM_IME_COMPOSITION => self.handle_ime_composition(lparam),
-            WM_IME_CHAR => self.handle_ime_char(wparam),
             WM_SETCURSOR => self.handle_set_cursor(lparam),
             _ => None,
         };
@@ -782,7 +781,6 @@ impl WindowsWindowInner {
             let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
             let result = if string_len >= 0 {
                 let mut buffer = vec![0u8; string_len as usize + 2];
-                // let mut buffer = [0u8; MAX_PATH as _];
                 ImmGetCompositionStringW(
                     ctx,
                     GCS_COMPSTR,
@@ -809,6 +807,32 @@ impl WindowsWindowInner {
             let ret = ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0);
             ImmReleaseContext(self.hwnd, ctx);
             ret as usize
+        }
+    }
+
+    fn parse_ime_compostion_result(&self) -> Option<String> {
+        unsafe {
+            let ctx = ImmGetContext(self.hwnd);
+            let string_len = ImmGetCompositionStringW(ctx, GCS_RESULTSTR, None, 0);
+            let result = if string_len >= 0 {
+                let mut buffer = vec![0u8; string_len as usize + 2];
+                ImmGetCompositionStringW(
+                    ctx,
+                    GCS_RESULTSTR,
+                    Some(buffer.as_mut_ptr() as _),
+                    string_len as _,
+                );
+                let wstring = std::slice::from_raw_parts::<u16>(
+                    buffer.as_mut_ptr().cast::<u16>(),
+                    string_len as usize / 2,
+                );
+                let string = String::from_utf16_lossy(wstring);
+                Some(string)
+            } else {
+                None
+            };
+            ImmReleaseContext(self.hwnd, ctx);
+            result
         }
     }
 
@@ -840,29 +864,20 @@ impl WindowsWindowInner {
             input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
             self.input_handler.set(Some(input_handler));
         }
+        if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
+            let Some(comp_result) = self.parse_ime_compostion_result() else {
+                return None;
+            };
+            let Some(mut input_handler) = self.input_handler.take() else {
+                return Some(1);
+            };
+            input_handler.replace_text_in_range(None, &comp_result);
+            self.input_handler.set(Some(input_handler));
+            self.invalidate_client_area();
+            return Some(0);
+        }
         // currently, we don't care other stuff
         None
-    }
-
-    fn parse_ime_char(&self, wparam: WPARAM) -> Option<String> {
-        let src = [wparam.0 as u16];
-        let Ok(first_char) = char::decode_utf16(src).collect::<Vec<_>>()[0] else {
-            return None;
-        };
-        Some(first_char.to_string())
-    }
-
-    fn handle_ime_char(&self, wparam: WPARAM) -> Option<isize> {
-        let Some(ime_char) = self.parse_ime_char(wparam) else {
-            return Some(1);
-        };
-        let Some(mut input_handler) = self.input_handler.take() else {
-            return Some(1);
-        };
-        input_handler.replace_text_in_range(None, &ime_char);
-        self.input_handler.set(Some(input_handler));
-        self.invalidate_client_area();
-        Some(0)
     }
 
     fn handle_drag_drop(&self, input: PlatformInput) {
