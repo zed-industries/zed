@@ -131,10 +131,10 @@ use ui::{
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::ItemHandle;
 use workspace::notifications::NotificationId;
-use workspace::Toast;
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
+use workspace::{OpenInTerminal, OpenTerminal, Toast};
 
 use crate::hover_links::find_url;
 
@@ -4940,6 +4940,25 @@ impl Editor {
                 });
                 editor.change_selections(None, cx, |selections| selections.refresh());
             });
+        }
+    }
+
+    pub fn open_active_item_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
+        if let Some(working_directory) = self.active_excerpt(cx).and_then(|(_, buffer, _)| {
+            let project_path = buffer.read(cx).project_path(cx)?;
+            let project = self.project.as_ref()?.read(cx);
+            let entry = project.entry_for_path(&project_path, cx)?;
+            let abs_path = project.absolute_path(&project_path, cx)?;
+            let parent = if entry.is_symlink {
+                abs_path.canonicalize().ok()?
+            } else {
+                abs_path
+            }
+            .parent()?
+            .to_path_buf();
+            Some(parent)
+        }) {
+            cx.dispatch_action(OpenTerminal { working_directory }.boxed_clone());
         }
     }
 

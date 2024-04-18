@@ -5,7 +5,8 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
+    NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
+    SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -1597,20 +1598,58 @@ impl Pane {
                         );
 
                     if let Some(entry) = single_entry_to_resolve {
+                        let parent_abs_path = pane
+                            .update(cx, |pane, cx| {
+                                pane.workspace.update(cx, |workspace, cx| {
+                                    let project = workspace.project().read(cx);
+                                    project.worktree_for_entry(entry, cx).and_then(|worktree| {
+                                        let worktree = worktree.read(cx);
+                                        let entry = worktree.entry_for_id(entry)?;
+                                        let abs_path = worktree.absolutize(&entry.path).ok()?;
+                                        let parent = if entry.is_symlink {
+                                            abs_path.canonicalize().ok()?
+                                        } else {
+                                            abs_path
+                                        }
+                                        .parent()?
+                                        .to_path_buf();
+                                        Some(parent)
+                                    })
+                                })
+                            })
+                            .ok()
+                            .flatten();
+
                         let entry_id = entry.to_proto();
-                        menu = menu.separator().entry(
-                            "Reveal In Project Panel",
-                            Some(Box::new(RevealInProjectPanel {
-                                entry_id: Some(entry_id),
-                            })),
-                            cx.handler_for(&pane, move |pane, cx| {
-                                pane.project.update(cx, |_, cx| {
-                                    cx.emit(project::Event::RevealInProjectPanel(
-                                        ProjectEntryId::from_proto(entry_id),
-                                    ))
-                                });
-                            }),
-                        );
+                        menu = menu
+                            .separator()
+                            .entry(
+                                "Reveal In Project Panel",
+                                Some(Box::new(RevealInProjectPanel {
+                                    entry_id: Some(entry_id),
+                                })),
+                                cx.handler_for(&pane, move |pane, cx| {
+                                    pane.project.update(cx, |_, cx| {
+                                        cx.emit(project::Event::RevealInProjectPanel(
+                                            ProjectEntryId::from_proto(entry_id),
+                                        ))
+                                    });
+                                }),
+                            )
+                            .when_some(parent_abs_path, |menu, abs_path| {
+                                menu.entry(
+                                    "Open in Terminal",
+                                    Some(Box::new(OpenInTerminal)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.dispatch_action(
+                                            OpenTerminal {
+                                                working_directory: abs_path.clone(),
+                                            }
+                                            .boxed_clone(),
+                                        );
+                                    }),
+                                )
+                            });
                     }
                 }
 

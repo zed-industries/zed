@@ -98,7 +98,6 @@ impl TerminalPanel {
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&workspace::ToggleZoom, cx);
                             }))
-                            // TODO kb
                             .tooltip(move |cx| {
                                 Tooltip::for_action(
                                     if zoomed { "Zoom Out" } else { "Zoom In" },
@@ -292,13 +291,13 @@ impl TerminalPanel {
         action: &workspace::OpenTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let Some(this) = workspace.focus_panel::<Self>(cx) else {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
-
-        this.update(cx, |this, cx| {
-            this.add_terminal(Some(action.working_directory.clone()), None, cx)
-        })
+        terminal_panel.update(cx, |panel, cx| {
+            panel.add_terminal(Some(action.working_directory.clone()), None, cx)
+        });
+        workspace.focus_panel::<Self>(cx);
     }
 
     fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
@@ -427,26 +426,17 @@ impl TerminalPanel {
         }
     }
 
-    ///Create a new Terminal in the current working directory or the user's home directory
+    /// Create a new Terminal in the current working directory or the user's home directory
     fn new_terminal(
         workspace: &mut Workspace,
         _: &workspace::NewTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let has_no_terminals = workspace
-            .panel::<Self>(cx)
-            .map(|terminal_panel| terminal_panel.update(cx, |panel, cx| panel.has_no_terminals(cx)))
-            .unwrap_or(true);
-        let Some(this) = workspace.focus_panel::<Self>(cx) else {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
-        if has_no_terminals {
-            // `set_active` on focus, will already add a new terminal
-            // into an empty terminal pane, no need to add another one
-            return;
-        }
-
-        this.update(cx, |this, cx| this.add_terminal(None, None, cx))
+        terminal_panel.update(cx, |this, cx| this.add_terminal(None, None, cx));
+        workspace.focus_panel::<Self>(cx);
     }
 
     fn terminals_for_task(
