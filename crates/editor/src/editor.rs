@@ -129,7 +129,7 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::item::ItemHandle;
+use workspace::item::{ItemHandle, PreviewTabsSettings};
 use workspace::notifications::NotificationId;
 use workspace::Toast;
 use workspace::{
@@ -1609,6 +1609,7 @@ impl Editor {
         {
             workspace.add_item_to_active_pane(
                 Box::new(cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                None,
                 cx,
             );
         }
@@ -3757,7 +3758,7 @@ impl Editor {
             let project = workspace.project().clone();
             let editor =
                 cx.new_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
                     &ranges_to_highlight,
@@ -8031,16 +8032,22 @@ impl Editor {
                 cx,
             );
         });
+
         let item = Box::new(editor);
+        let item_id = item.item_id();
+        let mut destination_index = None;
+        workspace.active_pane().update(cx, |pane, cx| {
+            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
+                destination_index = pane.close_current_preview_item(cx);
+            }
+            pane.set_preview_item_id(Some(item_id), cx);
+        });
+
         if split {
             workspace.split_item(SplitDirection::Right, item.clone(), cx);
         } else {
-            workspace.add_item_to_active_pane(item.clone(), cx);
+            workspace.add_item_to_active_pane(item.clone(), destination_index, cx);
         }
-        workspace.active_pane().clone().update(cx, |pane, cx| {
-            let item_id = item.item_id();
-            pane.set_preview_item_id(Some(item_id), cx);
-        });
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {

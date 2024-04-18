@@ -222,7 +222,7 @@ impl ProjectDiagnosticsEditor {
             let diagnostics = cx.new_view(|cx| {
                 ProjectDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
             });
-            workspace.add_item_to_active_pane(Box::new(diagnostics), cx);
+            workspace.add_item_to_active_pane(Box::new(diagnostics), None, cx);
         }
     }
 

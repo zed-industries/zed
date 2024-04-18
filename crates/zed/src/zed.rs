@@ -593,7 +593,7 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                             })
                         });
 
-                        workspace.add_item_to_active_pane(Box::new(editor), cx);
+                        workspace.add_item_to_active_pane(Box::new(editor), None, cx);
                     })
                     .log_err();
             })
@@ -812,7 +812,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
                 });
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
-                    cx,
+                    None,cx,
                 );
             }).log_err()?;
 
@@ -848,6 +848,7 @@ fn open_bundled_file(
                         Box::new(cx.new_view(|cx| {
                             Editor::for_multibuffer(buffer, Some(project.clone()), cx)
                         })),
+                        None,
                         cx,
                     );
                 })
