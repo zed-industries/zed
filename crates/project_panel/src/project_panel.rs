@@ -599,7 +599,10 @@ impl ProjectPanel {
     }
 
     pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
-        self.expanded_dir_ids.clear();
+        // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
+        // (which is it's default behaviour when there's no entry for a worktree in expanded_dir_ids).
+        self.expanded_dir_ids
+            .retain(|_, expanded_entries| expanded_entries.is_empty());
         self.update_visible_entries(None, cx);
         cx.notify();
     }
@@ -1896,8 +1899,10 @@ impl Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
-        Some(ui::IconName::FileTree)
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        ProjectPanelSettings::get_global(cx)
+            .button
+            .then(|| IconName::FileTree)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
