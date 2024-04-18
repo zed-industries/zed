@@ -5,7 +5,7 @@ use crate::{
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
     git::{
-        blame::{CommitDetails, GitBlame},
+        blame::{CommitDetails, GitBlame, GitRemote},
         diff_hunk_to_display, DisplayDiffHunk,
     },
     hover_popover::{
@@ -21,12 +21,13 @@ use crate::{
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
+use futures::Future;
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
-    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementContext,
-    ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
+    transparent_black, Action, AnchorCorner, AnyElement, Asset, AvailableSpace, Bounds,
+    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
+    ElementContext, ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
     Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
@@ -47,6 +48,7 @@ use std::{
     borrow::Cow,
     cmp::{self, max, Ordering},
     fmt::Write,
+    hash::Hash,
     iter, mem,
     ops::Range,
     sync::Arc,
@@ -55,7 +57,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor, ThemeSettings};
 use ui::{h_flex, Avatar, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
-use util::ResultExt;
+use util::{github, ResultExt};
 use workspace::{item::Item, Workspace};
 
 struct SelectionLayout {
@@ -3019,6 +3021,59 @@ impl EditorElement {
     }
 }
 
+#[derive(Clone, Debug)]
+struct CodeHostAvatarUrlForSha {
+    sha: Oid,
+    remote: GitRemote,
+}
+
+impl Hash for CodeHostAvatarUrlForSha {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.sha.hash(state);
+        self.remote.code_host.hash(state);
+    }
+}
+
+impl CodeHostAvatarUrlForSha {
+    fn new(sha: Oid, remote: GitRemote) -> Self {
+        Self { sha, remote }
+    }
+}
+
+impl Asset for CodeHostAvatarUrlForSha {
+    type Source = Self;
+    type Output = Result<Option<SharedString>, Arc<anyhow::Error>>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut WindowContext,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let client = cx.http_client();
+
+        async move {
+            let commit = source.sha.to_string();
+
+            match source.remote.code_host {
+                git::permalink::GitHostingProvider::Github => {
+                    let github_commit_author = github::fetch_github_commit_author(
+                        &source.remote.owner,
+                        &source.remote.repo,
+                        &commit,
+                        &client,
+                    )
+                    .await
+                    .map_err(Arc::from)?;
+
+                    let url =
+                        github_commit_author.map(|author| SharedString::from(author.avatar_url));
+                    Ok(url)
+                }
+                _ => Ok(None),
+            }
+        }
+    }
+}
+
 fn render_inline_blame_entry(
     blame: &gpui::Model<GitBlame>,
     blame_entry: BlameEntry,
@@ -3032,8 +3087,12 @@ fn render_inline_blame_entry(
     let text = format!("{}, {}", author, relative_timestamp);
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
+    let avatar_url = details
+        .as_ref()
+        .and_then(|details| blame_entry_avatar_url(blame_entry.sha, details, cx));
 
-    let tooltip = cx.new_view(|_| BlameEntryTooltip::new(blame_entry, details, style, workspace));
+    let tooltip =
+        cx.new_view(|_| BlameEntryTooltip::new(blame_entry, details, avatar_url, style, workspace));
 
     h_flex()
         .id("inline-blame")
@@ -3046,6 +3105,19 @@ fn render_inline_blame_entry(
         .gap_2()
         .hoverable_tooltip(move |_| tooltip.clone().into())
         .into_any()
+}
+
+fn blame_entry_avatar_url(
+    sha: Oid,
+    details: &CommitDetails,
+    cx: &mut ElementContext<'_>,
+) -> Option<SharedString> {
+    let remote = details.remote.as_ref().map(|remote| remote.clone())?;
+    let avatar_url = CodeHostAvatarUrlForSha::new(sha, remote);
+
+    cx.use_cached_asset::<CodeHostAvatarUrlForSha>(&avatar_url)?
+        .ok()
+        .flatten()
 }
 
 fn blame_entry_timestamp(
@@ -3079,6 +3151,7 @@ fn blame_entry_absolute_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) 
 struct BlameEntryTooltip {
     blame_entry: BlameEntry,
     details: Option<CommitDetails>,
+    avatar_url: Option<SharedString>,
     style: EditorStyle,
     workspace: Option<WeakView<Workspace>>,
     scroll_handle: ScrollHandle,
@@ -3088,6 +3161,7 @@ impl BlameEntryTooltip {
     fn new(
         blame_entry: BlameEntry,
         details: Option<CommitDetails>,
+        avatar_url: Option<SharedString>,
         style: &EditorStyle,
         workspace: Option<WeakView<Workspace>>,
     ) -> Self {
@@ -3095,6 +3169,7 @@ impl BlameEntryTooltip {
             style: style.clone(),
             blame_entry,
             details,
+            avatar_url,
             workspace,
             scroll_handle: ScrollHandle::new(),
         }
@@ -3133,16 +3208,6 @@ impl Render for BlameEntryTooltip {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
         let message_max_height = cx.line_height() * 12 + (ui_font_size / 0.4);
 
-        let avatar_url = self
-            .details
-            .as_ref()
-            .and_then(|details| details.avatar_url.clone())
-            .map(|mut url| {
-                // TODO: this is GitHub specific
-                url.set_query(Some("size=128"));
-                url
-            });
-
         tooltip_container(cx, move |this, cx| {
             this.occlude()
                 .on_mouse_move(|_, cx| cx.stop_propagation())
@@ -3155,8 +3220,8 @@ impl Render for BlameEntryTooltip {
                                 .gap_x_2()
                                 .overflow_x_hidden()
                                 .flex_wrap()
-                                .when_some(avatar_url, |this, url| {
-                                    this.child(Avatar::new(url.to_string()).size(rems(1.)))
+                                .when_some(self.avatar_url.clone(), |this, avatar_url| {
+                                    this.child(Avatar::new(avatar_url.to_string()))
                                 })
                                 .child(author)
                                 .when_some(author_email, |this, author_email| {
@@ -3250,8 +3315,18 @@ fn render_blame_entry(
 
     let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
 
+    let avatar_url = details
+        .as_ref()
+        .and_then(|details| blame_entry_avatar_url(blame_entry.sha, details, cx));
+
     let tooltip = cx.new_view(|_| {
-        BlameEntryTooltip::new(blame_entry.clone(), details.clone(), style, workspace)
+        BlameEntryTooltip::new(
+            blame_entry.clone(),
+            details.clone(),
+            avatar_url,
+            style,
+            workspace,
+        )
     });
 
     h_flex()

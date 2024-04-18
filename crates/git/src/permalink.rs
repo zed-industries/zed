@@ -1,8 +1,10 @@
+use core::fmt;
 use std::ops::Range;
 
 use anyhow::{anyhow, Result};
 use url::Url;
 
+#[derive(Clone, Debug, Hash)]
 pub enum GitHostingProvider {
     Github,
     Gitlab,
@@ -53,6 +55,20 @@ impl GitHostingProvider {
     }
 }
 
+impl fmt::Display for GitHostingProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            GitHostingProvider::Github => "GitHub",
+            GitHostingProvider::Gitlab => "GitLab",
+            GitHostingProvider::Gitee => "Gitee",
+            GitHostingProvider::Bitbucket => "Bitbucket",
+            GitHostingProvider::Sourcehut => "Sourcehut",
+            GitHostingProvider::Codeberg => "Codeberg",
+        };
+        write!(f, "{}", name)
+    }
+}
+
 pub struct BuildPermalinkParams<'a> {
     pub remote_url: &'a str,
     pub sha: &'a str,
@@ -90,6 +106,7 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
     Ok(permalink)
 }
 
+#[derive(Debug)]
 pub struct ParsedGitRemote<'a> {
     pub provider: GitHostingProvider,
     pub owner: &'a str,
