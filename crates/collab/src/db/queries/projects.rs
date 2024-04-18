@@ -959,7 +959,7 @@ impl Database {
         capability: Capability,
         tx: &DatabaseTransaction,
     ) -> Result<(project::Model, ChannelRole)> {
-        let (project, remote_project) = project::Entity::find_by_id(project_id)
+        let (mut project, remote_project) = project::Entity::find_by_id(project_id)
             .find_also_related(remote_project::Entity)
             .one(tx)
             .await?
@@ -978,29 +978,44 @@ impl Database {
             PrincipalId::UserId(user_id) => user_id,
         };
 
-        let role = if let Some(room_id) = project.room_id {
-            // what's the users role?
-            let current_participant = room_participant::Entity::find()
+        let role_from_room = if let Some(room_id) = project.room_id {
+            room_participant::Entity::find()
                 .filter(room_participant::Column::RoomId.eq(room_id))
                 .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.id))
                 .one(tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such room"))?;
-
-            current_participant.role.unwrap_or(ChannelRole::Guest)
-        } else if let Some(remote_project) = remote_project {
+                .and_then(|participant| participant.role)
+        } else {
+            None
+        };
+        let role_from_remote_project = if let Some(remote_project) = remote_project {
             let dev_server = dev_server::Entity::find_by_id(remote_project.dev_server_id)
                 .one(tx)
                 .await?
                 .ok_or_else(|| anyhow!("no such channel"))?;
-            if user_id != dev_server.user_id {
-                return Err(anyhow!("no permission to access dev server"))?;
+            if user_id == dev_server.user_id {
+                // If the user left the room "uncleanly" they may rejoin the
+                // remote project before leave_room runs. IN that case kick
+                // the project out of the room pre-emptively.
+                if role_from_room.is_none() {
+                    project = project::Entity::update(project::ActiveModel {
+                        room_id: ActiveValue::Set(None),
+                        ..project.into_active_model()
+                    })
+                    .exec(&*tx)
+                    .await?;
+                }
+                Some(ChannelRole::Admin)
+            } else {
+                None
             }
-
-            ChannelRole::Admin
         } else {
-            return Err(anyhow!("not authorized to read projects"))?;
+            None
         };
+
+        let role = role_from_remote_project
+            .or(role_from_room)
+            .unwrap_or(ChannelRole::Banned);
 
         match capability {
             Capability::ReadWrite => {

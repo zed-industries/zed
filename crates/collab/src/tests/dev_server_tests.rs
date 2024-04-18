@@ -255,3 +255,54 @@ async fn test_dev_server_leave_room(
     let (workspace, cx2) = client2.active_workspace(cx2);
     cx2.update(|cx| assert!(workspace.read(cx).project().read(cx).is_disconnected()));
 }
+
+#[gpui::test]
+async fn test_dev_server_reconnect(
+    cx1: &mut gpui::TestAppContext,
+    cx2: &mut gpui::TestAppContext,
+    cx3: &mut gpui::TestAppContext,
+) {
+    let (mut server, client1) = TestServer::start1(cx1).await;
+    let channel_id = server
+        .make_channel("test", None, (&client1, cx1), &mut [])
+        .await;
+
+    let (_dev_server, remote_workspace) =
+        create_remote_project(&server, client1.app_state.clone(), cx1, cx3).await;
+
+    cx1.update(|cx| {
+        workspace::join_channel(
+            channel_id,
+            client1.app_state.clone(),
+            Some(remote_workspace),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    cx1.executor().run_until_parked();
+
+    remote_workspace
+        .update(cx1, |ws, cx| {
+            assert!(ws.project().read(cx).is_shared());
+        })
+        .unwrap();
+
+    drop(client1);
+
+    let client2 = server.create_client(cx2, "user_a").await;
+
+    let store = cx2.update(|cx| remote_projects::Store::global(cx).clone());
+
+    store
+        .update(cx2, |store, cx| {
+            let projects = store.remote_projects();
+            workspace::join_remote_project(
+                projects[0].project_id.unwrap(),
+                client2.app_state.clone(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+}
