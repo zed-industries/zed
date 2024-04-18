@@ -112,6 +112,7 @@ actions!(
     workspace,
     [
         Open,
+        OpenInTerminal,
         NewFile,
         NewWindow,
         CloseWindow,

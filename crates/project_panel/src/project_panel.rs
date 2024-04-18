@@ -37,7 +37,7 @@ use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
-    Workspace,
+    OpenInTerminal, Workspace,
 };
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
@@ -127,7 +127,6 @@ actions!(
         CopyPath,
         CopyRelativePath,
         RevealInFinder,
-        OpenInTerminal,
         Cut,
         Paste,
         Rename,
