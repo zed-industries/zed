@@ -97,6 +97,7 @@ pub struct MenuHandleFrameState {
 
 impl<M: ManagedView> Element for RightClickMenu<M> {
     type BeforeLayout = MenuHandleFrameState;
+    type AfterLayout = ();
     type BeforePaint = Hitbox;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::BeforeLayout) {
@@ -143,10 +144,36 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         })
     }
 
+    fn after_layout(
+        &mut self,
+        _bounds: Bounds<Pixels>,
+        before_layout: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        cx.with_element_id(Some(self.id.clone()), |cx| {
+            let mut focus_target_bounds = None;
+
+            if let Some(child) = before_layout.child_element.as_mut() {
+                if let Some(child_focus_target_bounds) = child.after_layout(cx) {
+                    focus_target_bounds = Some(child_focus_target_bounds);
+                }
+            }
+
+            if let Some(menu) = before_layout.menu_element.as_mut() {
+                if let Some(menu_focus_target_bounds) = menu.after_layout(cx) {
+                    focus_target_bounds = Some(menu_focus_target_bounds);
+                }
+            }
+
+            (focus_target_bounds, ())
+        })
+    }
+
     fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) -> Hitbox {
         cx.with_element_id(Some(self.id.clone()), |cx| {
@@ -168,6 +195,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         &mut self,
         _bounds: Bounds<gpui::Pixels>,
         before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         hitbox: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
