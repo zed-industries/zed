@@ -176,25 +176,34 @@ fn render_markdown_image(image: &ParsedMarkdownImage, cx: &mut RenderContext) ->
     let workspace = cx.workspace.clone();
 
     div()
-        .id(cx.next_id(&image.source_range))
-        .child(img(source).object_fit(gpui::ObjectFit::None))
-        .when(!tooltip_text.is_empty(), |this| {
-            this.tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
-        })
-        .cursor_pointer()
-        .on_click(move |_, cx| match &link {
-            Link::Web { url } => cx.open_url(url),
-            Link::Path {
-                path,
-                display_path: _,
-            } => {
-                if let Some(workspace) = &workspace {
-                    _ = workspace.update(cx, |workspace, cx| {
-                        workspace.open_abs_path(path.clone(), false, cx).detach();
-                    });
-                }
-            }
-        })
+        .flex()
+        .child(
+            div()
+                .id(cx.next_id(&image.source_range))
+                .flex_shrink()
+                .child(img(source).object_fit(gpui::ObjectFit::None))
+                .when(!tooltip_text.is_empty(), |this| {
+                    this.tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
+                })
+                .cursor_pointer()
+                .on_click(move |_, cx| {
+                    if cx.modifiers().secondary() {
+                        match &link {
+                            Link::Web { url } => cx.open_url(url),
+                            Link::Path {
+                                path,
+                                display_path: _,
+                            } => {
+                                if let Some(workspace) = &workspace {
+                                    _ = workspace.update(cx, |workspace, cx| {
+                                        workspace.open_abs_path(path.clone(), false, cx).detach();
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }),
+        )
         .into_any()
 }
 
