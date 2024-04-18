@@ -1,12 +1,17 @@
+use std::time::Duration;
+
 use feature_flags::FeatureFlagViewExt;
 use gpui::{
-    Action, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    Model, ScrollHandle, Task, View, ViewContext,
+    percentage, Action, Animation, AnimationExt, AppContext, ClipboardItem, DismissEvent,
+    EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Task, Transformation, View,
+    ViewContext,
 };
 use remote_projects::{DevServer, DevServerId, RemoteProject, RemoteProjectId};
 use rpc::proto::{self, CreateDevServerResponse, DevServerStatus};
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
-use ui_text_field::TextField;
+use ui_text_field::{FieldLabelLayout, TextField};
 use util::ResultExt;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace};
 
@@ -54,7 +59,8 @@ impl RemoteProjects {
 
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let remote_project_path_input = cx.new_view(|cx| TextField::new(cx, "", "Project path"));
-        let dev_server_name_input = cx.new_view(|cx| TextField::new(cx, "", "Dev server name"));
+        let dev_server_name_input =
+            cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Stacked));
 
         let focus_handle = cx.focus_handle();
         let remote_project_store = remote_projects::Store::global(cx);
@@ -63,7 +69,11 @@ impl RemoteProjects {
             cx.observe(&remote_project_store, |_, _, cx| {
                 cx.notify();
             }),
-            cx.on_focus_out(&focus_handle, |_, cx| cx.emit(DismissEvent)),
+            cx.on_focus_out(&focus_handle, |this, cx| {
+                if matches!(this.mode, Mode::Default) {
+                    cx.emit(DismissEvent);
+                }
+            }),
         ];
 
         Self {
@@ -201,12 +211,6 @@ impl RemoteProjects {
                     .log_err();
                 }
             }
-        });
-
-        self.dev_server_name_input.update(cx, |input, cx| {
-            input.editor().update(cx, |editor, cx| {
-                editor.set_text("", cx);
-            });
         });
 
         self.mode = Mode::CreateDevServer(CreateDevServer {
@@ -384,89 +388,147 @@ impl RemoteProjects {
         };
 
         self.dev_server_name_input.update(cx, |input, cx| {
-            input.editor().update(cx, |editor, _| {
-                editor.set_read_only(creating.is_some() || dev_server.is_some())
-            });
+            input.set_disabled(creating.is_some() || dev_server.is_some(), cx);
         });
 
         v_flex()
+            .id("scroll-container")
+            .h_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
             .px_1()
             .pt_0p5()
             .gap_px()
             .child(
-                v_flex().py_0p5().px_1().child(
-                    h_flex()
-                        .px_1()
-                        .py_0p5()
-                        .child(
-                            IconButton::new("back", IconName::ArrowLeft)
-                                .style(ButtonStyle::Transparent)
-                                .on_click(cx.listener(|_, _: &gpui::ClickEvent, cx| {
-                                    cx.dispatch_action(menu::Cancel.boxed_clone())
-                                })),
-                        )
-                        .child(Headline::new("Register dev server").size(HeadlineSize::Small)),
-                ),
+                ModalHeader::new("remote-projects")
+                    .show_dismiss_button(true)
+                    .show_back_button(true)
+                    .child(Headline::new("New Dev Server").size(HeadlineSize::Small)),
             )
             .child(
-                h_flex()
-                    .ml_5()
-                    .gap_2()
-                    .child(self.dev_server_name_input.clone())
-                    .when(creating.is_none() && dev_server.is_none(), |div| {
-                        div.child(
-                            Button::new("create-dev-server", "Create").on_click(cx.listener(
-                                move |this, _, cx| {
-                                    this.create_dev_server(cx);
-                                },
-                            )),
-                        )
-                    })
-                    .when(creating.is_some() && dev_server.is_none(), |div| {
-                        div.child(Button::new("create-dev-server", "Creating...").disabled(true))
-                    }),
-            )
-            .when_some(dev_server.clone(), |div, dev_server| {
-                let status = self
-                    .remote_project_store
-                    .read(cx)
-                    .dev_server_status(DevServerId(dev_server.dev_server_id));
-
-                let instructions = SharedString::from(format!(
-                    "zed --dev-server-token {}",
-                    dev_server.access_token
-                ));
-                div.child(
+                ModalContent::new().child(
                     v_flex()
-                        .ml_8()
-                        .gap_2()
-                        .child(Label::new(format!(
-                            "Please log into `{}` and run:",
-                            dev_server.name
-                        )))
-                        .child(instructions.clone())
+                        .w_full()
                         .child(
-                            IconButton::new("copy-access-token", IconName::Copy)
-                                .on_click(cx.listener(move |_, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new(
-                                        instructions.to_string(),
-                                    ))
-                                }))
-                                .icon_size(IconSize::Small)
-                                .tooltip(|cx| Tooltip::text("Copy access token", cx)),
+                            h_flex()
+                                .pb_2()
+                                .items_end()
+                                .w_full()
+                                .px_2()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border)
+                                .child(
+                                    div()
+                                        .pl_2()
+                                        .max_w(rems(16.))
+                                        .child(self.dev_server_name_input.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .pl_1()
+                                        .pb(px(3.))
+                                        .when(creating.is_none() && dev_server.is_none(), |div| {
+                                            div.child(Button::new("create-dev-server", "Create").on_click(
+                                                cx.listener(move |this, _, cx| {
+                                                    this.create_dev_server(cx);
+                                                }),
+                                            ))
+                                        })
+                                        .when(creating.is_some() && dev_server.is_none(), |div| {
+                                            div.child(
+                                                Button::new("create-dev-server", "Creating...")
+                                                    .disabled(true),
+                                            )
+                                        }),
+                                )
                         )
-                        .when(status == DevServerStatus::Offline, |this| {
-                            this.child(Label::new("Waiting for connection..."))
+                        .when(dev_server.is_none(), |div| {
+                            div.px_2().child(Label::new("Once you have created a dev server, you will be given a command to run on the server to register it.").color(Color::Muted))
                         })
-                        .when(status == DevServerStatus::Online, |this| {
-                            this.child(Label::new("Connection established! 🎊")).child(
-                                Button::new("done", "Done").on_click(cx.listener(|_, _, cx| {
-                                    cx.dispatch_action(menu::Cancel.boxed_clone())
-                                })),
+                        .when_some(dev_server.clone(), |div, dev_server| {
+                            let status = self
+                                .remote_project_store
+                                .read(cx)
+                                .dev_server_status(DevServerId(dev_server.dev_server_id));
+
+                            let instructions = SharedString::from(format!(
+                                "zed --dev-server-token {}",
+                                dev_server.access_token
+                            ));
+                            div.child(
+                                v_flex()
+                                    .pl_2()
+                                    .pt_2()
+                                    .gap_2()
+                                    .child(
+                                        h_flex().justify_between().w_full()
+                                            .child(Label::new(format!(
+                                                    "Please log into `{}` and run:",
+                                                    dev_server.name
+                                            )))
+                                            .child(
+                                                Button::new("copy-access-token", "Copy Instructions")
+                                                    .icon(Some(IconName::Copy))
+                                                    .icon_size(IconSize::Small)
+                                                    .on_click({
+                                                        let instructions = instructions.clone();
+                                                        cx.listener(move |_, _, cx| {
+                                                        cx.write_to_clipboard(ClipboardItem::new(
+                                                            instructions.to_string(),
+                                                        ))
+                                                    })})
+                                            )
+                                    )
+                                    .child(
+                                        v_flex()
+                                        .w_full()
+                                        .bg(cx.theme().colors().title_bar_background) // todo: this should be distinct
+                                        .border()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .rounded_md()
+                                        .my_1()
+                                        .py_0p5()
+                                        .px_3()
+                                        .font(ThemeSettings::get_global(cx).buffer_font.family.clone())
+                                        .child(Label::new(instructions))
+                                    )
+                                    .when(status == DevServerStatus::Offline, |this| {
+                                        this.child(
+
+                                        h_flex()
+                                            .gap_2()
+                                            .child(
+                                                Icon::new(IconName::ArrowCircle)
+                                                    .size(IconSize::Medium)
+                                                    .with_animation(
+                                                        "arrow-circle",
+                                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                                        |icon, delta| {
+                                                            icon.transform(Transformation::rotate(percentage(delta)))
+                                                        },
+                                                    ),
+                                            )
+                                            .child(
+                                                Label::new("Waiting for connection…"),
+                                            )
+                                        )
+                                    })
+                                    .when(status == DevServerStatus::Online, |this| {
+                                        this.child(Label::new("🎊 Connection established!"))
+                                            .child(
+                                                h_flex().justify_end().child(
+                                                    Button::new("done", "Done").on_click(cx.listener(
+                                                        |_, _, cx| {
+                                                            cx.dispatch_action(menu::Cancel.boxed_clone())
+                                                        },
+                                                    ))
+                                                ),
+                                            )
+                                    }),
                             )
                         }),
                 )
-            })
+            )
     }
 
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -497,10 +559,14 @@ impl RemoteProjects {
                                     .tooltip(|cx| Tooltip::text("Register a new dev server", cx))
                                     .on_click(cx.listener(|this, _, cx| {
                                         this.mode = Mode::CreateDevServer(Default::default());
-                                        this.dev_server_name_input
-                                            .read(cx)
-                                            .focus_handle(cx)
-                                            .focus(cx);
+
+                                        this.dev_server_name_input.update(cx, |input, cx| {
+                                            input.editor().update(cx, |editor, cx| {
+                                                editor.set_text("", cx);
+                                            });
+                                            input.focus_handle(cx).focus(cx)
+                                        });
+
                                         cx.notify();
                                     })),
                             ),

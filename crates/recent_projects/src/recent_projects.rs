@@ -104,7 +104,11 @@ impl RecentProjects {
         });
     }
 
-    fn open(workspace: &mut Workspace, create_new_window: bool, cx: &mut ViewContext<Workspace>) {
+    pub fn open(
+        workspace: &mut Workspace,
+        create_new_window: bool,
+        cx: &mut ViewContext<Workspace>,
+    ) {
         let weak = cx.view().downgrade();
         workspace.toggle_modal(cx, |cx| {
             let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
