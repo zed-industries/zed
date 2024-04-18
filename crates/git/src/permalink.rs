@@ -3,7 +3,7 @@ use std::ops::Range;
 use anyhow::{anyhow, Result};
 use url::Url;
 
-pub(crate) enum GitHostingProvider {
+pub enum GitHostingProvider {
     Github,
     Gitlab,
     Gitee,
@@ -90,18 +90,18 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
     Ok(permalink)
 }
 
-pub(crate) struct ParsedGitRemote<'a> {
+pub struct ParsedGitRemote<'a> {
     pub provider: GitHostingProvider,
     pub owner: &'a str,
     pub repo: &'a str,
 }
 
-pub(crate) struct BuildCommitPermalinkParams<'a> {
+pub struct BuildCommitPermalinkParams<'a> {
     pub remote: &'a ParsedGitRemote<'a>,
     pub sha: &'a str,
 }
 
-pub(crate) fn build_commit_permalink(params: BuildCommitPermalinkParams) -> Url {
+pub fn build_commit_permalink(params: BuildCommitPermalinkParams) -> Url {
     let BuildCommitPermalinkParams { sha, remote } = params;
 
     let ParsedGitRemote {
@@ -122,7 +122,7 @@ pub(crate) fn build_commit_permalink(params: BuildCommitPermalinkParams) -> Url 
     provider.base_url().join(&path).unwrap()
 }
 
-pub(crate) fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
+pub fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
     if url.starts_with("git@github.com:") || url.starts_with("https://github.com/") {
         let repo_with_owner = url
             .trim_start_matches("git@github.com:")

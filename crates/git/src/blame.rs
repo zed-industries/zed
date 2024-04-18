@@ -21,6 +21,7 @@ pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
     pub permalinks: HashMap<Oid, Url>,
+    pub remote_url: Option<String>,
 }
 
 impl Blame {
@@ -41,6 +42,7 @@ impl Blame {
 
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);
+            // DEPRECATED: permalinks shouldn't be send over the wire anymore
             if let Some(remote) = parsed_remote_url.as_ref() {
                 permalinks.entry(entry.sha).or_insert_with(|| {
                     build_commit_permalink(BuildCommitPermalinkParams {
@@ -59,6 +61,7 @@ impl Blame {
             entries,
             permalinks,
             messages,
+            remote_url,
         })
     }
 }
