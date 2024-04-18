@@ -68,7 +68,7 @@ impl YandexGptCompletionProvider {
                 let (api_key, folder_id) = if let Some((api_key, folder_id)) =
                     env::var("YANDEX_GPT_API_KEY")
                         .into_iter()
-                        .zip(env::var("YANDEX_GPT_FOLDER_ID").into_iter())
+                        .zip(env::var("YANDEX_GPT_FOLDER_ID"))
                         .next()
                 {
                     (api_key, folder_id)
