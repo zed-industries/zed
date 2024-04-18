@@ -915,7 +915,7 @@ impl Database {
                     .exec(&*tx)
                     .await?;
 
-                // if any project in the room has a remote-projet-id that belongs to a dev server that this user owns.
+                // if any project in the room has a remote-project-id that belongs to a dev server that this user owns.
                 let remote_projects_for_user = self
                     .remote_project_ids_for_user(leaving_participant.user_id, &tx)
                     .await?;
