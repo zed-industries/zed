@@ -282,9 +282,12 @@ enum ElementDrawPhase<BeforeLayout, AfterLayout, BeforePaint> {
     Painted,
 }
 
+/// todo!()
 #[derive(Default)]
 pub struct ElementMeasurement {
+    /// The size of the element.
     pub size: Size<Pixels>,
+    /// The bounds for the focus target inside of the measured element.
     pub focus_target_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -604,7 +607,7 @@ impl Element for Empty {
         &mut self,
         _bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
-        cx: &mut ElementContext,
+        _cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
         (None, ())
     }

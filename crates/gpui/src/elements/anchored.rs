@@ -8,7 +8,6 @@ use crate::{
 
 /// The state that the anchored element element uses to track its children.
 pub struct AnchoredState {
-    layout_id: LayoutId,
     child_layout_ids: SmallVec<[LayoutId; 4]>,
 }
 
@@ -89,19 +88,13 @@ impl Element for Anchored {
 
         let layout_id = cx.request_layout(&anchored_style, child_layout_ids.iter().copied());
 
-        (
-            layout_id,
-            AnchoredState {
-                layout_id,
-                child_layout_ids,
-            },
-        )
+        (layout_id, AnchoredState { child_layout_ids })
     }
 
     fn after_layout(
         &mut self,
         _bounds: Bounds<Pixels>,
-        before_layout: &mut Self::BeforeLayout,
+        _before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
         let mut focus_target_bounds = None;

@@ -1361,6 +1361,7 @@ impl Interactivity {
         )
     }
 
+    /// todo!()
     pub fn after_layout<R>(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -1411,7 +1412,6 @@ impl Interactivity {
         )
     }
 
-    // self.content_size = content_size;
     /// Commit the bounds of this element according to this interactivity state's configured styles.
     pub fn before_paint<R>(
         &mut self,

@@ -224,8 +224,8 @@ impl Element for UniformList {
                 );
                 for mut item in items {
                     let measurement = item.layout(available_space, cx);
-                    if let Some(child_focus_target_bounds) = measurement.focus_target_bounds {
-                        focus_target_bounds = Some(child_focus_target_bounds);
+                    if measurement.focus_target_bounds.is_some() {
+                        focus_target_bounds = measurement.focus_target_bounds;
                     }
                     state.items.push(item);
                 }

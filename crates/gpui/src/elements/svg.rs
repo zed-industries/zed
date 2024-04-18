@@ -51,7 +51,7 @@ impl Element for Svg {
     fn after_layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        before_layout: &mut Self::BeforeLayout,
+        _before_layout: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
         self.interactivity

@@ -40,9 +40,9 @@ impl Element for Canvas {
 
     fn after_layout(
         &mut self,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         _before_layout: &mut Self::BeforeLayout,
-        cx: &mut ElementContext,
+        _cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
         (None, ())
     }
