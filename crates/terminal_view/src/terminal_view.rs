@@ -983,6 +983,7 @@ impl SearchableItem for TerminalView {
                     query.include_ignored(),
                     query.files_to_include().to_vec(),
                     query.files_to_exclude().to_vec(),
+                    None,
                 )
                 .unwrap()),
             ),

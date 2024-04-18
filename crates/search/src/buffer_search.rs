@@ -24,7 +24,7 @@ use project::{
 };
 use serde::Deserialize;
 use settings::Settings;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 use theme::ThemeSettings;
 
 use ui::{h_flex, prelude::*, IconButton, IconName, Tooltip, BASE_REM_SIZE_IN_PX};
@@ -97,6 +97,7 @@ pub struct BufferSearchBar {
     scroll_handle: ScrollHandle,
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
+    range_to_search: Option<Range<usize>>,
 }
 
 impl BufferSearchBar {
@@ -278,6 +279,16 @@ impl Render for BufferSearchBar {
                         "Select next match",
                         &SelectNextMatch,
                     ))
+                    .when(self.range_to_search.is_some(), |this| {
+                        this.child(
+                            Label::new(format!(
+                                "Range: {}.{}",
+                                self.range_to_search.as_ref().unwrap().start,
+                                self.range_to_search.as_ref().unwrap().end
+                            ))
+                            .color(Color::Disabled),
+                        )
+                    })
                     .when(!narrow_mode, |this| {
                         this.child(h_flex().min_w(rems_from_px(40.)).child(
                             Label::new(match_text).color(if self.active_match_index.is_some() {
@@ -507,6 +518,7 @@ impl BufferSearchBar {
             scroll_handle: ScrollHandle::new(),
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
+            range_to_search: None,
         }
     }
 
@@ -712,6 +724,11 @@ impl BufferSearchBar {
         cx.notify();
     }
 
+    pub fn set_range_to_search(&mut self, range: Option<Range<usize>>, cx: &mut ViewContext<Self>) {
+        self.range_to_search = range;
+        cx.notify();
+    }
+
     fn select_next_match(&mut self, _: &SelectNextMatch, cx: &mut ViewContext<Self>) {
         self.select_match(Direction::Next, 1, cx);
     }
@@ -881,6 +898,7 @@ impl BufferSearchBar {
                         false,
                         Vec::new(),
                         Vec::new(),
+                        self.range_to_search.clone(),
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {
@@ -898,6 +916,7 @@ impl BufferSearchBar {
                         false,
                         Vec::new(),
                         Vec::new(),
+                        self.range_to_search.clone(),
                     ) {
                         Ok(query) => query.with_replacement(self.replacement(cx)),
                         Err(_) => {

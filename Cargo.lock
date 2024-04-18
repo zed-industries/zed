@@ -11018,6 +11018,7 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
+ "lazy_static",
  "log",
  "lsp",
  "nvim-rs",

@@ -21,6 +21,7 @@ pub struct SearchInputs {
     query: Arc<str>,
     files_to_include: Vec<PathMatcher>,
     files_to_exclude: Vec<PathMatcher>,
+    range: Option<Range<usize>>, // TODO: this needs to be for each file
 }
 
 impl SearchInputs {
@@ -32,6 +33,9 @@ impl SearchInputs {
     }
     pub fn files_to_exclude(&self) -> &[PathMatcher] {
         &self.files_to_exclude
+    }
+    pub fn range(&self) -> Option<&Range<usize>> {
+        self.range.as_ref()
     }
 }
 #[derive(Clone, Debug)]
@@ -64,6 +68,7 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: Vec<PathMatcher>,
         files_to_exclude: Vec<PathMatcher>,
+        range: Option<Range<usize>>,
     ) -> Result<Self> {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
@@ -73,6 +78,7 @@ impl SearchQuery {
             query: query.into(),
             files_to_exclude,
             files_to_include,
+            range,
         };
         Ok(Self::Text {
             search: Arc::new(search),
@@ -91,6 +97,7 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: Vec<PathMatcher>,
         files_to_exclude: Vec<PathMatcher>,
+        range: Option<Range<usize>>,
     ) -> Result<Self> {
         let mut query = query.to_string();
         let initial_query = Arc::from(query.as_str());
@@ -111,6 +118,7 @@ impl SearchQuery {
             query: initial_query,
             files_to_exclude,
             files_to_include,
+            range,
         };
         Ok(Self::Regex {
             regex,
@@ -132,6 +140,7 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                None,
             )
         } else {
             Self::text(
@@ -141,6 +150,7 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                None,
             )
         }
     }

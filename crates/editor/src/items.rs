@@ -1126,13 +1126,24 @@ impl SearchableItem for Editor {
         cx.background_executor().spawn(async move {
             let mut ranges = Vec::new();
             if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
+                let byte_range = query.as_inner().range().map(|range| {
+                    // translate range of lines to range of bytes over the buffer
+                    let text = buffer.text();
+                    let byte_indices_of_newlines: Vec<_> = std::iter::once(0)
+                        .chain(text.match_indices('\n').map(|(idx, _)| idx))
+                        .collect();
+                    byte_indices_of_newlines[range.start - 1]..byte_indices_of_newlines[range.end]
+                });
+                let offset = byte_range.as_ref().map(|r| r.start).unwrap_or(0);
+
                 ranges.extend(
                     query
-                        .search(excerpt_buffer, None)
+                        .search(excerpt_buffer, byte_range.clone())
                         .await
                         .into_iter()
                         .map(|range| {
-                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
+                            buffer.anchor_after(range.start + offset)
+                                ..buffer.anchor_before(range.end + offset)
                         }),
                 );
             } else {

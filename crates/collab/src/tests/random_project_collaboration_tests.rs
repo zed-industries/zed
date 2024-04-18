@@ -871,7 +871,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                 let mut search = project.update(cx, |project, cx| {
                     project.search(
-                        SearchQuery::text(query, false, false, false, Vec::new(), Vec::new())
+                        SearchQuery::text(query, false, false, false, Vec::new(), Vec::new(), None)
                             .unwrap(),
                         cx,
                     )

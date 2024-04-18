@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use gpui::{actions, impl_actions, ViewContext};
 use search::{buffer_search, BufferSearchBar, SearchOptions};
 use serde_derive::Deserialize;
@@ -47,6 +49,7 @@ struct Replacement {
     replacement: String,
     should_replace_all: bool,
     is_case_sensitive: bool,
+    range: Option<Range<usize>>,
 }
 
 actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPrevMatch]);
@@ -338,6 +341,7 @@ fn replace_command(
                 replacement.search
             };
 
+            search_bar.set_range_to_search(replacement.range, cx);
             search_bar.set_replacement(Some(&replacement.replacement), cx);
             Some(search_bar.search(&search, Some(options), cx))
         });
@@ -373,7 +377,20 @@ fn replace_command(
 // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
 fn parse_replace_all(query: &str) -> Replacement {
     let mut chars = query.chars();
-    if Some('%') != chars.next() || Some('s') != chars.next() {
+    let mut range = None;
+    let maybe_line_range_and_rest: Option<(Range<usize>, &str)> =
+        crate::command::RANGE_REGEX.captures(query).map(|captures| {
+            (
+                captures.get(1).unwrap().as_str().parse().unwrap()
+                    ..captures.get(2).unwrap().as_str().parse().unwrap(),
+                captures.get(3).unwrap().as_str(),
+            )
+        });
+    if maybe_line_range_and_rest.is_some() {
+        let (line_range, rest) = maybe_line_range_and_rest.unwrap();
+        range = Some(line_range);
+        chars = rest.chars();
+    } else if Some('%') != chars.next() || Some('s') != chars.next() {
         return Replacement::default();
     }
 
@@ -430,6 +447,7 @@ fn parse_replace_all(query: &str) -> Replacement {
         replacement,
         should_replace_all: true,
         is_case_sensitive: true,
+        range,
     };
 
     for c in flags.chars() {
