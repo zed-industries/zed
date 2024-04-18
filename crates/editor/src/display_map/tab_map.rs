@@ -236,11 +236,10 @@ impl TabSnapshot {
         } else {
             to_next_stop
         };
-        dbg!(to_next_stop);
 
         TabChunks {
             fold_chunks: self.fold_snapshot.chunks(
-                dbg!(input_start..input_end),
+                input_start..input_end,
                 language_aware,
                 highlights,
             ),

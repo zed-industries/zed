@@ -3348,7 +3348,7 @@ fn deploy_blame_entry_context_menu(
 // TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
 // TODO kb do not draw git diff hunks for the expanded ones
 // TODO kb update the expanded hunks on editor changes
-// TODO kb display a revert icon in each expanded hunk
+// TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
 fn try_click_diff_hunk(
     editor: &mut Editor,
     hovered_hunk: &HoveredHunk,
@@ -3426,15 +3426,14 @@ fn render_deleted_block(
     let removed_editor = cx.new_view(|cx| {
         let mut editor = Editor::multi_line(cx);
         editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
-        // editor.show_wrap_guides = Some(false);
-        // editor.set_wrap_width(None, cx);
+        editor.show_wrap_guides = Some(false);
         editor.show_gutter = false;
         if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_language(language, cx);
             })
         }
-        // editor.scroll_manager.set_forbid_vertical_scroll(true);
+        editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_text(deleted_text, cx);
         editor.set_read_only(true);
 
@@ -3445,7 +3444,6 @@ fn render_deleted_block(
             .anchor_after(editor.buffer.read(cx).len(cx));
 
         editor.highlight_rows::<GitRowHighlight>(start..end, Some(deleted_color), cx);
-        // TODO kb disable wrapping
         editor
     });
 
@@ -3808,13 +3806,15 @@ impl Element for EditorElement {
 
                     let editor_width =
                         text_width - gutter_dimensions.margin - overscroll.width - em_width;
-                    let wrap_width = match editor.soft_wrap_mode(cx) {
+                    let _wrap_width = match editor.soft_wrap_mode(cx) {
                         SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
                         SoftWrap::EditorWidth => editor_width,
                         SoftWrap::Column(column) => editor_width.min(column as f32 * em_advance),
                     };
 
-                    if editor.set_wrap_width(Some(wrap_width), cx) {
+                    // TODO kb use the None variant when displaying a diff
+                    // if editor.set_wrap_width(Some(wrap_width), cx) {
+                    if editor.set_wrap_width(None, cx) {
                         editor.snapshot(cx)
                     } else {
                         snapshot
