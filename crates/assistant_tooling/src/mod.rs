@@ -85,8 +85,6 @@ pub trait LanguageModelTool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
 
     use gpui::TestAppContext;
