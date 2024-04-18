@@ -125,8 +125,11 @@ impl Platform for TestPlatform {
         #[cfg(target_os = "macos")]
         return Arc::new(crate::platform::mac::MacTextSystem::new());
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         return Arc::new(crate::platform::cosmic_text::CosmicTextSystem::new());
+
+        #[cfg(target_os = "windows")]
+        return Arc::new(crate::platform::windows::DirectWriteTextSystem::new().unwrap());
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {

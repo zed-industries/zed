@@ -57,7 +57,7 @@ pub(crate) struct WindowsPlatformInner {
     background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
     main_receiver: flume::Receiver<Runnable>,
-    text_system: Arc<CosmicTextSystem>,
+    text_system: Arc<dyn PlatformTextSystem>,
     callbacks: Mutex<Callbacks>,
     pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     pub(crate) dispatch_event: OwnedHandle,
@@ -155,7 +155,13 @@ impl WindowsPlatform {
         let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event.to_raw()));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system = Arc::new(CosmicTextSystem::new());
+        let text_system = if let Some(direct_write) = DirectWriteTextSystem::new().log_err() {
+            log::info!("Using direct write text system.");
+            Arc::new(direct_write) as Arc<dyn PlatformTextSystem>
+        } else {
+            log::info!("Using cosmic text system.");
+            Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
+        };
         let callbacks = Mutex::new(Callbacks::default());
         let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
