@@ -377,6 +377,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
+ "assistant_tooling",
  "client",
  "editor",
  "env_logger",

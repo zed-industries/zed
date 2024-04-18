@@ -15,6 +15,7 @@ crate-type = ["bin"]
 
 [dependencies]
 anyhow.workspace = true
+assistant_tooling.workspace = true
 client.workspace = true
 editor.workspace = true
 futures.workspace = true
