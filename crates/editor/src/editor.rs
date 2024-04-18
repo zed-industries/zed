@@ -7428,10 +7428,15 @@ impl Editor {
                     .into_iter()
                     .map(|selection| selection.head().excerpt_id)
                     .dedup(),
-                1,
+                3,
                 cx,
             )
         })
+    }
+
+    pub fn expand_excerpt(&mut self, excerpt: ExcerptId, cx: &mut ViewContext<Self>) {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.expand_excerpts([excerpt], 3, cx))
     }
 
     fn go_to_diagnostic(&mut self, _: &GoToDiagnostic, cx: &mut ViewContext<Self>) {
