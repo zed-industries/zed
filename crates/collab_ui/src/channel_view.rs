@@ -305,7 +305,7 @@ impl ChannelView {
                 });
             }
             ChannelBufferEvent::BufferEdited => {
-                // Emit the event to the editor so that other views can update it's state (e.g. markdown preview)
+                // Emit the edited event on the editor context so that other views can update it's state (e.g. markdown preview)
                 self.editor.update(cx, |_, cx| {
                     cx.emit(EditorEvent::Edited);
                 });
