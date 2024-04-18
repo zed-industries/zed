@@ -42,7 +42,8 @@ impl Blame {
 
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);
-            // DEPRECATED: permalinks shouldn't be send over the wire anymore
+            // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
+            // now do the parsing.
             if let Some(remote) = parsed_remote_url.as_ref() {
                 permalinks.entry(entry.sha).or_insert_with(|| {
                     build_commit_permalink(BuildCommitPermalinkParams {

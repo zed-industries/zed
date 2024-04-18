@@ -401,6 +401,10 @@ async fn parse_commit_messages(
                 },
             ))
         } else {
+            // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
+            // now do the parsing. This is here for backwards compatibility, so that
+            // when an old peer sends a client no `parsed_remote_url` but `deprecated_permalinks`,
+            // we fall back to that.
             deprecated_permalinks.get(&oid).cloned()
         };
 
