@@ -460,6 +460,7 @@ message JoinHostedProject {
 }
 
 message CreateRemoteProject {
+    reserved 1;
     reserved 2;
     uint64 dev_server_id = 3;
     string path = 4;
@@ -474,6 +475,7 @@ message CreateDevServer {
 
 message CreateDevServerResponse {
     uint64 dev_server_id = 1;
+    reserved 2;
     string access_token = 3;
     string name = 4;
 }
@@ -1136,6 +1138,10 @@ message UpdateChannels {
 
     repeated HostedProject hosted_projects = 10;
     repeated uint64 deleted_hosted_projects = 11;
+
+    reserved 13;
+    reserved 14;
+    reserved 15;
 }
 
 message UpdateUserChannels {
@@ -1174,12 +1180,14 @@ message HostedProject {
 message RemoteProject {
     uint64 id = 1;
     optional uint64 project_id = 2;
+    reserved 3;
     reserved 4;
     uint64 dev_server_id = 5;
     string path = 6;
 }
 
 message DevServer {
+    reserved 1;
     uint64 dev_server_id = 2;
     string name = 3;
     DevServerStatus status = 4;
