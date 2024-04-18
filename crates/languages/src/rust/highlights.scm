@@ -3,6 +3,10 @@
 (self) @variable.special
 (field_identifier) @property
 
+(trait_item name: (type_identifier) @type.super)
+(impl_item trait: (type_identifier) @type.super)
+(trait_bounds (type_identifier) @type.super)
+
 (call_expression
   function: [
     (identifier) @function
