@@ -4061,7 +4061,7 @@ impl Render for Workspace {
                                     .overflow_hidden()
                                     .child(
                                         h_flex()
-                                            .h_full()
+                                            .flex_1()
                                             .when_some(paddings.0, |this, p| {
                                                 this.child(p.border_r_1())
                                             })
