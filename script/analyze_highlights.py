@@ -1,3 +1,13 @@
+"""
+This script analyzes all the highlight.scm files in our embedded languages and extensions.
+It counts the number of unique instances of @{name} and the languages in which they are used.
+
+This is useful to help avoid accidentally introducing new tags when appropriate ones already exist when adding new languages.
+
+Flags:
+-v, --verbose: Include a detailed list of languages for each tag found in the highlight.scm files.
+"""
+
 from collections import defaultdict
 from pathlib import Path
 import argparse
