@@ -1721,16 +1721,35 @@ impl Pane {
             return;
         }
 
-        let edge_width = cx.rem_size() * 8;
-        let cursor = event.event.position;
-        let direction = if cursor.x < event.bounds.left() + edge_width {
-            Some(SplitDirection::Left)
-        } else if cursor.x > event.bounds.right() - edge_width {
-            Some(SplitDirection::Right)
-        } else if cursor.y < event.bounds.top() + edge_width {
-            Some(SplitDirection::Up)
-        } else if cursor.y > event.bounds.bottom() - edge_width {
-            Some(SplitDirection::Down)
+        let rect = event.bounds.size;
+
+        let size = event.bounds.size.width.min(event.bounds.size.height)
+            * WorkspaceSettings::get_global(cx).drop_target_size;
+
+        let relative_cursor = Point::new(
+            event.event.position.x - event.bounds.left(),
+            event.event.position.y - event.bounds.top(),
+        );
+
+        let direction = if relative_cursor.x < size
+            || relative_cursor.x > rect.width - size
+            || relative_cursor.y < size
+            || relative_cursor.y > rect.height - size
+        {
+            [
+                SplitDirection::Up,
+                SplitDirection::Right,
+                SplitDirection::Down,
+                SplitDirection::Left,
+            ]
+            .iter()
+            .min_by_key(|side| match side {
+                SplitDirection::Up => relative_cursor.y,
+                SplitDirection::Right => rect.width - relative_cursor.x,
+                SplitDirection::Down => rect.height - relative_cursor.y,
+                SplitDirection::Left => relative_cursor.x,
+            })
+            .cloned()
         } else {
             None
         };
@@ -2013,10 +2032,7 @@ impl Render for Pane {
                         div()
                             .invisible()
                             .absolute()
-                            .bg(theme::color_alpha(
-                                cx.theme().colors().drop_target_background,
-                                0.75,
-                            ))
+                            .bg(cx.theme().colors().drop_target_background)
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<ProjectEntryId>("", |style| style.visible())
                             .group_drag_over::<ExternalPaths>("", |style| style.visible())
@@ -2032,17 +2048,22 @@ impl Render for Pane {
                             .on_drop(cx.listener(move |this, paths, cx| {
                                 this.handle_external_paths_drop(paths, cx)
                             }))
-                            .map(|div| match self.drag_split_direction {
-                                None => div.top_0().left_0().right_0().bottom_0(),
-                                Some(SplitDirection::Up) => div.top_0().left_0().right_0().h_32(),
-                                Some(SplitDirection::Down) => {
-                                    div.left_0().bottom_0().right_0().h_32()
-                                }
-                                Some(SplitDirection::Left) => {
-                                    div.top_0().left_0().bottom_0().w_32()
-                                }
-                                Some(SplitDirection::Right) => {
-                                    div.top_0().bottom_0().right_0().w_32()
+                            .map(|div| {
+                                let size = DefiniteLength::Fraction(0.5);
+                                match self.drag_split_direction {
+                                    None => div.top_0().right_0().bottom_0().left_0(),
+                                    Some(SplitDirection::Up) => {
+                                        div.top_0().left_0().right_0().h(size)
+                                    }
+                                    Some(SplitDirection::Down) => {
+                                        div.left_0().bottom_0().right_0().h(size)
+                                    }
+                                    Some(SplitDirection::Left) => {
+                                        div.top_0().left_0().bottom_0().w(size)
+                                    }
+                                    Some(SplitDirection::Right) => {
+                                        div.top_0().bottom_0().right_0().w(size)
+                                    }
                                 }
                             }),
                     )
