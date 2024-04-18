@@ -71,8 +71,9 @@ pub struct UniformList {
 
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
-    item_size: Size<Pixels>,
+    item_height: Pixels,
     items: SmallVec<[AnyElement; 32]>,
+    visible_range: Range<usize>,
 }
 
 /// A handle for controlling the scroll position of a uniform list.
@@ -106,6 +107,7 @@ impl Styled for UniformList {
 
 impl Element for UniformList {
     type BeforeLayout = UniformListFrameState;
+    type AfterLayout = ();
     type BeforePaint = Option<Hitbox>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
@@ -119,7 +121,7 @@ impl Element for UniformList {
                     .unwrap_or(match available_space.width {
                         AvailableSpace::Definite(x) => x,
                         AvailableSpace::MinContent | AvailableSpace::MaxContent => {
-                            item_measurement.width
+                            item_measurement.size.width
                         }
                     });
 
@@ -134,8 +136,103 @@ impl Element for UniformList {
         (
             layout_id,
             UniformListFrameState {
-                item_size: item_measurement.size,
+                item_height: Pixels::default(),
                 items: SmallVec::new(),
+                visible_range: 0..0,
+            },
+        )
+    }
+
+    fn after_layout(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::BeforeLayout,
+        cx: &mut ElementContext,
+    ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
+        let style = self.interactivity.compute_style(None, cx);
+        let border = style.border_widths.to_pixels(cx.rem_size());
+        let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
+
+        let padded_size = size(
+            bounds.size.width - border.left - padding.left - border.right - padding.right,
+            bounds.size.height - border.top - padding.top - border.bottom - padding.bottom,
+        );
+        let item_height = self.measure_item(Some(padded_size.width), cx).size.height;
+        let content_size = Size {
+            width: padded_size.width,
+            height: item_height * self.item_count + padding.top + padding.bottom,
+        };
+
+        let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
+        // todo!("add support for scrolling to the focused element?");
+        let deferred_scroll_to_item = self
+            .scroll_handle
+            .as_mut()
+            .and_then(|handle| handle.deferred_scroll_to_item.take());
+
+        self.interactivity.after_layout(
+            bounds,
+            content_size,
+            cx,
+            |style, mut scroll_offset, mut focus_target_bounds, cx| {
+                if self.item_count == 0 {
+                    return (focus_target_bounds, ());
+                }
+
+                let border = style.border_widths.to_pixels(cx.rem_size());
+                let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
+
+                let padded_size = size(
+                    bounds.size.width - border.left - padding.left - border.right - padding.right,
+                    bounds.size.height - border.top - padding.top - border.bottom - padding.bottom,
+                );
+
+                let content_height = item_height * self.item_count + padding.top + padding.bottom;
+                let min_scroll_offset = padded_size.height - content_height;
+                let is_scrolled = scroll_offset.y != px(0.);
+
+                if is_scrolled && scroll_offset.y < min_scroll_offset {
+                    shared_scroll_offset.borrow_mut().y = min_scroll_offset;
+                    scroll_offset.y = min_scroll_offset;
+                }
+
+                if let Some(ix) = deferred_scroll_to_item {
+                    let list_height = padded_size.height;
+                    let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
+                    let item_top = item_height * ix + padding.top;
+                    let item_bottom = item_top + item_height;
+                    let scroll_top = -updated_scroll_offset.y;
+                    if item_top < scroll_top + padding.top {
+                        updated_scroll_offset.y = -(item_top) + padding.top;
+                    } else if item_bottom > scroll_top + list_height - padding.bottom {
+                        updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
+                    }
+                    scroll_offset = *updated_scroll_offset;
+                }
+
+                let first_visible_element_ix =
+                    (-(scroll_offset.y + padding.top) / item_height).floor() as usize;
+                let last_visible_element_ix =
+                    ((-scroll_offset.y + padded_size.height) / item_height).ceil() as usize;
+                let visible_range =
+                    first_visible_element_ix..cmp::min(last_visible_element_ix, self.item_count);
+
+                let mut items = (self.render_items)(visible_range.clone(), cx);
+                let available_space = size(
+                    AvailableSpace::Definite(padded_size.width),
+                    AvailableSpace::Definite(item_height),
+                );
+                for mut item in items {
+                    let measurement = item.layout(available_space, cx);
+                    if let Some(child_focus_target_bounds) = measurement.focus_target_bounds {
+                        focus_target_bounds = Some(child_focus_target_bounds);
+                    }
+                    state.items.push(item);
+                }
+                state.item_height = item_height;
+                state.visible_range = visible_range;
+
+                (focus_target_bounds, ())
             },
         )
     }
@@ -143,103 +240,37 @@ impl Element for UniformList {
     fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        before_layout: &mut Self::BeforeLayout,
+        state: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         cx: &mut ElementContext,
     ) -> Option<Hitbox> {
-        let style = self.interactivity.compute_style(None, cx);
-        let border = style.border_widths.to_pixels(cx.rem_size());
-        let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-
-        let padded_bounds = Bounds::from_corners(
-            bounds.origin + point(border.left + padding.left, border.top + padding.top),
-            bounds.lower_right()
-                - point(border.right + padding.right, border.bottom + padding.bottom),
-        );
-
-        let content_size = Size {
-            width: padded_bounds.size.width,
-            height: before_layout.item_size.height * self.item_count + padding.top + padding.bottom,
-        };
-
-        let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
-
-        let item_height = self.measure_item(Some(padded_bounds.size.width), cx).height;
-        let shared_scroll_to_item = self
-            .scroll_handle
-            .as_mut()
-            .and_then(|handle| handle.deferred_scroll_to_item.take());
-
-        self.interactivity.before_paint(
-            bounds,
-            content_size,
-            cx,
-            |style, mut scroll_offset, hitbox, cx| {
+        self.interactivity
+            .before_paint(bounds, cx, |style, scroll_offset, hitbox, cx| {
                 let border = style.border_widths.to_pixels(cx.rem_size());
                 let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-
                 let padded_bounds = Bounds::from_corners(
                     bounds.origin + point(border.left + padding.left, border.top),
                     bounds.lower_right() - point(border.right + padding.right, border.bottom),
                 );
 
-                if self.item_count > 0 {
-                    let content_height =
-                        item_height * self.item_count + padding.top + padding.bottom;
-                    let min_scroll_offset = padded_bounds.size.height - content_height;
-                    let is_scrolled = scroll_offset.y != px(0.);
-
-                    if is_scrolled && scroll_offset.y < min_scroll_offset {
-                        shared_scroll_offset.borrow_mut().y = min_scroll_offset;
-                        scroll_offset.y = min_scroll_offset;
+                let content_mask = ContentMask { bounds };
+                cx.with_content_mask(Some(content_mask), |cx| {
+                    for (item, ix) in state.items.iter_mut().zip(state.visible_range.clone()) {
+                        let item_y = state.item_height * ix + scroll_offset.y + padding.top;
+                        let item_origin = padded_bounds.origin + point(px(0.), item_y);
+                        cx.with_absolute_element_offset(item_origin, |cx| item.before_paint(cx));
                     }
-
-                    if let Some(ix) = shared_scroll_to_item {
-                        let list_height = padded_bounds.size.height;
-                        let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
-                        let item_top = item_height * ix + padding.top;
-                        let item_bottom = item_top + item_height;
-                        let scroll_top = -updated_scroll_offset.y;
-                        if item_top < scroll_top + padding.top {
-                            updated_scroll_offset.y = -(item_top) + padding.top;
-                        } else if item_bottom > scroll_top + list_height - padding.bottom {
-                            updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
-                        }
-                        scroll_offset = *updated_scroll_offset;
-                    }
-
-                    let first_visible_element_ix =
-                        (-(scroll_offset.y + padding.top) / item_height).floor() as usize;
-                    let last_visible_element_ix = ((-scroll_offset.y + padded_bounds.size.height)
-                        / item_height)
-                        .ceil() as usize;
-                    let visible_range = first_visible_element_ix
-                        ..cmp::min(last_visible_element_ix, self.item_count);
-
-                    let mut items = (self.render_items)(visible_range.clone(), cx);
-                    let content_mask = ContentMask { bounds };
-                    cx.with_content_mask(Some(content_mask), |cx| {
-                        for (mut item, ix) in items.into_iter().zip(visible_range) {
-                            let item_origin = padded_bounds.origin
-                                + point(px(0.), item_height * ix + scroll_offset.y + padding.top);
-                            let available_space = size(
-                                AvailableSpace::Definite(padded_bounds.size.width),
-                                AvailableSpace::Definite(item_height),
-                            );
-                            item.layout(item_origin, available_space, cx);
-                            before_layout.items.push(item);
-                        }
-                    });
-                }
+                });
 
                 hitbox
-            },
-        )
+            })
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
         before_layout: &mut Self::BeforeLayout,
+        _after_layout: &mut Self::AfterLayout,
         hitbox: &mut Option<Hitbox>,
         cx: &mut ElementContext,
     ) {
