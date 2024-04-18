@@ -1124,7 +1124,7 @@ impl Client {
                     let public_key_string = String::try_from(public_key)
                         .expect("failed to serialize public key for auth");
 
-                    dbg!(ADMIN_API_TOKEN.as_ref());
+                    ADMIN_API_TOKEN.as_ref();
 
                     if let Some((login, token)) =
                         IMPERSONATE_LOGIN.as_ref().zip(ADMIN_API_TOKEN.as_ref())

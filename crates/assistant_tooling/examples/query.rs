@@ -46,7 +46,7 @@ impl LanguageModelTool for ProjectIndexTool {
             if !results.is_empty() {
                 Ok(results.join("\n"))
             } else {
-                Ok(format!("No results"))
+                Ok("No results".to_string())
             }
         }
     }

@@ -11,8 +11,6 @@ name = "assistant_example"
 path = "examples/assistant_example.rs"
 crate-type = ["bin"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
@@ -32,6 +30,12 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 nanoid = "0.4"
+
+# Future work will require workspace in the assistant2 crate
+# To make sure branches merging into assistant2 pass, we'll override some settings
+# TODO: Remove before assistant2 is merged to `main`
+[package.metadata.cargo-machete]
+ignored = ["workspace"]
 
 [dev-dependencies]
 assets.workspace = true

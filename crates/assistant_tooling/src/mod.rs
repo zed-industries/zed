@@ -65,7 +65,7 @@ pub trait LanguageModelTool {
     fn description(&self) -> String;
 
     fn input_schema(&self) -> serde_json::Value {
-        let schema: RootSchema = schema_for!(Self::Input).into();
+        let schema: RootSchema = schema_for!(Self::Input);
         serde_json::to_value(schema).unwrap()
     }
 
