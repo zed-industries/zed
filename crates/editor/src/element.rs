@@ -57,6 +57,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor, ThemeSettings};
 use ui::{h_flex, Avatar, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use ui::{prelude::*, tooltip_container};
+use url::Url;
 use util::{github, ResultExt};
 use workspace::{item::Item, Workspace};
 
@@ -3063,9 +3064,11 @@ impl Asset for CodeHostAvatarUrlForSha {
                     )
                     .await
                     .ok()
-                    .flatten();
+                    .flatten()?;
 
-                    github_commit_author.map(|author| SharedString::from(author.avatar_url))
+                    let mut url = Url::parse(&github_commit_author.avatar_url).ok()?;
+                    url.set_query(Some("size=128"));
+                    Some(SharedString::from(url.to_string()))
                 }
                 _ => None,
             }
