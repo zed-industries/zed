@@ -2488,7 +2488,6 @@ impl EditorElement {
                             editor.set_scroll_position(position, cx);
                         }
 
-                        mouse_position = event.position;
                         cx.stop_propagation();
                     } else {
                         editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
@@ -2496,6 +2495,7 @@ impl EditorElement {
                             editor.scroll_manager.show_scrollbar(cx);
                         }
                     }
+                    mouse_position = event.position;
                 })
             }
         });
