@@ -440,16 +440,7 @@ impl ProjectPanel {
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
                             .action("Reveal in Finder", Box::new(RevealInFinder))
-                            .when_else(
-                                is_dir,
-                                |menu| menu.action("Open in Terminal…", Box::new(OpenInTerminal)),
-                                |menu| {
-                                    menu.action(
-                                        "Open Parent in Terminal…",
-                                        Box::new(OpenInTerminal),
-                                    )
-                                },
-                            )
+                            .action("Open in Terminal…", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
@@ -1138,28 +1129,18 @@ impl ProjectPanel {
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let abs_path = worktree.abs_path().join(&entry.path);
-            if entry.is_dir() {
-                cx.dispatch_action(
-                    workspace::OpenTerminal {
-                        working_directory: abs_path,
-                    }
-                    .boxed_clone(),
-                )
+            let working_directory = if entry.is_dir() {
+                Some(abs_path)
             } else {
-                if let Some(parent) = if entry.is_symlink {
+                if entry.is_symlink {
                     abs_path.canonicalize().ok()
                 } else {
                     Some(abs_path)
                 }
                 .and_then(|path| Some(path.parent()?.to_path_buf()))
-                {
-                    cx.dispatch_action(
-                        workspace::OpenTerminal {
-                            working_directory: parent,
-                        }
-                        .boxed_clone(),
-                    )
-                }
+            };
+            if let Some(working_directory) = working_directory {
+                cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
             }
         }
     }

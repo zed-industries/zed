@@ -5,7 +5,8 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    NewCenterTerminal, NewFile, NewSearch, OpenVisible, SplitDirection, ToggleZoom, Workspace,
+    NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
+    SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
@@ -1597,20 +1598,59 @@ impl Pane {
                         );
 
                     if let Some(entry) = single_entry_to_resolve {
+                        let parent_abs_path = pane
+                            .update(cx, |pane, cx| {
+                                pane.workspace.update(cx, |workspace, cx| {
+                                    let project = workspace.project().read(cx);
+                                    project.worktree_for_entry(entry, cx).and_then(|worktree| {
+                                        let worktree = worktree.read(cx);
+                                        let entry = worktree.entry_for_id(entry)?;
+                                        let abs_path = worktree.absolutize(&entry.path).ok()?;
+                                        let parent = if entry.is_symlink {
+                                            abs_path.canonicalize().ok()?
+                                        } else {
+                                            abs_path
+                                        }
+                                        .parent()?
+                                        .to_path_buf();
+                                        Some(parent)
+                                    })
+                                })
+                            })
+                            .ok()
+                            .flatten();
+
                         let entry_id = entry.to_proto();
-                        menu = menu.separator().entry(
-                            "Reveal In Project Panel",
-                            Some(Box::new(RevealInProjectPanel {
-                                entry_id: Some(entry_id),
-                            })),
-                            cx.handler_for(&pane, move |pane, cx| {
-                                pane.project.update(cx, |_, cx| {
-                                    cx.emit(project::Event::RevealInProjectPanel(
-                                        ProjectEntryId::from_proto(entry_id),
-                                    ))
-                                });
-                            }),
-                        );
+
+                        menu = menu
+                            .separator()
+                            .when_some(parent_abs_path, |menu, abs_path| {
+                                menu.entry(
+                                    "Open in Terminal…",
+                                    Some(Box::new(OpenInTerminal)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.dispatch_action(
+                                            OpenTerminal {
+                                                working_directory: abs_path.clone(),
+                                            }
+                                            .boxed_clone(),
+                                        );
+                                    }),
+                                )
+                            })
+                            .entry(
+                                "Reveal In Project Panel",
+                                Some(Box::new(RevealInProjectPanel {
+                                    entry_id: Some(entry_id),
+                                })),
+                                cx.handler_for(&pane, move |pane, cx| {
+                                    pane.project.update(cx, |_, cx| {
+                                        cx.emit(project::Event::RevealInProjectPanel(
+                                            ProjectEntryId::from_proto(entry_id),
+                                        ))
+                                    });
+                                }),
+                            );
                     }
                 }
 
@@ -1978,6 +2018,27 @@ impl Render for Pane {
                     }
                 }),
             )
+            .on_action(cx.listener(|pane, _: &OpenInTerminal, cx| {
+                if let Some(working_directory) = pane
+                    .active_item()
+                    .and_then(|item| item.project_path(cx))
+                    .and_then(|project_path| {
+                        let project = pane.project.read(cx);
+                        let entry = project.entry_for_path(&project_path, cx)?;
+                        let abs_path = project.absolute_path(&project_path, cx)?;
+                        let parent = if entry.is_symlink {
+                            abs_path.canonicalize().ok()?
+                        } else {
+                            abs_path
+                        }
+                        .parent()?
+                        .to_path_buf();
+                        Some(parent)
+                    })
+                {
+                    cx.dispatch_action(OpenTerminal { working_directory }.boxed_clone())
+                }
+            }))
             .when(self.active_item().is_some(), |pane| {
                 pane.child(self.render_tab_bar(cx))
             })
