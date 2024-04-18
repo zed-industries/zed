@@ -10,6 +10,7 @@ Flags:
 
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 import argparse
 import re
 
@@ -30,7 +31,7 @@ def find_highlight_files(root_dir):
 def count_instances(files):
     """Count all unique instances of @{name} and their languages in the given files."""
     # Use a defaultdict to automatically handle keys that aren't yet in the dictionary
-    instances = defaultdict(lambda: {'count': 0, 'languages': set()})
+    instances: defaultdict[list[Any], dict[str, Any]] = defaultdict(lambda: {'count': 0, 'languages': set()})
     for file_path in files:
         # Correctly identify the language by getting the directory name one level up
         language = file_path.parent.name
