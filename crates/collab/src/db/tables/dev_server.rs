@@ -15,7 +15,16 @@ pub struct Model {
 impl ActiveModelBehavior for ActiveModel {}
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(has_many = "super::remote_project::Entity")]
+    RemoteProject,
+}
+
+impl Related<super::remote_project::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::RemoteProject.def()
+    }
+}
 
 impl Model {
     pub fn to_proto(&self, status: proto::DevServerStatus) -> proto::DevServer {

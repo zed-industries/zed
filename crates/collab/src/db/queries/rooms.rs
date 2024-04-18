@@ -915,6 +915,23 @@ impl Database {
                     .exec(&*tx)
                     .await?;
 
+                // if any project in the room has a remote-projet-id that belongs to a dev server that this user owns.
+                let remote_projects_for_user = self
+                    .remote_project_ids_for_user(leaving_participant.user_id, &tx)
+                    .await?;
+                project::Entity::update_many()
+                    .filter(
+                        Condition::all()
+                            .add(project::Column::RoomId.eq(room_id))
+                            .add(project::Column::RemoteProjectId.is_in(remote_projects_for_user)),
+                    )
+                    .set(project::ActiveModel {
+                        room_id: ActiveValue::Set(None),
+                        ..Default::default()
+                    })
+                    .exec(&*tx)
+                    .await?;
+
                 let (channel, room) = self.get_channel_room(room_id, &tx).await?;
                 let deleted = if room.participants.is_empty() {
                     let result = room::Entity::delete_by_id(room_id).exec(&*tx).await?;

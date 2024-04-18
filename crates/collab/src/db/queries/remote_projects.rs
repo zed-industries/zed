@@ -49,6 +49,23 @@ impl Database {
         .await
     }
 
+    pub async fn remote_project_ids_for_user(
+        &self,
+        user_id: UserId,
+        tx: &DatabaseTransaction,
+    ) -> crate::Result<Vec<RemoteProjectId>> {
+        let dev_servers = dev_server::Entity::find()
+            .filter(dev_server::Column::UserId.eq(user_id))
+            .find_with_related(remote_project::Entity)
+            .all(&*tx)
+            .await?;
+
+        Ok(dev_servers
+            .into_iter()
+            .flat_map(|(_, projects)| projects.into_iter().map(|p| p.id))
+            .collect())
+    }
+
     pub async fn owner_for_remote_project(
         &self,
         remote_project_id: RemoteProjectId,
