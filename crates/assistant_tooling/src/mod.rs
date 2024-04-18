@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Result};
-use futures::{future::LocalBoxFuture, Future, FutureExt};
+use gpui::{AppContext, Task};
 use schemars::{schema::RootSchema, schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, future};
+use std::collections::HashMap;
 
 pub struct ToolRegistry {
-    tools: HashMap<String, Box<dyn Fn(&str) -> LocalBoxFuture<'static, Result<String>>>>,
+    tools: HashMap<String, Box<dyn Fn(&str, &AppContext) -> Task<Result<String>>>>,
     pub definitions: Vec<Value>,
 }
 
@@ -23,17 +23,16 @@ impl ToolRegistry {
         let name = tool.name();
         let previous = self.tools.insert(
             name.clone(),
-            Box::new(move |args: &str| {
+            Box::new(move |args: &str, cx: &AppContext| {
                 let result = match serde_json::from_str::<T::Input>(&args) {
-                    Ok(input) => tool.execute(input),
-                    Err(error) => return future::ready(Err(anyhow!(error))).boxed_local(),
+                    Ok(input) => tool.execute(input, cx),
+                    Err(error) => return Task::ready(Err(anyhow!(error))),
                 };
 
-                async move {
+                cx.spawn(|_cx| async move {
                     let result: T::Output = result.await?;
                     Ok(serde_json::to_string(&result)?)
-                }
-                .boxed_local()
+                })
             }),
         );
 
@@ -44,16 +43,15 @@ impl ToolRegistry {
         Ok(())
     }
 
-    pub fn call(&self, name: &str, input: &str) -> LocalBoxFuture<'static, Result<String>> {
+    pub fn call(&self, name: &str, input: &str, cx: &AppContext) -> Task<Result<String>> {
         let tool = match self.tools.get(name) {
             Some(tool) => tool,
             None => {
-                return future::ready(Err(anyhow!("no tool registered with name {}", name)))
-                    .boxed_local();
+                return Task::ready(Err(anyhow!("no tool registered with name {}", name)));
             }
         };
 
-        tool(input)
+        tool(input, cx)
     }
 }
 
@@ -92,7 +90,7 @@ pub trait LanguageModelTool {
     }
 
     /// Execute the tool
-    fn execute(&self, input: Self::Input) -> impl 'static + Future<Output = Result<Self::Output>>;
+    fn execute(&self, input: Self::Input, cx: &AppContext) -> Task<Result<Self::Output>>;
 }
 
 #[cfg(test)]
@@ -130,16 +128,13 @@ mod tests {
             "Fetches the current weather for a given location.".to_string()
         }
 
-        fn execute(
-            &self,
-            input: WeatherQuery,
-        ) -> impl 'static + Future<Output = Result<Self::Output>> {
+        fn execute(&self, input: WeatherQuery, _cx: &AppContext) -> Task<Result<Self::Output>> {
             let _location = input.location.clone();
             let _unit = input.unit.clone();
 
             let weather = self.current_weather.clone();
 
-            async move { Ok(weather) }
+            Task::ready(Ok(weather))
         }
     }
 
@@ -191,7 +186,10 @@ mod tests {
 
         let query: WeatherQuery = serde_json::from_value(args).unwrap();
 
-        let result = tool.execute(query).await.unwrap();
+        let result = cx.update(|cx| tool.execute(query, cx)).await;
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
 
         assert_eq!(result, tool.current_weather);
     }
@@ -212,13 +210,18 @@ mod tests {
 
         registry.register(tool).unwrap();
 
-        let result = registry
-            .call(
-                "get_current_weather",
-                r#"{ "location": "San Francisco", "unit": "Celsius" }"#,
-            )
-            .await
-            .unwrap();
+        let result = cx
+            .update(|cx| {
+                registry.call(
+                    "get_current_weather",
+                    r#"{ "location": "San Francisco", "unit": "Celsius" }"#,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
 
         let expected = r#"{"location":"San Francisco","temperature":21.0,"unit":"Celsius"}"#;
 
