@@ -344,7 +344,7 @@ impl Render for AuthenticationPrompt {
             "To use the assistant panel or inline assistant, you need to add your YandexGPT API key and Folder ID.",
             " - You can create an API key. See: yandex.cloud/docs/foundation-models/api-ref/authentication",
             " - You can get an existing folder ID or create a new one. See: yandex.cloud/docs/resource-manager/operations/folder/get-id",
-            " - Make sure your Yandex Cloud account has credits",
+            " - Make sure your Yandex Cloud account has a billing account",
             "",
         ];
 
