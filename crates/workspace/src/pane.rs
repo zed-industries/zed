@@ -1624,20 +1624,6 @@ impl Pane {
 
                         menu = menu
                             .separator()
-                            .when_some(parent_abs_path, |menu, abs_path| {
-                                menu.entry(
-                                    "Open in Terminal…",
-                                    Some(Box::new(OpenInTerminal)),
-                                    cx.handler_for(&pane, move |_, cx| {
-                                        cx.dispatch_action(
-                                            OpenTerminal {
-                                                working_directory: abs_path.clone(),
-                                            }
-                                            .boxed_clone(),
-                                        );
-                                    }),
-                                )
-                            })
                             .entry(
                                 "Reveal In Project Panel",
                                 Some(Box::new(RevealInProjectPanel {
@@ -1650,7 +1636,21 @@ impl Pane {
                                         ))
                                     });
                                 }),
-                            );
+                            )
+                            .when_some(parent_abs_path, |menu, abs_path| {
+                                menu.entry(
+                                    "Open in Terminal",
+                                    Some(Box::new(OpenInTerminal)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.dispatch_action(
+                                            OpenTerminal {
+                                                working_directory: abs_path.clone(),
+                                            }
+                                            .boxed_clone(),
+                                        );
+                                    }),
+                                )
+                            });
                     }
                 }
 

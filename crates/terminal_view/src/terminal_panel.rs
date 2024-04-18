@@ -98,7 +98,6 @@ impl TerminalPanel {
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&workspace::ToggleZoom, cx);
                             }))
-                            // TODO kb
                             .tooltip(move |cx| {
                                 Tooltip::for_action(
                                     if zoomed { "Zoom Out" } else { "Zoom In" },

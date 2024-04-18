@@ -440,7 +440,7 @@ impl ProjectPanel {
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
                             .action("Reveal in Finder", Box::new(RevealInFinder))
-                            .action("Open in Terminal…", Box::new(OpenInTerminal))
+                            .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))

@@ -84,7 +84,7 @@ pub fn deploy_context_menu(
                 )
                 .separator()
                 .action("Reveal in Finder", Box::new(RevealInFinder))
-                .action("Open in Terminal…", Box::new(OpenInTerminal))
+                .action("Open in Terminal", Box::new(OpenInTerminal))
         })
     };
     let mouse_context_menu = MouseContextMenu::new(position, context_menu, cx);
