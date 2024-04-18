@@ -58,10 +58,20 @@ impl ToolRegistry {
 }
 
 pub trait LanguageModelTool {
+    /// The input type that will be passed in to `execute` when the tool is called
+    /// by the language model.
     type Input: for<'de> Deserialize<'de> + JsonSchema;
+
+    /// The output returned by executing the tool.
     type Output: Serialize;
 
+    /// The name of the tool is exposed to the language model to allow
+    /// the model to pick which tools to use. As this name is used to
+    /// identify the tool within a tool registry, it should be unique.
     fn name(&self) -> String;
+
+    /// A description of the tool that can be used to _prompt_ the model
+    /// as to what the tool does.
     fn description(&self) -> String;
 
     fn input_schema(&self) -> serde_json::Value {
@@ -69,6 +79,7 @@ pub trait LanguageModelTool {
         serde_json::to_value(schema).unwrap()
     }
 
+    /// The OpenAI Function definition for the tool, for direct use with OpenAI's API.
     fn definition(&self) -> Value {
         json!({
             "type": "function",
@@ -80,6 +91,7 @@ pub trait LanguageModelTool {
         })
     }
 
+    /// Execute the tool
     fn execute(&self, input: Self::Input) -> impl 'static + Future<Output = Result<Self::Output>>;
 }
 
