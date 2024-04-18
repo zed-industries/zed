@@ -2081,19 +2081,21 @@ fn join_project_internal(
         })
         .collect::<Vec<_>>();
 
+    let add_project_collaborator = proto::AddProjectCollaborator {
+        project_id: project_id.to_proto(),
+        collaborator: Some(proto::Collaborator {
+            peer_id: Some(session.connection_id.into()),
+            replica_id: replica_id.0 as u32,
+            user_id: guest_user_id.to_proto(),
+        }),
+    };
+
     for collaborator in &collaborators {
         session
             .peer
             .send(
                 collaborator.peer_id.unwrap().into(),
-                proto::AddProjectCollaborator {
-                    project_id: project_id.to_proto(),
-                    collaborator: Some(proto::Collaborator {
-                        peer_id: Some(session.connection_id.into()),
-                        replica_id: replica_id.0 as u32,
-                        user_id: guest_user_id.to_proto(),
-                    }),
-                },
+                add_project_collaborator.clone(),
             )
             .trace_err();
     }

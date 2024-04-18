@@ -877,7 +877,7 @@ impl Database {
                 .find_related(project_collaborator::Entity)
                 .all(&*tx)
                 .await?;
-            let connection_ids = collaborators
+            let connection_ids: Vec<ConnectionId> = collaborators
                 .into_iter()
                 .map(|collaborator| collaborator.connection())
                 .collect();

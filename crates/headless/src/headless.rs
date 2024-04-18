@@ -3,13 +3,16 @@ use client::RemoteProjectId;
 use client::{user::UserStore, Client, ClientSettings};
 use fs::Fs;
 use futures::Future;
-use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
+use gpui::{
+    AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, ModelContext, Task,
+    WeakModel,
+};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use postage::stream::Stream;
-use project::Project;
+use project::{Project, WorktreeSettings};
 use rpc::{proto, TypedEnvelope};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
@@ -35,6 +38,15 @@ impl Global for GlobalDevServer {}
 pub fn init(client: Arc<Client>, app_state: AppState, cx: &mut AppContext) {
     let dev_server = cx.new_model(|cx| DevServer::new(client.clone(), app_state, cx));
     cx.set_global(GlobalDevServer(dev_server.clone()));
+
+    // Dev server cannot have any private files for now
+    cx.update_global(|store: &mut SettingsStore, _| {
+        let old_settings = store.get::<WorktreeSettings>(None);
+        store.override_global(WorktreeSettings {
+            private_files: Some(vec![]),
+            ..old_settings.clone()
+        });
+    });
 
     // Set up a handler when the dev server is shut down by the user pressing Ctrl-C
     let (tx, rx) = futures::channel::oneshot::channel();

@@ -4427,7 +4427,6 @@ async fn join_channel_internal(
         if let Some((project, host)) = room.most_active_project(cx) {
             return Some(join_in_room_project(project, host, app_state.clone(), cx));
         }
-
         // if you are the first to join a channel, share your project
         if room.remote_participants().len() == 0 && !room.local_participant_is_guest() {
             if let Some(workspace) = requesting_window {
@@ -4436,7 +4435,7 @@ async fn join_channel_internal(
                         return None;
                     }
                     let project = workspace.project.read(cx);
-                    if project.is_local()
+                    if (project.is_local() || project.remote_project_id().is_some())
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
