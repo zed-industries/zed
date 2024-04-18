@@ -212,6 +212,8 @@
     "scroll_debounce_ms": 50
   },
   "project_panel": {
+    // Whether to show the project panel button in the status bar
+    "button": true,
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
