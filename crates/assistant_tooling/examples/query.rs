@@ -1,17 +1,28 @@
 use anyhow::Result;
-use assistant_tooling::LanguageModelTool;
+use assistant_tooling::{LanguageModelTool, ToolRegistry};
 use futures::Future;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Deserialize, Serialize, JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
 struct CodebaseQuery {
     query: String,
 }
 
+struct ProjectIndex {}
+
+impl ProjectIndex {
+    fn new() -> Self {
+        ProjectIndex {}
+    }
+
+    fn search(&self, _query: &str, _limit: usize) -> impl Future<Output = Result<Vec<String>>> {
+        async move { Ok(vec![]) }
+    }
+}
+
 struct ProjectIndexTool {
-    // Placeholder for later
-    // semantic_index: SemanticIndex
+    project_index: ProjectIndex,
 }
 
 impl LanguageModelTool for ProjectIndexTool {
@@ -23,27 +34,39 @@ impl LanguageModelTool for ProjectIndexTool {
     }
 
     fn description(&self) -> String {
-        "Executes a query against the codebase, returning structured information.".to_string()
+        "Executes a query against the codebase, returning excerpts related to the query".to_string()
     }
 
     fn execute(&self, query: Self::Input) -> impl 'static + Future<Output = Result<Self::Output>> {
-        let query = query.query.clone();
+        let results = self.project_index.search(query.query.as_str(), 10);
 
         async move {
-            // Placeholder until semantic index hooked up
-            Ok(format!("No results for query: '{}'", query))
+            let results = results.await?;
+
+            if !results.is_empty() {
+                Ok(results.join("\n"))
+            } else {
+                Ok(format!("No results"))
+            }
         }
     }
 }
 
 fn main() {
-    let tool = ProjectIndexTool {};
-
-    let query = CodebaseQuery {
-        query: "how do i GPUI".to_string(),
+    let tool = ProjectIndexTool {
+        project_index: ProjectIndex::new(),
     };
 
-    let task = tool.execute(query);
+    let mut registry = ToolRegistry::new();
+    let registered = registry.register(tool);
+    assert!(registered.is_ok());
+
+    // This is where OpenAI would request a tool_call using a name and arguments
+    let task = registry.call(
+        "query_codebase",
+        r#"{"query":"GPUI Task background_executor"}"#,
+    );
+
     let result = futures::executor::block_on(task);
     println!("{}", result.unwrap());
 }

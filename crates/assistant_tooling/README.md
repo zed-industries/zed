@@ -28,13 +28,18 @@ struct CodebaseQuery {
     query: String,
 }
 
+#[derive(Serialize)]
+struct CodebaseQueryResult {
+    excerpts: Vec<String>,
+}
+
 struct ProjectIndexTool {
     project_index: ProjectIndex
 }
 
 impl LanguageModelTool for ProjectIndexTool {
     type Input = CodebaseQuery;
-    type Output = String;
+    type Output = CodebaseQueryResult;
 
     fn name(&self) -> String {
         "query_codebase".to_string()
@@ -48,8 +53,7 @@ impl LanguageModelTool for ProjectIndexTool {
         let query = query.query.clone();
 
         async move {
-            self.project_index.search(query, 10).await
-            // Placeholder until semantic index hooked up
+            let results = self.project_index.search(query, 10).await
             Ok(format!("No results for query: '{}'", query))
         }
     }
