@@ -2001,13 +2001,14 @@ impl Workspace {
     }
 
     pub fn add_item_to_active_pane(&mut self, item: Box<dyn ItemHandle>, cx: &mut WindowContext) {
-        self.add_item(self.active_pane.clone(), item, cx)
+        self.add_item(self.active_pane.clone(), item, None, cx)
     }
 
     pub fn add_item(
         &mut self,
         pane: View<Pane>,
         item: Box<dyn ItemHandle>,
+        destination_index: Option<usize>,
         cx: &mut WindowContext,
     ) {
         if let Some(text) = item.telemetry_event_text(cx) {
@@ -2016,7 +2017,9 @@ impl Workspace {
                 .report_app_event(format!("{}: open", text));
         }
 
-        pane.update(cx, |pane, cx| pane.add_item(item, true, true, None, cx));
+        pane.update(cx, |pane, cx| {
+            pane.add_item(item, true, true, destination_index, cx)
+        });
     }
 
     pub fn split_item(
@@ -2026,7 +2029,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) {
         let new_pane = self.split_pane(self.active_pane.clone(), split_direction, cx);
-        self.add_item(new_pane, item, cx);
+        self.add_item(new_pane, item, None, cx);
     }
 
     pub fn open_abs_path(
@@ -2198,10 +2201,21 @@ impl Workspace {
         }
 
         let item = cx.new_view(|cx| T::for_project_item(self.project().clone(), project_item, cx));
+
+        let item_id = item.item_id();
+        let mut destination_index = None;
         pane.update(cx, |pane, cx| {
+            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
+                if let Some(preview_item_id) = pane.preview_item_id() {
+                    if preview_item_id != item_id {
+                        destination_index = pane.close_current_preview_item(cx);
+                    }
+                }
+            }
             pane.set_preview_item_id(Some(item.item_id()), cx)
         });
-        self.add_item(pane, Box::new(item.clone()), cx);
+
+        self.add_item(pane, Box::new(item.clone()), destination_index, cx);
         item
     }
 
