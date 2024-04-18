@@ -95,7 +95,8 @@ fn run_git_blame(
     #[cfg(windows)]
     child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
 
-    let child = child.spawn()
+    let child = child
+        .spawn()
         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
 
     let mut stdin = child
