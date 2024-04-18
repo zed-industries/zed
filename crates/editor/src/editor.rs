@@ -8094,7 +8094,7 @@ impl Editor {
             .buffer
             .read(cx)
             .text_anchor_for_position(selection.head(), cx)?;
-        let (tail_buffer, _) = self
+        let (tail_buffer, cursor_buffer_position_end) = self
             .buffer
             .read(cx)
             .text_anchor_for_position(selection.tail(), cx)?;
@@ -8104,6 +8104,7 @@ impl Editor {
 
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
+        let cursor_buffer_offset_end = cursor_buffer_position_end.to_offset(&snapshot);
         let prepare_rename = project.update(cx, |project, cx| {
             project.prepare_rename(cursor_buffer.clone(), cursor_buffer_offset, cx)
         });
@@ -8132,6 +8133,8 @@ impl Editor {
                     let rename_buffer_range = rename_range.to_offset(&snapshot);
                     let cursor_offset_in_rename_range =
                         cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+                    let cursor_offset_in_rename_range_end =
+                        cursor_buffer_offset_end.saturating_sub(rename_buffer_range.start);
 
                     this.take_rename(false, cx);
                     let buffer = this.buffer.read(cx).read(cx);
@@ -8160,7 +8163,23 @@ impl Editor {
                         editor.buffer.update(cx, |buffer, cx| {
                             buffer.edit([(0..0, old_name.clone())], None, cx)
                         });
-                        editor.select_all(&SelectAll, cx);
+                        let rename_selection_range = match cursor_offset_in_rename_range
+                            .cmp(&cursor_offset_in_rename_range_end)
+                        {
+                            Ordering::Equal => {
+                                editor.select_all(&SelectAll, cx);
+                                return editor;
+                            }
+                            Ordering::Less => {
+                                cursor_offset_in_rename_range..cursor_offset_in_rename_range_end
+                            }
+                            Ordering::Greater => {
+                                cursor_offset_in_rename_range_end..cursor_offset_in_rename_range
+                            }
+                        };
+                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            s.select_ranges([rename_selection_range]);
+                        });
                         editor
                     });
 

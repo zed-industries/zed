@@ -736,8 +736,56 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
             6..9
         );
         rename.editor.update(cx, |rename_editor, cx| {
+            let rename_selection = rename_editor.selections.newest::<usize>(cx);
+            assert_eq!(
+                rename_selection.range(),
+                0..3,
+                "Rename that was triggered from zero selection caret, should propose the whole word."
+            );
             rename_editor.buffer().update(cx, |rename_buffer, cx| {
                 rename_buffer.edit([(0..3, "THREE")], None, cx);
+            });
+        });
+    });
+
+    // Cancel the rename, and repeat the same, but use selections instead of cursor movement
+    editor_b.update(cx_b, |editor, cx| {
+        editor.cancel(&editor::actions::Cancel, cx);
+    });
+    let prepare_rename = editor_b.update(cx_b, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([7..8]));
+        editor.rename(&Rename, cx).unwrap()
+    });
+
+    fake_language_server
+        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+            assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+            assert_eq!(params.position, lsp::Position::new(0, 8));
+            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                lsp::Position::new(0, 6),
+                lsp::Position::new(0, 9),
+            ))))
+        })
+        .next()
+        .await
+        .unwrap();
+    prepare_rename.await.unwrap();
+    editor_b.update(cx_b, |editor, cx| {
+        use editor::ToOffset;
+        let rename = editor.pending_rename().unwrap();
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let lsp_rename_start = rename.range.start.to_offset(&buffer);
+        let lsp_rename_end = rename.range.end.to_offset(&buffer);
+        assert_eq!(lsp_rename_start..lsp_rename_end, 6..9);
+        rename.editor.update(cx, |rename_editor, cx| {
+            let rename_selection = rename_editor.selections.newest::<usize>(cx);
+            assert_eq!(
+                rename_selection.range(),
+                1..2,
+                "Rename that was triggered from a selection, should have the same selection range in the rename proposal"
+            );
+            rename_editor.buffer().update(cx, |rename_buffer, cx| {
+                rename_buffer.edit([(0..lsp_rename_end - lsp_rename_start, "THREE")], None, cx);
             });
         });
     });
