@@ -2299,7 +2299,6 @@ dependencies = [
  "editor",
  "emojis",
  "extensions_ui",
- "feature_flags",
  "futures 0.3.28",
  "fuzzy",
  "gpui",
@@ -4663,7 +4662,6 @@ dependencies = [
  "node_runtime",
  "postage",
  "project",
- "remote_projects",
  "rpc",
  "settings",
  "util",
@@ -7859,15 +7857,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "fuzzy",
  "gpui",
- "menu",
- "ordered-float 2.10.0",
  "rpc",
  "serde",
  "serde_json",
- "smol",
- "util",
 ]
 
 [[package]]

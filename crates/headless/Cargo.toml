@@ -27,7 +27,6 @@ fs.workspace = true
 futures.workspace = true
 settings.workspace = true
 postage.workspace = true
-remote_projects.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

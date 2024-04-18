@@ -41,7 +41,6 @@ gpui::impl_actions!(projects, [OpenRecent]);
 gpui::actions!(projects, [OpenRemote]);
 
 pub fn init(cx: &mut AppContext) {
-    dbg!("init....');");
     cx.observe_new_views(RecentProjects::register).detach();
     cx.observe_new_views(remote_projects::RemoteProjects::register)
         .detach();

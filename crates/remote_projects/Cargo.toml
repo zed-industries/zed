@@ -14,13 +14,8 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-fuzzy.workspace = true
 gpui.workspace = true
-menu.workspace = true
-ordered-float.workspace = true
 serde.workspace = true
-smol.workspace = true
-util.workspace = true
 client.workspace = true
 rpc.workspace = true
 
