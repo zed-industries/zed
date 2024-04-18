@@ -9,9 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-name = "assistant_tooling"
-path = "src/mod.rs"
-
+path = "src/assistant_tooling.rs"
 
 [dependencies]
 anyhow.workspace = true
