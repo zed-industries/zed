@@ -758,6 +758,7 @@ impl Terminal {
             InternalEvent::SetSelection(selection) => {
                 term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
 
+                #[cfg(target_os = "linux")]
                 if let Some(selection_text) = term.selection_to_string() {
                     cx.write_to_primary(ClipboardItem::new(selection_text));
                 }
@@ -778,6 +779,7 @@ impl Terminal {
                     selection.update(point, side);
                     term.selection = Some(selection);
 
+                    #[cfg(target_os = "linux")]
                     if let Some(selection_text) = term.selection_to_string() {
                         cx.write_to_primary(ClipboardItem::new(selection_text));
                     }
