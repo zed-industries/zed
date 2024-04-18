@@ -1,7 +1,7 @@
 name = "GLSL"
 grammar = "glsl"
 path_suffixes = [
-    # Traditional rasterisation pipeline shaders
+    # Traditional rasterization pipeline shaders
     "vert", "frag", "tesc", "tese", "geom",
     # Compute shaders
     "comp",

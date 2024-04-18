@@ -6,41 +6,6 @@ struct GlslExtension {
     cached_binary_path: Option<String>,
 }
 
-impl zed::Extension for GlslExtension {
-    fn new() -> Self {
-        Self {
-            cached_binary_path: None,
-        }
-    }
-
-    fn language_server_command(
-        &mut self,
-        language_server_id: &zed::LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<zed::Command> {
-        Ok(zed::Command {
-            command: self.language_server_binary_path(language_server_id, worktree)?,
-            args: vec![],
-            env: Default::default(),
-        })
-    }
-
-    fn language_server_workspace_configuration(
-        &mut self,
-        _language_server_id: &zed::LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<Option<serde_json::Value>> {
-        let settings = LspSettings::for_worktree("glsl_analyzer", worktree)
-            .ok()
-            .and_then(|lsp_settings| lsp_settings.settings.clone())
-            .unwrap_or_default();
-
-        Ok(Some(serde_json::json!({
-            "glsl_analyzer": settings
-        })))
-    }
-}
-
 impl GlslExtension {
     fn language_server_binary_path(
         &mut self,
@@ -71,7 +36,7 @@ impl GlslExtension {
 
         let (platform, arch) = zed::current_platform();
         let asset_name = format!(
-            "{arch}-{os}.{extension}",
+            "{arch}-{os}.zip",
             arch = match arch {
                 zed::Architecture::Aarch64 => "aarch64",
                 zed::Architecture::X86 => "x86",
@@ -81,9 +46,6 @@ impl GlslExtension {
                 zed::Os::Mac => "macos",
                 zed::Os::Linux => "linux-musl",
                 zed::Os::Windows => "windows",
-            },
-            extension = match platform {
-                zed::Os::Mac | zed::Os::Linux | zed::Os::Windows => "zip",
             }
         );
 
@@ -128,6 +90,41 @@ impl GlslExtension {
 
         self.cached_binary_path = Some(binary_path.clone());
         Ok(binary_path)
+    }
+}
+
+impl zed::Extension for GlslExtension {
+    fn new() -> Self {
+        Self {
+            cached_binary_path: None,
+        }
+    }
+
+    fn language_server_command(
+        &mut self,
+        language_server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<zed::Command> {
+        Ok(zed::Command {
+            command: self.language_server_binary_path(language_server_id, worktree)?,
+            args: vec![],
+            env: Default::default(),
+        })
+    }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        _language_server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        let settings = LspSettings::for_worktree("glsl_analyzer", worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .unwrap_or_default();
+
+        Ok(Some(serde_json::json!({
+            "glsl_analyzer": settings
+        })))
     }
 }
 
