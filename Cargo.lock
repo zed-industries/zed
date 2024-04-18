@@ -6049,6 +6049,8 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
+ "ctor",
+ "env_logger",
  "futures 0.3.28",
  "git",
  "gpui",

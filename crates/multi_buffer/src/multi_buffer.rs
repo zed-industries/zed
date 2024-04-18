@@ -1581,6 +1581,9 @@ impl MultiBuffer {
         line_count: u32,
         cx: &mut ModelContext<Self>,
     ) {
+        if line_count == 0 {
+            return;
+        }
         self.sync(cx);
 
         let snapshot = self.snapshot(cx);
@@ -1606,13 +1609,12 @@ impl MultiBuffer {
             let start_point = Point::new(start_row, 0);
             excerpt.range.context.start = excerpt.buffer.anchor_before(start_point);
 
-            let end_row = cmp::min(
-                excerpt.range.context.end.to_point(&excerpt.buffer).row + line_count,
-                excerpt.buffer.row_count() - 1,
+            let end_point = excerpt.buffer.clip_point(
+                excerpt.range.context.end.to_point(&excerpt.buffer) + Point::new(line_count, 0),
+                Bias::Left,
             );
-            let end_point = Point::new(end_row, 0);
             excerpt.range.context.end = excerpt.buffer.anchor_after(end_point);
-            excerpt.max_buffer_row = end_row;
+            excerpt.max_buffer_row = end_point.row;
 
             excerpt.text_summary = excerpt
                 .buffer
@@ -1875,6 +1877,19 @@ impl MultiBuffer {
             if rng.gen_bool(0.05) {
                 log::info!("Clearing multi-buffer");
                 self.clear(cx);
+                continue;
+            } else if rng.gen_bool(0.1) && !self.excerpt_ids().is_empty() {
+                let ids = self.excerpt_ids();
+                let mut excerpts = HashSet::default();
+                for _ in 0..rng.gen_range(0..ids.len()) {
+                    excerpts.extend(ids.choose(rng).copied());
+                }
+
+                let line_count = rng.gen_range(0..5);
+
+                log::info!("Expanding excerpts {excerpts:?} by {line_count} lines");
+
+                self.expand_excerpts(excerpts.iter().cloned(), line_count, cx);
                 continue;
             }
 
@@ -4437,6 +4452,13 @@ mod tests {
     use std::env;
     use util::test::sample_text;
 
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
+
     #[gpui::test]
     fn test_singleton(cx: &mut AppContext) {
         let buffer = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
@@ -5228,9 +5250,44 @@ mod tests {
 
         for _ in 0..operations {
             match rng.gen_range(0..100) {
-                0..=19 if !buffers.is_empty() => {
+                0..=14 if !buffers.is_empty() => {
                     let buffer = buffers.choose(&mut rng).unwrap();
                     buffer.update(cx, |buf, cx| buf.randomly_edit(&mut rng, 5, cx));
+                }
+                15..=19 if !expected_excerpts.is_empty() => {
+                    multibuffer.update(cx, |multibuffer, cx| {
+                        let ids = multibuffer.excerpt_ids();
+                        let mut excerpts = HashSet::default();
+                        for _ in 0..rng.gen_range(0..ids.len()) {
+                            excerpts.extend(ids.choose(&mut rng).copied());
+                        }
+
+                        let line_count = rng.gen_range(0..5);
+
+                        let excerpt_ixs = excerpts
+                            .iter()
+                            .map(|id| excerpt_ids.iter().position(|i| i == id).unwrap())
+                            .collect::<Vec<_>>();
+                        log::info!("Expanding excerpts {excerpt_ixs:?} by {line_count} lines");
+                        multibuffer.expand_excerpts(excerpts.iter().cloned(), line_count, cx);
+
+                        if line_count > 0 {
+                            for id in excerpts {
+                                let excerpt_ix = excerpt_ids.iter().position(|&i| i == id).unwrap();
+                                let (buffer, range) = &mut expected_excerpts[excerpt_ix];
+                                let snapshot = buffer.read(cx).snapshot();
+                                let mut point_range = range.to_point(&snapshot);
+                                point_range.start =
+                                    Point::new(point_range.start.row.saturating_sub(line_count), 0);
+                                point_range.end = snapshot.clip_point(
+                                    Point::new(point_range.end.row + line_count, 0),
+                                    Bias::Left,
+                                );
+                                *range = snapshot.anchor_before(point_range.start)
+                                    ..snapshot.anchor_after(point_range.end);
+                            }
+                        }
+                    });
                 }
                 20..=29 if !expected_excerpts.is_empty() => {
                     let mut ids_to_remove = vec![];
@@ -5294,8 +5351,9 @@ mod tests {
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
                         let base_text = util::RandomCharIter::new(&mut rng)
-                            .take(10)
+                            .take(25)
                             .collect::<String>();
+
                         buffers.push(cx.new_model(|cx| Buffer::local(base_text, cx)));
                         buffers.last().unwrap()
                     } else {
