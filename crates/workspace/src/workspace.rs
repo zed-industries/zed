@@ -4994,7 +4994,7 @@ impl Element for DisconnectedOverlay {
 
     fn after_layout(
         &mut self,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         overlay: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {

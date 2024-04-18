@@ -649,7 +649,7 @@ mod element {
         children: Vec<PaneAxisChildLayout>,
     }
 
-    struct PaneAxisChildLayout {
+    pub struct PaneAxisChildLayout {
         bounds: Bounds<Pixels>,
         element: AnyElement,
         handle: Option<PaneAxisHandleLayout>,
@@ -793,6 +793,7 @@ mod element {
 
     impl Element for PaneAxisElement {
         type BeforeLayout = ();
+        type AfterLayout = Vec<PaneAxisChildLayout>;
         type BeforePaint = PaneAxisLayout;
 
         fn before_layout(
@@ -808,21 +809,12 @@ mod element {
             (cx.request_layout(&style, None), ())
         }
 
-        fn before_paint(
+        fn after_layout(
             &mut self,
             bounds: Bounds<Pixels>,
-            _state: &mut Self::BeforeLayout,
+            _before_layout: &mut Self::BeforeLayout,
             cx: &mut ElementContext,
-        ) -> PaneAxisLayout {
-            let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
-                Some(self.basis.into()),
-                |state, _cx| {
-                    let state = state
-                        .unwrap()
-                        .unwrap_or_else(|| Rc::new(RefCell::new(None)));
-                    (state.clone(), Some(state))
-                },
-            );
+        ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
             let flexes = self.flexes.lock().clone();
             let len = self.children.len();
             debug_assert!(flexes.len() == len);
@@ -844,13 +836,9 @@ mod element {
             let mut origin = bounds.origin;
             let space_per_flex = bounds.size.along(self.axis) / total_flex;
 
-            let mut bounding_boxes = self.bounding_boxes.lock();
-            bounding_boxes.clear();
+            let mut focus_target_bounds = None;
 
-            let mut layout = PaneAxisLayout {
-                dragged_handle: dragged_handle.clone(),
-                children: Vec::new(),
-            };
+            let mut children = Vec::new();
             for (ix, mut child) in mem::take(&mut self.children).into_iter().enumerate() {
                 let child_flex = active_pane_magnification
                     .map(|magnification| {
@@ -866,25 +854,76 @@ mod element {
                     .size
                     .apply_along(self.axis, |_| space_per_flex * child_flex)
                     .map(|d| d.round());
+                let child_bounds = Bounds::new(origin, child_size);
 
-                let child_bounds = Bounds {
-                    origin,
-                    size: child_size,
-                };
-                bounding_boxes.push(Some(child_bounds));
-                child.layout(origin, child_size.into(), cx);
+                let child_measurement = child.layout(child_size.into(), cx);
+                if let Some(child_focus_target_bounds) = child_measurement.focus_target_bounds {
+                    focus_target_bounds = Some(Bounds::new(
+                        child_bounds.origin + child_focus_target_bounds.origin,
+                        child_focus_target_bounds.size,
+                    ));
+                }
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
-                layout.children.push(PaneAxisChildLayout {
+                children.push(PaneAxisChildLayout {
                     bounds: child_bounds,
                     element: child,
                     handle: None,
                 })
             }
 
-            for (ix, child_layout) in layout.children.iter_mut().enumerate() {
-                if active_pane_magnification.is_none() {
-                    if ix < len - 1 {
+            (focus_target_bounds, children)
+        }
+
+        fn before_paint(
+            &mut self,
+            bounds: Bounds<Pixels>,
+            _before_layout: &mut Self::BeforeLayout,
+            children: &mut Self::AfterLayout,
+            cx: &mut ElementContext,
+        ) -> PaneAxisLayout {
+            let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
+                Some(self.basis.into()),
+                |state, _cx| {
+                    let state = state
+                        .unwrap()
+                        .unwrap_or_else(|| Rc::new(RefCell::new(None)));
+                    (state.clone(), Some(state))
+                },
+            );
+
+            let magnification_value = WorkspaceSettings::get(None, cx).active_pane_magnification;
+            let active_pane_magnification = if magnification_value == 1. {
+                None
+            } else {
+                Some(magnification_value)
+            };
+
+            let mut origin = bounds.origin;
+
+            let mut bounding_boxes = self.bounding_boxes.lock();
+            bounding_boxes.clear();
+
+            let mut layout = PaneAxisLayout {
+                dragged_handle: dragged_handle.clone(),
+                children: Vec::new(),
+            };
+            for child in children {
+                let child_bounds = Bounds {
+                    origin,
+                    size: child.bounds.size,
+                };
+                bounding_boxes.push(Some(child_bounds));
+                cx.with_absolute_element_offset(origin, |cx| child.element.before_paint(cx));
+                origin =
+                    origin.apply_along(self.axis, |val| val + child_bounds.size.along(self.axis));
+                child.bounds = child_bounds;
+            }
+
+            if active_pane_magnification.is_none() {
+                let mut child_layouts = layout.children.iter_mut().peekable();
+                while let Some(child_layout) = child_layouts.next() {
+                    if child_layouts.peek().is_some() {
                         child_layout.handle =
                             Some(Self::layout_handle(self.axis, child_layout.bounds, cx));
                     }
@@ -898,6 +937,7 @@ mod element {
             &mut self,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::BeforeLayout,
+            _: &mut Self::AfterLayout,
             layout: &mut Self::BeforePaint,
             cx: &mut ui::prelude::ElementContext,
         ) {
