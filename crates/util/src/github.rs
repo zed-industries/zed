@@ -107,10 +107,7 @@ pub async fn fetch_github_commit_author(
                 Ok(None)
             }
         })
-        .with_context(|| {
-            eprintln!("body_str: {:?}", body_str);
-            format!("deserializing GitHub commit details failed")
-        })?;
+        .context("deserializing GitHub commit details failed")?;
 
     Ok(author)
 }
