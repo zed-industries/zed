@@ -145,6 +145,12 @@ pub(crate) struct Frame {
 }
 
 #[derive(Clone, Default)]
+pub(crate) struct AfterLayoutIndex {
+    accessed_element_states_index: usize,
+    line_layout_index: LineLayoutIndex,
+}
+
+#[derive(Clone, Default)]
 pub(crate) struct BeforePaintIndex {
     hitboxes_index: usize,
     tooltips_index: usize,
@@ -547,6 +553,26 @@ impl<'a> ElementContext<'a> {
         }
         self.window.next_frame.deferred_draws = deferred_draws;
         self.window.element_id_stack.clear();
+    }
+
+    pub(crate) fn after_layout_index(&self) -> AfterLayoutIndex {
+        AfterLayoutIndex {
+            accessed_element_states_index: self.window.next_frame.accessed_element_states.len(),
+            line_layout_index: self.window.text_system.layout_index(),
+        }
+    }
+
+    pub(crate) fn reuse_after_layout(&mut self, range: Range<AfterLayoutIndex>) {
+        let window = &mut self.window;
+        window.next_frame.accessed_element_states.extend(
+            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .cloned(),
+        );
+        window
+            .text_system
+            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
     }
 
     pub(crate) fn before_paint_index(&self) -> BeforePaintIndex {

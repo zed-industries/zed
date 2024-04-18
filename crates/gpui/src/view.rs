@@ -1,8 +1,8 @@
 use crate::{
-    seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, BeforePaintIndex, Bounds,
-    ContentMask, Element, ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle,
-    FocusableView, IntoElement, LayoutId, Model, PaintIndex, Pixels, Render, Style,
-    StyleRefinement, TextStyle, ViewContext, VisualContext, WeakModel,
+    seal::Sealed, AfterLayoutIndex, AnyElement, AnyModel, AnyWeakModel, AppContext,
+    BeforePaintIndex, Bounds, ContentMask, Element, ElementContext, ElementId, Entity, EntityId,
+    Flatten, FocusHandle, FocusableView, IntoElement, LayoutId, Model, PaintIndex, Pixels, Render,
+    Style, StyleRefinement, TextStyle, ViewContext, VisualContext, WeakModel,
 };
 use anyhow::{Context, Result};
 use refineable::Refineable;
@@ -23,14 +23,17 @@ pub struct View<V> {
 impl<V> Sealed for View<V> {}
 
 struct AnyViewState {
+    after_layout_range: Range<AfterLayoutIndex>,
     before_paint_range: Range<BeforePaintIndex>,
     paint_range: Range<PaintIndex>,
+    focus_target_bounds: Option<Bounds<Pixels>>,
     cache_key: ViewCacheKey,
 }
 
 #[derive(Default)]
 struct ViewCacheKey {
-    bounds: Bounds<Pixels>,
+    after_layout_bounds: Bounds<Pixels>,
+    before_paint_bounds: Bounds<Pixels>,
     content_mask: ContentMask<Pixels>,
     text_style: TextStyle,
 }
@@ -241,8 +244,7 @@ impl AnyView {
     /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [ViewContext::notify] has not been called since it was rendered.
     /// The one exception is when [WindowContext::refresh] is called, in which case caching is ignored.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
-        // todo!("re-enable caching")
-        // self.cached_style = Some(style);
+        self.cached_style = Some(style);
         self
     }
 
@@ -314,8 +316,59 @@ impl Element for AnyView {
         element: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
     ) -> (Option<Bounds<Pixels>>, Self::AfterLayout) {
-        if let Some(style) = self.cached_style.as_ref() {
-            todo!()
+        if self.cached_style.is_some() {
+            let focus_target_bounds = cx.with_element_state::<AnyViewState, _>(
+                Some(ElementId::View(self.entity_id())),
+                |element_state, cx| {
+                    let mut element_state = element_state.unwrap();
+                    let text_style = cx.text_style();
+
+                    if let Some(mut element_state) = element_state {
+                        if element_state.cache_key.after_layout_bounds == bounds
+                            && element_state.cache_key.text_style == text_style
+                            && !cx.window.dirty_views.contains(&self.entity_id())
+                            && !cx.window.refreshing
+                        {
+                            let after_layout_start = cx.after_layout_index();
+                            cx.reuse_after_layout(element_state.after_layout_range.clone());
+                            let after_layout_end = cx.after_layout_index();
+                            element_state.after_layout_range = after_layout_start..after_layout_end;
+                            return (element_state.focus_target_bounds, Some(element_state));
+                        }
+                    }
+
+                    let after_layout_start = cx.after_layout_index();
+                    let mut rendered_element = (self.render)(self, cx);
+                    let element_measurement = rendered_element.layout(bounds.size.into(), cx);
+                    *element = Some(rendered_element);
+                    let focus_target_bounds =
+                        element_measurement
+                            .focus_target_bounds
+                            .map(|focus_target_bounds| {
+                                Bounds::new(
+                                    bounds.origin + focus_target_bounds.origin,
+                                    focus_target_bounds.size,
+                                )
+                            });
+                    let after_layout_end = cx.after_layout_index();
+
+                    let view_state = AnyViewState {
+                        after_layout_range: after_layout_start..after_layout_end,
+                        before_paint_range: BeforePaintIndex::default()
+                            ..BeforePaintIndex::default(),
+                        paint_range: PaintIndex::default()..PaintIndex::default(),
+                        focus_target_bounds,
+                        cache_key: ViewCacheKey {
+                            after_layout_bounds: bounds,
+                            text_style,
+                            ..Default::default()
+                        },
+                    };
+
+                    (focus_target_bounds, Some(view_state))
+                },
+            );
+            (focus_target_bounds, ())
         } else {
             cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
                 let bounds = element.as_mut().unwrap().after_layout(cx);
@@ -336,43 +389,45 @@ impl Element for AnyView {
             cx.with_element_state::<AnyViewState, _>(
                 Some(ElementId::View(self.entity_id())),
                 |element_state, cx| {
-                    todo!()
-                    // let mut element_state = element_state.unwrap();
+                    let mut element_state = element_state.unwrap().unwrap();
+                    let content_mask = cx.content_mask();
 
-                    // let content_mask = cx.content_mask();
-                    // let text_style = cx.text_style();
+                    if let Some(element) = element {
+                        let before_paint_start = cx.before_paint_index();
+                        cx.with_absolute_element_offset(bounds.origin, |cx| {
+                            element.before_paint(cx)
+                        });
+                        let before_paint_end = cx.before_paint_index();
+                        element_state.before_paint_range = before_paint_start..before_paint_end;
+                        element_state.cache_key.before_paint_bounds = bounds;
+                        element_state.cache_key.content_mask = content_mask;
+                    } else if element_state.cache_key.before_paint_bounds == bounds
+                        && element_state.cache_key.content_mask == content_mask
+                    {
+                        let before_paint_start = cx.before_paint_index();
+                        cx.reuse_before_paint(element_state.before_paint_range.clone());
+                        let before_paint_end = cx.before_paint_index();
+                        element_state.before_paint_range = before_paint_start..before_paint_end;
+                    } else {
+                        let mut rendered_element = (self.render)(self, cx);
+                        let after_layout_start = cx.after_layout_index();
+                        rendered_element.layout(bounds.size.into(), cx);
+                        let after_layout_end = cx.after_layout_index();
 
-                    // if let Some(mut element_state) = element_state {
-                    //     if element_state.cache_key.bounds == bounds
-                    //         && element_state.cache_key.content_mask == content_mask
-                    //         && element_state.cache_key.text_style == text_style
-                    //         && !cx.window.dirty_views.contains(&self.entity_id())
-                    //         && !cx.window.refreshing
-                    //     {
-                    //         let before_paint_start = cx.before_paint_index();
-                    //         cx.reuse_before_paint(element_state.before_paint_range.clone());
-                    //         let before_paint_end = cx.before_paint_index();
-                    //         element_state.before_paint_range = before_paint_start..before_paint_end;
-                    //         return (None, Some(element_state));
-                    //     }
-                    // }
+                        let before_paint_start = cx.before_paint_index();
+                        cx.with_absolute_element_offset(bounds.origin, |cx| {
+                            rendered_element.before_paint(cx)
+                        });
+                        let before_paint_end = cx.before_paint_index();
+                        element_state.after_layout_range = after_layout_start..after_layout_end;
+                        element_state.before_paint_range = before_paint_start..before_paint_end;
+                        element_state.cache_key.before_paint_bounds = bounds;
+                        element_state.cache_key.content_mask = content_mask;
 
-                    // let before_paint_start = cx.before_paint_index();
-                    // let element = element.get_or_insert((self.render)(self, cx));
-                    // element.layout(bounds.origin, bounds.size.into(), cx);
+                        *element = Some(rendered_element);
+                    }
 
-                    // let before_paint_end = cx.before_paint_index();
-
-                    // let view_state = AnyViewState {
-                    //     before_paint_range: before_paint_start..before_paint_end,
-                    //     paint_range: PaintIndex::default()..PaintIndex::default(),
-                    //     cache_key: ViewCacheKey {
-                    //         bounds,
-                    //         content_mask,
-                    //         text_style,
-                    //     },
-                    // };
-                    // ((), Some(view_state))
+                    ((), Some(element_state))
                 },
             )
         } else {
