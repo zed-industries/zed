@@ -77,7 +77,6 @@ fn main() {
 
         cx.spawn(|mut cx| async move {
             let project_path = Path::new(&args[1]);
-            dbg!(project_path);
             let project = Project::example([project_path], &mut cx).await;
             let mut semantic_index = semantic_index.await?;
 

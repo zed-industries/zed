@@ -259,8 +259,6 @@ impl AssistantChat {
                 query.push_str(&chunk);
             }
 
-            dbg!(&query);
-
             anyhow::Ok(query)
         })
     }
@@ -645,7 +643,7 @@ impl Render for CodebaseContext {
                         let expanded = excerpt.expanded;
                         let element_id = excerpt.element_id.clone();
 
-                        CollapsibleContainer::new(element_id.clone(), expanded.clone())
+                        CollapsibleContainer::new(element_id.clone(), expanded)
                             .start_slot(
                                 h_flex()
                                     .gap_1()
@@ -653,7 +651,6 @@ impl Render for CodebaseContext {
                                     .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
                             )
                             .on_click(cx.listener(move |this, _, cx| {
-                                dbg!("listener callback fired");
                                 this.toggle_expanded(element_id.clone(), cx);
                             }))
                             .child(

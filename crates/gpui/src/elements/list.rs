@@ -215,7 +215,7 @@ impl ListState {
     /// Inform the list state that the items in `old_range` have been replaced
     /// by `count` new items that must be recalculated.
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
-        self.splice_focusable(old_range, (0..count).into_iter().map(|_| None))
+        self.splice_focusable(old_range, (0..count).map(|_| None))
     }
 
     /// Register with the list state that the items in `old_range` have been replaced
@@ -285,7 +285,7 @@ impl ListState {
     }
 
     /// Scroll the list to the given item index and top/bottom offset.
-    /// If the given position is already visibile, this method won't scroll.
+    /// If the given position is already visible, this method won't scroll.
     pub fn scroll_to_fit(
         &self,
         mut item_ix: usize,
