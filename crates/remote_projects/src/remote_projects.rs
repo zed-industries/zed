@@ -1,14 +1,10 @@
 use anyhow::Result;
-use gpui::{
-    actions, AppContext, AsyncAppContext, Context, Global, Model, ModelContext, SharedString, Task,
-};
+use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, SharedString, Task};
 use rpc::{
     proto::{self, DevServerStatus},
     TypedEnvelope,
 };
 use std::{collections::HashMap, sync::Arc};
-
-actions!(projects, [OpenRemote]);
 
 use client::{Client, ProjectId};
 pub use client::{DevServerId, RemoteProjectId};

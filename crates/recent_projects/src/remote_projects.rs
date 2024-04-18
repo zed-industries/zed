@@ -1,13 +1,16 @@
+use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt};
 use gpui::{
     Action, AppContext, ClipboardItem, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Model, ScrollHandle, Task, View, ViewContext,
 };
-use remote_projects::{DevServer, DevServerId, OpenRemote, RemoteProject, RemoteProjectId};
+use remote_projects::{DevServer, DevServerId, RemoteProject, RemoteProjectId};
 use rpc::proto::{self, CreateDevServerResponse, DevServerStatus};
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
 use ui_text_field::TextField;
 use util::ResultExt;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace};
+
+use crate::OpenRemote;
 
 pub struct RemoteProjects {
     mode: Mode,
@@ -38,11 +41,17 @@ enum Mode {
 }
 
 impl RemoteProjects {
-    pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, _: &OpenRemote, cx| {
-            workspace.toggle_modal(cx, |cx| Self::new(cx))
-        });
+    pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        cx.observe_flag::<feature_flags::Remoting, _>(|enabled, workspace, cx| {
+            if enabled {
+                workspace.register_action(|workspace, _: &OpenRemote, cx| {
+                    workspace.toggle_modal(cx, |cx| Self::new(cx))
+                });
+            }
+        })
+        .detach();
     }
+
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let remote_project_path_input = cx.new_view(|cx| TextField::new(cx, "", "Project path"));
         let dev_server_name_input = cx.new_view(|cx| TextField::new(cx, "", "Dev server name"));

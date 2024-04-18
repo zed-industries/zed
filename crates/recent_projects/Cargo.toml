@@ -27,6 +27,7 @@ ui.workspace = true
 ui_text_field.workspace = true
 util.workspace = true
 workspace.workspace = true
+feature_flags.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

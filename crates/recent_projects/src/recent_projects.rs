@@ -1,5 +1,6 @@
 mod remote_projects;
 
+use feature_flags::FeatureFlagAppExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
@@ -18,8 +19,8 @@ use std::{
     sync::Arc,
 };
 use ui::{
-    prelude::*, tooltip_container, ButtonLike, IconWithIndicator, Indicator, Key, KeyBinding,
-    ListItem, ListItemSpacing, Tooltip,
+    prelude::*, tooltip_container, ButtonLike, IconWithIndicator, Indicator, KeyBinding, ListItem,
+    ListItemSpacing, Tooltip,
 };
 use util::{paths::PathExt, ResultExt};
 use workspace::{
@@ -40,6 +41,7 @@ gpui::impl_actions!(projects, [OpenRecent]);
 gpui::actions!(projects, [OpenRemote]);
 
 pub fn init(cx: &mut AppContext) {
+    dbg!("init....');");
     cx.observe_new_views(RecentProjects::register).detach();
     cx.observe_new_views(remote_projects::RemoteProjects::register)
         .detach();
@@ -483,6 +485,9 @@ impl PickerDelegate for RecentProjectsDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        if !cx.has_flag::<feature_flags::Remoting>() {
+            return None;
+        }
         Some(
             h_flex()
                 .border_t_1()
