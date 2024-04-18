@@ -9736,7 +9736,6 @@ dependencies = [
  "file_icons",
  "fuzzy",
  "gpui",
- "itertools 0.11.0",
  "language",
  "picker",
  "project",
