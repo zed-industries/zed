@@ -115,7 +115,7 @@ wayland-protocols = { version = "0.31.2", features = [
 ] }
 oo7 = "0.3.0"
 open = "5.1.2"
-x11rb = { version = "0.13.0", features = ["allow-unsafe-code", "xkb", "randr"] }
+x11rb = { version = "0.13.0", features = ["allow-unsafe-code", "xkb", "randr", "xinput"] }
 xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
