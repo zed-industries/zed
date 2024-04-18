@@ -163,7 +163,7 @@ impl WaylandClientStatePtr {
                 state.mouse_focused_window = Some(window);
             }
         }
-        if state.windows.len() == 0 {
+        if state.windows.is_empty() {
             state
                 .common
                 .foreground_executor
