@@ -308,18 +308,21 @@ impl TerminalPanel {
             return;
         };
 
-        let mut command = std::mem::take(&mut spawn_task.command);
-        let args = std::mem::take(&mut spawn_task.args);
-        for arg in args {
-            command.push(' ');
-            command.push_str(&arg);
-        }
-        spawn_task.command = shell;
-        user_args.extend(["-i".to_owned(), "-c".to_owned(), command]);
+        spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+        let task_command = std::mem::replace(&mut spawn_task.command, shell);
+        let task_args = std::mem::take(&mut spawn_task.args);
+        let combined_command = task_args
+            .into_iter()
+            .fold(task_command, |mut command, arg| {
+                command.push(' ');
+                command.push_str(&arg);
+                command
+            });
+        user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
         spawn_task.args = user_args;
-        spawn_task.command_label = todo!("TODO kb");
-        let reveal = spawn_task.reveal;
+        let spawn_task = spawn_task;
 
+        let reveal = spawn_task.reveal;
         let working_directory = spawn_in_terminal.cwd.clone();
         let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
         let use_new_terminal = spawn_in_terminal.use_new_terminal;
