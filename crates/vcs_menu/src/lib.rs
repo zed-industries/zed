@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Result};
-use fs::repository::Branch;
+use git::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     actions, rems, AnyElement, AppContext, DismissEvent, Element, EventEmitter, FocusHandle,

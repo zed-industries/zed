@@ -50,4 +50,4 @@ windows.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 
 [features]
-test-support = ["gpui/test-support"]
+test-support = ["gpui/test-support", "git/test-support"]

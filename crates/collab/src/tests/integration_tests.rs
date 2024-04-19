@@ -9,8 +9,9 @@ use anyhow::{anyhow, Result};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
-use fs::{repository::GitFileStatus, FakeFs, Fs as _, RemoveOptions};
+use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{channel::mpsc, StreamExt as _};
+use git::repository::GitFileStatus;
 use gpui::{
     px, size, AppContext, BackgroundExecutor, BorrowAppContext, Model, Modifiers, MouseButton,
     MouseDownEvent, TestAppContext,

@@ -1,10 +1,10 @@
+use crate::blame::Blame;
 use anyhow::{Context, Result};
 use collections::HashMap;
-use git::blame::Blame;
 use git2::{BranchType, StatusShow};
 use parking_lot::Mutex;
 use rope::Rope;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     path::{Component, Path, PathBuf},
@@ -59,7 +59,7 @@ pub trait GitRepository: Send {
     fn change_branch(&self, _: &str) -> Result<()>;
     fn create_branch(&self, _: &str) -> Result<()>;
 
-    fn blame(&self, path: &Path, content: Rope) -> Result<git::blame::Blame>;
+    fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -231,7 +231,7 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    fn blame(&self, path: &Path, content: Rope) -> Result<git::blame::Blame> {
+    fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame> {
         let working_directory = self
             .repository
             .workdir()
@@ -240,7 +240,7 @@ impl GitRepository for RealGitRepository {
         const REMOTE_NAME: &str = "origin";
         let remote_url = self.remote_url(REMOTE_NAME);
 
-        git::blame::Blame::for_path(
+        crate::blame::Blame::for_path(
             &self.git_binary_path,
             working_directory,
             path,
@@ -358,7 +358,7 @@ impl GitRepository for FakeGitRepository {
         Ok(())
     }
 
-    fn blame(&self, path: &Path, _content: Rope) -> Result<git::blame::Blame> {
+    fn blame(&self, path: &Path, _content: Rope) -> Result<crate::blame::Blame> {
         let state = self.state.lock();
         state
             .blames

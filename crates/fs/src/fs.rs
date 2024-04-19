@@ -1,5 +1,3 @@
-pub mod repository;
-
 use anyhow::{anyhow, Result};
 
 #[cfg(unix)]
@@ -7,9 +5,9 @@ use std::os::unix::fs::MetadataExt;
 
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
+use git::repository::{GitRepository, RealGitRepository};
 use git2::Repository as LibGitRepository;
 use parking_lot::Mutex;
-use repository::{GitRepository, RealGitRepository};
 use rope::Rope;
 #[cfg(any(test, feature = "test-support"))]
 use smol::io::AsyncReadExt;
@@ -29,7 +27,7 @@ use util::{paths, ResultExt};
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
-use repository::{FakeGitRepositoryState, GitFileStatus};
+use git::repository::{FakeGitRepositoryState, GitFileStatus};
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
@@ -525,7 +523,7 @@ enum FakeFsEntry {
         inode: u64,
         mtime: SystemTime,
         entries: BTreeMap<String, Arc<Mutex<FakeFsEntry>>>,
-        git_repo_state: Option<Arc<Mutex<repository::FakeGitRepositoryState>>>,
+        git_repo_state: Option<Arc<Mutex<git::repository::FakeGitRepositoryState>>>,
     },
     Symlink {
         target: PathBuf,
@@ -1417,7 +1415,7 @@ impl Fs for FakeFs {
             let state = git_repo_state
                 .get_or_insert_with(|| Arc::new(Mutex::new(FakeGitRepositoryState::default())))
                 .clone();
-            Some(repository::FakeGitRepository::open(state))
+            Some(git::repository::FakeGitRepository::open(state))
         } else {
             None
         }

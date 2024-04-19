@@ -11,6 +11,7 @@ pub mod blame;
 pub mod commit;
 pub mod diff;
 pub mod permalink;
+pub mod repository;
 
 lazy_static! {
     pub static ref DOT_GIT: &'static OsStr = OsStr::new(".git");

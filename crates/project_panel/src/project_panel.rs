@@ -8,6 +8,7 @@ use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
+use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
     AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
@@ -17,7 +18,7 @@ use gpui::{
 };
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{
-    repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
+    Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
     Worktree, WorktreeId,
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
