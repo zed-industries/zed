@@ -1,7 +1,7 @@
 use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
-    ToggleReplace, ToggleWholeWord,
+    ToggleReplace, ToggleSelection, ToggleWholeWord,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -68,6 +68,9 @@ pub fn init(cx: &mut AppContext) {
         });
         register_workspace_action(workspace, move |search_bar, _: &ToggleWholeWord, cx| {
             search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+        });
+        register_workspace_action(workspace, move |search_bar, _: &ToggleSelection, cx| {
+            search_bar.toggle_search_option(SearchOptions::SELECTION, cx);
         });
         register_workspace_action(workspace, move |search_bar, _: &ToggleRegex, cx| {
             search_bar.toggle_search_option(SearchOptions::REGEX, cx);
@@ -904,6 +907,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                self.search_options.contains(SearchOptions::SELECTION),
                 included_files,
                 excluded_files,
             ) {
@@ -930,6 +934,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
                 self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
+                self.search_options.contains(SearchOptions::SELECTION),
                 included_files,
                 excluded_files,
             ) {
@@ -1581,6 +1586,9 @@ impl Render for ProjectSearchBar {
             }))
             .on_action(cx.listener(|this, _: &ToggleCaseSensitive, cx| {
                 this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSelection, cx| {
+                this.toggle_search_option(SearchOptions::SELECTION, cx);
             }))
             .on_action(cx.listener(|this, action, cx| {
                 if let Some(search) = this.active_project_search.as_ref() {

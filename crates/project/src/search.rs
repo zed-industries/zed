@@ -42,6 +42,7 @@ pub enum SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        selection: bool,
         inner: SearchInputs,
     },
 
@@ -52,6 +53,7 @@ pub enum SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        selection: bool,
         inner: SearchInputs,
     },
 }
@@ -62,6 +64,7 @@ impl SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        selection: bool,
         files_to_include: Vec<PathMatcher>,
         files_to_exclude: Vec<PathMatcher>,
     ) -> Result<Self> {
@@ -80,6 +83,7 @@ impl SearchQuery {
             whole_word,
             case_sensitive,
             include_ignored,
+            selection,
             inner,
         })
     }
@@ -89,6 +93,7 @@ impl SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        selection: bool,
         files_to_include: Vec<PathMatcher>,
         files_to_exclude: Vec<PathMatcher>,
     ) -> Result<Self> {
@@ -119,6 +124,7 @@ impl SearchQuery {
             whole_word,
             case_sensitive,
             include_ignored,
+            selection,
             inner,
         })
     }
@@ -130,6 +136,7 @@ impl SearchQuery {
                 message.whole_word,
                 message.case_sensitive,
                 message.include_ignored,
+                message.selection,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
             )
@@ -139,6 +146,7 @@ impl SearchQuery {
                 message.whole_word,
                 message.case_sensitive,
                 message.include_ignored,
+                message.selection,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
             )
@@ -167,6 +175,7 @@ impl SearchQuery {
             whole_word: self.whole_word(),
             case_sensitive: self.case_sensitive(),
             include_ignored: self.include_ignored(),
+            selection: self.selection(),
             files_to_include: self
                 .files_to_include()
                 .iter()
@@ -370,6 +379,13 @@ impl SearchQuery {
             Self::Regex {
                 include_ignored, ..
             } => *include_ignored,
+        }
+    }
+
+    pub fn selection(&self) -> bool {
+        match self {
+            Self::Text { selection, .. } => *selection,
+            Self::Regex { selection, .. } => *selection,
         }
     }
 

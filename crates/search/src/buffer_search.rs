@@ -3,7 +3,7 @@ mod registrar;
 use crate::{
     search_bar::render_nav_button, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll,
     ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
 };
 use any_vec::AnyVec;
 use collections::HashMap;
@@ -230,6 +230,14 @@ impl Render for BufferSearchBar {
                         }))
                         .children(supported_options.word.then(|| {
                             self.render_search_option_button(
+                                SearchOptions::SELECTION,
+                                cx.listener(|this, _, cx| {
+                                    this.toggle_selection(&ToggleSelection, cx)
+                                }),
+                            )
+                        }))
+                        .children(supported_options.word.then(|| {
+                            self.render_search_option_button(
                                 SearchOptions::REGEX,
                                 cx.listener(|this, _, cx| this.toggle_regex(&ToggleRegex, cx)),
                             )
@@ -438,6 +446,11 @@ impl BufferSearchBar {
         registrar.register_handler(ForDeployed(|this, action: &ToggleWholeWord, cx| {
             if this.supported_options().word {
                 this.toggle_whole_word(action, cx);
+            }
+        }));
+        registrar.register_handler(ForDeployed(|this, action: &ToggleSelection, cx| {
+            if this.supported_options().word {
+                this.toggle_selection(action, cx);
             }
         }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleReplace, cx| {
@@ -823,6 +836,10 @@ impl BufferSearchBar {
         self.toggle_search_option(SearchOptions::WHOLE_WORD, cx)
     }
 
+    fn toggle_selection(&mut self, _: &ToggleSelection, cx: &mut ViewContext<Self>) {
+        self.toggle_search_option(SearchOptions::SELECTION, cx)
+    }
+
     fn toggle_regex(&mut self, _: &ToggleRegex, cx: &mut ViewContext<Self>) {
         self.toggle_search_option(SearchOptions::REGEX, cx)
     }
@@ -876,6 +893,7 @@ impl BufferSearchBar {
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         false,
+                        self.search_options.contains(SearchOptions::SELECTION),
                         Vec::new(),
                         Vec::new(),
                     ) {
@@ -893,6 +911,7 @@ impl BufferSearchBar {
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         false,
+                        self.search_options.contains(SearchOptions::SELECTION),
                         Vec::new(),
                         Vec::new(),
                     ) {

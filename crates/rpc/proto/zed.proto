@@ -1109,6 +1109,7 @@ message SearchProject {
     string files_to_include = 6;
     string files_to_exclude = 7;
     bool include_ignored = 8;
+    bool selection = 9;
 }
 
 message SearchProjectResponse {
