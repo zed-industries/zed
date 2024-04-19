@@ -1,5 +1,6 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use rpc::proto;
+use util::ResultExt as _;
 
 pub fn language_model_request_to_open_ai(
     request: proto::CompleteWithLanguageModel,
@@ -68,7 +69,15 @@ pub fn language_model_request_to_open_ai(
                             function: open_ai::FunctionDefinition {
                                 name: f.name,
                                 description: f.description,
-                                parameters: rpc::json::from_prost_struct(f.parameters),
+                                parameters: if let Some(params) = &f.parameters {
+                                    Some(
+                                        serde_json::from_str(params)
+                                            .context("failed to deserialize tool parameters")
+                                            .log_err()?,
+                                    )
+                                } else {
+                                    None
+                                },
                             },
                         }
                     }

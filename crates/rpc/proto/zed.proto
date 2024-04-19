@@ -1,8 +1,6 @@
 syntax = "proto3";
 package zed.messages;
 
-import "google/protobuf/struct.proto";
-
 // Looking for a number? Search "// current max"
 
 message PeerId {
@@ -1867,21 +1865,14 @@ message CompleteWithLanguageModel {
 }
 
 message ChatCompletionTool {
-    string type = 1;
-
     oneof variant {
-        FunctionObject function = 2;
+        FunctionObject function = 1;
     }
 
     message FunctionObject {
-        optional string description = 1;
-        string name = 2;
-        /// JSON Schema object for parameters to a function call
-        // FunctionParameters:
-        //       type: object
-        //       description: "The parameters the functions accepts, described as a JSON Schema object. See the [guide](/docs/guides/text-generation/function-calling) for examples, and the [JSON Schema reference](https://json-schema.org/understanding-json-schema/) for documentation about the format. \n\nOmitting `parameters` defines a function with an empty parameter list."
-        //       additionalProperties: true
-        optional google.protobuf.Struct parameters = 3;
+        string name = 1;
+        optional string description = 2;
+        optional string parameters = 3;
     }
 }
 

@@ -105,7 +105,7 @@ pub struct Request {
 pub struct FunctionDefinition {
     pub name: String,
     pub description: Option<String>,
-    pub parameters: Value,
+    pub parameters: Option<Value>,
 }
 
 #[derive(Serialize, Debug)]

@@ -8112,7 +8112,6 @@ dependencies = [
  "parking_lot",
  "prost",
  "prost-build",
- "prost-types",
  "rand 0.8.5",
  "rsa 0.4.0",
  "serde",
