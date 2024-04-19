@@ -113,6 +113,8 @@ impl CompletionProviderBackend for CloudCompletionProvider {
                         .collect(),
                     stop,
                     temperature,
+                    tool_choice: None,
+                    tools: Vec::new(),
                 })
                 .await?;
 

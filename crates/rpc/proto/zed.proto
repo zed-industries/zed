@@ -1,6 +1,8 @@
 syntax = "proto3";
 package zed.messages;
 
+import "google/protobuf/struct.proto";
+
 // Looking for a number? Search "// current max"
 
 message PeerId {
@@ -1860,6 +1862,58 @@ message CompleteWithLanguageModel {
     repeated LanguageModelRequestMessage messages = 2;
     repeated string stop = 3;
     float temperature = 4;
+    repeated ChatCompletionTool tools = 5;
+    optional string tool_choice = 6;
+}
+
+// OpenAI OpenAPI Schema
+// ChatCompletionTool:
+//   type: object
+//   properties:
+//     type:
+//       type: string
+//       enum: ["function"]
+//       description: The type of the tool. Currently, only `function` is supported.
+//     function:
+//       $ref: "#/components/schemas/FunctionObject"
+//   required:
+//     - type
+//     - function
+//
+// FunctionObject:
+//   type: object
+//   properties:
+//     description:
+//       type: string
+//       description: A description of what the function does, used by the model to choose when and how to call the function.
+//     name:
+//       type: string
+//       description: The name of the function to be called. Must be a-z, A-Z, 0-9, or contain underscores and dashes, with a maximum length of 64.
+//     parameters:
+//       $ref: "#/components/schemas/FunctionParameters"
+//   required:
+//     - name
+//
+//
+// FunctionParameters:
+//       type: object
+//       description: "The parameters the functions accepts, described as a JSON Schema object. See the [guide](/docs/guides/text-generation/function-calling) for examples, and the [JSON Schema reference](https://json-schema.org/understanding-json-schema/) for documentation about the format. \n\nOmitting `parameters` defines a function with an empty parameter list."
+//       additionalProperties: true
+
+message ChatCompletionTool {
+    string type = 1;
+
+    oneof variant {
+        FunctionObject function = 2;
+    }
+
+    message FunctionObject {
+        string description = 1;
+        string name = 2;
+        // This field is a JSON Schema object, partially (no $schema, title)
+        // Not sure how to represent this dynamic field
+        google.protobuf.Struct parameters = 3;
+    }
 }
 
 message LanguageModelRequestMessage {

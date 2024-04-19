@@ -149,6 +149,8 @@ impl LanguageModelRequest {
             messages: self.messages.iter().map(|m| m.to_proto()).collect(),
             stop: self.stop.clone(),
             temperature: self.temperature,
+            tool_choice: None,
+            tools: Vec::new(),
         }
     }
 }

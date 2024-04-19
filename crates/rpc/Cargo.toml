@@ -26,6 +26,7 @@ futures.workspace = true
 gpui = { workspace = true, optional = true }
 parking_lot.workspace = true
 prost.workspace = true
+prost-types.workspace = true
 rand.workspace = true
 rsa = "0.4"
 serde.workspace = true
