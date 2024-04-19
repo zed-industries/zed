@@ -156,7 +156,7 @@ impl TaskTemplate {
             &variable_names,
             &mut substituted_variables,
         )?;
-        let args = substitute_all_template_variables_in_vec(
+        let args_with_substitutions = substitute_all_template_variables_in_vec(
             &self.args,
             &task_variables,
             &variable_names,
@@ -187,8 +187,16 @@ impl TaskTemplate {
                 cwd,
                 full_label,
                 label: human_readable_label,
+                command_label: args_with_substitutions.iter().fold(
+                    command.clone(),
+                    |mut command_label, arg| {
+                        command_label.push(' ');
+                        command_label.push_str(arg);
+                        command_label
+                    },
+                ),
                 command,
-                args,
+                args: self.args.clone(),
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,

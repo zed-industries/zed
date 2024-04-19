@@ -293,6 +293,7 @@ pub struct SpawnTask {
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
+    pub command_label: String,
     pub env: HashMap<String, String>,
     pub reveal: RevealStrategy,
 }

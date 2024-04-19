@@ -307,16 +307,16 @@ impl PickerDelegate for TasksModalDelegate {
         let display_label = resolved_task.display_label();
 
         let mut tooltip_label_text = if display_label != &template.label {
-            template.label.clone()
+            resolved_task.resolved_label.clone()
         } else {
             String::new()
         };
-        if let Some(resolved_command) = resolved_task.resolved_command() {
-            if display_label != resolved_command {
+        if let Some(resolved) = resolved_task.resolved.as_ref() {
+            if display_label != resolved.command_label {
                 if !tooltip_label_text.trim().is_empty() {
                     tooltip_label_text.push('\n');
                 }
-                tooltip_label_text.push_str(&resolved_command);
+                tooltip_label_text.push_str(&resolved.command_label);
             }
         }
         let tooltip_label = if tooltip_label_text.trim().is_empty() {
@@ -392,7 +392,7 @@ impl PickerDelegate for TasksModalDelegate {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        task.resolved_command()
+        Some(task.resolved.as_ref()?.command_label.clone())
     }
 
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
