@@ -8,6 +8,7 @@ pub enum CompletionRole {
     User,
     Assistant,
     System,
+    #[allow(dead_code)]
     Tool,
 }
 
