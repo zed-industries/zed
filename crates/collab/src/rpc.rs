@@ -4056,7 +4056,7 @@ async fn complete_with_open_ai(
                 .into_iter()
                 .map(|choice| proto::LanguageModelChoiceDelta {
                     index: choice.index,
-                    delta: Some(proto::LanguageModelResponseMessage {
+                    delta: Some(proto::LanguageModelResponseMessageDelta {
                         role: choice.delta.role.map(|role| match role {
                             open_ai::Role::User => LanguageModelRole::LanguageModelUser,
                             open_ai::Role::Assistant => LanguageModelRole::LanguageModelAssistant,
@@ -4117,7 +4117,7 @@ async fn complete_with_google_ai(
                 .into_iter()
                 .map(|candidate| proto::LanguageModelChoiceDelta {
                     index: candidate.index as u32,
-                    delta: Some(proto::LanguageModelResponseMessage {
+                    delta: Some(proto::LanguageModelResponseMessageDelta {
                         role: Some(match candidate.content.role {
                             google_ai::Role::User => LanguageModelRole::LanguageModelUser,
                             google_ai::Role::Model => LanguageModelRole::LanguageModelAssistant,
@@ -4219,7 +4219,7 @@ async fn complete_with_anthropic(
                             response.send(proto::LanguageModelResponse {
                                 choices: vec![proto::LanguageModelChoiceDelta {
                                     index: 0,
-                                    delta: Some(proto::LanguageModelResponseMessage {
+                                    delta: Some(proto::LanguageModelResponseMessageDelta {
                                         role: Some(current_role as i32),
                                         content: Some(text),
                                         tool_calls: Vec::new(),
@@ -4236,7 +4236,7 @@ async fn complete_with_anthropic(
                     response.send(proto::LanguageModelResponse {
                         choices: vec![proto::LanguageModelChoiceDelta {
                             index: 0,
-                            delta: Some(proto::LanguageModelResponseMessage {
+                            delta: Some(proto::LanguageModelResponseMessageDelta {
                                 role: Some(current_role as i32),
                                 content: Some(text),
                                 tool_calls: Vec::new(),

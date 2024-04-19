@@ -1,10 +1,12 @@
 mod completion_provider;
+mod tools;
 
 use anyhow::Result;
-use client::Client;
+use assistant_tooling::{ToolFunctionCall, ToolRegistry};
+use client::{proto, Client};
 use completion_provider::*;
 use editor::{Editor, EditorEvent};
-use futures::{channel::oneshot, Future, FutureExt as _, StreamExt};
+use futures::{channel::oneshot, future::join_all, Future, FutureExt as _, StreamExt};
 use gpui::{
     list, prelude::*, AnyElement, AppContext, FocusHandle, Global, ListAlignment, ListState, Model,
     Render, Task, View,
@@ -17,6 +19,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{cmp, sync::Arc};
 use theme::ThemeSettings;
+use tools::ProjectIndexTool;
 use ui::{popover_menu, prelude::*, ButtonLike, CollapsibleContainer, Color, ContextMenu, Tooltip};
 use util::ResultExt;
 
@@ -98,6 +101,7 @@ struct AssistantChat {
     fs: Arc<dyn Fs>,
     next_message_id: MessageId,
     pending_completion: Option<Task<()>>,
+    tool_registry: ToolRegistry,
 }
 
 impl AssistantChat {
@@ -119,6 +123,12 @@ impl AssistantChat {
             },
         );
 
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(ProjectIndexTool {
+            project_index: project_index.clone(),
+            fs: fs.clone(),
+        });
+
         let mut this = Self {
             model,
             messages: Vec::new(),
@@ -128,6 +138,7 @@ impl AssistantChat {
             fs,
             next_message_id: MessageId(0),
             pending_completion: None,
+            tool_registry,
         };
         this.push_new_user_message(true, cx);
         this
@@ -153,18 +164,15 @@ impl AssistantChat {
         self.truncate_messages(focused_message_id, cx);
         self.push_new_assistant_message(cx);
 
-        let populate = self.populate_context_on_submit(focused_message_id, mode, cx);
-
         self.pending_completion = Some(cx.spawn(|this, mut cx| async move {
             let complete = async {
-                populate.await?;
-
                 let completion = this.update(&mut cx, |this, cx| {
                     CompletionProvider::get(cx).complete(
                         this.model.clone(),
                         this.completion_messages(cx),
                         Vec::new(),
                         1.0,
+                        this.tool_registry.definitions(),
                     )
                 });
 
@@ -172,15 +180,43 @@ impl AssistantChat {
 
                 let mut body = String::new();
 
-                while let Some(chunk) = stream.next().await {
-                    let chunk = chunk?;
+                while let Some(delta) = stream.next().await {
+                    let delta = delta?;
                     this.update(&mut cx, |this, cx| {
                         if let Some(ChatMessage::Assistant(AssistantMessage {
                             body: message_body,
+                            tool_calls: message_tool_calls,
                             ..
                         })) = this.messages.last_mut()
                         {
-                            body.push_str(&chunk);
+                            if let Some(content) = &delta.content {
+                                body.push_str(content);
+                            }
+
+                            for tool_call in delta.tool_calls {
+                                let index = tool_call.index as usize;
+                                if index >= message_tool_calls.len() {
+                                    message_tool_calls.resize_with(index + 1, Default::default);
+                                }
+                                let call = &mut message_tool_calls[index];
+
+                                if let Some(id) = &tool_call.id {
+                                    call.id.push_str(id);
+                                }
+
+                                match tool_call.variant {
+                                    Some(proto::tool_call_delta::Variant::Function(tool_call)) => {
+                                        if let Some(name) = &tool_call.name {
+                                            call.name.push_str(name);
+                                        }
+                                        if let Some(arguments) = &tool_call.arguments {
+                                            call.arguments.push_str(arguments);
+                                        }
+                                    }
+                                    None => {}
+                                }
+                            }
+
                             *message_body =
                                 RichText::new(body.clone(), &[], &this.language_registry);
                             cx.notify();
@@ -194,108 +230,49 @@ impl AssistantChat {
             }
             .await;
 
-            this.update(&mut cx, |this, cx| {
-                if let Err(error) = complete {
+            let tool_tasks = this
+                .update(&mut cx, |this, cx| {
+                    let mut tool_tasks = Vec::new();
+
                     if let Some(ChatMessage::Assistant(AssistantMessage {
                         error: message_error,
+                        tool_calls,
                         ..
                     })) = this.messages.last_mut()
                     {
-                        message_error.replace(SharedString::from(error.to_string()));
-                        cx.notify();
-                    } else {
-                        unreachable!()
+                        if let Err(error) = complete {
+                            message_error.replace(SharedString::from(error.to_string()));
+                            cx.notify();
+                        } else {
+                            for tool_call in tool_calls.iter() {
+                                tool_tasks.push(this.tool_registry.call(tool_call, cx));
+                            }
+                        }
                     }
-                }
 
-                let focus = this
-                    .user_message(focused_message_id)
-                    .body
-                    .focus_handle(cx)
-                    .contains_focused(cx);
-                this.push_new_user_message(focus, cx);
-            })
-            .log_err();
+                    let focus = this
+                        .user_message(focused_message_id)
+                        .body
+                        .focus_handle(cx)
+                        .contains_focused(cx);
+                    this.push_new_user_message(focus, cx);
+
+                    tool_tasks
+                })
+                .log_err();
+
+            if let Some(tool_tasks) = tool_tasks {
+                let tools = join_all(&tool_tasks).await;
+
+                this.update(&mut cx, |this, cx| {
+                    if let Some(ChatMessage::Assistant(AssistantMessage { tool_calls, .. })) =
+                        this.messages.last_mut()
+                    {
+                        *tool_calls = tools;
+                    }
+                });
+            }
         }));
-    }
-
-    /// Set up the query designed for the semantic index, based on previous conversation
-    fn setup_query(&self, cx: &mut ViewContext<Self>) -> Task<Result<String>> {
-        // Let's try another approach where we take the user's previous messages and turn that into a query
-        // by calling for a completion.
-
-        // For now, we'll set up a summary request message, where we tell the model we need something simple to summarize
-
-        let mut query_creation_messages = self.completion_messages(cx);
-
-        query_creation_messages.push(CompletionMessage {
-                role: CompletionRole::System,
-                body: r#"
-                    Turn the user's query into a single search string that can be used to search for code base snippets relevant to the user's query. Everything you respond with will be fed directly to a semantic index.
-
-                    ## Example
-
-                    **User**: How can I create a component in GPUI that works like a `<details>` / `<summary>` pair in HTML?
-
-                    GPUI create component like HTML details summary example
-                    "#.into(),
-            });
-
-        let query = CompletionProvider::get(cx).complete(
-            self.model.clone(),
-            query_creation_messages,
-            Vec::new(),
-            1.0,
-        );
-
-        cx.spawn(|_, _| async move {
-            let mut stream = query.await?;
-
-            // todo!(): Show the query in the UI as part of the context view
-            let mut query = String::new();
-
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                query.push_str(&chunk);
-            }
-
-            anyhow::Ok(query)
-        })
-    }
-
-    // Returns a oneshot channel which resolves to true when the context is successfully populated.
-    fn populate_context_on_submit(
-        &mut self,
-        submitted_id: MessageId,
-        mode: &SubmitMode,
-        cx: &mut ViewContext<Self>,
-    ) -> oneshot::Receiver<bool> {
-        let (tx, rx) = oneshot::channel();
-
-        match mode {
-            SubmitMode::Simple => {
-                tx.send(true).ok();
-            }
-            SubmitMode::CurrentFile => {
-                tx.send(true).ok();
-            }
-            SubmitMode::Codebase => {
-                self.user_message(submitted_id).contexts.clear();
-
-                let query = self.setup_query(cx);
-
-                let project_index = self.project_index.clone();
-                let fs = self.fs.clone();
-
-                self.user_message(submitted_id)
-                    .contexts
-                    .push(AssistantContext::Codebase(cx.new_view(|cx| {
-                        CodebaseContext::new(query, tx, project_index, fs, cx)
-                    })));
-            }
-        }
-
-        rx
     }
 
     fn user_message(&mut self, message_id: MessageId) -> &mut UserMessage {
@@ -364,6 +341,7 @@ impl AssistantChat {
         let message = ChatMessage::Assistant(AssistantMessage {
             id: self.next_message_id.post_inc(),
             body: RichText::default(),
+            tool_calls: Vec::new(),
             error: None,
         });
         self.push_message(message, cx);
@@ -428,11 +406,16 @@ impl AssistantChat {
                         .text_color(cx.theme().colors().editor_foreground)
                         .font(ThemeSettings::get_global(cx).buffer_font.clone())
                         .bg(cx.theme().colors().editor_background)
-                        .child(body.clone())
-                        .children(contexts.iter().map(|context| context.render(cx))),
+                        .child(body.clone()), // .children(contexts.iter().map(|context| context.render(cx))),
                 )
                 .into_any(),
-            ChatMessage::Assistant(AssistantMessage { id, body, error }) => div()
+            ChatMessage::Assistant(AssistantMessage {
+                id,
+                body,
+                error,
+                tool_calls,
+                ..
+            }) => div()
                 .when(!is_last, |element| element.mb_2())
                 .child(
                     div()
@@ -441,7 +424,10 @@ impl AssistantChat {
                 )
                 .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
                 .child(self.render_error(error.clone(), ix, cx))
-                .into_any(),
+                .children(tool_calls.iter().map(|tool_call| {
+                    self.tool_registry.read(cx).render_tool_call(tool_call, cx)
+                })
+                .into_any()
         }
     }
 
@@ -574,10 +560,12 @@ struct UserMessage {
 }
 
 // chain_of_thought: ... -> search -> search_results -> produce_new_message -> send for the real chat message
+struct BuiltToolCall {}
 
 struct AssistantMessage {
     id: MessageId,
     body: RichText,
+    tool_calls: Vec<ToolFunctionCall>,
     error: Option<SharedString>,
 }
 
@@ -761,7 +749,7 @@ impl CodebaseContext {
                     return Vec::new();
                 }
 
-                let mut body = "Semantic search reasults for user query:\n".to_string();
+                let mut body = "Semantic search results for user query:\n".to_string();
 
                 for excerpt in excerpts {
                     body.push_str("Excerpt from ");

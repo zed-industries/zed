@@ -1890,7 +1890,7 @@ enum LanguageModelRole {
     LanguageModelTool = 3;
 }
 
-message LanguageModelResponseMessage {
+message LanguageModelResponseMessageDelta {
     optional LanguageModelRole role = 1;
     optional string content = 2;
     repeated ToolCallDelta tool_calls = 3;
@@ -1929,7 +1929,7 @@ message LanguageModelResponse {
 
 message LanguageModelChoiceDelta {
     uint32 index = 1;
-    LanguageModelResponseMessage delta = 2;
+    LanguageModelResponseMessageDelta delta = 2;
     optional string finish_reason = 3;
 }
 

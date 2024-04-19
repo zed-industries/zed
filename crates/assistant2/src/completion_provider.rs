@@ -1,4 +1,5 @@
 use anyhow::Result;
+use assistant_tooling::ToolFunctionDefinition;
 use client::{proto, Client};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::Global;
@@ -39,8 +40,12 @@ impl CompletionProvider {
         messages: Vec<CompletionMessage>,
         stop: Vec<String>,
         temperature: f32,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        self.0.complete(model, messages, stop, temperature)
+        tools: &[ToolFunctionDefinition],
+    ) -> BoxFuture<
+        'static,
+        Result<BoxStream<'static, Result<proto::LanguageModelResponseMessageDelta>>>,
+    > {
+        self.0.complete(model, messages, stop, temperature, tools)
     }
 }
 
@@ -55,7 +60,11 @@ pub trait CompletionProviderBackend: 'static {
         messages: Vec<CompletionMessage>,
         stop: Vec<String>,
         temperature: f32,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
+        tools: &[ToolFunctionDefinition],
+    ) -> BoxFuture<
+        'static,
+        Result<BoxStream<'static, Result<proto::LanguageModelResponseMessageDelta>>>,
+    >;
 }
 
 pub struct CloudCompletionProvider {
@@ -83,8 +92,27 @@ impl CompletionProviderBackend for CloudCompletionProvider {
         messages: Vec<CompletionMessage>,
         stop: Vec<String>,
         temperature: f32,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        tools: &[ToolFunctionDefinition],
+    ) -> BoxFuture<
+        'static,
+        Result<BoxStream<'static, Result<proto::LanguageModelResponseMessageDelta>>>,
+    > {
         let client = self.client.clone();
+        let tools = tools
+            .iter()
+            .filter_map(|tool| {
+                Some(proto::ChatCompletionTool {
+                    variant: Some(proto::chat_completion_tool::Variant::Function(
+                        proto::chat_completion_tool::FunctionObject {
+                            name: tool.name.clone(),
+                            description: Some(tool.description.clone()),
+                            parameters: Some(serde_json::to_string(&tool.parameters).ok()?),
+                        },
+                    )),
+                })
+            })
+            .collect();
+
         async move {
             let stream = client
                 .request_stream(proto::CompleteWithLanguageModel {
@@ -113,15 +141,15 @@ impl CompletionProviderBackend for CloudCompletionProvider {
                         .collect(),
                     stop,
                     temperature,
-                    tool_choice: None,
-                    tools: Vec::new(),
+                    tool_choice: Some("auto".into()),
+                    tools,
                 })
                 .await?;
 
             Ok(stream
                 .filter_map(|response| async move {
                     match response {
-                        Ok(mut response) => Some(Ok(response.choices.pop()?.delta?.content?)),
+                        Ok(mut response) => Some(Ok(response.choices.pop()?.delta?)),
                         Err(error) => Some(Err(error)),
                     }
                 })
