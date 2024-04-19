@@ -928,8 +928,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer {
     ) -> windows::core::Result<()> {
         unsafe {
             let glyphrun = &*glyphrun;
-            let desc = &*glyphrundescription;
             let glyph_count = glyphrun.glyphCount as usize;
+            if glyph_count == 0 {
+                return Ok(());
+            }
+            let desc = &*glyphrundescription;
             let utf16_length_per_glyph = desc.stringLength as usize / glyph_count;
             let context =
                 &mut *(clientdrawingcontext as *const RendererContext as *mut RendererContext);
