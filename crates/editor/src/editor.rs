@@ -7419,8 +7419,10 @@ impl Editor {
         self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
-    pub fn expand_excerpts(&mut self, _: &ExpandExcerpts, cx: &mut ViewContext<Self>) {
+    pub fn expand_excerpts(&mut self, action: &ExpandExcerpts, cx: &mut ViewContext<Self>) {
         let selections = self.selections.disjoint_anchors();
+
+        let lines = if action.lines == 0 { 3 } else { action.lines };
 
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_excerpts(
@@ -7428,7 +7430,7 @@ impl Editor {
                     .into_iter()
                     .map(|selection| selection.head().excerpt_id)
                     .dedup(),
-                3,
+                lines,
                 cx,
             )
         })

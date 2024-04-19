@@ -1706,7 +1706,7 @@ impl EditorElement {
                                                 move |cx| {
                                                     Tooltip::for_action(
                                                         "Expand Excerpt",
-                                                        &ExpandExcerpts,
+                                                        &ExpandExcerpts { lines: 0 },
                                                         cx,
                                                     )
                                                 }
