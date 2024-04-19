@@ -345,7 +345,6 @@ impl WindowsWindowInner {
             let logical_size = logical_size(new_physical_size, scale_factor);
             callback(logical_size, scale_factor);
         }
-        self.invalidate_client_area();
         Some(0)
     }
 
