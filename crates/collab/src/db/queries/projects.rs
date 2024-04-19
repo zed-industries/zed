@@ -1002,7 +1002,7 @@ impl Database {
                         room_id: ActiveValue::Set(None),
                         ..project.into_active_model()
                     })
-                    .exec(&*tx)
+                    .exec(tx)
                     .await?;
                 }
                 Some(ChannelRole::Admin)

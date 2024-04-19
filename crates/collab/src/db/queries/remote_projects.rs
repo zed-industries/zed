@@ -57,7 +57,7 @@ impl Database {
         let dev_servers = dev_server::Entity::find()
             .filter(dev_server::Column::UserId.eq(user_id))
             .find_with_related(remote_project::Entity)
-            .all(&*tx)
+            .all(tx)
             .await?;
 
         Ok(dev_servers
