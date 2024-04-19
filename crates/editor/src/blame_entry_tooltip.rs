@@ -10,8 +10,8 @@ use std::hash::Hash;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{
     div, h_flex, tooltip_container, v_flex, Avatar, Button, ButtonStyle, Clickable as _, Color,
-    FluentBuilder, IconName, IconPosition, InteractiveElement as _, IntoElement, SharedString,
-    Styled as _, ViewContext,
+    FluentBuilder, Icon, IconName, IconPosition, InteractiveElement as _, IntoElement,
+    SharedString, Styled as _, ViewContext,
 };
 use ui::{ButtonCommon, Disableable as _};
 use workspace::Workspace;
@@ -39,14 +39,18 @@ impl<'a> CommitAvatar<'a> {
 
         let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha);
 
-        cx.with_element_context(|cx| {
+        let element = cx.with_element_context(|cx| {
             match cx.use_cached_asset::<CommitAvatarAsset>(&avatar_url) {
                 // Loading or no avatar found
-                None | Some(None) => Some(div().w(gpui::rems(1.)).into_any()),
+                None | Some(None) => Icon::new(IconName::Person)
+                    .color(Color::Muted)
+                    .into_element()
+                    .into_any(),
                 // Found
-                Some(Some(url)) => Some(Avatar::new(url.to_string()).into_element().into_any()),
+                Some(Some(url)) => Avatar::new(url.to_string()).into_element().into_any(),
             }
-        })
+        });
+        Some(element)
     }
 }
 
