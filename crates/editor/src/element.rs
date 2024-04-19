@@ -3089,12 +3089,8 @@ fn render_inline_blame_entry(
     let text = format!("{}, {}", author, relative_timestamp);
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
-    let avatar_url = details
-        .as_ref()
-        .and_then(|details| blame_entry_avatar_url(blame_entry.sha, details, cx));
 
-    let tooltip =
-        cx.new_view(|_| BlameEntryTooltip::new(blame_entry, details, avatar_url, style, workspace));
+    let tooltip = cx.new_view(|_| BlameEntryTooltip::new(blame_entry, details, style, workspace));
 
     h_flex()
         .id("inline-blame")
@@ -3152,7 +3148,6 @@ fn blame_entry_absolute_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) 
 struct BlameEntryTooltip {
     blame_entry: BlameEntry,
     details: Option<CommitDetails>,
-    avatar_url: Option<SharedString>,
     style: EditorStyle,
     workspace: Option<WeakView<Workspace>>,
     scroll_handle: ScrollHandle,
@@ -3162,7 +3157,6 @@ impl BlameEntryTooltip {
     fn new(
         blame_entry: BlameEntry,
         details: Option<CommitDetails>,
-        avatar_url: Option<SharedString>,
         style: &EditorStyle,
         workspace: Option<WeakView<Workspace>>,
     ) -> Self {
@@ -3170,7 +3164,6 @@ impl BlameEntryTooltip {
             style: style.clone(),
             blame_entry,
             details,
-            avatar_url,
             workspace,
             scroll_handle: ScrollHandle::new(),
         }
@@ -3179,6 +3172,10 @@ impl BlameEntryTooltip {
 
 impl Render for BlameEntryTooltip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let avatar_url = self.details.as_ref().and_then(|details| {
+            cx.with_element_context(|cx| blame_entry_avatar_url(self.blame_entry.sha, details, cx))
+        });
+
         let author = self
             .blame_entry
             .author
@@ -3221,7 +3218,7 @@ impl Render for BlameEntryTooltip {
                                 .gap_x_2()
                                 .overflow_x_hidden()
                                 .flex_wrap()
-                                .when_some(self.avatar_url.clone(), |this, avatar_url| {
+                                .when_some(avatar_url, |this, avatar_url| {
                                     this.child(Avatar::new(avatar_url.to_string()))
                                 })
                                 .child(author)
@@ -3316,18 +3313,8 @@ fn render_blame_entry(
 
     let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
 
-    let avatar_url = details
-        .as_ref()
-        .and_then(|details| blame_entry_avatar_url(blame_entry.sha, details, cx));
-
     let tooltip = cx.new_view(|_| {
-        BlameEntryTooltip::new(
-            blame_entry.clone(),
-            details.clone(),
-            avatar_url,
-            style,
-            workspace,
-        )
+        BlameEntryTooltip::new(blame_entry.clone(), details.clone(), style, workspace)
     });
 
     h_flex()
