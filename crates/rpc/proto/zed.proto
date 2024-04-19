@@ -470,6 +470,7 @@ message CreateRemoteProjectResponse {
 }
 
 message CreateDevServer {
+    reserved 1;
     string name = 2;
 }
 
@@ -1139,6 +1140,7 @@ message UpdateChannels {
     repeated HostedProject hosted_projects = 10;
     repeated uint64 deleted_hosted_projects = 11;
 
+    reserved 12;
     reserved 13;
     reserved 14;
     reserved 15;
