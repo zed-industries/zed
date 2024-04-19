@@ -9842,7 +9842,6 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand",
- "shlex",
  "smol",
  "task",
  "terminal",
