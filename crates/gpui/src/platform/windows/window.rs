@@ -371,16 +371,8 @@ impl WindowsWindowInner {
 
     fn handle_timer_msg(&self, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
-            println!("Timer");
-            // self.invalidate_client_area();
-            unsafe {
-                RedrawWindow(
-                    self.hwnd,
-                    None,
-                    HRGN::default(),
-                    RDW_INVALIDATE | RDW_UPDATENOW,
-                );
-            }
+            self.platform_inner.run_foreground_tasks();
+            self.handle_paint_msg();
             return Some(0);
         }
         None
