@@ -24,13 +24,10 @@ text.workspace = true
 time.workspace = true
 url.workspace = true
 serde.workspace = true
-<<<<<<< HEAD
 rope.workspace = true
 util.workspace = true
 parking_lot.workspace = true
-=======
 windows.workspace = true
->>>>>>> main
 
 [dev-dependencies]
 unindent.workspace = true
