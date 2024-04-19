@@ -17,10 +17,7 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use project::{
-    Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
-    Worktree, WorktreeId,
-};
+use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use std::{
