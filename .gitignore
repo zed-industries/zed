@@ -6,6 +6,7 @@
 /plugins/bin
 /script/node_modules
 /script/flatpak/.flatpak-builder
+/script/flatpak/generated-sources.json
 /crates/theme/schemas/theme.json
 /crates/collab/.admins.json
 /assets/*licenses.md
