@@ -75,7 +75,6 @@ pub struct CommitDetails {
     pub message: String,
     pub parsed_message: ParsedMarkdown,
     pub permalink: Option<Url>,
-    pub avatar_url: Option<Url>,
     pub remote: Option<GitRemote>,
 }
 
@@ -446,7 +445,6 @@ async fn parse_commit_messages(
                 parsed_message,
                 permalink,
                 remote,
-                avatar_url: None,
             },
         );
     }
