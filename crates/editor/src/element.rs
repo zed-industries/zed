@@ -3391,20 +3391,26 @@ fn insert_deleted_hunk_block(
     deleted_text: String,
     cx: &mut ViewContext<'_, Editor>,
 ) {
-    let height = deleted_text.lines().count() as u8;
     let language = editor.language_at(position, cx);
+    let mut deleted_color = cx.theme().status().git().deleted;
+    deleted_color.fade_out(0.7);
+
+    let (editor_height, editor_with_deleted_text) =
+        editor_with_deleted_text(language, deleted_text, deleted_color, cx);
+    let parent_gutter_width = editor.gutter_width;
     let new_block_ids = editor.insert_blocks(
         Some(BlockProperties {
             position,
-            height,
+            height: editor_height,
             style: BlockStyle::Flex,
-            render: render_deleted_block(
-                language,
-                editor.gutter_width,
-                deleted_text,
-                height as f32,
-                cx,
-            ),
+            render: Box::new(move |_| {
+                div()
+                    .bg(deleted_color)
+                    .size_full()
+                    .pl(parent_gutter_width)
+                    .child(editor_with_deleted_text.clone())
+                    .into_any_element()
+            }),
             disposition: BlockDisposition::Above,
         }),
         None,
@@ -3413,26 +3419,19 @@ fn insert_deleted_hunk_block(
     editor.git_blocks.extend(new_block_ids);
 }
 
-fn render_deleted_block(
+fn editor_with_deleted_text(
     language: Option<Arc<Language>>,
-    parent_gutter_width: Pixels,
     deleted_text: String,
-    height: f32,
+    deleted_color: Hsla,
     cx: &mut ViewContext<'_, Editor>,
-) -> Box<dyn Send + Fn(&mut BlockContext) -> AnyElement> {
-    let mut deleted_color = cx.theme().status().git().deleted;
-    deleted_color.fade_out(0.7);
-
-    let removed_editor = cx.new_view(|cx| {
+) -> (u8, View<Editor>) {
+    let deleted_text_line_count = deleted_text.lines().count() as u8;
+    let editor = cx.new_view(|cx| {
         let mut editor = Editor::multi_line(cx);
         editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
         editor.show_wrap_guides = Some(false);
         editor.show_gutter = false;
-        if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_language(language, cx);
-            })
-        }
+        // TODO kb synthetic drag for selecting scrolls the editor, but should not
         editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_text(deleted_text, cx);
         editor.set_read_only(true);
@@ -3447,14 +3446,25 @@ fn render_deleted_block(
         editor
     });
 
-    Box::new(move |_| {
-        div()
-            .bg(deleted_color)
-            .size_full()
-            .pl(parent_gutter_width)
-            .child(removed_editor.clone())
-            .into_any_element()
-    })
+    let editor_height = editor.update(cx, |editor, cx| {
+        if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
+            let editor_snapshot = editor.snapshot(cx);
+            let display_rows = buffer.update(cx, |buffer, cx| {
+                buffer.set_language(language, cx);
+
+                let buffer_snapshot = buffer.snapshot();
+                let last_point = buffer_snapshot.offset_to_point(buffer.len());
+                last_point
+                    .to_display_point(&editor_snapshot.display_snapshot)
+                    .row() as u8
+            });
+            display_rows.max(deleted_text_line_count)
+        } else {
+            deleted_text_line_count
+        }
+    });
+
+    (editor_height, editor)
 }
 
 fn original_text(
