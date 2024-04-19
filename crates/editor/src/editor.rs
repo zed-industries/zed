@@ -10326,7 +10326,7 @@ impl Render for Editor {
             EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.ui_font.family.clone(),
-                font_features: settings.ui_font.features,
+                font_features: settings.ui_font.features.clone(),
                 font_size: rems(0.875).into(),
                 font_weight: FontWeight::NORMAL,
                 font_style: FontStyle::Normal,
@@ -10340,7 +10340,7 @@ impl Render for Editor {
             EditorMode::Full => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
-                font_features: settings.buffer_font.features,
+                font_features: settings.buffer_font.features.clone(),
                 font_size: settings.buffer_font_size(cx).into(),
                 font_weight: FontWeight::NORMAL,
                 font_style: FontStyle::Normal,
