@@ -37,10 +37,10 @@ impl<'a> CommitAvatar<'a> {
             .and_then(|details| details.remote.as_ref())
             .filter(|remote| remote.hosts_supports_avatars())?;
 
-        let avatar_url = CodeHostAvatarForSha::new(remote.clone(), self.sha);
+        let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha);
 
         cx.with_element_context(|cx| {
-            match cx.use_cached_asset::<CodeHostAvatarForSha>(&avatar_url) {
+            match cx.use_cached_asset::<CommitAvatarAsset>(&avatar_url) {
                 // Loading or no avatar found
                 None | Some(None) => Some(div().w(gpui::rems(1.)).into_any()),
                 // Found
@@ -51,25 +51,25 @@ impl<'a> CommitAvatar<'a> {
 }
 
 #[derive(Clone, Debug)]
-struct CodeHostAvatarForSha {
+struct CommitAvatarAsset {
     sha: Oid,
     remote: GitRemote,
 }
 
-impl Hash for CodeHostAvatarForSha {
+impl Hash for CommitAvatarAsset {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.sha.hash(state);
         self.remote.code_host.hash(state);
     }
 }
 
-impl CodeHostAvatarForSha {
+impl CommitAvatarAsset {
     fn new(remote: GitRemote, sha: Oid) -> Self {
         Self { remote, sha }
     }
 }
 
-impl Asset for CodeHostAvatarForSha {
+impl Asset for CommitAvatarAsset {
     type Source = Self;
     type Output = Option<SharedString>;
 
