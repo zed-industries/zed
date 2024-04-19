@@ -420,7 +420,6 @@ impl<'a> MarkdownParser<'a> {
 
         if let Some(last_block) = self.parsed.last_mut() {
             if let ParsedMarkdownElement::Paragraph(last_paragraph) = last_block {
-                // We have an inline image, insert paragraph start
                 end_source_range = last_paragraph.source_range.end;
                 last_paragraph.source_range.end = source_range.start;
             }

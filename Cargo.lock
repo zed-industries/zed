@@ -5856,6 +5856,7 @@ dependencies = [
  "pulldown-cmark",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 

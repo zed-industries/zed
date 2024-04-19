@@ -5,9 +5,9 @@ use crate::markdown_elements::{
     ParsedMarkdownTableRow, ParsedMarkdownText,
 };
 use gpui::{
-    div, img, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Modifiers,
-    ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
+    div, img, px, rems, AbsoluteLength, AnyElement, AnyView, DefiniteLength, Div, Element,
+    ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
+    Modifiers, ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
 use std::{
     ops::{Mul, Range},
@@ -15,8 +15,9 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme};
 use ui::{
-    h_flex, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
-    StatefulInteractiveElement, Tooltip,
+    h_flex, tooltip_container, v_flex, Checkbox, Color, FluentBuilder, InteractiveElement, Label,
+    LabelCommon, LabelSize, LinkPreview, Render, Selection, StatefulInteractiveElement, Tooltip,
+    VisualContext,
 };
 use workspace::Workspace;
 
@@ -167,11 +168,11 @@ fn render_markdown_image(image: &ParsedMarkdownImage, cx: &mut RenderContext) ->
         } => ImageSource::File(Arc::new(path.clone())),
     };
 
-    let tooltip_text = SharedString::from(if image.title.is_empty() {
+    let tooltip_text = if image.title.is_empty() {
         image.url.clone()
     } else {
         image.title.clone()
-    });
+    };
 
     let workspace = cx.workspace.clone();
 
@@ -183,7 +184,7 @@ fn render_markdown_image(image: &ParsedMarkdownImage, cx: &mut RenderContext) ->
                 .flex_shrink()
                 .child(img(source).object_fit(gpui::ObjectFit::None))
                 .when(!tooltip_text.is_empty(), |this| {
-                    this.tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx))
+                    this.tooltip(move |cx| ImageTooltip::new(&tooltip_text, cx))
                 })
                 .cursor_pointer()
                 .on_click(move |_, cx| {
@@ -472,4 +473,42 @@ fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     let rule = div().w_full().h(px(2.)).bg(cx.border_color);
     div().pt_3().pb_3().child(rule).into_any()
+}
+
+struct ImageTooltip {
+    tooltip_text: SharedString,
+}
+
+impl ImageTooltip {
+    pub fn new(tooltip_text: &str, cx: &mut WindowContext) -> AnyView {
+        let tooltip_text = util::truncate_and_trailoff(tooltip_text, 50).into();
+        cx.new_view(|_| Self { tooltip_text }).into()
+    }
+}
+
+impl Render for ImageTooltip {
+    fn render(&mut self, cx: &mut ui::prelude::ViewContext<Self>) -> impl IntoElement {
+        let tooltip_text = self.tooltip_text.clone();
+        tooltip_container(cx, |el, _| {
+            let secondary_modifier = Keystroke {
+                key: "".to_string(),
+                modifiers: Modifiers::secondary_key(),
+                ime_key: None,
+            };
+
+            el.child(
+                v_flex()
+                    .gap_1()
+                    .child(Label::new(tooltip_text).size(LabelSize::Small))
+                    .child(
+                        Label::new(format!(
+                            "{}-click to open image",
+                            secondary_modifier.to_string()
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+        })
+    }
 }
