@@ -79,6 +79,7 @@ impl WindowsPlatformInner {
             .and_then(|hwnd| try_get_window_inner(*hwnd))
     }
 
+    #[inline]
     pub fn run_foreground_tasks(&self) {
         for runnable in self.main_receiver.drain() {
             runnable.run();
@@ -188,6 +189,7 @@ impl WindowsPlatform {
         Self { inner }
     }
 
+    #[inline]
     fn run_foreground_tasks(&self) {
         self.inner.run_foreground_tasks();
     }
