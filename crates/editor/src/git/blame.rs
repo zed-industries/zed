@@ -13,6 +13,7 @@ use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
 use url::Url;
+use util::http::HttpClient;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -52,6 +53,20 @@ pub struct GitRemote {
     pub code_host: GitHostingProvider,
     pub owner: String,
     pub repo: String,
+}
+
+impl GitRemote {
+    pub fn hosts_supports_avatars(&self) -> bool {
+        self.code_host.supports_avatars()
+    }
+
+    pub async fn avatar_url(&self, commit: Oid, client: Arc<dyn HttpClient>) -> Option<Url> {
+        self.code_host
+            .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
+            .await
+            .ok()
+            .flatten()
+    }
 }
 
 #[derive(Clone, Debug)]

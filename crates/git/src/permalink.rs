@@ -1,8 +1,11 @@
 use core::fmt;
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use url::Url;
+use util::{github, http::HttpClient};
+
+use crate::Oid;
 
 #[derive(Clone, Debug, Hash)]
 pub enum GitHostingProvider {
@@ -51,6 +54,40 @@ impl GitHostingProvider {
                 }
                 Self::Bitbucket => format!("lines-{}:{}", start_line, end_line),
             }
+        }
+    }
+
+    pub fn supports_avatars(&self) -> bool {
+        match self {
+            GitHostingProvider::Github => true,
+            _ => false,
+        }
+    }
+
+    pub async fn commit_author_avatar_url(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: Oid,
+        client: Arc<dyn HttpClient>,
+    ) -> Result<Option<Url>> {
+        match self {
+            GitHostingProvider::Github => {
+                let commit = commit.to_string();
+
+                let author =
+                    github::fetch_github_commit_author(repo_owner, repo, &commit, &client).await?;
+
+                let url = if let Some(author) = author {
+                    let mut url = Url::parse(&author.avatar_url)?;
+                    url.set_query(Some("size=128"));
+                    Some(url)
+                } else {
+                    None
+                };
+                Ok(url)
+            }
+            _ => Ok(None),
         }
     }
 }
