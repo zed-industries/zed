@@ -402,7 +402,7 @@ impl RemoteProjects {
             .child(
                 ModalHeader::new("remote-projects")
                     .show_back_button(true)
-                    .child(Headline::new("New Dev Server").size(HeadlineSize::Small)),
+                    .child(Headline::new("New dev server").size(HeadlineSize::Small)),
             )
             .child(
                 ModalContent::new().child(

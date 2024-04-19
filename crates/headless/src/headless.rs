@@ -166,12 +166,15 @@ impl DevServer {
     }
 
     async fn handle_validate_remote_project_request(
-        _: Model<Self>,
+        this: Model<Self>,
         envelope: TypedEnvelope<proto::ValidateRemoteProjectRequest>,
         client: Arc<Client>,
-        _: AsyncAppContext,
+        cx: AsyncAppContext,
     ) -> Result<()> {
-        let path_exists = std::path::Path::new(&envelope.payload.path).exists();
+        let path = std::path::Path::new(&envelope.payload.path);
+        let fs = cx.read_model(&this, |this, _| this.app_state.fs.clone())?;
+
+        let path_exists = fs.is_dir(path).await;
         if path_exists {
             //TODO actually send the Ack
             client.respond_with_error(

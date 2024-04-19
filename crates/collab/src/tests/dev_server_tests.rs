@@ -4,7 +4,7 @@ use call::ActiveCall;
 use editor::Editor;
 use fs::Fs;
 use gpui::{TestAppContext, VisualTestContext, WindowHandle};
-use rpc::proto::DevServerStatus;
+use rpc::{proto::DevServerStatus, ErrorCode, ErrorExt};
 use serde_json::json;
 use workspace::{AppState, Workspace};
 
@@ -173,6 +173,7 @@ async fn create_remote_project(
     let dev_server = server
         .create_dev_server(resp.access_token, cx_devserver)
         .await;
+
     cx.executor().run_until_parked();
 
     dev_server
@@ -305,4 +306,48 @@ async fn test_dev_server_reconnect(
         })
         .await
         .unwrap();
+}
+
+#[gpui::test]
+async fn test_create_remote_project_path_validation(
+    cx1: &mut gpui::TestAppContext,
+    cx2: &mut gpui::TestAppContext,
+    cx3: &mut gpui::TestAppContext,
+) {
+    let (server, client1) = TestServer::start1(cx1).await;
+    let _channel_id = server
+        .make_channel("test", None, (&client1, cx1), &mut [])
+        .await;
+
+    // Creating a project with a path that does exist should not fail
+    let (_dev_server, _) =
+        create_remote_project(&server, client1.app_state.clone(), cx1, cx2).await;
+
+    cx1.executor().run_until_parked();
+
+    let store = cx1.update(|cx| remote_projects::Store::global(cx).clone());
+
+    let resp = store
+        .update(cx1, |store, cx| {
+            store.create_dev_server("server-2".to_string(), cx)
+        })
+        .await
+        .unwrap();
+    let _dev_server = server.create_dev_server(resp.access_token, cx3).await;
+
+    // Creating a remote project with a path that does not exist should fail
+    let result = store
+        .update(cx1, |store, cx| {
+            store.create_remote_project(
+                client::DevServerId(resp.dev_server_id),
+                "/notfound".to_string(),
+                cx,
+            )
+        })
+        .await;
+    let error = result.unwrap_err();
+    assert!(matches!(
+        error.error_code(),
+        ErrorCode::RemoteProjectPathDoesNotExist
+    ));
 }
