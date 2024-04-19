@@ -10,6 +10,7 @@ pub use lazy_static::lazy_static;
 pub mod blame;
 pub mod commit;
 pub mod diff;
+pub mod hosting_provider;
 pub mod permalink;
 pub mod repository;
 

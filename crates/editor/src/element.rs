@@ -1,13 +1,11 @@
 use crate::{
+    blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     display_map::{
         BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
         TransformBlock,
     },
     editor_settings::{DoubleClickInMultibuffer, MultiCursorModifier, ShowScrollbar},
-    git::{
-        blame::{CommitDetails, GitBlame},
-        diff_hunk_to_display, DisplayDiffHunk,
-    },
+    git::{blame::GitBlame, diff_hunk_to_display, DisplayDiffHunk},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -28,9 +26,9 @@ use gpui::{
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementContext,
     ElementInputHandler, Entity, Hitbox, Hsla, InteractiveElement, IntoElement,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, Stateful, StatefulInteractiveElement, Style, Styled, TextRun, TextStyle,
-    TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
+    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
+    StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
+    ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -52,9 +50,9 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
-use theme::{ActiveTheme, PlayerColor, ThemeSettings};
+use theme::{ActiveTheme, PlayerColor};
+use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
-use ui::{prelude::*, tooltip_container};
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
 
@@ -3046,160 +3044,6 @@ fn render_inline_blame_entry(
         .gap_2()
         .hoverable_tooltip(move |_| tooltip.clone().into())
         .into_any()
-}
-
-fn blame_entry_timestamp(
-    blame_entry: &BlameEntry,
-    format: time_format::TimestampFormat,
-    cx: &WindowContext,
-) -> String {
-    match blame_entry.author_offset_date_time() {
-        Ok(timestamp) => time_format::format_localized_timestamp(
-            timestamp,
-            time::OffsetDateTime::now_utc(),
-            cx.local_timezone(),
-            format,
-        ),
-        Err(_) => "Error parsing date".to_string(),
-    }
-}
-
-fn blame_entry_relative_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) -> String {
-    blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative, cx)
-}
-
-fn blame_entry_absolute_timestamp(blame_entry: &BlameEntry, cx: &WindowContext) -> String {
-    blame_entry_timestamp(
-        blame_entry,
-        time_format::TimestampFormat::MediumAbsolute,
-        cx,
-    )
-}
-
-struct BlameEntryTooltip {
-    blame_entry: BlameEntry,
-    details: Option<CommitDetails>,
-    style: EditorStyle,
-    workspace: Option<WeakView<Workspace>>,
-    scroll_handle: ScrollHandle,
-}
-
-impl BlameEntryTooltip {
-    fn new(
-        blame_entry: BlameEntry,
-        details: Option<CommitDetails>,
-        style: &EditorStyle,
-        workspace: Option<WeakView<Workspace>>,
-    ) -> Self {
-        Self {
-            style: style.clone(),
-            blame_entry,
-            details,
-            workspace,
-            scroll_handle: ScrollHandle::new(),
-        }
-    }
-}
-
-impl Render for BlameEntryTooltip {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let author = self
-            .blame_entry
-            .author
-            .clone()
-            .unwrap_or("<no name>".to_string());
-
-        let author_email = self.blame_entry.author_mail.clone();
-
-        let pretty_commit_id = format!("{}", self.blame_entry.sha);
-        let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
-        let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry, cx);
-
-        let message = self
-            .details
-            .as_ref()
-            .map(|details| {
-                crate::render_parsed_markdown(
-                    "blame-message",
-                    &details.parsed_message,
-                    &self.style,
-                    self.workspace.clone(),
-                    cx,
-                )
-                .into_any()
-            })
-            .unwrap_or("<no commit message>".into_any());
-
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
-        let message_max_height = cx.line_height() * 12 + (ui_font_size / 0.4);
-
-        tooltip_container(cx, move |this, cx| {
-            this.occlude()
-                .on_mouse_move(|_, cx| cx.stop_propagation())
-                .child(
-                    v_flex()
-                        .w(gpui::rems(30.))
-                        .gap_4()
-                        .child(
-                            h_flex()
-                                .gap_x_2()
-                                .overflow_x_hidden()
-                                .flex_wrap()
-                                .child(author)
-                                .when_some(author_email, |this, author_email| {
-                                    this.child(
-                                        div()
-                                            .text_color(cx.theme().colors().text_muted)
-                                            .child(author_email),
-                                    )
-                                })
-                                .pb_1()
-                                .border_b_1()
-                                .border_color(cx.theme().colors().border),
-                        )
-                        .child(
-                            div()
-                                .id("inline-blame-commit-message")
-                                .occlude()
-                                .child(message)
-                                .max_h(message_max_height)
-                                .overflow_y_scroll()
-                                .track_scroll(&self.scroll_handle),
-                        )
-                        .child(
-                            h_flex()
-                                .text_color(cx.theme().colors().text_muted)
-                                .w_full()
-                                .justify_between()
-                                .child(absolute_timestamp)
-                                .child(
-                                    Button::new("commit-sha-button", short_commit_id.clone())
-                                        .style(ButtonStyle::Transparent)
-                                        .color(Color::Muted)
-                                        .icon(IconName::FileGit)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .disabled(
-                                            self.details.as_ref().map_or(true, |details| {
-                                                details.permalink.is_none()
-                                            }),
-                                        )
-                                        .when_some(
-                                            self.details
-                                                .as_ref()
-                                                .and_then(|details| details.permalink.clone()),
-                                            |this, url| {
-                                                this.on_click(move |_, cx| {
-                                                    cx.stop_propagation();
-                                                    cx.open_url(url.as_str())
-                                                })
-                                            },
-                                        ),
-                                ),
-                        ),
-                )
-        })
-    }
 }
 
 fn render_blame_entry(
