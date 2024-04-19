@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+
+Name=Zed
+Comment=Zed is a high-performance, multiplayer code editor.
+Categories=Development;IDE;
+
+Icon=dev.zed.Zed
+Exec=Zed
+Terminal=false

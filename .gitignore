@@ -5,6 +5,7 @@
 .DS_Store
 /plugins/bin
 /script/node_modules
+/script/flatpak/.flatpak-builder
 /crates/theme/schemas/theme.json
 /crates/collab/.admins.json
 /assets/*licenses.md
@@ -24,3 +25,4 @@ DerivedData/
 .venv
 .blob_store
 .vscode
+.flatpak

@@ -1,0 +1,49 @@
+{
+    "id": "dev.zed.Zed",
+    "runtime": "org.freedesktop.Platform",
+    "runtime-version": "23.08",
+    "sdk": "org.freedesktop.Sdk",
+    "sdk-extensions": [
+        "org.freedesktop.Sdk.Extension.rust-stable"
+    ],
+    "command": "Zed",
+    "finish-args": [
+        "--socket=fallback-x11",
+        "--socket=wayland",
+        "--socket=pulseaudio",
+        "--share=network",
+        "--filesystem=host"
+    ],
+    "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin"
+    },
+    "modules": [
+        {
+            "name": "Zed",
+            "buildsystem": "simple",
+            "build-options": {
+                "env": {
+                    "CARGO_HOME": "/run/build/Zed/cargo"
+                }
+            },
+            "build-commands": [
+                "cargo --offline fetch --manifest-path Cargo.toml --verbose",
+                "cargo --offline build --release --verbose",
+                "install -Dm755 ./target/release/Zed -t /app/bin",
+                "mkdir -p /app/share/metainfo",
+                "mkdir -p /app/share/applications",
+                "mkdir -p /app/share/icons/hicolor/scalable/apps",
+                "cp ./assets/packaging/dev.zed.Zed.metainfo.xml /app/share/metainfo",
+                "cp ./assets/packaging/dev.zed.Zed.desktop /app/share/applications",
+                "cp ./assets/packaging/dev.zed.Zed.svg /app/share/icons/hicolor/scalable/apps"
+            ],
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "../../"
+                },
+                "generated-sources.json"
+            ]
+        }
+    ]
+}
