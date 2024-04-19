@@ -4317,6 +4317,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
+ "regex",
  "rope",
  "serde",
  "serde_json",
