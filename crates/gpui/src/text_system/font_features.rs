@@ -103,21 +103,41 @@ macro_rules! create_definitions {
                         formatter.write_str("a map of font features")
                     }
 
+                    #[cfg(not(target_os = "windows"))]
                     fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
                     where
                         M: MapAccess<'de>,
                     {
                         let mut enabled: u64 = 0;
                         let mut disabled: u64 = 0;
-                        #[cfg(target_os = "windows")]
+
+                        while let Some((key, value)) = access.next_entry::<String, Option<bool>>()? {
+                            let idx = match key.as_str() {
+                                $(stringify!($name) => $idx,)*
+                                _ => continue,
+                            };
+                            match value {
+                                Some(true) => enabled |= 1 << idx,
+                                Some(false) => disabled |= 1 << idx,
+                                None => {}
+                            }
+                        }
+                        Ok(FontFeatures { enabled, disabled })
+                    }
+
+                    #[cfg(target_os = "windows")]
+                    fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+                    where
+                        M: MapAccess<'de>,
+                    {
+                        let mut enabled: u64 = 0;
+                        let mut disabled: u64 = 0;
                         let mut other_enabled = "".to_owned();
-                        #[cfg(target_os = "windows")]
                         let mut other_disabled = "".to_owned();
 
                         while let Some((key, value)) = access.next_entry::<String, Option<bool>>()? {
                             let idx = match key.as_str() {
                                 $(stringify!($name) => Some($idx),)*
-                                #[cfg(target_os = "windows")]
                                 other_feature => {
                                     if other_feature.len() != 4 || !other_feature.is_ascii() {
                                         log::error!("Incorrect feature name: {}", other_feature);
@@ -125,8 +145,6 @@ macro_rules! create_definitions {
                                     }
                                     None
                                 },
-                                #[cfg(not(target_os = "windows"))]
-                                _ => continue,
                             };
                             if let Some(idx) = idx {
                                 match value {
@@ -135,7 +153,6 @@ macro_rules! create_definitions {
                                     None => {}
                                 };
                             } else {
-                                #[cfg(target_os = "windows")]
                                 match value {
                                     Some(true) => other_enabled.push_str(key.as_str()),
                                     Some(false) => other_disabled.push_str(key.as_str()),
@@ -143,10 +160,7 @@ macro_rules! create_definitions {
                                 }
                             }
                         }
-                        #[cfg(not(target_os = "windows"))]
-                        return Ok(FontFeatures { enabled, disabled });
-                        #[cfg(target_os = "windows")]
-                        return Ok(FontFeatures { enabled, disabled, other_enabled: other_enabled.into(), other_disabled: other_disabled.into() });
+                        Ok(FontFeatures { enabled, disabled, other_enabled: other_enabled.into(), other_disabled: other_disabled.into() })
                     }
                 }
 
@@ -172,6 +186,16 @@ macro_rules! create_definitions {
                         }
                     }
                 )*
+
+                #[cfg(target_os = "windows")]
+                {
+                    for name in self.other_enabled.as_ref().chars().chunks(4).into_iter() {
+                        map.serialize_entry(name.collect::<String>().as_str(), &true);
+                    }
+                    for name in self.other_disabled.as_ref().chars().chunks(4).into_iter() {
+                        map.serialize_entry(name.collect::<String>().as_str(), &false);
+                    }
+                }
 
                 map.end()
             }
