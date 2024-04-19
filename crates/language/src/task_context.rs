@@ -15,9 +15,9 @@ pub trait ContextProvider: Send + Sync {
     /// Builds a specific context to be placed on top of the basic one (replacing all conflicting entries) and to be used for task resolving later.
     fn build_context(
         &self,
-        _: Option<&Path>,
-        _: &Location,
-        _: &mut AppContext,
+        _worktree_abs_path: Option<&Path>,
+        _location: &Location,
+        _cx: &mut AppContext,
     ) -> Result<TaskVariables> {
         Ok(TaskVariables::default())
     }
