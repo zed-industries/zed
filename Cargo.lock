@@ -4330,6 +4330,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "windows 0.53.0",
 ]
 
 [[package]]
@@ -9740,7 +9741,6 @@ dependencies = [
  "file_icons",
  "fuzzy",
  "gpui",
- "itertools 0.11.0",
  "language",
  "picker",
  "project",
