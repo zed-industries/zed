@@ -190,10 +190,10 @@ macro_rules! create_definitions {
                 #[cfg(target_os = "windows")]
                 {
                     for name in self.other_enabled.as_ref().chars().chunks(4).into_iter() {
-                        map.serialize_entry(name.collect::<String>().as_str(), &true);
+                        map.serialize_entry(name.collect::<String>().as_str(), &true)?;
                     }
                     for name in self.other_disabled.as_ref().chars().chunks(4).into_iter() {
-                        map.serialize_entry(name.collect::<String>().as_str(), &false);
+                        map.serialize_entry(name.collect::<String>().as_str(), &false)?;
                     }
                 }
 
