@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS "followers" (
     "follower_connection_id" INTEGER NOT NULL
 );
 
-CREATE UNIQUE INDEX 
+CREATE UNIQUE INDEX
     "index_followers_on_project_id_and_leader_connection_server_id_and_leader_connection_id_and_follower_connection_server_id_and_follower_connection_id"
 ON "followers" ("project_id", "leader_connection_server_id", "leader_connection_id", "follower_connection_server_id", "follower_connection_id");
 
