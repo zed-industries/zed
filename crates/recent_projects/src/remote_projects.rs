@@ -401,7 +401,6 @@ impl RemoteProjects {
             .gap_px()
             .child(
                 ModalHeader::new("remote-projects")
-                    .show_dismiss_button(true)
                     .show_back_button(true)
                     .child(Headline::new("New Dev Server").size(HeadlineSize::Small)),
             )
