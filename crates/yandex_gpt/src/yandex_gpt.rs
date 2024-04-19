@@ -165,18 +165,22 @@ pub async fn stream_completion(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => match serde_json::from_str::<ResponseResult>(line.as_str()) {
-                        Ok(response) => {
-                            if response
+                        Ok(response) => Some(Ok(ResponseStreamEvent {
+                            alternatives: response
                                 .result
                                 .alternatives
-                                .iter()
-                                .all(|a| a.status == "ALTERNATIVE_STATUS_FINAL")
-                            {
-                                Some(Ok(response.result))
-                            } else {
-                                None
-                            }
-                        }
+                                .into_iter()
+                                .filter(|a| {
+                                    ![
+                                        "ALTERNATIVE_STATUS_UNSPECIFIED",
+                                        "ALTERNATIVE_STATUS_PARTIAL",
+                                        "ALTERNATIVE_STATUS_CONTENT_FILTER",
+                                    ]
+                                    .contains(&a.status.as_str())
+                                })
+                                .collect(),
+                            ..response.result
+                        })),
                         Err(error) => Some(Err(anyhow!(error))),
                     },
                     Err(error) => Some(Err(anyhow!(error))),
