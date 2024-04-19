@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
-use fs::repository::Branch;
 use fuzzy::{StringMatch, StringMatchCandidate};
+use git::repository::Branch;
 use gpui::{
     actions, rems, AnyElement, AppContext, DismissEvent, Element, EventEmitter, FocusHandle,
     FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
