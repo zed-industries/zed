@@ -440,7 +440,7 @@ async fn parse_commit_messages(
             repo: remote.repo.to_string(),
         });
 
-        let pull_request_url = parsed_remote_url
+        let pull_request = parsed_remote_url
             .as_ref()
             .and_then(|remote| extract_pull_request(remote, &message));
 
@@ -451,7 +451,7 @@ async fn parse_commit_messages(
                 parsed_message,
                 permalink,
                 remote,
-                pull_request: pull_request_url,
+                pull_request,
             },
         );
     }
