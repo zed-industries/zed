@@ -4,7 +4,8 @@ use anyhow::Result;
 use collections::HashMap;
 use git::{
     blame::{Blame, BlameEntry},
-    permalink::{build_commit_permalink, parse_git_remote_url, GitHostingProvider},
+    hosting_provider::HostingProvider,
+    permalink::{build_commit_permalink, parse_git_remote_url},
     Oid,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
@@ -50,7 +51,7 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
 
 #[derive(Clone, Debug)]
 pub struct GitRemote {
-    pub code_host: GitHostingProvider,
+    pub code_host: HostingProvider,
     pub owner: String,
     pub repo: String,
 }

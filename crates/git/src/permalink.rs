@@ -1,110 +1,9 @@
-use core::fmt;
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 
 use anyhow::{anyhow, Result};
 use url::Url;
-use util::{github, http::HttpClient};
 
-use crate::Oid;
-
-#[derive(Clone, Debug, Hash)]
-pub enum GitHostingProvider {
-    Github,
-    Gitlab,
-    Gitee,
-    Bitbucket,
-    Sourcehut,
-    Codeberg,
-}
-
-impl GitHostingProvider {
-    fn base_url(&self) -> Url {
-        let base_url = match self {
-            Self::Github => "https://github.com",
-            Self::Gitlab => "https://gitlab.com",
-            Self::Gitee => "https://gitee.com",
-            Self::Bitbucket => "https://bitbucket.org",
-            Self::Sourcehut => "https://git.sr.ht",
-            Self::Codeberg => "https://codeberg.org",
-        };
-
-        Url::parse(&base_url).unwrap()
-    }
-
-    /// Returns the fragment portion of the URL for the selected lines in
-    /// the representation the [`GitHostingProvider`] expects.
-    fn line_fragment(&self, selection: &Range<u32>) -> String {
-        if selection.start == selection.end {
-            let line = selection.start + 1;
-
-            match self {
-                Self::Github | Self::Gitlab | Self::Gitee | Self::Sourcehut | Self::Codeberg => {
-                    format!("L{}", line)
-                }
-                Self::Bitbucket => format!("lines-{}", line),
-            }
-        } else {
-            let start_line = selection.start + 1;
-            let end_line = selection.end + 1;
-
-            match self {
-                Self::Github | Self::Codeberg => format!("L{}-L{}", start_line, end_line),
-                Self::Gitlab | Self::Gitee | Self::Sourcehut => {
-                    format!("L{}-{}", start_line, end_line)
-                }
-                Self::Bitbucket => format!("lines-{}:{}", start_line, end_line),
-            }
-        }
-    }
-
-    pub fn supports_avatars(&self) -> bool {
-        match self {
-            GitHostingProvider::Github => true,
-            _ => false,
-        }
-    }
-
-    pub async fn commit_author_avatar_url(
-        &self,
-        repo_owner: &str,
-        repo: &str,
-        commit: Oid,
-        client: Arc<dyn HttpClient>,
-    ) -> Result<Option<Url>> {
-        match self {
-            GitHostingProvider::Github => {
-                let commit = commit.to_string();
-
-                let author =
-                    github::fetch_github_commit_author(repo_owner, repo, &commit, &client).await?;
-
-                let url = if let Some(author) = author {
-                    let mut url = Url::parse(&author.avatar_url)?;
-                    url.set_query(Some("size=128"));
-                    Some(url)
-                } else {
-                    None
-                };
-                Ok(url)
-            }
-            _ => Ok(None),
-        }
-    }
-}
-
-impl fmt::Display for GitHostingProvider {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            GitHostingProvider::Github => "GitHub",
-            GitHostingProvider::Gitlab => "GitLab",
-            GitHostingProvider::Gitee => "Gitee",
-            GitHostingProvider::Bitbucket => "Bitbucket",
-            GitHostingProvider::Sourcehut => "Sourcehut",
-            GitHostingProvider::Codeberg => "Codeberg",
-        };
-        write!(f, "{}", name)
-    }
-}
+use crate::hosting_provider::HostingProvider;
 
 pub struct BuildPermalinkParams<'a> {
     pub remote_url: &'a str,
@@ -129,12 +28,12 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
         .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
     let path = match provider {
-        GitHostingProvider::Github => format!("{owner}/{repo}/blob/{sha}/{path}"),
-        GitHostingProvider::Gitlab => format!("{owner}/{repo}/-/blob/{sha}/{path}"),
-        GitHostingProvider::Gitee => format!("{owner}/{repo}/blob/{sha}/{path}"),
-        GitHostingProvider::Bitbucket => format!("{owner}/{repo}/src/{sha}/{path}"),
-        GitHostingProvider::Sourcehut => format!("~{owner}/{repo}/tree/{sha}/item/{path}"),
-        GitHostingProvider::Codeberg => format!("{owner}/{repo}/src/commit/{sha}/{path}"),
+        HostingProvider::Github => format!("{owner}/{repo}/blob/{sha}/{path}"),
+        HostingProvider::Gitlab => format!("{owner}/{repo}/-/blob/{sha}/{path}"),
+        HostingProvider::Gitee => format!("{owner}/{repo}/blob/{sha}/{path}"),
+        HostingProvider::Bitbucket => format!("{owner}/{repo}/src/{sha}/{path}"),
+        HostingProvider::Sourcehut => format!("~{owner}/{repo}/tree/{sha}/item/{path}"),
+        HostingProvider::Codeberg => format!("{owner}/{repo}/src/commit/{sha}/{path}"),
     };
     let line_fragment = selection.map(|selection| provider.line_fragment(&selection));
 
@@ -145,7 +44,7 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
 
 #[derive(Debug)]
 pub struct ParsedGitRemote<'a> {
-    pub provider: GitHostingProvider,
+    pub provider: HostingProvider,
     pub owner: &'a str,
     pub repo: &'a str,
 }
@@ -165,12 +64,12 @@ pub fn build_commit_permalink(params: BuildCommitPermalinkParams) -> Url {
     } = remote;
 
     let path = match provider {
-        GitHostingProvider::Github => format!("{owner}/{repo}/commit/{sha}"),
-        GitHostingProvider::Gitlab => format!("{owner}/{repo}/-/commit/{sha}"),
-        GitHostingProvider::Gitee => format!("{owner}/{repo}/commit/{sha}"),
-        GitHostingProvider::Bitbucket => format!("{owner}/{repo}/commits/{sha}"),
-        GitHostingProvider::Sourcehut => format!("~{owner}/{repo}/commit/{sha}"),
-        GitHostingProvider::Codeberg => format!("{owner}/{repo}/commit/{sha}"),
+        HostingProvider::Github => format!("{owner}/{repo}/commit/{sha}"),
+        HostingProvider::Gitlab => format!("{owner}/{repo}/-/commit/{sha}"),
+        HostingProvider::Gitee => format!("{owner}/{repo}/commit/{sha}"),
+        HostingProvider::Bitbucket => format!("{owner}/{repo}/commits/{sha}"),
+        HostingProvider::Sourcehut => format!("~{owner}/{repo}/commit/{sha}"),
+        HostingProvider::Codeberg => format!("{owner}/{repo}/commit/{sha}"),
     };
 
     provider.base_url().join(&path).unwrap()
@@ -186,7 +85,7 @@ pub fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
         let (owner, repo) = repo_with_owner.split_once('/')?;
 
         return Some(ParsedGitRemote {
-            provider: GitHostingProvider::Github,
+            provider: HostingProvider::Github,
             owner,
             repo,
         });
@@ -201,7 +100,7 @@ pub fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
         let (owner, repo) = repo_with_owner.split_once('/')?;
 
         return Some(ParsedGitRemote {
-            provider: GitHostingProvider::Gitlab,
+            provider: HostingProvider::Gitlab,
             owner,
             repo,
         });
@@ -216,7 +115,7 @@ pub fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
         let (owner, repo) = repo_with_owner.split_once('/')?;
 
         return Some(ParsedGitRemote {
-            provider: GitHostingProvider::Gitee,
+            provider: HostingProvider::Gitee,
             owner,
             repo,
         });
@@ -230,7 +129,7 @@ pub fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
             .split_once('/')?;
 
         return Some(ParsedGitRemote {
-            provider: GitHostingProvider::Bitbucket,
+            provider: HostingProvider::Bitbucket,
             owner,
             repo,
         });
@@ -247,7 +146,7 @@ pub fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
         let (owner, repo) = repo_with_owner.split_once('/')?;
 
         return Some(ParsedGitRemote {
-            provider: GitHostingProvider::Sourcehut,
+            provider: HostingProvider::Sourcehut,
             owner,
             repo,
         });
@@ -262,7 +161,7 @@ pub fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
         let (owner, repo) = repo_with_owner.split_once('/')?;
 
         return Some(ParsedGitRemote {
-            provider: GitHostingProvider::Codeberg,
+            provider: HostingProvider::Codeberg,
             owner,
             repo,
         });
@@ -530,7 +429,7 @@ mod tests {
     fn test_parse_git_remote_url_bitbucket_https_with_username() {
         let url = "https://thorstenballzed@bitbucket.org/thorstenzed/testingrepo.git";
         let parsed = parse_git_remote_url(url).unwrap();
-        assert!(matches!(parsed.provider, GitHostingProvider::Bitbucket));
+        assert!(matches!(parsed.provider, HostingProvider::Bitbucket));
         assert_eq!(parsed.owner, "thorstenzed");
         assert_eq!(parsed.repo, "testingrepo");
     }
@@ -539,7 +438,7 @@ mod tests {
     fn test_parse_git_remote_url_bitbucket_https_without_username() {
         let url = "https://bitbucket.org/thorstenzed/testingrepo.git";
         let parsed = parse_git_remote_url(url).unwrap();
-        assert!(matches!(parsed.provider, GitHostingProvider::Bitbucket));
+        assert!(matches!(parsed.provider, HostingProvider::Bitbucket));
         assert_eq!(parsed.owner, "thorstenzed");
         assert_eq!(parsed.repo, "testingrepo");
     }
@@ -548,7 +447,7 @@ mod tests {
     fn test_parse_git_remote_url_bitbucket_git() {
         let url = "git@bitbucket.org:thorstenzed/testingrepo.git";
         let parsed = parse_git_remote_url(url).unwrap();
-        assert!(matches!(parsed.provider, GitHostingProvider::Bitbucket));
+        assert!(matches!(parsed.provider, HostingProvider::Bitbucket));
         assert_eq!(parsed.owner, "thorstenzed");
         assert_eq!(parsed.repo, "testingrepo");
     }
