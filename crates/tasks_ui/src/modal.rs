@@ -233,11 +233,7 @@ impl PickerDelegate for TasksModalDelegate {
                         .map(|(index, (_, candidate))| StringMatchCandidate {
                             id: index,
                             char_bag: candidate.resolved_label.chars().collect(),
-                            string: candidate
-                                .resolved
-                                .as_ref()
-                                .map(|resolved| resolved.label.clone())
-                                .unwrap_or_else(|| candidate.resolved_label.clone()),
+                            string: candidate.display_label().to_owned(),
                         })
                         .collect::<Vec<_>>()
                 })
@@ -306,7 +302,28 @@ impl PickerDelegate for TasksModalDelegate {
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
-        let (source_kind, _) = &candidates.get(hit.candidate_id)?;
+        let (source_kind, resolved_task) = &candidates.get(hit.candidate_id)?;
+        let template = resolved_task.original_task();
+        let display_label = resolved_task.display_label();
+
+        let mut tooltip_label_text = if display_label != &template.label {
+            template.label.clone()
+        } else {
+            String::new()
+        };
+        if let Some(resolved_command) = resolved_task.resolved_command() {
+            if display_label != resolved_command {
+                if !tooltip_label_text.trim().is_empty() {
+                    tooltip_label_text.push('\n');
+                }
+                tooltip_label_text.push_str(&resolved_command);
+            }
+        }
+        let tooltip_label = if tooltip_label_text.trim().is_empty() {
+            None
+        } else {
+            Some(Tooltip::text(tooltip_label_text, cx))
+        };
 
         let highlighted_location = HighlightedText {
             text: hit.string.clone(),
@@ -321,10 +338,14 @@ impl PickerDelegate for TasksModalDelegate {
                 .get_type_icon(&name.to_lowercase())
                 .map(|icon_path| Icon::from_path(icon_path)),
         };
+
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
+                .when_some(tooltip_label, |list_item, item_label| {
+                    list_item.tooltip(move |_| item_label.clone())
+                })
                 .map(|item| {
                     let item = if matches!(source_kind, TaskSourceKind::UserInput)
                         || Some(ix) <= self.last_used_candidate_index
@@ -368,18 +389,10 @@ impl PickerDelegate for TasksModalDelegate {
     }
 
     fn selected_as_query(&self) -> Option<String> {
-        use itertools::intersperse;
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        task.resolved.as_ref().map(|spawn_in_terminal| {
-            let mut command = spawn_in_terminal.command.clone();
-            if !spawn_in_terminal.args.is_empty() {
-                command.push(' ');
-                command.extend(intersperse(spawn_in_terminal.args.clone(), " ".to_string()));
-            }
-            command
-        })
+        task.resolved_command()
     }
 
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
@@ -405,7 +418,11 @@ impl PickerDelegate for TasksModalDelegate {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use editor::Editor;
     use gpui::{TestAppContext, VisualTestContext};
+    use language::Point;
     use project::{FakeFs, Project};
     use serde_json::json;
 
@@ -561,6 +578,100 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_basic_context_for_simple_files(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                ".zed": {
+                    "tasks.json": r#"[
+                        {
+                            "label": "hello from $ZED_FILE:$ZED_ROW:$ZED_COLUMN",
+                            "command": "echo",
+                            "args": ["hello", "from", "$ZED_FILE", ":", "$ZED_ROW", ":", "$ZED_COLUMN"]
+                        },
+                        {
+                            "label": "opened now: $ZED_WORKTREE_ROOT",
+                            "command": "echo",
+                            "args": ["opened", "now:", "$ZED_WORKTREE_ROOT"]
+                        }
+                    ]"#,
+                },
+                "file_without_extension": "aaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaa",
+                "file_with.odd_extension": "b",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            Vec::<String>::new(),
+            "Should list no file or worktree context-dependent when no file is open"
+        );
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+
+        let _ = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/file_with.odd_extension"), true, cx)
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "hello from …th.odd_extension:1:1".to_string(),
+                "opened now: /dir".to_string()
+            ],
+            "Second opened buffer should fill the context, labels should be trimmed if long enough"
+        );
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+
+        let second_item = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/file_without_extension"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let editor = cx.update(|cx| second_item.act_as::<Editor>(cx)).unwrap();
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges(Some(Point::new(1, 2)..Point::new(1, 5)))
+            })
+        });
+        cx.executor().run_until_parked();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "hello from …ithout_extension:2:3".to_string(),
+                "opened now: /dir".to_string()
+            ],
+            "Opened buffer should fill the context, labels should be trimmed if long enough"
+        );
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+    }
+
     fn open_spawn_tasks(
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
@@ -569,7 +680,7 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<TasksModal>(cx)
-                .unwrap()
+                .expect("no task modal after `Spawn` action was dispatched")
                 .read(cx)
                 .picker
                 .clone()

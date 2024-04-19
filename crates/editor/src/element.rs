@@ -363,6 +363,7 @@ impl EditorElement {
         register_action(view, cx, Editor::unique_lines_case_sensitive);
         register_action(view, cx, Editor::accept_partial_inline_completion);
         register_action(view, cx, Editor::revert_selected_hunks);
+        register_action(view, cx, Editor::open_active_item_in_terminal)
     }
 
     fn register_key_listeners(&self, cx: &mut ElementContext, layout: &EditorLayout) {
@@ -500,6 +501,34 @@ impl EditorElement {
             cx,
         );
         cx.stop_propagation();
+    }
+
+    fn mouse_middle_down(
+        editor: &mut Editor,
+        event: &MouseDownEvent,
+        position_map: &PositionMap,
+        text_hitbox: &Hitbox,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
+            return;
+        }
+
+        if let Some(item) = cx.read_from_primary() {
+            let point_for_position =
+                position_map.point_for_position(text_hitbox.bounds, event.position);
+            let position = point_for_position.previous_valid;
+
+            editor.select(
+                SelectPhase::Begin {
+                    position,
+                    add: false,
+                    click_count: 1,
+                },
+                cx,
+            );
+            editor.insert(item.text(), cx);
+        }
     }
 
     fn mouse_up(
@@ -2902,6 +2931,9 @@ impl EditorElement {
                         }),
                         MouseButton::Right => editor.update(cx, |editor, cx| {
                             Self::mouse_right_down(editor, event, &position_map, &text_hitbox, cx);
+                        }),
+                        MouseButton::Middle => editor.update(cx, |editor, cx| {
+                            Self::mouse_middle_down(editor, event, &position_map, &text_hitbox, cx);
                         }),
                         _ => {}
                     };

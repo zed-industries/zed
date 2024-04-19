@@ -14,6 +14,9 @@ use time::OffsetDateTime;
 use time::UtcOffset;
 use url::Url;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 pub use git2 as libgit;
 
 #[derive(Debug, Clone, Default)]
@@ -76,7 +79,9 @@ fn run_git_blame(
     path: &Path,
     contents: &Rope,
 ) -> Result<String> {
-    let child = Command::new(git_binary)
+    let mut child = Command::new(git_binary);
+
+    child
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
@@ -85,7 +90,12 @@ fn run_git_blame(
         .arg(path.as_os_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(windows)]
+    child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+
+    let child = child
         .spawn()
         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
 

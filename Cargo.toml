@@ -260,7 +260,9 @@ futures-batch = "0.6.1"
 futures-lite = "1.13"
 git2 = { version = "0.18", default-features = false }
 globset = "0.4"
-heed = { git = "https://github.com/meilisearch/heed", rev = "036ac23f73a021894974b9adc815bc95b3e0482a", features = ["read-txn-no-tls"] }
+heed = { git = "https://github.com/meilisearch/heed", rev = "036ac23f73a021894974b9adc815bc95b3e0482a", features = [
+    "read-txn-no-tls",
+] }
 hex = "0.4.3"
 ignore = "0.4.22"
 indoc = "1"
@@ -365,10 +367,16 @@ sys-locale = "0.3.1"
 version = "0.53.0"
 features = [
     "implement",
+    "Foundation_Numerics",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
     "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_Imaging",
+    "Win32_Graphics_Imaging_D2D",
     "Win32_Media",
     "Win32_Security",
     "Win32_Security_Credentials",

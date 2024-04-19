@@ -849,6 +849,8 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn write_to_primary(&self, _item: ClipboardItem) {}
+
     fn write_to_clipboard(&self, item: ClipboardItem) {
         let state = self.0.lock();
         unsafe {
@@ -884,6 +886,10 @@ impl Platform for MacPlatform {
                     .setData_forType(metadata_bytes, state.metadata_pasteboard_type);
             }
         }
+    }
+
+    fn read_from_primary(&self) -> Option<ClipboardItem> {
+        None
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {

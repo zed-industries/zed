@@ -69,6 +69,8 @@
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
   "restore_on_startup": "last_workspace",
+  // Size of the drop target in the editor.
+  "drop_target_size": 0.2,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // Whether to pop the completions menu while typing in an editor without

@@ -75,6 +75,26 @@ impl ResolvedTask {
     pub fn substituted_variables(&self) -> &HashSet<VariableName> {
         &self.substituted_variables
     }
+
+    /// If the resolution produced a task with the command, returns a string, combined from its command and arguments.
+    pub fn resolved_command(&self) -> Option<String> {
+        self.resolved.as_ref().map(|resolved| {
+            let mut command = resolved.command.clone();
+            for arg in &resolved.args {
+                command.push(' ');
+                command.push_str(arg);
+            }
+            command
+        })
+    }
+
+    /// A human-readable label to display in the UI.
+    pub fn display_label(&self) -> &str {
+        self.resolved
+            .as_ref()
+            .map(|resolved| resolved.label.as_str())
+            .unwrap_or_else(|| self.resolved_label.as_str())
+    }
 }
 
 /// Variables, available for use in [`TaskContext`] when a Zed's [`TaskTemplate`] gets resolved into a [`ResolvedTask`].
