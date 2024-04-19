@@ -8,12 +8,14 @@ use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use project::project_settings::ProjectSettings;
+use rope::Rope;
 use serde_json::{json, Value};
 use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
     ffi::OsString,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -161,6 +163,27 @@ impl LspAdapter for TypeScriptLspAdapter {
             text,
             runs: vec![(0..len, highlight_id)],
             filter_range: 0..len,
+        })
+    }
+
+    async fn label_for_resolved_completion(
+        &self,
+        completion: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let (label, range, import) = get_details_for_completion(completion)?;
+
+        let source = Rope::from(label.clone());
+        let runs = language.highlight_text(&source, 0..label.len());
+
+        let text = match import {
+            Some(import) => format!("{} \"{}\"", label, import),
+            None => label,
+        };
+        Some(language::CodeLabel {
+            text,
+            runs,
+            filter_range: range,
         })
     }
 
@@ -410,11 +433,226 @@ async fn get_cached_eslint_server_binary(
     .log_err()
 }
 
+fn get_details_for_completion(
+    completion: &lsp::CompletionItem,
+) -> Option<(String, Range<usize>, Option<String>)> {
+    let kind = completion.kind?;
+    let mut scan = completion.detail.as_ref()?.as_str();
+    let import_text = "Auto import from '";
+    let import = if scan.starts_with(import_text) {
+        let slice = &scan[import_text.len()..];
+        let import_end = slice.find("'");
+        let import = match import_end {
+            Some(end) => Some(slice[..end].to_string()),
+            None => return None,
+        };
+        if let Some(offset) = scan.find('\n') {
+            scan = &scan[(offset + 1)..];
+        } else {
+            return None;
+        }
+        import
+    } else {
+        None
+    };
+
+    if scan.starts_with("namespace") {
+        if let Some(offset) = scan.find('\n') {
+            scan = &scan[offset..];
+        } else {
+            return None;
+        }
+    }
+
+    let interface = "interface ";
+    match kind {
+        lsp::CompletionItemKind::CLASS => {
+            let ctor = "constructor ";
+            let typee = "type ";
+            if scan.starts_with(ctor) {
+                let name_end = scan[ctor.len()..].find("(")?;
+                Some((scan.to_string(), ctor.len() + 1..name_end, import))
+            } else if scan.starts_with(typee) {
+                let name_end = scan[typee.len()..].find(" ")?;
+                Some((scan.to_string(), typee.len() + 1..name_end, import))
+            } else {
+                None
+            }
+        }
+        lsp::CompletionItemKind::METHOD => None,
+        lsp::CompletionItemKind::FUNCTION => {
+            let func = "function ";
+            if scan.starts_with(interface) {
+                return None;
+            }
+            let name_end = scan[func.len()..].find("(")?;
+            Some((scan.to_string(), func.len() + 1..name_end, import))
+        }
+        lsp::CompletionItemKind::VARIABLE => {
+            let var = "var ";
+            if scan.starts_with(interface) {
+                return None;
+            }
+            let name_end = scan[var.len()..].find(":")?;
+            Some((scan.to_string(), var.len() + 1..name_end, import))
+        }
+        lsp::CompletionItemKind::CONSTANT => {
+            let constant = "const ";
+            let name_end = scan[constant.len()..].find(":")?;
+            Some((scan.to_string(), constant.len() + 1..name_end, import))
+        }
+        lsp::CompletionItemKind::PROPERTY => None,
+        lsp::CompletionItemKind::FIELD => None,
+        lsp::CompletionItemKind::CONSTRUCTOR => None,
+        lsp::CompletionItemKind::INTERFACE | lsp::CompletionItemKind::ENUM => {
+            let keyword = match kind {
+                lsp::CompletionItemKind::INTERFACE => "interface ",
+                lsp::CompletionItemKind::ENUM => "enum ",
+                _ => unreachable!(),
+            };
+            let name_end = scan[keyword.len()..].find(" ")?;
+            // TODO format long strings? esp. those with newlines
+            Some((scan.to_string(), keyword.len() + 1..name_end, import))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use gpui::{Context, TestAppContext};
+    use super::*;
+    use gpui::{Context, Hsla, TestAppContext};
+    use language::CodeLabel;
+    use node_runtime::FakeNodeRuntime;
+    use std::sync::Arc;
     use text::BufferId;
+    use theme::SyntaxTheme;
     use unindent::Unindent;
+
+    #[gpui::test]
+    fn test_get_completion_details() {
+        let completion = lsp::CompletionItem {
+            label: "foo".to_string(),
+            detail: Some("var foo: string".to_string()),
+            kind: Some(lsp::CompletionItemKind::VARIABLE),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "var foo: string");
+        assert_eq!(range, 4..7);
+        assert_eq!(import, None);
+
+        let completion = lsp::CompletionItem {
+            label: "foo".to_string(),
+            detail: Some("let foo: string".to_string()),
+            kind: Some(lsp::CompletionItemKind::VARIABLE),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "let foo: string");
+        assert_eq!(range, 4..7);
+        assert_eq!(import, None);
+
+        let completion = lsp::CompletionItem {
+            label: "foo".to_string(),
+            detail: Some("function foo()".to_string()),
+            kind: Some(lsp::CompletionItemKind::FUNCTION),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "function foo()");
+        assert_eq!(range, 9..12);
+        assert_eq!(import, None);
+
+        let completion = lsp::CompletionItem {
+            label: "Foo".to_string(),
+            detail: Some("interface Foo {}".to_string()),
+            kind: Some(lsp::CompletionItemKind::INTERFACE),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "interface Foo {}");
+        assert_eq!(range, 10..13);
+        assert_eq!(import, None);
+
+        let completion = lsp::CompletionItem {
+            label: "Foo".to_string(),
+            detail: Some("enum Foo {}".to_string()),
+            kind: Some(lsp::CompletionItemKind::ENUM),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "enum Foo {}");
+        assert_eq!(range, 5..8);
+        assert_eq!(import, None);
+
+        let completion = lsp::CompletionItem {
+            label: "foo".to_string(),
+            detail: Some("const foo: string".to_string()),
+            kind: Some(lsp::CompletionItemKind::CONSTANT),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "const foo: string");
+        assert_eq!(range, 6..9);
+        assert_eq!(import, None);
+
+        let completion = lsp::CompletionItem {
+            label: "Hello".to_string(),
+            detail: Some("constructor Hello()".to_string()),
+            kind: Some(lsp::CompletionItemKind::CLASS),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "constructor Hello()");
+        assert_eq!(range, 12..17);
+        assert_eq!(import, None);
+
+        let completion = lsp::CompletionItem {
+            label: "lchmodSync".to_string(),
+            detail: Some(
+                "Auto import from 'fs'\nfunction lchmodSync(path: PathLike, mode: Mode): void"
+                    .to_string(),
+            ),
+            kind: Some(lsp::CompletionItemKind::FUNCTION),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(
+            label,
+            "function lchmodSync(path: PathLike, mode: Mode): void"
+        );
+        assert_eq!(range, 9..19);
+        assert_eq!(import, Some("fs".to_string()));
+
+        let completion = lsp::CompletionItem {
+          label: "moduleFunctionDocs".to_string(),
+          detail:Some(        "Auto import from 'function-module'\nfunction moduleFunctionDocs(param1: string, param2: number, param3: ModuleClass): [string, number]".to_string()),
+            kind: Some(lsp::CompletionItemKind::FUNCTION),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(
+            label,
+            "function moduleFunctionDocs(param1: string, param2: number, param3: ModuleClass): [string, number]"
+        );
+        assert_eq!(range, 9..27);
+        assert_eq!(import, Some("function-module".to_string()));
+
+        // let completion = lsp::CompletionItem {
+        //   label: "WritableStreamDefaultWriter".to_string(),
+        //   kind: Some(lsp::CompletionItemKind::FUNCTION),
+        //   detail: Some("interface WritableStreamDefaultWriter<W = any>\nvar WritableStreamDefaultWriter: {\n    new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;\n    prototype: WritableStreamDefaultWriter<any>;\n}".to_string()),
+        //   tags: None , ..Default::default()
+        // };
+        // let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        // assert_eq!(
+        //     label,
+        //     "function moduleFunctionDocs(param1: string, param2: number, param3: ModuleClass): [string, number]"
+        // );
+        // assert_eq!(range, 9..27);
+        // assert_eq!(import, Some("function-module".to_string()));
+    }
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
