@@ -5413,6 +5413,7 @@ impl Project {
 
     pub fn resolve_completions(
         &self,
+        language: Option<Arc<Language>>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
@@ -5424,7 +5425,7 @@ impl Project {
         let project_id = self.remote_id();
 
         cx.spawn(move |this, mut cx| async move {
-            let mut did_resolve = false;
+            let mut any_completion_resolved = false;
             if is_remote {
                 let project_id =
                     project_id.ok_or_else(|| anyhow!("Remote project without remote_id"))?;
@@ -5437,7 +5438,7 @@ impl Project {
                             continue;
                         }
 
-                        did_resolve = true;
+                        any_completion_resolved = true;
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
 
@@ -5470,39 +5471,46 @@ impl Project {
                         (server_id, completion)
                     };
 
-                    let server = this
-                        .read_with(&mut cx, |project, _| {
-                            project.language_server_for_id(server_id)
-                        })
-                        .ok()
-                        .flatten();
-                    let Some(server) = server else {
-                        continue;
+                    let (server, lsp_adapter) = match this.read_with(&mut cx, |project, _| {
+                        (
+                            project.language_server_for_id(server_id),
+                            project.language_server_adapter_for_id(server_id),
+                        )
+                    }) {
+                        Ok((server, lsp_adapter)) => match server {
+                            Some(server) => (server, lsp_adapter),
+                            None => continue,
+                        },
+                        Err(_) => continue,
                     };
 
-                    did_resolve = true;
-                    Self::resolve_completion_documentation_local(
+                    let resolved = Self::resolve_completion_documentation_local(
                         server,
+                        language.clone(),
+                        lsp_adapter,
                         completions.clone(),
                         completion_index,
                         completion,
                         language_registry.clone(),
                     )
                     .await;
+                    any_completion_resolved = any_completion_resolved || resolved;
                 }
             }
 
-            Ok(did_resolve)
+            Ok(any_completion_resolved)
         })
     }
 
     async fn resolve_completion_documentation_local(
         server: Arc<lsp::LanguageServer>,
+        language: Option<Arc<Language>>,
+        lsp_adapter: Option<Arc<CachedLspAdapter>>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
         language_registry: Arc<LanguageRegistry>,
-    ) {
+    ) -> bool {
         let can_resolve = server
             .capabilities()
             .completion_provider
@@ -5510,30 +5518,49 @@ impl Project {
             .and_then(|options| options.resolve_provider)
             .unwrap_or(false);
         if !can_resolve {
-            return;
+            return false;
         }
 
         let request = server.request::<lsp::request::ResolveCompletionItem>(completion);
-        let Some(completion_item) = request.await.log_err() else {
-            return;
+
+        let Some(lsp_completion) = request.await.log_err() else {
+            return false;
         };
 
-        if let Some(lsp_documentation) = completion_item.documentation {
-            let documentation = language::prepare_completion_documentation(
-                &lsp_documentation,
-                &language_registry,
-                None, // TODO: Try to reasonably work out which language the completion is for
-            )
-            .await;
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
 
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(documentation);
+        if let Some((lsp_adapter, language)) = lsp_adapter.zip(language.as_ref()) {
+            if let Some(label) = lsp_adapter
+                .adapter
+                .label_for_resolved_completion(&lsp_completion, language)
+                .await
+            {
+                completion.label = label;
+                println!("{:?}", completion.label.filter_range);
+            }
         } else {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
+            completion.label = CodeLabel::plain(
+                lsp_completion.label.clone(),
+                lsp_completion.filter_text.as_deref(),
+            )
         }
+
+        let documentation = match lsp_completion.documentation.as_ref() {
+            Some(lsp_documentation) => {
+                language::prepare_completion_documentation(
+                    lsp_documentation,
+                    &language_registry,
+                    language.clone(),
+                )
+                .await
+            }
+            None => Documentation::Undocumented,
+        };
+
+        completion.documentation = Some(documentation);
+        completion.lsp_completion = lsp_completion;
+        return true;
     }
 
     async fn resolve_completion_documentation_remote(

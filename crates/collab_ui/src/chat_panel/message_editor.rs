@@ -9,8 +9,8 @@ use gpui::{
     Render, SharedString, Task, TextStyle, View, ViewContext, WeakView, WhiteSpace,
 };
 use language::{
-    language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
-    LanguageServerId, ToOffset,
+    language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, Language,
+    LanguageRegistry, LanguageServerId, ToOffset,
 };
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -59,6 +59,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
 
     fn resolve_completions(
         &self,
+        _language: Option<Arc<Language>>,
         _completion_indices: Vec<usize>,
         _completions: Arc<RwLock<Box<[Completion]>>>,
         _cx: &mut ViewContext<Editor>,

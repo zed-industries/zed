@@ -770,6 +770,7 @@ struct CompletionsMenu {
     initial_position: Anchor,
     buffer: Model<Buffer>,
     completions: Arc<RwLock<Box<[Completion]>>>,
+    language: Option<Arc<Language>>,
     match_candidates: Arc<[StringMatchCandidate]>,
     matches: Arc<[StringMatch]>,
     selected_item: usize,
@@ -815,6 +816,7 @@ impl CompletionsMenu {
     }
 
     fn pre_resolve_completion_documentation(
+        language: Option<Arc<Language>>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         matches: Arc<[StringMatch]>,
         editor: &Editor,
@@ -830,6 +832,7 @@ impl CompletionsMenu {
         };
 
         let resolve_task = provider.resolve_completions(
+            language,
             matches.iter().map(|m| m.candidate_id).collect(),
             completions.clone(),
             cx,
@@ -858,7 +861,12 @@ impl CompletionsMenu {
         };
 
         let resolve_task = project.update(cx, |project, cx| {
-            project.resolve_completions(vec![completion_index], self.completions.clone(), cx)
+            project.resolve_completions(
+                self.language.clone(),
+                vec![completion_index],
+                self.completions.clone(),
+                cx,
+            )
         });
 
         let delay_ms =
@@ -3384,6 +3392,7 @@ impl Editor {
         let completions = provider.completions(&buffer, buffer_position, cx);
 
         let id = post_inc(&mut self.next_completion_id);
+        let language = buffer.read(cx).language_at(buffer_position);
         let task = cx.spawn(|this, mut cx| {
             async move {
                 let completions = completions.await.log_err();
@@ -3402,7 +3411,7 @@ impl Editor {
                                 )
                             })
                             .collect(),
-                        buffer,
+                        buffer: buffer,
                         completions: Arc::new(RwLock::new(completions.into())),
                         matches: Vec::new().into(),
                         selected_item: 0,
@@ -3410,6 +3419,7 @@ impl Editor {
                         selected_completion_documentation_resolve_debounce: Arc::new(Mutex::new(
                             DebouncedDelay::new(),
                         )),
+                        language,
                     };
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
@@ -3420,6 +3430,7 @@ impl Editor {
                         this.update(&mut cx, |editor, cx| {
                             let completions = menu.completions.clone();
                             let matches = menu.matches.clone();
+                            let language = menu.language.clone();
 
                             let delay_ms = EditorSettings::get_global(cx)
                                 .completion_documentation_secondary_query_debounce;
@@ -3429,6 +3440,7 @@ impl Editor {
                                 .completion_documentation_pre_resolve_debounce
                                 .fire_new(delay, cx, |editor, cx| {
                                     CompletionsMenu::pre_resolve_completion_documentation(
+                                        language,
                                         completions,
                                         matches,
                                         editor,
@@ -9895,6 +9907,7 @@ pub trait CompletionProvider {
 
     fn resolve_completions(
         &self,
+        language: Option<Arc<Language>>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
@@ -9923,12 +9936,13 @@ impl CompletionProvider for Model<Project> {
 
     fn resolve_completions(
         &self,
+        language: Option<Arc<Language>>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>> {
         self.update(cx, |project, cx| {
-            project.resolve_completions(completion_indices, completions, cx)
+            project.resolve_completions(language, completion_indices, completions, cx)
         })
     }
 
