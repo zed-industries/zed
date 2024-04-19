@@ -12,11 +12,11 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockDisposition, BlockProperties, CursorShape, DisplayPoint, DocumentHighlightRead,
+    BlockDisposition, BlockId, BlockProperties, CursorShape, DisplayPoint, DocumentHighlightRead,
     DocumentHighlightWrite, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-   ExpandExcerpts, GitRowHighlight, GutterDimensions, HalfPageDown, HalfPageUp, HoveredCursor, LineDown, LineUp,
-    OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    ExpandExcerpts, ExpandedGitHunk, GitRowHighlight, GutterDimensions, HalfPageDown, HalfPageUp,
+    HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection,
+    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use client::ParticipantIndex;
@@ -60,7 +60,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
-use util::ResultExt;
+use util::{debug_panic, ResultExt};
 use workspace::{item::Item, Workspace};
 
 struct SelectionLayout {
@@ -2292,6 +2292,7 @@ impl EditorElement {
 
         let clickable_hunks = if show_git_gutter {
             Some(Self::paint_diff_hunks(
+                &self.editor,
                 layout.gutter_hitbox.bounds,
                 layout,
                 &cx.mouse_position(),
@@ -2335,6 +2336,8 @@ impl EditorElement {
     }
 
     fn paint_diff_hunks(
+        // TODO kb get `expanded_hunks`, map them to rows
+        editor: &View<Editor>,
         bounds: Bounds<Pixels>,
         layout: &EditorLayout,
         mouse_position: &gpui::Point<Pixels>,
@@ -2345,6 +2348,7 @@ impl EditorElement {
             return clickable_hunks;
         }
 
+        // TODO kb use larger hunk bounds
         let line_height = layout.position_map.line_height;
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
             for hunk in &layout.display_hunks {
@@ -3359,28 +3363,50 @@ fn try_click_diff_hunk(
         &hovered_hunk.display_row_range,
         &editor_snapshot.display_snapshot,
     );
-    let (buffer_snapshot, deleted_text) = editor.buffer().update(cx, |buffer, cx| {
+    let (multi_buffer_snapshot, deleted_text) = editor.buffer().update(cx, |buffer, cx| {
         let buffer_snapshot = buffer.snapshot(cx);
         let original_text = original_text(buffer, buffer_range.clone(), cx)?;
         Some((buffer_snapshot, original_text))
     })?;
-    let hunk_start = buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-    let hunk_end = buffer_snapshot.anchor_at(buffer_range.end, Bias::Left);
+    let hunk_start = multi_buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
+    // TODO kb highlights one extra line, fix
+    let hunk_end = multi_buffer_snapshot.anchor_at(buffer_range.end, Bias::Left);
+
+    let block_insert_index = match editor.expanded_hunks.binary_search_by(|probe| {
+        probe
+            .hunk_range
+            .start
+            .cmp(&hunk_start, &multi_buffer_snapshot)
+    }) {
+        Ok(_already_present) => return None,
+        Err(ix) => ix,
+    };
 
     let mut created_color = cx.theme().status().git().created;
     created_color.fade_out(0.7);
-    match hovered_hunk.status {
+    let (block, rows_highlighted) = match hovered_hunk.status {
         DiffHunkStatus::Removed => {
-            insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx);
+            let block_id = insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx)?;
+            (Some(block_id), false)
         }
         DiffHunkStatus::Added => {
             editor.highlight_rows::<GitRowHighlight>(hunk_start..hunk_end, Some(created_color), cx);
+            (None, true)
         }
         DiffHunkStatus::Modified => {
-            insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx);
+            let block_id = insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx)?;
             editor.highlight_rows::<GitRowHighlight>(hunk_start..hunk_end, Some(created_color), cx);
+            (Some(block_id), true)
         }
-    }
+    };
+    editor.expanded_hunks.insert(
+        block_insert_index,
+        ExpandedGitHunk {
+            block,
+            rows_highlighted,
+            hunk_range: hunk_start..hunk_end,
+        },
+    );
 
     Some(())
 }
@@ -3390,7 +3416,7 @@ fn insert_deleted_hunk_block(
     position: Anchor,
     deleted_text: String,
     cx: &mut ViewContext<'_, Editor>,
-) {
+) -> Option<BlockId> {
     let language = editor.language_at(position, cx);
     let mut deleted_color = cx.theme().status().git().deleted;
     deleted_color.fade_out(0.7);
@@ -3398,7 +3424,7 @@ fn insert_deleted_hunk_block(
     let (editor_height, editor_with_deleted_text) =
         editor_with_deleted_text(language, deleted_text, deleted_color, cx);
     let parent_gutter_width = editor.gutter_width;
-    let new_block_ids = editor.insert_blocks(
+    let mut new_block_ids = editor.insert_blocks(
         Some(BlockProperties {
             position,
             height: editor_height,
@@ -3416,7 +3442,14 @@ fn insert_deleted_hunk_block(
         None,
         cx,
     );
-    editor.git_blocks.extend(new_block_ids);
+    if new_block_ids.len() == 1 {
+        new_block_ids.pop()
+    } else {
+        debug_panic!(
+            "Inserted one editor block but did not receive exactly one block id: {new_block_ids:?}"
+        );
+        None
+    }
 }
 
 fn editor_with_deleted_text(
