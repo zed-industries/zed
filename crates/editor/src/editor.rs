@@ -7419,7 +7419,7 @@ impl Editor {
         self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
-    pub fn expand_excerpts(&mut self, _: &ExpandExcerpt, cx: &mut ViewContext<Self>) {
+    pub fn expand_excerpts(&mut self, _: &ExpandExcerpts, cx: &mut ViewContext<Self>) {
         let selections = self.selections.disjoint_anchors();
 
         self.buffer.update(cx, |buffer, cx| {

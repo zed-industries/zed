@@ -155,7 +155,7 @@ gpui::actions!(
         DisplayCursorNames,
         DuplicateLineUp,
         DuplicateLineDown,
-        ExpandExcerpt,
+        ExpandExcerpts,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,

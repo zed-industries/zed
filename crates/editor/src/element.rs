@@ -15,7 +15,7 @@ use crate::{
     mouse_context_menu::{self, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpt, GutterDimensions, HalfPageDown,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GutterDimensions, HalfPageDown,
     HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
     SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
@@ -1678,59 +1678,21 @@ impl EditorElement {
                                     )
                                     .h_full()
                                     .child(
-                                        ButtonLike::new("jump-icon")
-                                            .style(ButtonStyle::Transparent)
-                                            .child(
-                                                svg()
-                                                    .path(IconName::ArrowUpRight.path())
-                                                    .size(IconSize::XSmall.rems())
-                                                    .text_color(cx.theme().colors().border)
-                                                    .group_hover("excerpt-jump-action", |style| {
-                                                        style.text_color(
-                                                            cx.theme().colors().editor_line_number,
-                                                        )
-                                                    }),
-                                            )
-                                            .when_some(jump_data.clone(), |this, jump_data| {
-                                                this.on_click(cx.listener_for(&self.editor, {
-                                                    let path = jump_data.path.clone();
-                                                    move |editor, _, cx| {
-                                                        editor.jump(
-                                                            path.clone(),
-                                                            jump_data.position,
-                                                            jump_data.anchor,
-                                                            jump_data.line_offset_from_top,
-                                                            cx,
-                                                        );
-                                                    }
-                                                }))
-                                                .tooltip({
-                                                    move |cx| {
-                                                        Tooltip::for_action(
-                                                            format!(
-                                                                "Jump to {}:L{}",
-                                                                jump_data.path.path.display(),
-                                                                jump_data.position.row + 1
-                                                            ),
-                                                            &OpenExcerpts,
-                                                            cx,
-                                                        )
-                                                    }
-                                                })
-                                            }),
-                                    )
-                                    .child(
                                         ButtonLike::new("expand-icon")
                                             .style(ButtonStyle::Transparent)
                                             .child(
                                                 svg()
-                                                    .path(IconName::Terminal.path())
+                                                    .path(IconName::ExpandVertical.path())
                                                     .size(IconSize::XSmall.rems())
-                                                    .text_color(cx.theme().colors().border)
+                                                    .text_color(
+                                                        cx.theme().colors().editor_line_number,
+                                                    )
                                                     .group("")
                                                     .hover(|style| {
                                                         style.text_color(
-                                                            cx.theme().colors().editor_line_number,
+                                                            cx.theme()
+                                                                .colors()
+                                                                .editor_active_line_number,
                                                         )
                                                     }),
                                             )
@@ -1744,7 +1706,7 @@ impl EditorElement {
                                                 move |cx| {
                                                     Tooltip::for_action(
                                                         "Expand Excerpt",
-                                                        &ExpandExcerpt,
+                                                        &ExpandExcerpts,
                                                         cx,
                                                     )
                                                 }
