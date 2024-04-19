@@ -262,7 +262,7 @@ impl TextStyle {
     pub fn font(&self) -> Font {
         Font {
             family: self.font_family.clone(),
-            features: self.font_features,
+            features: self.font_features.clone(),
             weight: self.font_weight,
             style: self.font_style,
         }
