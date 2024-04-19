@@ -501,12 +501,9 @@ impl Render for ImageTooltip {
                     .gap_1()
                     .child(Label::new(tooltip_text).size(LabelSize::Small))
                     .child(
-                        Label::new(format!(
-                            "{}-click to open image",
-                            secondary_modifier.to_string()
-                        ))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
+                        Label::new(format!("{}-click to open image", secondary_modifier))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                     ),
             )
         })
