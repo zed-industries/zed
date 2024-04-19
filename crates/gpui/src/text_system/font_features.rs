@@ -117,6 +117,7 @@ macro_rules! create_definitions {
                         while let Some((key, value)) = access.next_entry::<String, Option<bool>>()? {
                             let idx = match key.as_str() {
                                 $(stringify!($name) => Some($idx),)*
+                                #[cfg(target_os = "windows")]
                                 other_feature => {
                                     if other_feature.len() != 4 || !other_feature.is_ascii() {
                                         log::error!("Incorrect feature name: {}", other_feature);
@@ -124,6 +125,8 @@ macro_rules! create_definitions {
                                     }
                                     None
                                 },
+                                #[cfg(not(target_os = "windows"))]
+                                _ => continue,
                             };
                             if let Some(idx) = idx {
                                 match value {
