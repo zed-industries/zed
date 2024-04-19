@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{convert::TryFrom, future::Future};
 use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
@@ -94,6 +95,24 @@ pub struct Request {
     pub stream: bool,
     pub stop: Vec<String>,
     pub temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<String>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    pub tools: Vec<ToolDefinition>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Value,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolDefinition {
+    #[allow(dead_code)]
+    Function { function: FunctionDefinition },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -101,6 +120,7 @@ pub struct Request {
 pub enum RequestMessage {
     Assistant {
         content: Option<String>,
+        #[serde(default)]
         tool_calls: Vec<ToolCall>,
     },
     User {
@@ -132,6 +152,7 @@ pub enum ToolCallContent {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "<[_]>::is_empty")]
     pub tool_calls: Vec<ToolCallChunk>,
 }
 
@@ -182,6 +203,7 @@ pub async fn stream_completion(
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{api_url}/chat/completions");
+
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)

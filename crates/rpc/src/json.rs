@@ -23,7 +23,20 @@ where
     map.end()
 }
 
-fn value_to_json(value: &prost_types::Value) -> Value {
+pub fn from_prost_struct(wrapper: Option<prost_types::Struct>) -> Value {
+    match wrapper {
+        Some(wrapper) => Value::Object(
+            wrapper
+                .fields
+                .iter()
+                .map(|(k, v)| (k.clone(), value_to_json(v)))
+                .collect(),
+        ),
+        None => Value::Null,
+    }
+}
+
+pub fn value_to_json(value: &prost_types::Value) -> Value {
     match value.kind {
         Some(prost_types::value::Kind::NullValue(_)) => Value::Null,
         Some(prost_types::value::Kind::NumberValue(v)) => {

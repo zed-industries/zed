@@ -146,7 +146,7 @@ impl OpenAiCompletionProvider {
                     },
                     Role::Assistant => RequestMessage::Assistant {
                         content: Some(msg.content),
-                        tool_calls: vec![],
+                        tool_calls: Vec::new(),
                     },
                     Role::System => RequestMessage::System {
                         content: msg.content,
@@ -156,6 +156,8 @@ impl OpenAiCompletionProvider {
             stream: true,
             stop: request.stop,
             temperature: request.temperature,
+            tools: Vec::new(),
+            tool_choice: None,
         }
     }
 }

@@ -58,6 +58,24 @@ pub fn language_model_request_to_open_ai(
         stream: true,
         stop: request.stop,
         temperature: request.temperature,
+        tools: request
+            .tools
+            .into_iter()
+            .filter_map(|tool| {
+                Some(match tool.variant? {
+                    proto::chat_completion_tool::Variant::Function(f) => {
+                        open_ai::ToolDefinition::Function {
+                            function: open_ai::FunctionDefinition {
+                                name: f.name,
+                                description: f.description,
+                                parameters: rpc::json::from_prost_struct(f.parameters),
+                            },
+                        }
+                    }
+                })
+            })
+            .collect(),
+        tool_choice: request.tool_choice,
     })
 }
 

@@ -2,7 +2,7 @@ pub mod auth;
 mod conn;
 mod error;
 mod extension;
-mod json;
+pub mod json;
 mod notification;
 mod peer;
 pub mod proto;
