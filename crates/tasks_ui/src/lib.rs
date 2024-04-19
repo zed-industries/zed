@@ -168,8 +168,8 @@ fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskContex
         let language_context_provider = buffer
             .read(cx)
             .language()
-            .and_then(|language| language.context_provider())?;
-
+            .and_then(|language| language.context_provider())
+            .unwrap_or_else(|| Arc::new(BasicContextProvider));
         let selection_range = selection.range();
         let start = editor_snapshot
             .display_snapshot

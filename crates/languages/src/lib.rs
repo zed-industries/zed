@@ -85,13 +85,7 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
-                    Ok((
-                        config.clone(),
-                        load_queries($name),
-                        Some(Arc::new(language::BasicContextProvider)),
-                    ))
-                },
+                move || Ok((config.clone(), load_queries($name), None)),
             );
         };
         ($name:literal, $adapters:expr) => {
@@ -105,13 +99,7 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
-                    Ok((
-                        config.clone(),
-                        load_queries($name),
-                        Some(Arc::new(language::BasicContextProvider)),
-                    ))
-                },
+                move || Ok((config.clone(), load_queries($name), None)),
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr) => {
