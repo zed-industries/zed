@@ -1,4 +1,6 @@
+#[cfg(target_os = "windows")]
 use crate::SharedString;
+#[cfg(target_os = "windows")]
 use itertools::Itertools;
 use schemars::{
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec},
