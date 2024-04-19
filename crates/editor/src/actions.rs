@@ -254,6 +254,7 @@ gpui::actions!(
         UndoSelection,
         UnfoldLines,
         UniqueLinesCaseSensitive,
-        UniqueLinesCaseInsensitive
+        UniqueLinesCaseInsensitive,
+        UnwrapSyntaxNode
     ]
 );
