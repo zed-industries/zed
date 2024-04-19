@@ -12,6 +12,7 @@ pub enum Role {
     User,
     Assistant,
     System,
+    Tool,
 }
 
 impl TryFrom<String> for Role {
@@ -22,6 +23,7 @@ impl TryFrom<String> for Role {
             "user" => Ok(Self::User),
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
+            "tool" => Ok(Self::Tool),
             _ => Err(anyhow!("invalid role '{value}'")),
         }
     }
@@ -33,6 +35,7 @@ impl From<Role> for String {
             Role::User => "user".to_owned(),
             Role::Assistant => "assistant".to_owned(),
             Role::System => "system".to_owned(),
+            Role::Tool => "tool".to_owned(),
         }
     }
 }
@@ -94,15 +97,60 @@ pub struct Request {
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct RequestMessage {
-    pub role: Role,
-    pub content: String,
+#[serde(tag = "role", rename_all = "lowercase")]
+pub enum RequestMessage {
+    Assistant {
+        content: Option<String>,
+        tool_calls: Vec<ToolCall>,
+    },
+    User {
+        content: String,
+    },
+    System {
+        content: String,
+    },
+    Tool {
+        content: String,
+        tool_call_id: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ResponseMessage {
+pub struct ToolCall {
+    pub id: String,
+    #[serde(flatten)]
+    pub content: ToolCallContent,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolCallContent {
+    Function { name: String, arguments: String },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
+    pub tool_calls: Vec<ToolCallChunk>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCallChunk {
+    pub index: usize,
+    pub id: Option<String>,
+
+    #[serde(flatten)]
+    pub content: ToolCallChunkContent,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolCallChunkContent {
+    Function {
+        name: Option<String>,
+        arguments: Option<String>,
+    },
 }
 
 #[derive(Deserialize, Debug)]
@@ -115,7 +163,7 @@ pub struct Usage {
 #[derive(Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
-    pub delta: ResponseMessage,
+    pub delta: ResponseMessageDelta,
     pub finish_reason: Option<String>,
 }
 

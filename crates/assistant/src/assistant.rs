@@ -128,6 +128,8 @@ impl LanguageModelRequestMessage {
                 Role::System => proto::LanguageModelRole::LanguageModelSystem,
             } as i32,
             content: self.content.clone(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
         }
     }
 }

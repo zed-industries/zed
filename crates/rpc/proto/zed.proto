@@ -1865,17 +1865,48 @@ message CompleteWithLanguageModel {
 message LanguageModelRequestMessage {
     LanguageModelRole role = 1;
     string content = 2;
+    optional string tool_call_id = 3;
+    repeated ToolCall tool_calls = 4;
 }
 
 enum LanguageModelRole {
     LanguageModelUser = 0;
     LanguageModelAssistant = 1;
     LanguageModelSystem = 2;
+    LanguageModelTool = 3;
 }
 
 message LanguageModelResponseMessage {
     optional LanguageModelRole role = 1;
     optional string content = 2;
+    repeated ToolCallDelta tool_calls = 3;
+}
+
+message ToolCall {
+    string id = 1;
+
+    oneof variant {
+        FunctionCall function = 2;
+    }
+
+    message FunctionCall {
+        string name = 1;
+        string arguments = 2;
+    }
+}
+
+message ToolCallDelta {
+    uint32 index = 1;
+    optional string id = 2;
+
+    oneof variant {
+        FunctionCallDelta function = 3;
+    }
+
+    message FunctionCallDelta {
+        optional string name = 1;
+        optional string arguments = 2;
+    }
 }
 
 message LanguageModelResponse {

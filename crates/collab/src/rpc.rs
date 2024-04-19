@@ -4061,8 +4061,28 @@ async fn complete_with_open_ai(
                             open_ai::Role::User => LanguageModelRole::LanguageModelUser,
                             open_ai::Role::Assistant => LanguageModelRole::LanguageModelAssistant,
                             open_ai::Role::System => LanguageModelRole::LanguageModelSystem,
+                            open_ai::Role::Tool => LanguageModelRole::LanguageModelTool,
                         } as i32),
                         content: choice.delta.content,
+                        tool_calls: choice
+                            .delta
+                            .tool_calls
+                            .into_iter()
+                            .map(|delta| proto::ToolCallDelta {
+                                index: delta.index as u32,
+                                id: delta.id,
+                                variant: match delta.content {
+                                    open_ai::ToolCallChunkContent::Function { name, arguments } => {
+                                        Some(proto::tool_call_delta::Variant::Function(
+                                            proto::tool_call_delta::FunctionCallDelta {
+                                                name,
+                                                arguments,
+                                            },
+                                        ))
+                                    }
+                                },
+                            })
+                            .collect(),
                     }),
                     finish_reason: choice.finish_reason,
                 })
@@ -4113,6 +4133,8 @@ async fn complete_with_google_ai(
                                 })
                                 .collect(),
                         ),
+                        // Tool calls are not supported for Google
+                        tool_calls: Vec::new(),
                     }),
                     finish_reason: candidate.finish_reason.map(|reason| reason.to_string()),
                 })
@@ -4135,24 +4157,28 @@ async fn complete_with_anthropic(
     let messages = request
         .messages
         .into_iter()
-        .filter_map(|message| match message.role() {
-            LanguageModelRole::LanguageModelUser => Some(anthropic::RequestMessage {
-                role: anthropic::Role::User,
-                content: message.content,
-            }),
-            LanguageModelRole::LanguageModelAssistant => Some(anthropic::RequestMessage {
-                role: anthropic::Role::Assistant,
-                content: message.content,
-            }),
-            // Anthropic's API breaks system instructions out as a separate field rather
-            // than having a system message role.
-            LanguageModelRole::LanguageModelSystem => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
-                }
-                system_message.push_str(&message.content);
+        .filter_map(|message| {
+            match message.role() {
+                LanguageModelRole::LanguageModelUser => Some(anthropic::RequestMessage {
+                    role: anthropic::Role::User,
+                    content: message.content,
+                }),
+                LanguageModelRole::LanguageModelAssistant => Some(anthropic::RequestMessage {
+                    role: anthropic::Role::Assistant,
+                    content: message.content,
+                }),
+                // Anthropic's API breaks system instructions out as a separate field rather
+                // than having a system message role.
+                LanguageModelRole::LanguageModelSystem => {
+                    if !system_message.is_empty() {
+                        system_message.push_str("\n\n");
+                    }
+                    system_message.push_str(&message.content);
 
-                None
+                    None
+                }
+                // We don't yet support tool calls for Anthropic
+                LanguageModelRole::LanguageModelTool => None,
             }
         })
         .collect();
@@ -4196,6 +4222,7 @@ async fn complete_with_anthropic(
                                     delta: Some(proto::LanguageModelResponseMessage {
                                         role: Some(current_role as i32),
                                         content: Some(text),
+                                        tool_calls: Vec::new(),
                                     }),
                                     finish_reason: None,
                                 }],
@@ -4212,6 +4239,7 @@ async fn complete_with_anthropic(
                             delta: Some(proto::LanguageModelResponseMessage {
                                 role: Some(current_role as i32),
                                 content: Some(text),
+                                tool_calls: Vec::new(),
                             }),
                             finish_reason: None,
                         }],

@@ -140,9 +140,17 @@ impl OpenAiCompletionProvider {
             messages: request
                 .messages
                 .into_iter()
-                .map(|msg| RequestMessage {
-                    role: msg.role.into(),
-                    content: msg.content,
+                .map(|msg| match msg.role {
+                    Role::User => RequestMessage::User {
+                        content: msg.content,
+                    },
+                    Role::Assistant => RequestMessage::Assistant {
+                        content: Some(msg.content),
+                        tool_calls: vec![],
+                    },
+                    Role::System => RequestMessage::System {
+                        content: msg.content,
+                    },
                 })
                 .collect(),
             stream: true,

@@ -8,6 +8,7 @@ pub enum CompletionRole {
     User,
     Assistant,
     System,
+    Tool,
 }
 
 pub struct CompletionMessage {
@@ -100,7 +101,12 @@ impl CompletionProviderBackend for CloudCompletionProvider {
                                 CompletionRole::System => {
                                     proto::LanguageModelRole::LanguageModelSystem as i32
                                 }
+                                CompletionRole::Tool => {
+                                    proto::LanguageModelRole::LanguageModelTool as i32
+                                }
                             },
+                            tool_calls: Default::default(),
+                            tool_call_id: None,
                             content: message.body,
                         })
                         .collect(),

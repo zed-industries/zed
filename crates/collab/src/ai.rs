@@ -12,16 +12,47 @@ pub fn language_model_request_to_open_ai(
             .map(|message| {
                 let role = proto::LanguageModelRole::from_i32(message.role)
                     .ok_or_else(|| anyhow!("invalid role {}", message.role))?;
-                Ok(open_ai::RequestMessage {
-                    role: match role {
-                        proto::LanguageModelRole::LanguageModelUser => open_ai::Role::User,
-                        proto::LanguageModelRole::LanguageModelAssistant => {
-                            open_ai::Role::Assistant
-                        }
-                        proto::LanguageModelRole::LanguageModelSystem => open_ai::Role::System,
+
+                let message = match role {
+                    proto::LanguageModelRole::LanguageModelUser => open_ai::RequestMessage::User {
+                        content: message.content,
                     },
-                    content: message.content,
-                })
+                    proto::LanguageModelRole::LanguageModelAssistant => {
+                        open_ai::RequestMessage::Assistant {
+                            content: Some(message.content),
+                            tool_calls: message
+                                .tool_calls
+                                .into_iter()
+                                .filter_map(|call| {
+                                    Some(open_ai::ToolCall {
+                                        id: call.id,
+                                        content: match call.variant? {
+                                            proto::tool_call::Variant::Function(f) => {
+                                                open_ai::ToolCallContent::Function {
+                                                    name: f.name,
+                                                    arguments: f.arguments,
+                                                }
+                                            }
+                                        },
+                                    })
+                                })
+                                .collect(),
+                        }
+                    }
+                    proto::LanguageModelRole::LanguageModelSystem => {
+                        open_ai::RequestMessage::System {
+                            content: message.content,
+                        }
+                    }
+                    proto::LanguageModelRole::LanguageModelTool => open_ai::RequestMessage::Tool {
+                        tool_call_id: message
+                            .tool_call_id
+                            .ok_or_else(|| anyhow!("tool message is missing tool call id"))?,
+                        content: message.content,
+                    },
+                };
+
+                Ok(message)
             })
             .collect::<Result<Vec<open_ai::RequestMessage>>>()?,
         stream: true,
@@ -58,6 +89,9 @@ pub fn language_model_request_message_to_google_ai(
             proto::LanguageModelRole::LanguageModelUser => google_ai::Role::User,
             proto::LanguageModelRole::LanguageModelAssistant => google_ai::Role::Model,
             proto::LanguageModelRole::LanguageModelSystem => google_ai::Role::User,
+            proto::LanguageModelRole::LanguageModelTool => {
+                Err(anyhow!("we don't handle tool calls with google ai yet"))?
+            }
         },
     })
 }
