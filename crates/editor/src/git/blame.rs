@@ -51,18 +51,18 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
 
 #[derive(Clone, Debug)]
 pub struct GitRemote {
-    pub code_host: HostingProvider,
+    pub host: HostingProvider,
     pub owner: String,
     pub repo: String,
 }
 
 impl GitRemote {
-    pub fn hosts_supports_avatars(&self) -> bool {
-        self.code_host.supports_avatars()
+    pub fn host_supports_avatars(&self) -> bool {
+        self.host.supports_avatars()
     }
 
     pub async fn avatar_url(&self, commit: Oid, client: Arc<dyn HttpClient>) -> Option<Url> {
-        self.code_host
+        self.host
             .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
             .await
             .ok()
@@ -434,7 +434,7 @@ async fn parse_commit_messages(
         };
 
         let remote = parsed_remote_url.as_ref().map(|remote| GitRemote {
-            code_host: remote.provider.clone(),
+            host: remote.provider.clone(),
             owner: remote.owner.to_string(),
             repo: remote.repo.to_string(),
         });

@@ -35,7 +35,7 @@ impl<'a> CommitAvatar<'a> {
         let remote = self
             .details
             .and_then(|details| details.remote.as_ref())
-            .filter(|remote| remote.hosts_supports_avatars())?;
+            .filter(|remote| remote.host_supports_avatars())?;
 
         let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha);
 
@@ -63,7 +63,7 @@ struct CommitAvatarAsset {
 impl Hash for CommitAvatarAsset {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.sha.hash(state);
-        self.remote.code_host.hash(state);
+        self.remote.host.hash(state);
     }
 }
 
