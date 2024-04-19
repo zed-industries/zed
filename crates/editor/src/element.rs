@@ -3806,15 +3806,16 @@ impl Element for EditorElement {
 
                     let editor_width =
                         text_width - gutter_dimensions.margin - overscroll.width - em_width;
-                    let _wrap_width = match editor.soft_wrap_mode(cx) {
-                        SoftWrap::None => (MAX_LINE_LEN / 2) as f32 * em_advance,
-                        SoftWrap::EditorWidth => editor_width,
-                        SoftWrap::Column(column) => editor_width.min(column as f32 * em_advance),
+                    let wrap_width = match editor.soft_wrap_mode(cx) {
+                        SoftWrap::None => None,
+                        SoftWrap::PreferLine => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
+                        SoftWrap::EditorWidth => Some(editor_width),
+                        SoftWrap::Column(column) => {
+                            Some(editor_width.min(column as f32 * em_advance))
+                        }
                     };
 
-                    // TODO kb use the None variant when displaying a diff
-                    // if editor.set_wrap_width(Some(wrap_width), cx) {
-                    if editor.set_wrap_width(None, cx) {
+                    if editor.set_wrap_width(wrap_width, cx) {
                         editor.snapshot(cx)
                     } else {
                         snapshot
