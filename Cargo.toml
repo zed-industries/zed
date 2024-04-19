@@ -298,7 +298,6 @@ serde_json_lenient = { version = "0.1", features = [
 ] }
 serde_repr = "0.1"
 sha2 = "0.10"
-shlex = "1.3"
 shellexpand = "2.1.0"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"

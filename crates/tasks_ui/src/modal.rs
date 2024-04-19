@@ -306,7 +306,28 @@ impl PickerDelegate for TasksModalDelegate {
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
-        let (source_kind, _) = &candidates.get(hit.candidate_id)?;
+        let (source_kind, resolved_task) = &candidates.get(hit.candidate_id)?;
+        let template = resolved_task.original_task();
+        let display_label = resolved_task.display_label();
+
+        let mut tooltip_label_text = if display_label != &template.label {
+            resolved_task.resolved_label.clone()
+        } else {
+            String::new()
+        };
+        if let Some(resolved) = resolved_task.resolved.as_ref() {
+            if display_label != resolved.command_label {
+                if !tooltip_label_text.trim().is_empty() {
+                    tooltip_label_text.push('\n');
+                }
+                tooltip_label_text.push_str(&resolved.command_label);
+            }
+        }
+        let tooltip_label = if tooltip_label_text.trim().is_empty() {
+            None
+        } else {
+            Some(Tooltip::text(tooltip_label_text, cx))
+        };
 
         let highlighted_location = HighlightedText {
             text: hit.string.clone(),
@@ -325,6 +346,9 @@ impl PickerDelegate for TasksModalDelegate {
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
+                .when_some(tooltip_label, |list_item, item_label| {
+                    list_item.tooltip(move |_| item_label.clone())
+                })
                 .map(|item| {
                     let item = if matches!(source_kind, TaskSourceKind::UserInput)
                         || Some(ix) <= self.last_used_candidate_index
@@ -368,18 +392,10 @@ impl PickerDelegate for TasksModalDelegate {
     }
 
     fn selected_as_query(&self) -> Option<String> {
-        use itertools::intersperse;
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
         let (_, task) = tasks.get(task_index)?;
-        task.resolved.as_ref().map(|spawn_in_terminal| {
-            let mut command = spawn_in_terminal.command.clone();
-            if !spawn_in_terminal.args.is_empty() {
-                command.push(' ');
-                command.extend(intersperse(spawn_in_terminal.args.clone(), " ".to_string()));
-            }
-            command
-        })
+        Some(task.resolved.as_ref()?.command_label.clone())
     }
 
     fn confirm_input(&mut self, omit_history_entry: bool, cx: &mut ViewContext<Picker<Self>>) {
