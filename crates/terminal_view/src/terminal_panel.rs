@@ -15,10 +15,7 @@ use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use task::{RevealStrategy, SpawnInTerminal, TaskId};
-use terminal::{
-    terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
-    SpawnTask,
-};
+use terminal::terminal_settings::{Shell, TerminalDockPosition, TerminalSettings};
 use ui::{h_flex, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -301,16 +298,7 @@ impl TerminalPanel {
     }
 
     fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
-        let mut spawn_task = SpawnTask {
-            id: spawn_in_terminal.id.clone(),
-            full_label: spawn_in_terminal.full_label.clone(),
-            label: spawn_in_terminal.label.clone(),
-            command: spawn_in_terminal.command.clone(),
-            args: spawn_in_terminal.args.clone(),
-            command_label: spawn_in_terminal.command_label.clone(),
-            env: spawn_in_terminal.env.clone(),
-            reveal: spawn_in_terminal.reveal,
-        };
+        let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone() {
             Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, Vec::new())),
@@ -407,7 +395,7 @@ impl TerminalPanel {
 
     fn spawn_in_new_terminal(
         &mut self,
-        spawn_task: SpawnTask,
+        spawn_task: SpawnInTerminal,
         working_directory: Option<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -470,7 +458,7 @@ impl TerminalPanel {
     fn add_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        spawn_task: Option<SpawnTask>,
+        spawn_task: Option<SpawnInTerminal>,
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace.clone();
@@ -562,7 +550,7 @@ impl TerminalPanel {
     fn replace_terminal(
         &self,
         working_directory: Option<PathBuf>,
-        spawn_task: SpawnTask,
+        spawn_task: SpawnInTerminal,
         terminal_item_index: usize,
         terminal_to_replace: View<TerminalView>,
         cx: &mut ViewContext<'_, Self>,
