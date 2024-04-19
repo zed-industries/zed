@@ -6,6 +6,7 @@ use git::{
     blame::{Blame, BlameEntry},
     hosting_provider::HostingProvider,
     permalink::{build_commit_permalink, parse_git_remote_url},
+    pull_request::{extract_pull_request, PullRequest},
     Oid,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
@@ -75,6 +76,7 @@ pub struct CommitDetails {
     pub message: String,
     pub parsed_message: ParsedMarkdown,
     pub permalink: Option<Url>,
+    pub pull_request: Option<PullRequest>,
     pub remote: Option<GitRemote>,
 }
 
@@ -438,6 +440,10 @@ async fn parse_commit_messages(
             repo: remote.repo.to_string(),
         });
 
+        let pull_request = parsed_remote_url
+            .as_ref()
+            .and_then(|remote| extract_pull_request(remote, &message));
+
         commit_details.insert(
             oid,
             CommitDetails {
@@ -445,6 +451,7 @@ async fn parse_commit_messages(
                 parsed_message,
                 permalink,
                 remote,
+                pull_request,
             },
         );
     }
