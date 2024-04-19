@@ -405,7 +405,11 @@ impl PickerDelegate for TasksModalDelegate {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use editor::Editor;
     use gpui::{TestAppContext, VisualTestContext};
+    use language::Point;
     use project::{FakeFs, Project};
     use serde_json::json;
 
@@ -561,6 +565,100 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_basic_context_for_simple_files(cx: &mut TestAppContext) {
+        crate::tests::init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                ".zed": {
+                    "tasks.json": r#"[
+                        {
+                            "label": "hello from $ZED_FILE:$ZED_ROW:$ZED_COLUMN",
+                            "command": "echo",
+                            "args": ["hello", "from", "$ZED_FILE", ":", "$ZED_ROW", ":", "$ZED_COLUMN"]
+                        },
+                        {
+                            "label": "opened now: $ZED_WORKTREE_ROOT",
+                            "command": "echo",
+                            "args": ["opened", "now:", "$ZED_WORKTREE_ROOT"]
+                        }
+                    ]"#,
+                },
+                "file_without_extension": "aaaaaaaaaaaaaaaaaaaa\naaaaaaaaaaaaaaaaaa",
+                "file_with.odd_extension": "b",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            Vec::<String>::new(),
+            "Should list no file or worktree context-dependent when no file is open"
+        );
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+
+        let _ = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/file_with.odd_extension"), true, cx)
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "hello from …th.odd_extension:1:1".to_string(),
+                "opened now: /dir".to_string()
+            ],
+            "Second opened buffer should fill the context, labels should be trimmed if long enough"
+        );
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+
+        let second_item = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/file_without_extension"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let editor = cx.update(|cx| second_item.act_as::<Editor>(cx)).unwrap();
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.select_ranges(Some(Point::new(1, 2)..Point::new(1, 5)))
+            })
+        });
+        cx.executor().run_until_parked();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "hello from …ithout_extension:2:3".to_string(),
+                "opened now: /dir".to_string()
+            ],
+            "Opened buffer should fill the context, labels should be trimmed if long enough"
+        );
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+    }
+
     fn open_spawn_tasks(
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
@@ -569,7 +667,7 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<TasksModal>(cx)
-                .unwrap()
+                .expect("no task modal after `Spawn` action was dispatched")
                 .read(cx)
                 .picker
                 .clone()
