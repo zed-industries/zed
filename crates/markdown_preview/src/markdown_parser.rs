@@ -110,7 +110,7 @@ impl<'a> MarkdownParser<'a> {
                 Tag::Paragraph => {
                     self.cursor += 1;
                     let text = self.parse_text(false);
-                    if text.contents.is_empty() {
+                    if text.contents.trim().is_empty() {
                         return None;
                     }
                     Some(ParsedMarkdownElement::Paragraph(text))
