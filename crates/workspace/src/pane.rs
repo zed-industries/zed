@@ -5,8 +5,7 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-
-    CloseWindow,NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
+    CloseWindow, NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
     SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
