@@ -32,9 +32,9 @@ use crate::{
     AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
     Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, SharedString,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window,
-    WindowAppearance, WindowContext, WindowHandle, WindowId,
+    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
+    Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -547,9 +547,21 @@ impl AppContext {
         self.platform.window_appearance()
     }
 
+    /// Writes data to the primary selection buffer.
+    /// Only available on Linux.
+    pub fn write_to_primary(&self, item: ClipboardItem) {
+        self.platform.write_to_primary(item)
+    }
+
     /// Writes data to the platform clipboard.
     pub fn write_to_clipboard(&self, item: ClipboardItem) {
         self.platform.write_to_clipboard(item)
+    }
+
+    /// Reads data from the primary selection buffer.
+    /// Only available on Linux.
+    pub fn read_from_primary(&self) -> Option<ClipboardItem> {
+        self.platform.read_from_primary()
     }
 
     /// Reads data from the platform clipboard.
@@ -1251,6 +1263,22 @@ impl Context for AppContext {
         })
     }
 
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
+        Reservation(self.entities.reserve())
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        self.update(|cx| {
+            let slot = reservation.0;
+            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
+            cx.entities.insert(slot, entity)
+        })
+    }
+
     /// Updates the entity referenced by the given model. The function is passed a mutable reference to the
     /// entity along with a `ModelContext` for the entity.
     fn update_model<T: 'static, R>(
@@ -1264,6 +1292,18 @@ impl Context for AppContext {
             cx.entities.end_lease(entity);
             result
         })
+    }
+
+    fn read_model<T, R>(
+        &self,
+        handle: &Model<T>,
+        read: impl FnOnce(&T, &AppContext) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        let entity = self.entities.read(handle);
+        read(entity, self)
     }
 
     fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
@@ -1293,18 +1333,6 @@ impl Context for AppContext {
 
             Ok(result)
         })
-    }
-
-    fn read_model<T, R>(
-        &self,
-        handle: &Model<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
-    ) -> Self::Result<R>
-    where
-        T: 'static,
-    {
-        let entity = self.entities.read(handle);
-        read(entity, self)
     }
 
     fn read_window<T, R>(
@@ -1400,8 +1428,8 @@ pub struct AnyTooltip {
     /// The view used to display the tooltip
     pub view: AnyView,
 
-    /// The offset from the cursor to use, relative to the parent view
-    pub cursor_offset: Point<Pixels>,
+    /// The absolute position of the mouse when the tooltip was deployed.
+    pub mouse_position: Point<Pixels>,
 }
 
 /// A keystroke event, and potentially the associated action

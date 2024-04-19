@@ -5,8 +5,8 @@ use crate::{
 use anyhow::Result;
 use client::Client;
 use clock::FakeSystemClock;
-use fs::{repository::GitFileStatus, FakeFs, Fs, RealFs, RemoveOptions};
-use git::GITIGNORE;
+use fs::{FakeFs, Fs, RealFs, RemoveOptions};
+use git::{repository::GitFileStatus, GITIGNORE};
 use gpui::{BorrowAppContext, ModelContext, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
@@ -21,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use text::BufferId;
 use util::{http::FakeHttpClient, test::temp_tree, ResultExt};
 
 #[gpui::test]
@@ -577,11 +576,9 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let buffer = tree
         .update(cx, |tree, cx| {
-            tree.as_local_mut().unwrap().load_buffer(
-                BufferId::new(1).unwrap(),
-                "one/node_modules/b/b1.js".as_ref(),
-                cx,
-            )
+            tree.as_local_mut()
+                .unwrap()
+                .load_buffer("one/node_modules/b/b1.js".as_ref(), cx)
         })
         .await
         .unwrap();
@@ -621,11 +618,9 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let buffer = tree
         .update(cx, |tree, cx| {
-            tree.as_local_mut().unwrap().load_buffer(
-                BufferId::new(1).unwrap(),
-                "one/node_modules/a/a2.js".as_ref(),
-                cx,
-            )
+            tree.as_local_mut()
+                .unwrap()
+                .load_buffer("one/node_modules/a/a2.js".as_ref(), cx)
         })
         .await
         .unwrap();

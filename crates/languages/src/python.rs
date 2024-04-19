@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{ContextProviderWithTasks, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use std::{
@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
@@ -180,13 +181,30 @@ async fn get_cached_server_binary(
     }
 }
 
+pub(super) fn python_task_context() -> ContextProviderWithTasks {
+    ContextProviderWithTasks::new(TaskTemplates(vec![
+        TaskTemplate {
+            label: "execute selection".to_owned(),
+            command: "python3".to_owned(),
+            args: vec!["-c".to_owned(), VariableName::SelectedText.template_value()],
+            ignore_previously_resolved: true,
+            ..TaskTemplate::default()
+        },
+        TaskTemplate {
+            label: format!("run '{}'", VariableName::File.template_value()),
+            command: "python3".to_owned(),
+            args: vec![VariableName::File.template_value()],
+            ..TaskTemplate::default()
+        },
+    ]))
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::{BorrowAppContext, Context, ModelContext, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
-    use text::BufferId;
 
     #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
@@ -204,8 +222,7 @@ mod tests {
         });
 
         cx.new_model(|cx| {
-            let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "")
-                .with_language(language, cx);
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
                 let ix = buffer.len();
                 buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);

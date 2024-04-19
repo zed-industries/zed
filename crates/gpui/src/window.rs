@@ -287,6 +287,8 @@ pub struct Window {
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     pub(crate) next_hitbox_id: HitboxId,
+    pub(crate) next_tooltip_id: TooltipId,
+    pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
@@ -551,6 +553,8 @@ impl Window {
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
             next_hitbox_id: HitboxId::default(),
+            next_tooltip_id: TooltipId::default(),
+            tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
             focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
@@ -1295,7 +1299,7 @@ impl<'a> WindowContext<'a> {
         });
         self.window.rendered_frame.mouse_listeners = mouse_listeners;
 
-        if self.app.propagate_event && self.has_active_drag() {
+        if self.has_active_drag() {
             if event.is::<MouseMoveEvent>() {
                 // If this was a mouse move event, redraw the window so that the
                 // active drag can follow the mouse cursor.
@@ -1830,6 +1834,18 @@ impl Context for WindowContext<'_> {
         self.entities.insert(slot, model)
     }
 
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+        self.app.reserve_model()
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: crate::Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        self.app.insert_model(reservation, build_model)
+    }
+
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
@@ -1844,18 +1860,6 @@ impl Context for WindowContext<'_> {
         result
     }
 
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
-    where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
-    {
-        if window == self.window.handle {
-            let root_view = self.window.root_view.clone().unwrap();
-            Ok(update(root_view, self))
-        } else {
-            window.update(self.app, update)
-        }
-    }
-
     fn read_model<T, R>(
         &self,
         handle: &Model<T>,
@@ -1866,6 +1870,18 @@ impl Context for WindowContext<'_> {
     {
         let entity = self.entities.read(handle);
         read(entity, &*self.app)
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
+        if window == self.window.handle {
+            let root_view = self.window.root_view.clone().unwrap();
+            Ok(update(root_view, self))
+        } else {
+            window.update(self.app, update)
+        }
     }
 
     fn read_window<T, R>(
@@ -2478,19 +2494,24 @@ impl<V> Context for ViewContext<'_, V> {
         self.window_cx.new_model(build_model)
     }
 
+    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+        self.window_cx.reserve_model()
+    }
+
+    fn insert_model<T: 'static>(
+        &mut self,
+        reservation: crate::Reservation<T>,
+        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
+        self.window_cx.insert_model(reservation, build_model)
+    }
+
     fn update_model<T: 'static, R>(
         &mut self,
         model: &Model<T>,
         update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> R {
         self.window_cx.update_model(model, update)
-    }
-
-    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
-    where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
-    {
-        self.window_cx.update_window(window, update)
     }
 
     fn read_model<T, R>(
@@ -2502,6 +2523,13 @@ impl<V> Context for ViewContext<'_, V> {
         T: 'static,
     {
         self.window_cx.read_model(handle, read)
+    }
+
+    fn update_window<T, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+    {
+        self.window_cx.update_window(window, update)
     }
 
     fn read_window<T, R>(

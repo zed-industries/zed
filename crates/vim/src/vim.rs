@@ -67,7 +67,15 @@ struct Number(usize);
 
 actions!(
     vim,
-    [Tab, Enter, Object, InnerObject, FindForward, FindBackward]
+    [
+        Tab,
+        Enter,
+        Object,
+        InnerObject,
+        FindForward,
+        FindBackward,
+        OpenDefaultKeymap
+    ]
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
@@ -131,6 +139,14 @@ fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         update_settings_file::<VimModeSetting>(fs, cx, move |setting| {
             *setting = Some(!currently_enabled)
         })
+    });
+
+    workspace.register_action(|_: &mut Workspace, _: &OpenDefaultKeymap, cx| {
+        cx.emit(workspace::Event::OpenBundledFile {
+            text: settings::vim_keymap(),
+            title: "Default Vim Bindings",
+            language: "JSON",
+        });
     });
 
     normal::register(workspace, cx);
@@ -500,6 +516,17 @@ impl Vim {
             Operator::Change | Operator::Delete | Operator::Replace
         ) {
             self.start_recording(cx)
+        };
+        // Since these operations can only be entered with pre-operators,
+        // we need to clear the previous operators when pushing,
+        // so that the current stack is the most correct
+        if matches!(
+            operator,
+            Operator::AddSurrounds { .. }
+                | Operator::ChangeSurrounds { .. }
+                | Operator::DeleteSurrounds
+        ) {
+            self.clear_operator(cx);
         };
         self.update_state(|state| state.operator_stack.push(operator));
         self.sync_vim_settings(cx);

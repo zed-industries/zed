@@ -23,6 +23,7 @@ pub(crate) struct TestPlatform {
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
+    current_primary_item: Mutex<Option<ClipboardItem>>,
     pub(crate) prompts: RefCell<TestPrompts>,
     pub opened_url: RefCell<Option<String>>,
     weak: Weak<Self>,
@@ -44,6 +45,7 @@ impl TestPlatform {
             active_display: Rc::new(TestDisplay::new()),
             active_window: Default::default(),
             current_clipboard_item: Mutex::new(None),
+            current_primary_item: Mutex::new(None),
             weak: weak.clone(),
             opened_url: Default::default(),
         })
@@ -122,14 +124,14 @@ impl Platform for TestPlatform {
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        #[cfg(target_os = "linux")]
-        return Arc::new(crate::platform::linux::LinuxTextSystem::new());
-
         #[cfg(target_os = "macos")]
         return Arc::new(crate::platform::mac::MacTextSystem::new());
 
+        #[cfg(target_os = "linux")]
+        return Arc::new(crate::platform::cosmic_text::CosmicTextSystem::new());
+
         #[cfg(target_os = "windows")]
-        return Arc::new(crate::platform::windows::WindowsTextSystem::new());
+        return Arc::new(crate::platform::windows::DirectWriteTextSystem::new().unwrap());
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
@@ -282,8 +284,16 @@ impl Platform for TestPlatform {
         false
     }
 
+    fn write_to_primary(&self, item: ClipboardItem) {
+        *self.current_primary_item.lock() = Some(item);
+    }
+
     fn write_to_clipboard(&self, item: ClipboardItem) {
         *self.current_clipboard_item.lock() = Some(item);
+    }
+
+    fn read_from_primary(&self) -> Option<ClipboardItem> {
+        self.current_primary_item.lock().clone()
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {

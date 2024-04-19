@@ -1,0 +1,19 @@
+name = "GLSL"
+grammar = "glsl"
+path_suffixes = [
+    # Traditional rasterization pipeline shaders
+    "vert", "frag", "tesc", "tese", "geom",
+    # Compute shaders
+    "comp",
+    # Ray tracing pipeline shaders
+    "rgen", "rint", "rahit", "rchit", "rmiss", "rcall",
+    # Other
+    "glsl"
+    ]
+line_comments = ["// "]
+block_comment = ["/* ", " */"]
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]

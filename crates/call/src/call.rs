@@ -432,7 +432,9 @@ impl ActiveCall {
         room: Option<Model<Room>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        if room.as_ref() != self.room.as_ref().map(|room| &room.0) {
+        if room.as_ref() == self.room.as_ref().map(|room| &room.0) {
+            Task::ready(Ok(()))
+        } else {
             cx.notify();
             if let Some(room) = room {
                 if room.read(cx).status().is_offline() {
@@ -462,8 +464,6 @@ impl ActiveCall {
                 self.room = None;
                 Task::ready(Ok(()))
             }
-        } else {
-            Task::ready(Ok(()))
         }
     }
 

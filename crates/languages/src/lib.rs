@@ -8,27 +8,25 @@ use smol::stream::StreamExt;
 use std::{str, sync::Arc};
 use util::{asset_str, ResultExt};
 
-use crate::{elixir::elixir_task_context, rust::RustContextProvider};
+use crate::{
+    bash::bash_task_context, elixir::elixir_task_context, python::python_task_context,
+    rust::RustContextProvider,
+};
 
 use self::{deno::DenoSettings, elixir::ElixirSettings};
 
+mod bash;
 mod c;
 mod css;
 mod deno;
 mod elixir;
-mod elm;
 mod go;
 mod json;
-mod lua;
-mod nu;
-mod ocaml;
 mod python;
 mod ruby;
 mod rust;
 mod tailwind;
-mod terraform;
 mod typescript;
-mod vue;
 mod yaml;
 
 // 1. Add tree-sitter-{language} parser to zed crate
@@ -59,38 +57,24 @@ pub fn init(
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
         ("elixir", tree_sitter_elixir::language()),
-        ("elm", tree_sitter_elm::language()),
         (
             "embedded_template",
             tree_sitter_embedded_template::language(),
         ),
-        ("glsl", tree_sitter_glsl::language()),
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
-        ("hcl", tree_sitter_hcl::language()),
         ("heex", tree_sitter_heex::language()),
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
-        ("lua", tree_sitter_lua::language()),
         ("markdown", tree_sitter_markdown::language()),
-        ("nix", tree_sitter_nix::language()),
-        ("nu", tree_sitter_nu::language()),
-        ("ocaml", tree_sitter_ocaml::language_ocaml()),
-        (
-            "ocaml_interface",
-            tree_sitter_ocaml::language_ocaml_interface(),
-        ),
         ("proto", tree_sitter_proto::language()),
         ("python", tree_sitter_python::language()),
-        ("racket", tree_sitter_racket::language()),
         ("regex", tree_sitter_regex::language()),
         ("ruby", tree_sitter_ruby::language()),
         ("rust", tree_sitter_rust::language()),
-        ("scheme", tree_sitter_scheme::language()),
         ("tsx", tree_sitter_typescript::language_tsx()),
         ("typescript", tree_sitter_typescript::language_typescript()),
-        ("vue", tree_sitter_vue::language()),
         ("yaml", tree_sitter_yaml::language()),
     ]);
 
@@ -101,13 +85,7 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
-                    Ok((
-                        config.clone(),
-                        load_queries($name),
-                        Some(Arc::new(language::SymbolContextProvider)),
-                    ))
-                },
+                move || Ok((config.clone(), load_queries($name), None)),
             );
         };
         ($name:literal, $adapters:expr) => {
@@ -121,13 +99,7 @@ pub fn init(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
-                    Ok((
-                        config.clone(),
-                        load_queries($name),
-                        Some(Arc::new(language::SymbolContextProvider)),
-                    ))
-                },
+                move || Ok((config.clone(), load_queries($name), None)),
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr) => {
@@ -151,7 +123,7 @@ pub fn init(
             );
         };
     }
-    language!("bash");
+    language!("bash", Vec::new(), bash_task_context());
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language!("cpp", vec![Arc::new(c::CLspAdapter)]);
     language!(
@@ -213,7 +185,8 @@ pub fn init(
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
-        ))]
+        ))],
+        python_task_context()
     );
     language!(
         "rust",
@@ -280,37 +253,12 @@ pub fn init(
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
         ]
     );
-    language!("scheme");
-    language!("racket");
     language!("regex");
-    language!("lua", vec![Arc::new(lua::LuaLspAdapter)]);
     language!(
         "yaml",
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
-    language!(
-        "elm",
-        vec![Arc::new(elm::ElmLspAdapter::new(node_runtime.clone()))]
-    );
-    language!("glsl");
-    language!("nix");
-    language!("nu", vec![Arc::new(nu::NuLanguageServer {})]);
-    language!("ocaml", vec![Arc::new(ocaml::OCamlLspAdapter)]);
-    language!("ocaml-interface", vec![Arc::new(ocaml::OCamlLspAdapter)]);
-    language!(
-        "vue",
-        vec![
-            Arc::new(vue::VueLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
     language!("proto");
-    language!("terraform", vec![Arc::new(terraform::TerraformLspAdapter)]);
-    language!(
-        "terraform-vars",
-        vec![Arc::new(terraform::TerraformLspAdapter)]
-    );
-    language!("hcl", vec![]);
 
     languages.register_secondary_lsp_adapter(
         "Astro".into(),
@@ -326,6 +274,10 @@ pub fn init(
     );
     languages.register_secondary_lsp_adapter(
         "Svelte".into(),
+        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    );
+    languages.register_secondary_lsp_adapter(
+        "Vue.js".into(),
         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
     );
 

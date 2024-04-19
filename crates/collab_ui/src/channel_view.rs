@@ -22,8 +22,9 @@ use std::{
 };
 use ui::{prelude::*, Label};
 use util::ResultExt;
+use workspace::notifications::NotificationId;
 use workspace::{
-    item::{FollowableItem, Item, ItemEvent, ItemHandle},
+    item::{FollowableItem, Item, ItemEvent, ItemHandle, TabContentParams},
     register_followable_item,
     searchable::SearchableItemHandle,
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
@@ -269,7 +270,15 @@ impl ChannelView {
         cx.write_to_clipboard(ClipboardItem::new(link));
         self.workspace
             .update(cx, |workspace, cx| {
-                workspace.show_toast(Toast::new(0, "Link copied to clipboard"), cx);
+                struct CopyLinkForPositionToast;
+
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<CopyLinkForPositionToast>(),
+                        "Link copied to clipboard",
+                    ),
+                    cx,
+                );
             })
             .ok();
     }
@@ -296,6 +305,10 @@ impl ChannelView {
                 });
             }
             ChannelBufferEvent::BufferEdited => {
+                // Emit the edited event on the editor context so that other views can update it's state (e.g. markdown preview)
+                self.editor.update(cx, |_, cx| {
+                    cx.emit(EditorEvent::Edited);
+                });
                 if self.editor.read(cx).is_focused(cx) {
                     self.acknowledge_buffer_version(cx);
                 } else {
@@ -365,7 +378,7 @@ impl Item for ChannelView {
         }
     }
 
-    fn tab_content(&self, _: Option<usize>, selected: bool, cx: &WindowContext) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let label = if let Some(channel) = self.channel(cx) {
             match (
                 self.channel_buffer.read(cx).buffer().read(cx).read_only(),
@@ -379,7 +392,7 @@ impl Item for ChannelView {
             "channel notes (disconnected)".to_string()
         };
         Label::new(label)
-            .color(if selected {
+            .color(if params.selected {
                 Color::Default
             } else {
                 Color::Muted

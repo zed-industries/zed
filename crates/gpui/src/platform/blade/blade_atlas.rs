@@ -29,6 +29,9 @@ struct BladeAtlasState {
     uploads: Vec<PendingUpload>,
 }
 
+#[cfg(gles)]
+unsafe impl Send for BladeAtlasState {}
+
 impl BladeAtlasState {
     fn destroy(&mut self) {
         self.storage.destroy(&self.gpu);
@@ -159,7 +162,7 @@ impl BladeAtlasState {
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Polychrome => {
-                format = gpu::TextureFormat::Rgba8Unorm;
+                format = gpu::TextureFormat::Bgra8Unorm;
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Path => {

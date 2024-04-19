@@ -1,3 +1,4 @@
+pub mod connection_manager;
 pub mod debounced_delay;
 pub mod lsp_command;
 pub mod lsp_ext_command;
@@ -20,7 +21,6 @@ use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
-use fs::repository::GitRepository;
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver},
@@ -31,7 +31,7 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
-use git::blame::Blame;
+use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
@@ -96,7 +96,7 @@ use std::{
 };
 use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
-use text::{Anchor, BufferId, RopeFingerprint};
+use text::{Anchor, BufferId};
 use util::{
     debug_panic, defer,
     http::{HttpClient, Url},
@@ -112,8 +112,6 @@ pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
-#[cfg(feature = "test-support")]
-pub use task_inventory::test_inventory::*;
 pub use task_inventory::{Inventory, TaskSourceKind};
 pub use worktree::{
     DiagnosticSummary, Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId,
@@ -178,7 +176,6 @@ pub struct Project {
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
-    next_buffer_id: BufferId,
     loading_buffers: HashMap<BufferId, Vec<oneshot::Sender<Result<Model<Buffer>, anyhow::Error>>>>,
     incomplete_remote_buffers: HashMap<BufferId, Model<Buffer>>,
     shared_buffers: HashMap<proto::PeerId, HashSet<BufferId>>,
@@ -237,6 +234,7 @@ enum BufferOrderedMessage {
     Resync,
 }
 
+#[derive(Debug)]
 enum LocalProjectUpdate {
     WorktreesChanged,
     CreateBufferForPeer {
@@ -347,7 +345,7 @@ pub enum LanguageServerState {
     },
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: String,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
@@ -600,6 +598,7 @@ impl Project {
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+        connection_manager::init(client.clone(), cx);
         Self::init_settings(cx);
 
         client.add_model_message_handler(Self::handle_add_collaborator);
@@ -675,7 +674,6 @@ impl Project {
                 flush_language_server_update: None,
                 pending_language_server_update: None,
                 collaborators: Default::default(),
-                next_buffer_id: BufferId::new(1).unwrap(),
                 opened_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 loading_buffers_by_path: Default::default(),
@@ -738,6 +736,24 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: AsyncAppContext,
     ) -> Result<Model<Self>> {
+        let project =
+            Self::in_room(remote_id, client, user_store, languages, fs, cx.clone()).await?;
+        cx.update(|cx| {
+            connection_manager::Manager::global(cx).update(cx, |manager, cx| {
+                manager.maintain_project_connection(&project, cx)
+            })
+        })?;
+        Ok(project)
+    }
+
+    pub async fn in_room(
+        remote_id: u64,
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        languages: Arc<LanguageRegistry>,
+        fs: Arc<dyn Fs>,
+        cx: AsyncAppContext,
+    ) -> Result<Model<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
         let subscription = client.subscribe_to_entity(remote_id)?;
@@ -757,6 +773,7 @@ impl Project {
         )
         .await
     }
+
     async fn from_join_project_response(
         response: TypedEnvelope<proto::JoinProjectResponse>,
         subscription: PendingEntitySubscription<Project>,
@@ -792,7 +809,6 @@ impl Project {
                 pending_language_server_update: None,
                 flush_language_server_update: None,
                 loading_buffers_by_path: Default::default(),
-                next_buffer_id: BufferId::new(1).unwrap(),
                 loading_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 incomplete_remote_buffers: Default::default(),
@@ -962,6 +978,50 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub async fn example(
+        root_paths: impl IntoIterator<Item = &Path>,
+        cx: &mut AsyncAppContext,
+    ) -> Model<Project> {
+        use clock::FakeSystemClock;
+
+        let fs = Arc::new(RealFs::default());
+        let languages = LanguageRegistry::test(cx.background_executor().clone());
+        let clock = Arc::new(FakeSystemClock::default());
+        let http_client = util::http::FakeHttpClient::with_404_response();
+        let client = cx
+            .update(|cx| client::Client::new(clock, http_client.clone(), cx))
+            .unwrap();
+        let user_store = cx
+            .new_model(|cx| UserStore::new(client.clone(), cx))
+            .unwrap();
+        let project = cx
+            .update(|cx| {
+                Project::local(
+                    client,
+                    node_runtime::FakeNodeRuntime::new(),
+                    user_store,
+                    Arc::new(languages),
+                    fs,
+                    cx,
+                )
+            })
+            .unwrap();
+        for path in root_paths {
+            let (tree, _) = project
+                .update(cx, |project, cx| {
+                    project.find_or_create_local_worktree(path, true, cx)
+                })
+                .unwrap()
+                .await
+                .unwrap();
+            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+                .unwrap()
+                .await;
+        }
+        project
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn test(
         fs: Arc<dyn Fs>,
         root_paths: impl IntoIterator<Item = &Path>,
@@ -1127,6 +1187,10 @@ impl Project {
 
     pub fn user_store(&self) -> Model<UserStore> {
         self.user_store.clone()
+    }
+
+    pub fn node_runtime(&self) -> Option<&Arc<dyn NodeRuntime>> {
+        self.node.as_ref()
     }
 
     pub fn opened_buffers(&self) -> Vec<Model<Buffer>> {
@@ -1566,7 +1630,7 @@ impl Project {
                                     })
                                 })?
                                 .await;
-                            if update_project.is_ok() {
+                            if update_project.log_err().is_some() {
                                 for worktree in worktrees {
                                     worktree.update(&mut cx, |worktree, cx| {
                                         let worktree = worktree.as_local_mut().unwrap();
@@ -1849,9 +1913,8 @@ impl Project {
         if self.is_remote() {
             return Err(anyhow!("creating buffers as a guest is not supported yet"));
         }
-        let id = self.next_buffer_id.next();
         let buffer = cx.new_model(|cx| {
-            Buffer::new(self.replica_id(), id, text)
+            Buffer::local(text, cx)
                 .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
         });
         self.register_buffer(&buffer, cx)?;
@@ -1950,10 +2013,9 @@ impl Project {
         worktree: Model<Worktree>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        let buffer_id = self.next_buffer_id.next();
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let worktree = worktree.as_local_mut().unwrap();
-            worktree.load_buffer(buffer_id, &path, cx)
+            worktree.load_buffer(&path, cx)
         });
         fn is_not_found_error(error: &anyhow::Error) -> bool {
             error
@@ -1967,7 +2029,7 @@ impl Project {
                 Err(error) if is_not_found_error(&error) => {
                     worktree.update(&mut cx, |worktree, cx| {
                         let worktree = worktree.as_local_mut().unwrap();
-                        worktree.new_buffer(buffer_id, path, cx)
+                        worktree.new_buffer(path, cx)
                     })
                 }
                 Err(e) => Err(e),
@@ -2744,15 +2806,15 @@ impl Project {
             futures::future::join_all(tasks).await;
 
             this.update(&mut cx, |this, cx| {
-                if !this.buffers_needing_diff.is_empty() {
-                    this.recalculate_buffer_diffs(cx).detach();
-                } else {
+                if this.buffers_needing_diff.is_empty() {
                     // TODO: Would a `ModelContext<Project>.notify()` suffice here?
                     for buffer in buffers {
                         if let Some(buffer) = buffer.upgrade() {
                             buffer.update(cx, |_, cx| cx.notify());
                         }
                     }
+                } else {
+                    this.recalculate_buffer_diffs(cx).detach();
                 }
             })
             .ok();
@@ -3924,19 +3986,6 @@ impl Project {
                         },
                         cx,
                     );
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id,
-                            message: proto::update_language_server::Variant::WorkStart(
-                                proto::LspWorkStart {
-                                    token,
-                                    message: report.message,
-                                    percentage: report.percentage,
-                                },
-                            ),
-                        },
-                    )
-                    .ok();
                 }
             }
             lsp::WorkDoneProgress::Report(report) => {
@@ -3984,15 +4033,6 @@ impl Project {
                     .ok();
                 } else {
                     self.on_lsp_work_end(language_server_id, token.clone(), cx);
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id,
-                            message: proto::update_language_server::Variant::WorkEnd(
-                                proto::LspWorkEnd { token },
-                            ),
-                        },
-                    )
-                    .ok();
                 }
             }
         }
@@ -4006,8 +4046,20 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
-            status.pending_work.insert(token, progress);
+            status.pending_work.insert(token.clone(), progress.clone());
             cx.notify();
+        }
+
+        if self.is_local() {
+            self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::WorkStart(proto::LspWorkStart {
+                    token,
+                    message: progress.message,
+                    percentage: progress.percentage.map(|p| p as u32),
+                }),
+            })
+            .ok();
         }
     }
 
@@ -4048,6 +4100,16 @@ impl Project {
             cx.emit(Event::RefreshInlayHints);
             status.pending_work.remove(&token);
             cx.notify();
+        }
+
+        if self.is_local() {
+            self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
+                    token,
+                }),
+            })
+            .ok();
         }
     }
 
@@ -6748,7 +6810,7 @@ impl Project {
                     let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
 
                     let id = lsp_request.id();
-                    if status.is_some() {
+                    let _cleanup = if status.is_some() {
                         cx.update(|cx| {
                             this.update(cx, |this, cx| {
                                 this.on_lsp_work_start(
@@ -6764,22 +6826,35 @@ impl Project {
                             })
                         })
                         .log_err();
-                    }
+
+                        Some(defer(|| {
+                            cx.update(|cx| {
+                                this.update(cx, |this, cx| {
+                                    this.on_lsp_work_end(
+                                        language_server.server_id(),
+                                        id.to_string(),
+                                        cx,
+                                    );
+                                })
+                            })
+                            .log_err();
+                        }))
+                    } else {
+                        None
+                    };
 
                     let result = lsp_request.await;
-                    let response = match result {
-                        Ok(response) => response,
 
-                        Err(err) => {
-                            log::warn!(
-                                "Generic lsp request to {} failed: {}",
-                                language_server.name(),
-                                err
-                            );
-                            return Err(err);
-                        }
-                    };
-                    let result = request
+                    let response = result.map_err(|err| {
+                        log::warn!(
+                            "Generic lsp request to {} failed: {}",
+                            language_server.name(),
+                            err
+                        );
+                        err
+                    })?;
+
+                    request
                         .response_from_lsp(
                             response,
                             this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
@@ -6787,22 +6862,7 @@ impl Project {
                             language_server.server_id(),
                             cx.clone(),
                         )
-                        .await;
-
-                    if status.is_some() {
-                        cx.update(|cx| {
-                            this.update(cx, |this, cx| {
-                                this.on_lsp_work_end(
-                                    language_server.server_id(),
-                                    id.to_string(),
-                                    cx,
-                                );
-                            })
-                        })
-                        .log_err();
-                    }
-
-                    result
+                        .await
                 });
             }
         } else if let Some(project_id) = self.remote_id() {
@@ -7486,15 +7546,12 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
+                                id_base: "local_tasks_for_worktree",
                             },
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(
-                                    format!("local_tasks_for_workspace_{remote_worktree_id}"),
-                                    TrackedFile::new(tasks_file_rx, cx),
-                                    cx,
-                                )
+                                StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
                             },
                             cx,
                         );
@@ -7511,14 +7568,12 @@ impl Project {
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
+                                id_base: "local_vscode_tasks_for_worktree",
                             },
                             |cx| {
                                 let tasks_file_rx =
                                     watch_config_file(&cx.background_executor(), fs, task_abs_path);
                                 StaticSource::new(
-                                    format!(
-                                        "local_vscode_tasks_for_workspace_{remote_worktree_id}"
-                                    ),
                                     TrackedFile::new_convertible::<task::VsCodeTaskFile>(
                                         tasks_file_rx,
                                         cx,
@@ -7727,13 +7782,20 @@ impl Project {
                     .as_local()
                     .context("worktree was not local")?
                     .snapshot();
-                let (work_directory, repo) = worktree
-                    .repository_and_work_directory_for_path(&buffer_project_path.path)
-                    .context("failed to get repo for blamed buffer")?;
 
-                let repo_entry = worktree
-                    .get_local_repo(&repo)
-                    .context("failed to get repo for blamed buffer")?;
+                let (work_directory, repo) = match worktree
+                    .repository_and_work_directory_for_path(&buffer_project_path.path)
+                {
+                    Some(work_dir_repo) => work_dir_repo,
+                    None => anyhow::bail!(NoRepositoryError {}),
+                };
+
+                let repo_entry = match worktree.get_local_repo(&repo) {
+                    Some(repo_entry) => repo_entry,
+                    None => anyhow::bail!(NoRepositoryError {}),
+                };
+
+                let repo = repo_entry.repo().clone();
 
                 let relative_path = buffer_project_path
                     .path
@@ -7744,7 +7806,6 @@ impl Project {
                     Some(version) => buffer.rope_for_version(&version).clone(),
                     None => buffer.as_rope().clone(),
                 };
-                let repo = repo_entry.repo().clone();
 
                 anyhow::Ok((repo, relative_path, content))
             });
@@ -7753,6 +7814,7 @@ impl Project {
                 let (repo, relative_path, content) = blame_params?;
                 let lock = repo.lock();
                 lock.blame(&relative_path, content)
+                    .with_context(|| format!("Failed to blame {relative_path:?}"))
             })
         } else {
             let project_id = self.remote_id();
@@ -8544,7 +8606,6 @@ impl Project {
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
             mtime: buffer.saved_mtime().map(|time| time.into()),
-            fingerprint: language::proto::serialize_fingerprint(buffer.saved_version_fingerprint()),
         })
     }
 
@@ -8637,9 +8698,6 @@ impl Project {
                             buffer_id: buffer_id.into(),
                             version: language::proto::serialize_version(buffer.saved_version()),
                             mtime: buffer.saved_mtime().map(|time| time.into()),
-                            fingerprint: language::proto::serialize_fingerprint(
-                                buffer.saved_version_fingerprint(),
-                            ),
                             line_ending: language::proto::serialize_line_ending(
                                 buffer.line_ending(),
                             ) as i32,
@@ -9628,7 +9686,6 @@ impl Project {
         _: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let fingerprint = Default::default();
         let version = deserialize_version(&envelope.payload.version);
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let mtime = envelope.payload.mtime.map(|time| time.into());
@@ -9641,7 +9698,7 @@ impl Project {
                 .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned());
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_save(version, fingerprint, mtime, cx);
+                    buffer.did_save(version, mtime, cx);
                 });
             }
             Ok(())
@@ -9656,7 +9713,6 @@ impl Project {
     ) -> Result<()> {
         let payload = envelope.payload;
         let version = deserialize_version(&payload.version);
-        let fingerprint = RopeFingerprint::default();
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(payload.line_ending)
                 .ok_or_else(|| anyhow!("missing line ending"))?,
@@ -9671,7 +9727,7 @@ impl Project {
                 .or_else(|| this.incomplete_remote_buffers.get(&buffer_id).cloned());
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.did_reload(version, fingerprint, line_ending, mtime, cx);
+                    buffer.did_reload(version, line_ending, mtime, cx);
                 });
             }
             Ok(())
@@ -9923,16 +9979,27 @@ async fn populate_labels_for_symbols(
 ) {
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
+    let mut unknown_path = None;
     for symbol in symbols {
         let language = language_registry
             .language_for_file_path(&symbol.path.path)
             .await
-            .log_err()
-            .or_else(|| default_language.clone());
+            .ok()
+            .or_else(|| {
+                unknown_path.get_or_insert(symbol.path.path.clone());
+                default_language.clone()
+            });
         symbols_by_language
             .entry(language)
             .or_default()
             .push(symbol);
+    }
+
+    if let Some(unknown_path) = unknown_path {
+        log::info!(
+            "no language found for symbol path {}",
+            unknown_path.display()
+        );
     }
 
     let mut label_params = Vec::new();
@@ -10686,6 +10753,7 @@ fn serialize_blame_buffer_response(blame: git::blame::Blame) -> proto::BlameBuff
         entries,
         messages,
         permalinks,
+        remote_url: blame.remote_url,
     }
 }
 
@@ -10734,6 +10802,7 @@ fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> gi
         entries,
         permalinks,
         messages,
+        remote_url: response.remote_url,
     }
 }
 
@@ -10747,3 +10816,14 @@ fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
         Some(hover)
     }
 }
+
+#[derive(Debug)]
+pub struct NoRepositoryError {}
+
+impl std::fmt::Display for NoRepositoryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no git repository for worktree found")
+    }
+}
+
+impl std::error::Error for NoRepositoryError {}

@@ -28,8 +28,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::linux::wayland::WaylandClient;
 use crate::{
-    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, LinuxTextSystem, Menu, Modifiers,
+    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
+    DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, Modifiers,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task,
     WindowAppearance, WindowOptions, WindowParams,
@@ -45,63 +45,6 @@ pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
-pub struct RcRefCell<T>(Rc<RefCell<T>>);
-
-impl<T> RcRefCell<T> {
-    pub fn new(value: T) -> Self {
-        RcRefCell(Rc::new(RefCell::new(value)))
-    }
-
-    #[inline]
-    #[track_caller]
-    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, T> {
-        #[cfg(debug_assertions)]
-        {
-            if option_env!("TRACK_BORROW_MUT").is_some() {
-                eprintln!(
-                    "borrow_mut-ing {} at {}",
-                    type_name::<T>(),
-                    Location::caller()
-                );
-            }
-        }
-
-        self.0.borrow_mut()
-    }
-
-    #[inline]
-    #[track_caller]
-    pub fn borrow(&self) -> std::cell::Ref<'_, T> {
-        #[cfg(debug_assertions)]
-        {
-            if option_env!("TRACK_BORROW_MUT").is_some() {
-                eprintln!("borrow-ing {} at {}", type_name::<T>(), Location::caller());
-            }
-        }
-
-        self.0.borrow()
-    }
-}
-
-impl<T> Deref for RcRefCell<T> {
-    type Target = Rc<RefCell<T>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl<T> DerefMut for RcRefCell<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<T> Clone for RcRefCell<T> {
-    fn clone(&self) -> Self {
-        RcRefCell(self.0.clone())
-    }
-}
-
 pub trait LinuxClient {
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
@@ -113,7 +56,9 @@ pub trait LinuxClient {
         options: WindowParams,
     ) -> Box<dyn PlatformWindow>;
     fn set_cursor_style(&self, style: CursorStyle);
+    fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
+    fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn run(&self);
 }
@@ -134,7 +79,7 @@ pub(crate) struct PlatformHandlers {
 pub(crate) struct LinuxCommon {
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
-    pub(crate) text_system: Arc<LinuxTextSystem>,
+    pub(crate) text_system: Arc<CosmicTextSystem>,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
 }
@@ -142,7 +87,7 @@ pub(crate) struct LinuxCommon {
 impl LinuxCommon {
     pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
-        let text_system = Arc::new(LinuxTextSystem::new());
+        let text_system = Arc::new(CosmicTextSystem::new());
         let callbacks = PlatformHandlers::default();
 
         let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
@@ -463,7 +408,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         })
     }
 
-    //todo(linux): add trait methods for accessing the primary selection
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
@@ -518,8 +462,16 @@ impl<P: LinuxClient + 'static> Platform for P {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
     }
 
+    fn write_to_primary(&self, item: ClipboardItem) {
+        self.write_to_primary(item)
+    }
+
     fn write_to_clipboard(&self, item: ClipboardItem) {
         self.write_to_clipboard(item)
+    }
+
+    fn read_from_primary(&self) -> Option<ClipboardItem> {
+        self.read_from_primary()
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
@@ -620,6 +572,24 @@ impl Keystroke {
             modifiers,
             key,
             ime_key,
+        }
+    }
+}
+
+impl Modifiers {
+    pub(super) fn from_xkb(keymap_state: &State) -> Self {
+        let shift = keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
+        let alt = keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
+        let control =
+            keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
+        let platform =
+            keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
+        Modifiers {
+            shift,
+            alt,
+            control,
+            platform,
+            function: false,
         }
     }
 }

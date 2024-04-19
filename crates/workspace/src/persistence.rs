@@ -138,6 +138,7 @@ define_connection! {
     //   window_height: Option<f32>, // WindowBounds::Fixed RectF height
     //   display: Option<Uuid>, // Display id
     //   fullscreen: Option<bool>, // Is the window fullscreen?
+    //   centered_layout: Option<bool>, // Is the Centered Layout mode activated?
     // )
     //
     // pane_groups(
@@ -168,6 +169,7 @@ define_connection! {
     //     kind: String, // Indicates which view this connects to. This is the key in the item_deserializers global
     //     position: usize, // Position of the item in the parent pane. This is equivalent to panes' position column
     //     active: bool, // Indicates if this item is the active one in the pane
+    //     preview: bool // Indicates if this item is a preview item
     // )
     pub static ref DB: WorkspaceDb<()> =
     &[sql!(
@@ -279,6 +281,15 @@ define_connection! {
     sql!(
         ALTER TABLE workspaces ADD COLUMN fullscreen INTEGER; //bool
     ),
+    // Add preview field to items
+    sql!(
+        ALTER TABLE items ADD COLUMN preview INTEGER; //bool
+    ),
+    // Add centered_layout field to workspace
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN centered_layout INTEGER; //bool
+    ),
+
     ];
 }
 
@@ -294,11 +305,12 @@ impl WorkspaceDb {
 
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
-        let (workspace_id, workspace_location, bounds, display, fullscreen, docks): (
+        let (workspace_id, workspace_location, bounds, display, fullscreen, centered_layout, docks): (
             WorkspaceId,
             WorkspaceLocation,
             Option<SerializedWindowsBounds>,
             Option<Uuid>,
+            Option<bool>,
             Option<bool>,
             DockStructure,
         ) = self
@@ -313,6 +325,7 @@ impl WorkspaceDb {
                     window_height,
                     display,
                     fullscreen,
+                    centered_layout,
                     left_dock_visible,
                     left_dock_active_panel,
                     left_dock_zoom,
@@ -339,6 +352,7 @@ impl WorkspaceDb {
                 .log_err()?,
             bounds: bounds.map(|bounds| bounds.0),
             fullscreen: fullscreen.unwrap_or(false),
+            centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
         })
@@ -623,7 +637,7 @@ impl WorkspaceDb {
 
     fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
         self.select_bound(sql!(
-            SELECT kind, item_id, active FROM items
+            SELECT kind, item_id, active, preview FROM items
             WHERE pane_id = ?
                 ORDER BY position
         ))?(pane_id)
@@ -636,7 +650,7 @@ impl WorkspaceDb {
         items: &[SerializedItem],
     ) -> Result<()> {
         let mut insert = conn.exec_bound(sql!(
-            INSERT INTO items(workspace_id, pane_id, position, kind, item_id, active) VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO items(workspace_id, pane_id, position, kind, item_id, active, preview) VALUES (?, ?, ?, ?, ?, ?, ?)
         )).context("Preparing insertion")?;
         for (position, item) in items.iter().enumerate() {
             insert((workspace_id, pane_id, position, item))?;
@@ -670,6 +684,14 @@ impl WorkspaceDb {
         pub(crate) async fn set_fullscreen(workspace_id: WorkspaceId, fullscreen: bool) -> Result<()> {
             UPDATE workspaces
             SET fullscreen = ?2
+            WHERE workspace_id = ?1
+        }
+    }
+
+    query! {
+        pub(crate) async fn set_centered_layout(workspace_id: WorkspaceId, centered_layout: bool) -> Result<()> {
+            UPDATE workspaces
+            SET centered_layout = ?2
             WHERE workspace_id = ?1
         }
     }
@@ -759,6 +781,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -769,6 +792,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -836,15 +860,15 @@ mod tests {
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 5, false),
-                                SerializedItem::new("Terminal", 6, true),
+                                SerializedItem::new("Terminal", 5, false, false),
+                                SerializedItem::new("Terminal", 6, true, false),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 7, true),
-                                SerializedItem::new("Terminal", 8, false),
+                                SerializedItem::new("Terminal", 7, true, false),
+                                SerializedItem::new("Terminal", 8, false, false),
                             ],
                             false,
                         )),
@@ -852,8 +876,8 @@ mod tests {
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 9, false),
-                        SerializedItem::new("Terminal", 10, true),
+                        SerializedItem::new("Terminal", 9, false, false),
+                        SerializedItem::new("Terminal", 10, true, false),
                     ],
                     false,
                 )),
@@ -868,6 +892,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -897,6 +922,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -907,6 +933,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -944,6 +971,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -978,6 +1006,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             fullscreen: false,
+            centered_layout: false,
         }
     }
 
@@ -1000,15 +1029,15 @@ mod tests {
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 1, false),
-                                SerializedItem::new("Terminal", 2, true),
+                                SerializedItem::new("Terminal", 1, false, false),
+                                SerializedItem::new("Terminal", 2, true, false),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 4, false),
-                                SerializedItem::new("Terminal", 3, true),
+                                SerializedItem::new("Terminal", 4, false, false),
+                                SerializedItem::new("Terminal", 3, true, false),
                             ],
                             true,
                         )),
@@ -1016,8 +1045,8 @@ mod tests {
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 5, true),
-                        SerializedItem::new("Terminal", 6, false),
+                        SerializedItem::new("Terminal", 5, true, false),
+                        SerializedItem::new("Terminal", 6, false, false),
                     ],
                     false,
                 )),
@@ -1047,15 +1076,15 @@ mod tests {
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 1, false),
-                                SerializedItem::new("Terminal", 2, true),
+                                SerializedItem::new("Terminal", 1, false, false),
+                                SerializedItem::new("Terminal", 2, true, false),
                             ],
                             false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 4, false),
-                                SerializedItem::new("Terminal", 3, true),
+                                SerializedItem::new("Terminal", 4, false, false),
+                                SerializedItem::new("Terminal", 3, true, false),
                             ],
                             true,
                         )),
@@ -1063,8 +1092,8 @@ mod tests {
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 5, false),
-                        SerializedItem::new("Terminal", 6, true),
+                        SerializedItem::new("Terminal", 5, false, false),
+                        SerializedItem::new("Terminal", 6, true, false),
                     ],
                     false,
                 )),
@@ -1082,15 +1111,15 @@ mod tests {
             vec![
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 1, false),
-                        SerializedItem::new("Terminal", 2, true),
+                        SerializedItem::new("Terminal", 1, false, false),
+                        SerializedItem::new("Terminal", 2, true, false),
                     ],
                     false,
                 )),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 4, true),
-                        SerializedItem::new("Terminal", 3, false),
+                        SerializedItem::new("Terminal", 4, true, false),
+                        SerializedItem::new("Terminal", 3, false, false),
                     ],
                     true,
                 )),
