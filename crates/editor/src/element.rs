@@ -13,9 +13,9 @@ use crate::{
     mouse_context_menu::{self, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, GutterDimensions, HalfPageDown, HalfPageUp,
-    HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection,
-    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GutterDimensions, HalfPageDown,
+    HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
+    SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -257,6 +257,9 @@ impl EditorElement {
         register_action(view, cx, Editor::move_to_enclosing_bracket);
         register_action(view, cx, Editor::undo_selection);
         register_action(view, cx, Editor::redo_selection);
+        if !view.read(cx).is_singleton(cx) {
+            register_action(view, cx, Editor::expand_excerpts);
+        }
         register_action(view, cx, Editor::go_to_diagnostic);
         register_action(view, cx, Editor::go_to_prev_diagnostic);
         register_action(view, cx, Editor::go_to_hunk);
@@ -1543,6 +1546,7 @@ impl EditorElement {
                     range,
                     starts_new_buffer,
                     height,
+                    id,
                     ..
                 } => {
                     let include_root = self
@@ -1700,45 +1704,38 @@ impl EditorElement {
                                     )
                                     .h_full()
                                     .child(
-                                        ButtonLike::new("jump-icon")
+                                        ButtonLike::new("expand-icon")
                                             .style(ButtonStyle::Transparent)
                                             .child(
                                                 svg()
-                                                    .path(IconName::ArrowUpRight.path())
+                                                    .path(IconName::ExpandVertical.path())
                                                     .size(IconSize::XSmall.rems())
-                                                    .text_color(cx.theme().colors().border)
-                                                    .group_hover("excerpt-jump-action", |style| {
+                                                    .text_color(
+                                                        cx.theme().colors().editor_line_number,
+                                                    )
+                                                    .group("")
+                                                    .hover(|style| {
                                                         style.text_color(
-                                                            cx.theme().colors().editor_line_number,
+                                                            cx.theme()
+                                                                .colors()
+                                                                .editor_active_line_number,
                                                         )
                                                     }),
                                             )
-                                            .when_some(jump_data.clone(), |this, jump_data| {
-                                                this.on_click(cx.listener_for(&self.editor, {
-                                                    let path = jump_data.path.clone();
-                                                    move |editor, _, cx| {
-                                                        editor.jump(
-                                                            path.clone(),
-                                                            jump_data.position,
-                                                            jump_data.anchor,
-                                                            jump_data.line_offset_from_top,
-                                                            cx,
-                                                        );
-                                                    }
-                                                }))
-                                                .tooltip({
-                                                    move |cx| {
-                                                        Tooltip::for_action(
-                                                            format!(
-                                                                "Jump to {}:L{}",
-                                                                jump_data.path.path.display(),
-                                                                jump_data.position.row + 1
-                                                            ),
-                                                            &OpenExcerpts,
-                                                            cx,
-                                                        )
-                                                    }
-                                                })
+                                            .on_click(cx.listener_for(&self.editor, {
+                                                let id = *id;
+                                                move |editor, _, cx| {
+                                                    editor.expand_excerpt(id, cx);
+                                                }
+                                            }))
+                                            .tooltip({
+                                                move |cx| {
+                                                    Tooltip::for_action(
+                                                        "Expand Excerpt",
+                                                        &ExpandExcerpts { lines: 0 },
+                                                        cx,
+                                                    )
+                                                }
                                             }),
                                     ),
                             )

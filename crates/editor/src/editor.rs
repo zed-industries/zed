@@ -7462,6 +7462,28 @@ impl Editor {
         self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
+    pub fn expand_excerpts(&mut self, action: &ExpandExcerpts, cx: &mut ViewContext<Self>) {
+        let selections = self.selections.disjoint_anchors();
+
+        let lines = if action.lines == 0 { 3 } else { action.lines };
+
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.expand_excerpts(
+                selections
+                    .into_iter()
+                    .map(|selection| selection.head().excerpt_id)
+                    .dedup(),
+                lines,
+                cx,
+            )
+        })
+    }
+
+    pub fn expand_excerpt(&mut self, excerpt: ExcerptId, cx: &mut ViewContext<Self>) {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.expand_excerpts([excerpt], 3, cx))
+    }
+
     fn go_to_diagnostic(&mut self, _: &GoToDiagnostic, cx: &mut ViewContext<Self>) {
         self.go_to_diagnostic_impl(Direction::Next, cx)
     }
