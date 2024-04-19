@@ -234,7 +234,8 @@ message Envelope {
         RejoinRemoteProjects rejoin_remote_projects = 186;
         RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
 
-        RemoteProjectsUpdate remote_projects_update = 193; // current max
+        RemoteProjectsUpdate remote_projects_update = 193;
+        ValidateRemoteProjectRequest validate_remote_project_request = 194; // Current max
     }
 
     reserved 158 to 161;
@@ -271,6 +272,8 @@ enum ErrorCode {
     UnsharedItem = 12;
     NoSuchProject = 13;
     DevServerAlreadyOnline = 14;
+    DevServerOffline = 15;
+    RemoteProjectPathDoesNotExist = 16;
     reserved 6;
 }
 
@@ -467,6 +470,10 @@ message CreateRemoteProject {
 }
 message CreateRemoteProjectResponse {
     RemoteProject remote_project = 1;
+}
+
+message ValidateRemoteProjectRequest {
+    string path = 1;
 }
 
 message CreateDevServer {

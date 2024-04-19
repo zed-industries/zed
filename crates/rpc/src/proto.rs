@@ -318,6 +318,7 @@ messages!(
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
     (RemoteProjectsUpdate, Foreground),
+    (ValidateRemoteProjectRequest, Foreground),
 );
 
 request_messages!(
@@ -418,6 +419,7 @@ request_messages!(
     (JoinRemoteProject, JoinProjectResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
     (ReconnectDevServer, ReconnectDevServerResponse),
+    (ValidateRemoteProjectRequest, Ack),
     (MultiLspQuery, MultiLspQueryResponse),
 );
 

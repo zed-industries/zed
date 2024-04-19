@@ -11,7 +11,7 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use postage::stream::Stream;
 use project::{Project, WorktreeSettings};
-use rpc::{proto, TypedEnvelope};
+use rpc::{proto, ErrorCode, ErrorCodeExt, ErrorExt, TypedEnvelope};
 use settings::{Settings, SettingsStore};
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
@@ -102,7 +102,11 @@ impl DevServer {
 
         DevServer {
             _subscriptions: vec![
-                client.add_message_handler(cx.weak_model(), Self::handle_dev_server_instructions)
+                client.add_message_handler(cx.weak_model(), Self::handle_dev_server_instructions),
+                client.add_message_handler(
+                    cx.weak_model(),
+                    Self::handle_validate_remote_project_request,
+                ),
             ],
             _maintain_connection: maintain_connection,
             projects: Default::default(),
@@ -159,6 +163,31 @@ impl DevServer {
             Ok::<(), anyhow::Error>(())
         })??;
         Ok(())
+    }
+
+    async fn handle_validate_remote_project_request(
+        _: Model<Self>,
+        envelope: TypedEnvelope<proto::ValidateRemoteProjectRequest>,
+        client: Arc<Client>,
+        _: AsyncAppContext,
+    ) -> Result<()> {
+        let path_exists = std::path::Path::new(&envelope.payload.path).exists();
+        if path_exists {
+            //TODO actually send the Ack
+            client.respond_with_error(
+                envelope.receipt(),
+                ErrorCode::Internal
+                    .message("Path exists".to_string())
+                    .to_proto(),
+            )
+        } else {
+            client.respond_with_error(
+                envelope.receipt(),
+                ErrorCode::RemoteProjectPathDoesNotExist
+                    .message("Path does not exist".to_string())
+                    .to_proto(),
+            )
+        }
     }
 
     fn unshare_project(

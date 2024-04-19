@@ -2229,6 +2229,40 @@ async fn create_remote_project(
     response: Response<proto::CreateRemoteProject>,
     session: UserSession,
 ) -> Result<()> {
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
+    let Some(dev_server_connection_id) = dev_server_connection_id else {
+        Err(ErrorCode::DevServerOffline
+            .message("Cannot create a remote project when the dev server is offline".to_string())
+            .anyhow())?
+    };
+
+    let path = request.path.clone();
+    //Check that the path exists on the dev server
+    let check_project_path_response = session
+        .peer
+        .request(
+            dev_server_connection_id,
+            proto::ValidateRemoteProjectRequest { path: path.clone() },
+        )
+        .await;
+    if let Err(err) = check_project_path_response {
+        match err.error_code() {
+            ErrorCode::RemoteProjectPathDoesNotExist => {
+                Err(ErrorCode::RemoteProjectPathDoesNotExist
+                    .message(format!(
+                        "The path '{}' does not exist on the dev server",
+                        path
+                    ))
+                    .anyhow())?;
+            }
+            _ => (),
+        };
+    }
+
     let (remote_project, update) = session
         .db()
         .await
@@ -2245,17 +2279,10 @@ async fn create_remote_project(
         .get_remote_projects_for_dev_server(remote_project.dev_server_id)
         .await?;
 
-    let dev_server_id = remote_project.dev_server_id;
-    let dev_server_connection_id = session
-        .connection_pool()
-        .await
-        .dev_server_connection_id(dev_server_id);
-    if let Some(dev_server_connection_id) = dev_server_connection_id {
-        session.peer.send(
-            dev_server_connection_id,
-            proto::DevServerInstructions { projects },
-        )?;
-    }
+    session.peer.send(
+        dev_server_connection_id,
+        proto::DevServerInstructions { projects },
+    )?;
 
     send_remote_projects_update(session.user_id(), update, &session).await;
 
