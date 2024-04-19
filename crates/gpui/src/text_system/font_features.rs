@@ -120,7 +120,7 @@ macro_rules! create_definitions {
                                 Some(true) => enabled |= 1 << idx,
                                 Some(false) => disabled |= 1 << idx,
                                 None => {}
-                            }
+                            };
                         }
                         Ok(FontFeatures { enabled, disabled })
                     }
@@ -157,7 +157,7 @@ macro_rules! create_definitions {
                                     Some(true) => other_enabled.push_str(key.as_str()),
                                     Some(false) => other_disabled.push_str(key.as_str()),
                                     None => {}
-                                }
+                                };
                             }
                         }
                         Ok(FontFeatures { enabled, disabled, other_enabled: other_enabled.into(), other_disabled: other_disabled.into() })
