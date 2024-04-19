@@ -344,6 +344,9 @@ impl Editor {
         scroll_delta: gpui::Point<f32>,
         cx: &mut ViewContext<Self>,
     ) {
+        if self.scroll_manager.forbid_vertical_scroll {
+            return;
+        }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let position = self.scroll_manager.anchor.scroll_position(&display_map) + scroll_delta;
         self.set_scroll_position_taking_display_map(position, true, false, display_map, cx);
@@ -354,6 +357,9 @@ impl Editor {
         scroll_position: gpui::Point<f32>,
         cx: &mut ViewContext<Self>,
     ) {
+        if self.scroll_manager.forbid_vertical_scroll {
+            return;
+        }
         self.set_scroll_position_internal(scroll_position, true, false, cx);
     }
 

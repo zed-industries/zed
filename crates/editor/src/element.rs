@@ -3431,7 +3431,6 @@ fn editor_with_deleted_text(
         editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
         editor.show_wrap_guides = Some(false);
         editor.show_gutter = false;
-        // TODO kb synthetic drag for selecting scrolls the editor, but should not
         editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_text(deleted_text, cx);
         editor.set_read_only(true);
