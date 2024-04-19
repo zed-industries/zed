@@ -333,7 +333,12 @@ async fn test_create_remote_project_path_validation(
         })
         .await
         .unwrap();
+
+    cx1.executor().run_until_parked();
+
     let _dev_server = server.create_dev_server(resp.access_token, cx3).await;
+
+    cx1.executor().run_until_parked();
 
     // Creating a remote project with a path that does not exist should fail
     let result = store
@@ -345,6 +350,9 @@ async fn test_create_remote_project_path_validation(
             )
         })
         .await;
+
+    cx1.executor().run_until_parked();
+
     let error = result.unwrap_err();
     assert!(matches!(
         error.error_code(),
