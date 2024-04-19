@@ -578,6 +578,7 @@ impl Element for TerminalElement {
 
                 let font_features = terminal_settings
                     .font_features
+                    .as_ref()
                     .map(|features| features.clone())
                     .unwrap_or(settings.buffer_font.features.clone());
 
