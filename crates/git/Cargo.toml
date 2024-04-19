@@ -24,9 +24,6 @@ text.workspace = true
 time.workspace = true
 url.workspace = true
 serde.workspace = true
-rope.workspace = true
-util.workspace = true
-parking_lot.workspace = true
 windows.workspace = true
 
 [dev-dependencies]

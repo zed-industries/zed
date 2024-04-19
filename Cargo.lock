@@ -4318,9 +4318,7 @@ dependencies = [
  "git2",
  "lazy_static",
  "log",
- "parking_lot",
  "pretty_assertions",
- "rope",
  "serde",
  "serde_json",
  "smol",
@@ -4329,7 +4327,6 @@ dependencies = [
  "time",
  "unindent",
  "url",
- "util",
  "windows 0.53.0",
 ]
 
