@@ -870,7 +870,7 @@ impl EditorElement {
             .collect()
     }
 
-    fn before_paint_folds(
+    fn paint_fold_hitboxes(
         &self,
         folds: &mut [FoldLayout],
         content_origin: gpui::Point<Pixels>,
@@ -981,7 +981,7 @@ impl EditorElement {
         })
     }
 
-    fn before_paint_cursors(
+    fn paint_cursor_hitboxes(
         &self,
         cursors: &mut [CursorLayout],
         text_hitbox: &Hitbox,
@@ -1187,7 +1187,7 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn before_paint_inline_blame(
+    fn paint_inline_blame_hitboxes(
         &self,
         element: &mut AnyElement,
         display_row: u32,
@@ -1270,7 +1270,7 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn before_paint_blame_entries(
+    fn paint_blame_entries_hitboxes(
         &self,
         blame_entries: &mut [AnyElement],
         em_width: Pixels,
@@ -1295,25 +1295,24 @@ impl EditorElement {
         newest_selection_head: DisplayPoint,
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
         cx: &mut ElementContext,
-    ) -> Option<AnyElement> {
+    ) -> Option<CodeActionsIndicatorLayout> {
         let mut active = false;
-        let mut button = None;
+        let mut indicator = None;
         self.editor.update(cx, |editor, cx| {
             active = matches!(
                 editor.context_menu.read().as_ref(),
                 Some(crate::ContextMenu::CodeActions(_))
             );
-            button = editor.render_code_actions_indicator(&self.style, active, cx);
+            indicator = editor.render_code_actions_indicator(&self.style, active, cx);
         });
 
-        let mut button = button?.into_any_element();
+        let mut indicator = indicator?.into_any_element();
         let available_space = size(
             AvailableSpace::MinContent,
             AvailableSpace::Definite(line_height),
         );
-        let indicator_size = button.layout(available_space, cx);
+        let indicator_measurement = indicator.layout(available_space, cx);
 
         let blame_width = gutter_dimensions
             .git_blame_entries_width
@@ -1321,15 +1320,28 @@ impl EditorElement {
 
         let mut x = blame_width;
         let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
-            - indicator_size.width
+            - indicator_measurement.size.width
             - blame_width;
         x += available_width / 2.;
 
         let mut y = newest_selection_head.row() as f32 * line_height - scroll_pixel_position.y;
-        y += (line_height - indicator_size.height) / 2.;
+        y += (line_height - indicator_measurement.size.height) / 2.;
 
-        button.layout(gutter_hitbox.origin + point(x, y), available_space, cx);
-        Some(button)
+        Some(CodeActionsIndicatorLayout {
+            origin: point(x, y),
+            element: indicator,
+        })
+    }
+
+    fn paint_code_actions_indicator_hitboxes(
+        &self,
+        indicator: &mut CodeActionsIndicatorLayout,
+        gutter_hitbox: &Hitbox,
+        cx: &mut ElementContext,
+    ) {
+        cx.with_absolute_element_offset(gutter_hitbox.origin + indicator.origin, |cx| {
+            indicator.element.before_paint(cx)
+        });
     }
 
     fn calculate_relative_line_numbers(
@@ -1875,7 +1887,7 @@ impl EditorElement {
         blocks
     }
 
-    fn before_paint_blocks(
+    fn paint_block_hitboxes(
         &self,
         blocks: &mut [BlockLayout],
         hitbox: &Hitbox,
@@ -1933,7 +1945,7 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn before_paint_context_menu(
+    fn paint_context_menu_hitboxes(
         &self,
         context_menu: ContextMenuLayout,
         text_hitbox: &Hitbox,
@@ -3789,7 +3801,7 @@ impl Element for EditorElement {
                 let autoscrolled = if autoscroll_horizontally {
                     editor.autoscroll_horizontally(
                         start_row,
-                        text_bounds.size.width,
+                        text_size.width,
                         scroll_width,
                         em_width,
                         &line_layouts,
@@ -4213,7 +4225,7 @@ impl Element for EditorElement {
                 });
 
                 cx.with_element_id(Some("blocks"), |cx| {
-                    self.before_paint_blocks(
+                    self.paint_block_hitboxes(
                         &mut blocks,
                         &hitbox,
                         line_height,
@@ -4590,6 +4602,11 @@ struct ContextMenuLayout {
     origin: gpui::Point<Pixels>,
     element: AnyElement,
     measurement: ElementMeasurement,
+}
+
+struct CodeActionsIndicatorLayout {
+    origin: gpui::Point<Pixels>,
+    element: AnyElement,
 }
 
 struct PositionMap {
