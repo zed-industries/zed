@@ -253,6 +253,9 @@ impl WindowsWindowInner {
             WM_CREATE => self.handle_create_msg(lparam),
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
+            WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => self.handle_size_move_loop(),
+            WM_EXITSIZEMOVE | WM_EXITMENULOOP => self.handle_size_move_loop_exit(),
+            WM_TIMER => self.handle_timer_msg(wparam),
             WM_NCCALCSIZE => self.handle_calc_client_size(wparam, lparam),
             WM_DPICHANGED => self.handle_dpi_changed_msg(wparam, lparam),
             WM_NCHITTEST => self.handle_hit_test_msg(msg, wparam, lparam),
@@ -342,8 +345,36 @@ impl WindowsWindowInner {
             let logical_size = logical_size(new_physical_size, scale_factor);
             callback(logical_size, scale_factor);
         }
-        self.invalidate_client_area();
         Some(0)
+    }
+
+    fn handle_size_move_loop(&self) -> Option<isize> {
+        unsafe {
+            let ret = SetTimer(self.hwnd, SIZE_MOVE_LOOP_TIMER_ID, USER_TIMER_MINIMUM, None);
+            if ret == 0 {
+                log::error!(
+                    "unable to create timer: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+        None
+    }
+
+    fn handle_size_move_loop_exit(&self) -> Option<isize> {
+        unsafe {
+            KillTimer(self.hwnd, SIZE_MOVE_LOOP_TIMER_ID).log_err();
+        }
+        None
+    }
+
+    fn handle_timer_msg(&self, wparam: WPARAM) -> Option<isize> {
+        if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
+            self.platform_inner.run_foreground_tasks();
+            self.handle_paint_msg();
+            return Some(0);
+        }
+        None
     }
 
     fn handle_paint_msg(&self) -> Option<isize> {
@@ -1883,6 +1914,7 @@ const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
 const DOUBLE_CLICK_SPATIAL_TOLERANCE: i32 = 4;
+const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
 #[cfg(test)]
 mod tests {
