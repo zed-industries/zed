@@ -72,7 +72,7 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
         let original_y = scroll_position.y;
-        if let Some(last_bounds) = self.expect_bounds_change.take() {
+        if let Some(last_bounds) = self.expect_layout_bounds_change.take() {
             if scroll_position.y != 0. {
                 scroll_position.y += (bounds.top() - last_bounds.top()) / line_height;
                 if scroll_position.y < 0. {

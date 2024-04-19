@@ -1173,7 +1173,7 @@ impl SearchableItem for Editor {
     }
 
     fn search_bar_visibility_changed(&mut self, _visible: bool, _cx: &mut ViewContext<Self>) {
-        self.expect_bounds_change = self.last_bounds;
+        self.expect_layout_bounds_change = self.last_layout_bounds;
     }
 }
 
