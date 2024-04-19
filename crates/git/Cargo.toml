@@ -26,7 +26,6 @@ url.workspace = true
 util.workspace = true
 serde.workspace = true
 rope.workspace = true
-util.workspace = true
 parking_lot.workspace = true
 windows.workspace = true
 

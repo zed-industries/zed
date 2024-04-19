@@ -95,21 +95,19 @@ pub async fn fetch_github_commit_author(
 
     let body_str = std::str::from_utf8(&body)?;
 
-    let author = serde_json::from_str::<CommitDetails>(body_str)
-        .and_then(|github_commit| {
+    serde_json::from_str::<CommitDetails>(body_str)
+        .map(|github_commit| {
             if let Some(author) = github_commit.author {
-                Ok(Some(GitHubAuthor {
+                Some(GitHubAuthor {
                     id: author.id,
                     avatar_url: author.avatar_url,
                     email: github_commit.commit.author.email,
-                }))
+                })
             } else {
-                Ok(None)
+                None
             }
         })
-        .context("deserializing GitHub commit details failed")?;
-
-    Ok(author)
+        .context("deserializing GitHub commit details failed")
 }
 
 pub async fn latest_github_release(
