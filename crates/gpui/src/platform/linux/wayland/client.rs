@@ -70,7 +70,7 @@ const MIN_KEYCODE: u32 = 8;
 pub struct Globals {
     pub qh: QueueHandle<WaylandClientStatePtr>,
     pub compositor: wl_compositor::WlCompositor,
-    pub data_device_manager: wl_data_device_manager::WlDataDeviceManager, // TODO: optional?
+    pub data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     pub wm_base: xdg_wm_base::XdgWmBase,
     pub shm: wl_shm::WlShm,
     pub viewporter: Option<wp_viewporter::WpViewporter>,
@@ -101,7 +101,7 @@ impl Globals {
                     WL_DATA_DEVICE_MANAGER_VERSION..=WL_DATA_DEVICE_MANAGER_VERSION,
                     (),
                 )
-                .unwrap(),
+                .ok(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
@@ -273,7 +273,10 @@ impl WaylandClient {
         let seat = seat.unwrap();
         let globals = Globals::new(globals, common.foreground_executor.clone(), qh.clone());
 
-        let data_device = globals.data_device_manager.get_data_device(&seat, &qh, ());
+        let data_device = globals
+            .data_device_manager
+            .as_ref()
+            .map(|data_device_manager| data_device_manager.get_data_device(&seat, &qh, ()));
         // TODO: data_device.release();
 
         let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
