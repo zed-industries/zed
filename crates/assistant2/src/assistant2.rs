@@ -416,21 +416,32 @@ impl AssistantChat {
                 error,
                 tool_calls,
                 ..
-            }) => {
-                div()
-                    .when(!is_last, |element| element.mb_2())
-                    .child(
-                        div()
+            }) => div()
+                .when(!is_last, |element| element.mb_2())
+                .child(
+                    div()
+                        .p_2()
+                        .child(Label::new("Assistant").color(Color::Modified)),
+                )
+                .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
+                .child(self.render_error(error.clone(), ix, cx))
+                .children(tool_calls.iter().map(|tool_call| {
+                    let result = tool_call.result;
+                    let name = tool_call.name.clone();
+                    match result {
+                        Some(result) => div()
                             .p_2()
-                            .child(Label::new("Assistant").color(Color::Modified)),
-                    )
-                    .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
-                    .child(self.render_error(error.clone(), ix, cx))
-                    .children(tool_calls.iter().map(|tool_call| {
-                        self.tool_registry.read(cx).render_tool_call(tool_call, cx)
-                    }))
-                    .into_any()
-            }
+                            .child(Label::new(name).color(Color::Modified))
+                            .child(result.render(cx))
+                            .into_any(),
+                        None => div()
+                            .p_2()
+                            .child(Label::new(name).color(Color::Modified))
+                            .child("Running...")
+                            .into_any(),
+                    }
+                }))
+                .into_any(),
         }
     }
 

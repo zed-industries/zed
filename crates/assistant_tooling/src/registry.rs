@@ -26,11 +26,13 @@ impl NoToolForName {
 
 impl ToolFunctionOutput for NoToolForName {
     fn render(&self, _cx: &mut WindowContext) -> AnyElement {
-        div().child("No tool found for {self.name}").into_any()
+        let name = self.name.clone();
+        div().child(format!("No tool found for {name}")).into_any()
     }
 
     fn format(&self) -> String {
-        "No tool found for name".to_string()
+        let name = self.name.clone();
+        format!("No tool found for {name}")
     }
 }
 
@@ -48,9 +50,10 @@ impl FailedToParseArguments {
 impl ToolFunctionOutput for FailedToParseArguments {
     fn render(&self, _cx: &mut WindowContext) -> AnyElement {
         let message = self.error.to_string();
+        let name = self.name.clone();
 
         div()
-            .child(format!("Model sent bad input: {message}"))
+            .child(format!("Model sent bad input for {name}: {message}"))
             .into_any()
     }
 
