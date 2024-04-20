@@ -63,7 +63,6 @@ impl WindowsWindowInner {
         handle: AnyWindowHandle,
         hide_title_bar: bool,
         display: Rc<WindowsDisplay>,
-        fullscreen_restore_bounds: Option<Bounds<DevicePixels>>,
     ) -> Self {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = Cell::new(point(DevicePixels(cs.x), DevicePixels(cs.y)));
@@ -115,11 +114,7 @@ impl WindowsWindowInner {
         let display = RefCell::new(display);
         let click_state = RefCell::new(ClickState::new());
         let fullscreen = Cell::new(None);
-        let fullscreen_restore_bounds = if let Some(bounds) = fullscreen_restore_bounds {
-            Cell::new(bounds)
-        } else {
-            Cell::new(Bounds::default())
-        };
+        let fullscreen_restore_bounds = Cell::new(Bounds::default());
 
         Self {
             hwnd,
@@ -1278,7 +1273,6 @@ struct WindowCreateContext {
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: Rc<WindowsDisplay>,
-    fullscreen_restore_bounds: Option<Bounds<DevicePixels>>,
 }
 
 impl WindowsWindow {
@@ -1302,13 +1296,6 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
-        let (show_cmd, fullscreen, fullscreen_restore_bounds) = match params.open_status {
-            WindowOpenStatus::FullScreen(bounds) => (SW_SHOW, true, Some(bounds)),
-            WindowOpenStatus::Maximized(_) => (SW_SHOWMAXIMIZED, false, None),
-            _ => (SW_SHOW, false, None),
-        };
-        let hwndparent = HWND::default();
-        let hmenu = HMENU::default();
         let hinstance = get_module_handle();
         let mut context = WindowCreateContext {
             inner: None,
@@ -1318,7 +1305,6 @@ impl WindowsWindow {
             // todo(windows) move window to target monitor
             // options.display_id
             display: Rc::new(WindowsDisplay::primary_monitor().unwrap()),
-            fullscreen_restore_bounds,
         };
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
@@ -1356,24 +1342,19 @@ impl WindowsWindow {
             .write()
             .push(wnd.inner.hwnd);
 
-        if let Some(restore_bounds) = params.open_status.get_bounds() {
-            unsafe {
-                let mut placement = WINDOWPLACEMENT {
-                    length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-                    ..Default::default()
-                };
-                GetWindowPlacement(wnd.inner.hwnd, &mut placement).log_err();
-                placement.rcNormalPosition.left = restore_bounds.left().0;
-                placement.rcNormalPosition.right = restore_bounds.right().0;
-                placement.rcNormalPosition.top = restore_bounds.top().0;
-                placement.rcNormalPosition.bottom = restore_bounds.bottom().0;
-                SetWindowPlacement(wnd.inner.hwnd, &placement).log_err();
-            }
+        unsafe {
+            let mut placement = WINDOWPLACEMENT {
+                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                ..Default::default()
+            };
+            GetWindowPlacement(wnd.inner.hwnd, &mut placement).log_err();
+            placement.rcNormalPosition.left = params.bounds.left().0;
+            placement.rcNormalPosition.right = params.bounds.right().0;
+            placement.rcNormalPosition.top = params.bounds.top().0;
+            placement.rcNormalPosition.bottom = params.bounds.bottom().0;
+            SetWindowPlacement(wnd.inner.hwnd, &placement).log_err();
         }
-        unsafe { ShowWindow(wnd.inner.hwnd, show_cmd) };
-        if fullscreen {
-            wnd.toggle_fullscreen();
-        }
+        unsafe { ShowWindow(wnd.inner.hwnd, SW_SHOW) };
 
         wnd
     }
@@ -1845,7 +1826,6 @@ unsafe extern "system" fn wnd_proc(
             ctx.handle,
             ctx.hide_title_bar,
             ctx.display.clone(),
-            ctx.fullscreen_restore_bounds,
         ));
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
