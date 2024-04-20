@@ -110,7 +110,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) center_group: SerializedPaneGroup,
-    pub(crate) open_status: Option<SerializedWindowOpenStatus>,
+    pub(crate) open_status: SerializedWindowOpenStatus,
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
