@@ -28,7 +28,7 @@ use crate::scene::Scene;
 use crate::{
     px, size, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay, PlatformInput,
     Point, PromptLevel, Size, WaylandClientState, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowParams,
+    WindowBackgroundAppearance, WindowOpenStatus, WindowParams,
 };
 
 #[derive(Default)]
@@ -548,6 +548,17 @@ impl PlatformWindow for WaylandWindow {
     fn is_minimized(&self) -> bool {
         // This cannot be determined by the client
         false
+    }
+
+    fn restore_status(&self) -> WindowOpenStatus {
+        let state = self.borrow();
+        if state.fullscreen {
+            WindowOpenStatus::FullScreen(state.bounds.map(|p| DevicePixels(p as i32)))
+        } else if state.maximized {
+            WindowOpenStatus::Maximized(state.bounds.map(|p| DevicePixels(p as i32)))
+        } else {
+            WindowOpenStatus::Windowed(Some(state.bounds.map(|p| DevicePixels(p as i32))))
+        }
     }
 
     fn content_size(&self) -> Size<Pixels> {
