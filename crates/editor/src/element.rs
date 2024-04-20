@@ -3994,7 +3994,7 @@ struct ScrollbarLayout {
 impl ScrollbarLayout {
     const BORDER_WIDTH: Pixels = px(1.0);
     const LINE_MARKER_HEIGHT: Pixels = px(2.0);
-    const COLUMN_MARKER_HEIGHT: Pixels = px(5.0);
+    const MIN_MARKER_HEIGHT: Pixels = px(5.0);
     const MIN_THUMB_HEIGHT: Pixels = px(20.0);
 
     fn thumb_bounds(&self) -> Bounds<Pixels> {
@@ -4015,30 +4015,41 @@ impl ScrollbarLayout {
         row_ranges: impl IntoIterator<Item = ColoredRange<u32>>,
         column: Option<usize>,
     ) -> Vec<PaintQuad> {
-        let (x_range, height) = if let Some(column) = column {
+        struct MinMax {
+            min: Pixels,
+            max: Pixels,
+        }
+        let (x_range, height_limit) = if let Some(column) = column {
             let column_width = px(((self.hitbox.size.width - Self::BORDER_WIDTH).0 / 3.0).floor());
             let start = Self::BORDER_WIDTH + (column as f32 * column_width);
             let end = start + column_width;
-            (Range { start, end }, Self::COLUMN_MARKER_HEIGHT)
+            (
+                Range { start, end },
+                MinMax {
+                    min: Self::MIN_MARKER_HEIGHT,
+                    max: px(f32::MAX),
+                },
+            )
         } else {
             (
                 Range {
                     start: Self::BORDER_WIDTH,
                     end: self.hitbox.size.width,
                 },
-                Self::LINE_MARKER_HEIGHT,
+                MinMax {
+                    min: Self::LINE_MARKER_HEIGHT,
+                    max: Self::LINE_MARKER_HEIGHT,
+                },
             )
         };
 
+        let row_to_y = |row: u32| row as f32 * self.row_height;
         let mut pixel_ranges = row_ranges
             .into_iter()
             .map(|range| {
-                let start_y = range.start as f32 * self.row_height;
-                let end_y = if range.end == range.start {
-                    start_y + height
-                } else {
-                    range.end as f32 * self.row_height + height
-                };
+                let start_y = row_to_y(range.start);
+                let end_y = row_to_y(range.end)
+                    + self.row_height.max(height_limit.min).min(height_limit.max);
                 ColoredRange {
                     start: start_y,
                     end: end_y,
