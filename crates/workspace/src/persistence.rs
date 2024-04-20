@@ -117,7 +117,7 @@ impl Column for SerializedWindowOpenStatus {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (window_state, next_index) = String::column(statement, start_index)?;
         let status = match window_state.as_str() {
-            "Windowed" => {
+            "Windowed" | "Fixed" => {
                 let ((x, y, width, height), _) = Column::column(statement, next_index)?;
                 let x: i32 = x;
                 let y: i32 = y;
