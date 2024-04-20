@@ -172,7 +172,7 @@ impl AssistantChat {
                         this.completion_messages(cx),
                         Vec::new(),
                         1.0,
-                        this.tool_registry.definitions(),
+                        this.tool_registry.definitions.as_slice(),
                     )
                 });
 
@@ -415,19 +415,21 @@ impl AssistantChat {
                 error,
                 tool_calls,
                 ..
-            }) => div()
-                .when(!is_last, |element| element.mb_2())
-                .child(
-                    div()
-                        .p_2()
-                        .child(Label::new("Assistant").color(Color::Modified)),
-                )
-                .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
-                .child(self.render_error(error.clone(), ix, cx))
-                .children(tool_calls.iter().map(|tool_call| {
-                    self.tool_registry.read(cx).render_tool_call(tool_call, cx)
-                })
-                .into_any()
+            }) => {
+                div()
+                    .when(!is_last, |element| element.mb_2())
+                    .child(
+                        div()
+                            .p_2()
+                            .child(Label::new("Assistant").color(Color::Modified)),
+                    )
+                    .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
+                    .child(self.render_error(error.clone(), ix, cx))
+                    .children(tool_calls.iter().map(|tool_call| {
+                        self.tool_registry.read(cx).render_tool_call(tool_call, cx)
+                    }))
+                    .into_any()
+            }
         }
     }
 
