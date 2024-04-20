@@ -315,14 +315,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(concludeDragOperation:),
         conclude_drag_operation as extern "C" fn(&Object, Sel, id),
     );
-    decl.add_method(
-        sel!(windowDidMiniaturize:),
-        window_did_miniaturize as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowDidDeminiaturize:),
-        window_did_deminiaturize as extern "C" fn(&Object, Sel, id),
-    );
 
     decl.register()
 }
@@ -1910,18 +1902,6 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Exited),
     );
-}
-
-extern "C" fn window_did_miniaturize(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-
-    window_state.lock().minimized = true;
-}
-
-extern "C" fn window_did_deminiaturize(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-
-    window_state.lock().minimized = false;
 }
 
 async fn synthetic_drag(
