@@ -353,7 +353,6 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
-    minimized: bool,
     maximized: bool,
     maximized_restore_bounds: Bounds<DevicePixels>,
     fullscreen_restore_bounds: Bounds<DevicePixels>,
@@ -437,10 +436,6 @@ impl MacWindowState {
 
     fn is_maximized(&self) -> bool {
         self.maximized
-    }
-
-    fn is_minimized(&self) -> bool {
-        self.minimized
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -653,7 +648,6 @@ impl MacWindow {
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
                 first_mouse: false,
-                minimized: false,
                 maximized: false,
                 maximized_restore_bounds: Bounds::default(),
                 fullscreen_restore_bounds: Bounds::default(),
@@ -799,10 +793,6 @@ impl PlatformWindow for MacWindow {
 
     fn is_maximized(&self) -> bool {
         self.0.as_ref().lock().is_maximized()
-    }
-
-    fn is_minimized(&self) -> bool {
-        self.0.as_ref().lock().is_minimized()
     }
 
     fn content_size(&self) -> Size<Pixels> {
