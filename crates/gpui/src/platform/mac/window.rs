@@ -501,7 +501,7 @@ impl MacWindowState {
 
     fn restore_status(&self) -> WindowOpenStatus {
         if self.is_fullscreen() {
-            WindowOpenStatus::FullScreen(self.fullscreen_restore_bounds)
+            WindowOpenStatus::Fullscreen(self.fullscreen_restore_bounds)
         } else if self.is_maximized() {
             WindowOpenStatus::Maximized(self.maximized_restore_bounds)
         } else {

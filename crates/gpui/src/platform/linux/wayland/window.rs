@@ -561,7 +561,7 @@ impl PlatformWindow for WaylandWindow {
     fn restore_status(&self) -> WindowOpenStatus {
         let state = self.borrow();
         if state.fullscreen {
-            WindowOpenStatus::FullScreen(state.restore_bounds)
+            WindowOpenStatus::Fullscreen(state.restore_bounds)
         } else if state.maximized {
             WindowOpenStatus::Maximized(state.restore_bounds)
         } else {
