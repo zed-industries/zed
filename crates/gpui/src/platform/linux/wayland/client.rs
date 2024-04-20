@@ -3,6 +3,7 @@ use std::cell::{RefCell, RefMut};
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -121,6 +122,7 @@ pub(crate) struct WaylandClientState {
     // Output to scale mapping
     output_scales: HashMap<ObjectId, i32>,
     keymap_state: Option<xkb::State>,
+    drag: DragState,
     click: ClickState,
     repeat: KeyRepeat,
     modifiers: Modifiers,
@@ -138,12 +140,16 @@ pub(crate) struct WaylandClientState {
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_icon_name: String,
     cursor: Cursor,
-    current_drag_offer: Option<wl_data_offer::WlDataOffer>,
-    current_drag_window: Option<WaylandWindowStatePtr>,
     clipboard: Option<Clipboard>,
     primary: Option<Primary>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
+}
+
+pub struct DragState {
+    data_offer: Option<wl_data_offer::WlDataOffer>,
+    window: Option<WaylandWindowStatePtr>,
+    position: Point<Pixels>,
 }
 
 pub struct ClickState {
@@ -285,9 +291,14 @@ impl WaylandClient {
             windows: HashMap::default(),
             common,
             keymap_state: None,
+            drag: DragState {
+                data_offer: None,
+                window: None,
+                position: Point::default(),
+            },
             click: ClickState {
                 last_click: Instant::now(),
-                last_location: Point::new(px(0.0), px(0.0)),
+                last_location: Point::default(),
                 current_count: 0,
             },
             repeat: KeyRepeat {
@@ -317,8 +328,6 @@ impl WaylandClient {
             cursor_icon_name: "arrow".to_string(),
             enter_token: None,
             cursor,
-            current_drag_offer: None,
-            current_drag_window: None,
             clipboard: Some(clipboard),
             primary: Some(primary),
             event_loop: Some(event_loop),
@@ -1209,8 +1218,9 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                         return;
                     };
 
-                    let actions = DndAction::Copy;
-                    data_offer.set_actions(actions, actions);
+                    // todo(linux): this should be determined by the gpui user.
+                    const ACTIONS: DndAction = DndAction::Copy;
+                    data_offer.set_actions(ACTIONS, ACTIONS);
 
                     let pipe = Pipe::new().unwrap();
                     // TODO: move mime type to constant
@@ -1219,9 +1229,8 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     });
                     let fd = pipe.read;
                     drop(pipe.write);
-                    // data_offer.receive("text/uri-list".to_string(), fd);
 
-                    let read = match read_pipe_with_timeout(fd) {
+                    let file_list = match read_pipe_with_timeout(fd) {
                         Ok(read) => read,
                         Err(err) => {
                             log::error!("error reading dnd pipe: {err:?}");
@@ -1229,47 +1238,60 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                         }
                     };
 
-                    // let file_list: Vec<String> = read.lines().collect();
-
-                    let mut paths = SmallVec::<[PathBuf; 2]>::new();
+                    let paths: SmallVec<[_; 2]> = file_list.lines().map(PathBuf::from).collect();
+                    let position = Point::new(x.into(), y.into());
+                    println!("{paths:?}");
                     let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                        position: Point::new(x.into(), y.into()),
+                        position,
                         paths: crate::ExternalPaths(paths),
                     });
 
-                    state.current_drag_offer = Some(data_offer);
-                    state.current_drag_window = Some(drag_window.clone());
+                    state.drag.data_offer = Some(data_offer);
+                    state.drag.window = Some(drag_window.clone());
+                    state.drag.position = position;
 
                     drop(state);
                     drag_window.handle_input(input);
                 }
             }
             wl_data_device::Event::Motion { time: _, x, y } => {
-                let drag_window = state.current_drag_window.clone().unwrap();
-                let input = PlatformInput::FileDrop(FileDropEvent::Pending {
-                    position: Point::new(x.into(), y.into()),
-                });
+                let drag_window = state.drag.window.clone().unwrap();
+                let position = Point::new(x.into(), y.into());
+                state.drag.position = position;
+
+                let input = PlatformInput::FileDrop(FileDropEvent::Pending { position });
                 drop(state);
                 drag_window.handle_input(input);
             }
             wl_data_device::Event::Leave => {
                 println!("Data offer leave");
-                let drag_window = state.current_drag_window.clone().unwrap();
-                state.current_drag_offer = None;
-                state.current_drag_window = None;
+                let drag_window = state.drag.window.clone().unwrap();
+                let data_offer = state.drag.data_offer.clone().unwrap();
+                data_offer.destroy();
+
+                state.drag.data_offer = None;
+                state.drag.window = None;
 
                 let input = PlatformInput::FileDrop(FileDropEvent::Exited {});
                 drop(state);
                 drag_window.handle_input(input);
             }
             wl_data_device::Event::Drop => {
-                // TODO: handle drop
                 println!("File dropped!");
 
-                let drag_offer = state.current_drag_offer.clone().unwrap();
-                let drag_window = state.current_drag_window.clone().unwrap();
+                let drag_window = state.drag.window.clone().unwrap();
+                let data_offer = state.drag.data_offer.clone().unwrap();
+                data_offer.finish();
+                data_offer.destroy();
 
-                // drag_offer.receive(mime_type, fd)
+                state.drag.data_offer = None;
+                state.drag.window = None;
+
+                let input = PlatformInput::FileDrop(FileDropEvent::Submit {
+                    position: state.drag.position,
+                });
+                drop(state);
+                drag_window.handle_input(input);
             }
             _ => {}
         }
