@@ -639,7 +639,7 @@ impl Window {
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
         match open_status {
-            WindowOpenStatus::FullScreen(_) => platform_window.toggle_fullscreen(),
+            WindowOpenStatus::Fullscreen(_) => platform_window.toggle_fullscreen(),
             WindowOpenStatus::Maximized(_) => platform_window.zoom(),
             WindowOpenStatus::Windowed(_) => {}
         }

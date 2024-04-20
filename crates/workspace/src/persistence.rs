@@ -97,7 +97,7 @@ impl Bind for SerializedWindowOpenStatus {
                     next_index,
                 )
             }
-            WindowOpenStatus::FullScreen(bounds) => {
+            WindowOpenStatus::Fullscreen(bounds) => {
                 let next_index = statement.bind(&"FullScreen", start_index)?;
                 statement.bind(
                     &(
@@ -145,7 +145,7 @@ impl Column for SerializedWindowOpenStatus {
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowOpenStatus(WindowOpenStatus::FullScreen(Bounds {
+                SerializedWindowOpenStatus(WindowOpenStatus::Fullscreen(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
                 }))

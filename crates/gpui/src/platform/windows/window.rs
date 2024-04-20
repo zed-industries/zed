@@ -134,7 +134,7 @@ impl WindowsWindowState {
         };
 
         if self.is_fullscreen() {
-            WindowOpenStatus::FullScreen(self.fullscreen_restore_bounds.get())
+            WindowOpenStatus::Fullscreen(self.fullscreen_restore_bounds.get())
         } else if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
             WindowOpenStatus::Maximized(bounds)
         } else {
