@@ -938,7 +938,7 @@ impl Workspace {
                 } else {
                     let restorable_bounds = serialized_workspace
                         .as_ref()
-                        .and_then(|workspace| Some((workspace.display?, workspace.open_status?)))
+                        .and_then(|workspace| Some((workspace.display?, workspace.open_status)))
                         .or_else(|| {
                             let (display, open_status) = DB.last_window().log_err()?;
                             Some((display?, open_status?))
@@ -3650,7 +3650,7 @@ impl Workspace {
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
-            let open_status = cx.restore_status();
+            let open_status = SerializedWindowOpenStatus(cx.restore_status());
             let serialized_workspace = SerializedWorkspace {
                 id: self.database_id,
                 location,
