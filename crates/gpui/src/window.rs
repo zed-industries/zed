@@ -603,15 +603,18 @@ impl Window {
             app_id,
         } = options;
 
-        let open_status = if open_status == WindowOpenStatus::Windowed(None) {
-            WindowOpenStatus::Windowed(Some(default_bounds(display_id, cx)))
-        } else {
-            open_status
-        };
+        // let open_status = if open_status == WindowOpenStatus::Windowed(None) {
+        //     WindowOpenStatus::Windowed(Some(default_bounds(display_id, cx)))
+        // } else {
+        //     open_status
+        // };
+        let bounds = open_status
+            .get_bounds()
+            .unwrap_or_else(|| default_bounds(display_id, cx));
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
-                open_status,
+                bounds,
                 titlebar,
                 kind,
                 is_movable,
@@ -634,6 +637,12 @@ impl Window {
         let needs_present = Rc::new(Cell::new(false));
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
+
+        match open_status {
+            WindowOpenStatus::FullScreen(_) => platform_window.toggle_fullscreen(),
+            WindowOpenStatus::Maximized(_) => platform_window.zoom(),
+            WindowOpenStatus::Windowed(_) => {}
+        }
 
         platform_window.on_close(Box::new({
             let mut cx = cx.to_async();
