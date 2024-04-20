@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
-use futures::future::try_join_all;
+use futures::future::{join_all, try_join_all};
 use git::repository::GitFileStatus;
 use gpui::{
     point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
@@ -1131,6 +1131,7 @@ impl SearchableItem for Editor {
         query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
+        let selections = self.selections.all::<Point>(cx);
         let buffer = self.buffer().read(cx).snapshot(cx);
         let search_within_ranges = self
             .background_highlights
@@ -1141,28 +1142,64 @@ impl SearchableItem for Editor {
                     .map(|range| range.to_offset(&buffer))
                     .collect::<Vec<_>>()
             });
+
+        let selection = query.selection();
+        let selection_line_mode = self.selections.line_mode;
         cx.background_executor().spawn(async move {
+            let search_ranges = if selection {
+                dbg!(&selections);
+                selections
+                    .into_iter()
+                    .map(|selection| {
+                        let mut start = selection.start;
+                        let mut end = selection.end;
+                        let max_point = buffer.max_point();
+                        let is_entire_line = selection.is_empty() || selection_line_mode;
+                        if is_entire_line {
+                            start = Point::new(start.row, 0);
+                            end = cmp::min(max_point, Point::new(end.row + 1, 0));
+                        }
+
+                        Some(Range {
+                            start: buffer.point_to_offset(start),
+                            end: buffer.point_to_offset(end),
+                        })
+                    })
+                    .collect()
+            } else if let Some(search_within_ranges) = search_within_ranges {
+                search_within_ranges
+                    .into_iter()
+                    .map(|range| Some(range))
+                    .collect()
+            } else {
+                vec![None]
+            };
+
+            dbg!(&search_ranges);
+
             let mut ranges = Vec::new();
             if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
-                if let Some(search_within_ranges) = search_within_ranges {
-                    for range in search_within_ranges {
-                        let offset = range.start;
-                        ranges.extend(
-                            query
-                                .search(excerpt_buffer, Some(range))
-                                .await
-                                .into_iter()
-                                .map(|range| {
-                                    buffer.anchor_after(range.start + offset)
-                                        ..buffer.anchor_before(range.end + offset)
-                                }),
-                        );
-                    }
-                } else {
-                    ranges.extend(query.search(excerpt_buffer, None).await.into_iter().map(
-                        |range| buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
-                    ));
-                }
+                ranges.extend(
+                    join_all(search_ranges.into_iter().map(|range| async {
+                        let offset = if let Some(range) = &range {
+                            range.start
+                        } else {
+                            0
+                        };
+
+                        let buffer = &buffer;
+
+                        query.search(excerpt_buffer, range).await.into_iter().map(
+                            move |matched_range| {
+                                buffer.anchor_after(offset + matched_range.start)
+                                    ..buffer.anchor_before(offset + matched_range.end)
+                            },
+                        )
+                    }))
+                    .await
+                    .into_iter()
+                    .flatten(),
+                );
             } else {
                 for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
                     if let Some(next_excerpt) = excerpt.next {
