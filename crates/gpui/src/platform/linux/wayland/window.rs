@@ -548,6 +548,7 @@ impl PlatformWindow for WaylandWindow {
         false
     }
 
+    // todo(linux)
     fn restore_status(&self) -> WindowOpenStatus {
         let state = self.borrow();
         if state.fullscreen {

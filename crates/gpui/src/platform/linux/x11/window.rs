@@ -425,7 +425,13 @@ impl PlatformWindow for X11Window {
     // todo(linux)
     fn restore_status(&self) -> WindowOpenStatus {
         let state = self.state.borrow();
-        WindowOpenStatus::Windowed(Some(state.bounds.map(|p| DevicePixels(p as i32))))
+        if state.fullscreen {
+            WindowOpenStatus::FullScreen(state.bounds.map(|p| DevicePixels(p)))
+        } else if state.maximized {
+            WindowOpenStatus::Maximized(state.bounds.map(|p| DevicePixels(p)))
+        } else {
+            WindowOpenStatus::Windowed(Some(state.bounds.map(|p| DevicePixels(p))))
+        }
     }
 
     fn content_size(&self) -> Size<Pixels> {
