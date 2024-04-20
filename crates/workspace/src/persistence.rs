@@ -59,7 +59,7 @@ impl sqlez::bindable::Column for SerializedAxis {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
 pub(crate) struct SerializedWindowOpenStatus(pub(crate) WindowOpenStatus);
 
 impl StaticColumnCount for SerializedWindowOpenStatus {
@@ -396,7 +396,7 @@ impl WorkspaceDb {
             WorkspaceId,
             Option<LocalPaths>,
             Option<u64>,
-            Option<SerializedWindowOpenStatus>,
+            SerializedWindowOpenStatus,
             Option<Uuid>,
             Option<bool>,
             DockStructure,
