@@ -12,15 +12,14 @@ impl TerraformExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<String> {
+        if let Some(path) = worktree.which("terraform-ls") {
+            return Ok(path);
+        }
+
         if let Some(path) = &self.cached_binary_path {
             if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
                 return Ok(path.clone());
             }
-        }
-
-        if let Some(path) = worktree.which("terraform-ls") {
-            self.cached_binary_path = Some(path.clone());
-            return Ok(path);
         }
 
         zed::set_language_server_installation_status(

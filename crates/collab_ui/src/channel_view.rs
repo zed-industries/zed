@@ -305,6 +305,10 @@ impl ChannelView {
                 });
             }
             ChannelBufferEvent::BufferEdited => {
+                // Emit the edited event on the editor context so that other views can update it's state (e.g. markdown preview)
+                self.editor.update(cx, |_, cx| {
+                    cx.emit(EditorEvent::Edited);
+                });
                 if self.editor.read(cx).is_focused(cx) {
                     self.acknowledge_buffer_version(cx);
                 } else {

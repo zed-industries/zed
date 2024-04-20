@@ -1,4 +1,4 @@
-use std::{borrow::Cow, ops::ControlFlow, path::PathBuf, sync::Arc};
+use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 
 use crate::TerminalView;
 use collections::{HashMap, HashSet};
@@ -15,10 +15,7 @@ use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use task::{RevealStrategy, SpawnInTerminal, TaskId};
-use terminal::{
-    terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
-    SpawnTask,
-};
+use terminal::terminal_settings::{Shell, TerminalDockPosition, TerminalSettings};
 use ui::{h_flex, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -26,7 +23,7 @@ use workspace::{
     item::Item,
     pane,
     ui::IconName,
-    DraggedTab, NewTerminal, Pane, Workspace,
+    DraggedTab, NewTerminal, Pane, ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -99,7 +96,11 @@ impl TerminalPanel {
                                 pane.toggle_zoom(&workspace::ToggleZoom, cx);
                             }))
                             .tooltip(move |cx| {
-                                Tooltip::text(if zoomed { "Zoom Out" } else { "Zoom In" }, cx)
+                                Tooltip::for_action(
+                                    if zoomed { "Zoom Out" } else { "Zoom In" },
+                                    &ToggleZoom,
+                                    cx,
+                                )
                             })
                     })
                     .into_any_element()
@@ -287,46 +288,41 @@ impl TerminalPanel {
         action: &workspace::OpenTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let Some(this) = workspace.focus_panel::<Self>(cx) else {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
-
-        this.update(cx, |this, cx| {
-            this.add_terminal(Some(action.working_directory.clone()), None, cx)
-        })
+        terminal_panel.update(cx, |panel, cx| {
+            panel.add_terminal(Some(action.working_directory.clone()), None, cx)
+        });
+        workspace.focus_panel::<Self>(cx);
     }
 
     fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
-        let mut spawn_task = SpawnTask {
-            id: spawn_in_terminal.id.clone(),
-            full_label: spawn_in_terminal.full_label.clone(),
-            label: spawn_in_terminal.label.clone(),
-            command: spawn_in_terminal.command.clone(),
-            args: spawn_in_terminal.args.clone(),
-            env: spawn_in_terminal.env.clone(),
-            reveal: spawn_in_terminal.reveal,
-        };
+        let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone() {
-            Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, vec![])),
-            Shell::Program(shell) => Some((shell, vec![])),
+            Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, Vec::new())),
+            Shell::Program(shell) => Some((shell, Vec::new())),
             Shell::WithArguments { program, args } => Some((program, args)),
         }) else {
             return;
         };
 
-        let mut command = std::mem::take(&mut spawn_task.command);
-        let args = std::mem::take(&mut spawn_task.args);
-        for arg in args {
-            command.push(' ');
-            let arg = shlex::try_quote(&arg).unwrap_or(Cow::Borrowed(&arg));
-            command.push_str(&arg);
-        }
-        spawn_task.command = shell;
-        user_args.extend(["-i".to_owned(), "-c".to_owned(), command]);
+        spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+        let task_command = std::mem::replace(&mut spawn_task.command, shell);
+        let task_args = std::mem::take(&mut spawn_task.args);
+        let combined_command = task_args
+            .into_iter()
+            .fold(task_command, |mut command, arg| {
+                command.push(' ');
+                command.push_str(&arg);
+                command
+            });
+        user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
         spawn_task.args = user_args;
-        let reveal = spawn_task.reveal;
+        let spawn_task = spawn_task;
 
+        let reveal = spawn_task.reveal;
         let working_directory = spawn_in_terminal.cwd.clone();
         let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
         let use_new_terminal = spawn_in_terminal.use_new_terminal;
@@ -402,7 +398,7 @@ impl TerminalPanel {
 
     fn spawn_in_new_terminal(
         &mut self,
-        spawn_task: SpawnTask,
+        spawn_task: SpawnInTerminal,
         working_directory: Option<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -422,17 +418,17 @@ impl TerminalPanel {
         }
     }
 
-    ///Create a new Terminal in the current working directory or the user's home directory
+    /// Create a new Terminal in the current working directory or the user's home directory
     fn new_terminal(
         workspace: &mut Workspace,
         _: &workspace::NewTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let Some(this) = workspace.focus_panel::<Self>(cx) else {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
-
-        this.update(cx, |this, cx| this.add_terminal(None, None, cx))
+        terminal_panel.update(cx, |this, cx| this.add_terminal(None, None, cx));
+        workspace.focus_panel::<Self>(cx);
     }
 
     fn terminals_for_task(
@@ -465,7 +461,7 @@ impl TerminalPanel {
     fn add_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        spawn_task: Option<SpawnTask>,
+        spawn_task: Option<SpawnInTerminal>,
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace.clone();
@@ -557,7 +553,7 @@ impl TerminalPanel {
     fn replace_terminal(
         &self,
         working_directory: Option<PathBuf>,
-        spawn_task: SpawnTask,
+        spawn_task: SpawnInTerminal,
         terminal_item_index: usize,
         terminal_to_replace: View<TerminalView>,
         cx: &mut ViewContext<'_, Self>,
@@ -593,8 +589,13 @@ impl TerminalPanel {
 
         Some(())
     }
+
     pub fn pane(&self) -> &View<Pane> {
         &self.pane
+    }
+
+    fn has_no_terminals(&mut self, cx: &mut ViewContext<'_, Self>) -> bool {
+        self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
     }
 }
 
@@ -708,7 +709,7 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active && self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0 {
+        if active && self.has_no_terminals(cx) {
             self.add_terminal(None, None, cx)
         }
     }
@@ -726,8 +727,10 @@ impl Panel for TerminalPanel {
         "TerminalPanel"
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
-        Some(IconName::Terminal)
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        TerminalSettings::get_global(cx)
+            .button
+            .then(|| IconName::Terminal)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

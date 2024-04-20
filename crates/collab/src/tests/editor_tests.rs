@@ -3,6 +3,7 @@ use crate::{
     tests::{rust_lang, TestServer},
 };
 use call::ActiveCall;
+use collections::HashMap;
 use editor::{
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Redo, Rename, RevertSelectedHunks,
@@ -18,7 +19,10 @@ use language::{
     language_settings::{AllLanguageSettings, InlayHintSettings},
     FakeLspAdapter,
 };
-use project::SERVER_PROGRESS_DEBOUNCE_TIMEOUT;
+use project::{
+    project_settings::{InlineBlameSettings, ProjectSettings},
+    SERVER_PROGRESS_DEBOUNCE_TIMEOUT,
+};
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
 use settings::SettingsStore;
@@ -732,8 +736,56 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
             6..9
         );
         rename.editor.update(cx, |rename_editor, cx| {
+            let rename_selection = rename_editor.selections.newest::<usize>(cx);
+            assert_eq!(
+                rename_selection.range(),
+                0..3,
+                "Rename that was triggered from zero selection caret, should propose the whole word."
+            );
             rename_editor.buffer().update(cx, |rename_buffer, cx| {
                 rename_buffer.edit([(0..3, "THREE")], None, cx);
+            });
+        });
+    });
+
+    // Cancel the rename, and repeat the same, but use selections instead of cursor movement
+    editor_b.update(cx_b, |editor, cx| {
+        editor.cancel(&editor::actions::Cancel, cx);
+    });
+    let prepare_rename = editor_b.update(cx_b, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([7..8]));
+        editor.rename(&Rename, cx).unwrap()
+    });
+
+    fake_language_server
+        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+            assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+            assert_eq!(params.position, lsp::Position::new(0, 8));
+            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                lsp::Position::new(0, 6),
+                lsp::Position::new(0, 9),
+            ))))
+        })
+        .next()
+        .await
+        .unwrap();
+    prepare_rename.await.unwrap();
+    editor_b.update(cx_b, |editor, cx| {
+        use editor::ToOffset;
+        let rename = editor.pending_rename().unwrap();
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let lsp_rename_start = rename.range.start.to_offset(&buffer);
+        let lsp_rename_end = rename.range.end.to_offset(&buffer);
+        assert_eq!(lsp_rename_start..lsp_rename_end, 6..9);
+        rename.editor.update(cx, |rename_editor, cx| {
+            let rename_selection = rename_editor.selections.newest::<usize>(cx);
+            assert_eq!(
+                rename_selection.range(),
+                1..2,
+                "Rename that was triggered from a selection, should have the same selection range in the rename proposal"
+            );
+            rename_editor.buffer().update(cx, |rename_buffer, cx| {
+                rename_buffer.edit([(0..lsp_rename_end - lsp_rename_start, "THREE")], None, cx);
             });
         });
     });
@@ -1999,6 +2051,26 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
 
     cx_a.update(editor::init);
     cx_b.update(editor::init);
+    // Turn inline-blame-off by default so no state is transferred without us explicitly doing so
+    let inline_blame_off_settings = Some(InlineBlameSettings {
+        enabled: false,
+        delay_ms: None,
+        min_column: None,
+    });
+    cx_a.update(|cx| {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |settings| {
+                settings.git.inline_blame = inline_blame_off_settings;
+            });
+        });
+    });
+    cx_b.update(|cx| {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<ProjectSettings>(cx, |settings| {
+                settings.git.inline_blame = inline_blame_off_settings;
+            });
+        });
+    });
 
     client_a
         .fs()
@@ -2018,15 +2090,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             blame_entry("3a3a3a", 2..3),
             blame_entry("4c4c4c", 3..4),
         ],
-        permalinks: [
-            ("1b1b1b", "http://example.com/codehost/idx-0"),
-            ("0d0d0d", "http://example.com/codehost/idx-1"),
-            ("3a3a3a", "http://example.com/codehost/idx-2"),
-            ("4c4c4c", "http://example.com/codehost/idx-3"),
-        ]
-        .into_iter()
-        .map(|(sha, url)| (sha.parse().unwrap(), url.parse().unwrap()))
-        .collect(),
+        permalinks: HashMap::default(), // This field is deprecrated
         messages: [
             ("1b1b1b", "message for idx-0"),
             ("0d0d0d", "message for idx-1"),
@@ -2036,6 +2100,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .into_iter()
         .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
         .collect(),
+        remote_url: Some("git@github.com:zed-industries/zed.git".to_string()),
     };
     client_a.fs().set_blame_for_repo(
         Path::new("/my-repo/.git"),
@@ -2104,7 +2169,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
                 assert_eq!(details.message, format!("message for idx-{}", idx));
                 assert_eq!(
                     details.permalink.unwrap().to_string(),
-                    format!("http://example.com/codehost/idx-{}", idx)
+                    format!("https://github.com/zed-industries/zed/commit/{}", entry.sha)
                 );
             }
         });

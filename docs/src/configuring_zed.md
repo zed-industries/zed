@@ -142,6 +142,24 @@ For example, to disable ligatures for a given font you can add the following to 
 
 `boolean` values
 
+## Centered Layout
+
+- Description: Configuration for the centered layout mode.
+- Setting: `centered_layout`
+- Default:
+
+```json
+"centered_layout": {
+  "left_padding": 0.2,
+  "right_padding": 0.2,
+}
+```
+
+**Options**
+
+The `left_padding` and `right_padding` options define the relative width of the
+left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
+
 ## Copilot
 
 - Description: Copilot-specific settings.
@@ -189,6 +207,102 @@ List of `string` values
 1. Position the dock attached to the bottom of the workspace: `bottom`
 2. Position the dock to the right of the workspace like a side panel: `right`
 3. Position the dock full screen over the entire workspace: `expanded`
+
+## Editor Scrollbar
+
+- Description: Whether or not to show the editor scrollbar and various elements in it.
+- Setting: `scrollbar`
+- Default:
+
+```json
+"scrollbar": {
+  "show": "auto",
+  "git_diff": true,
+  "search_results": true,
+  "selected_symbol": true,
+  "diagnostics": true
+},
+```
+
+### Show Mode
+
+- Description: When to show the editor scrollbar.
+- Setting: `show`
+- Default: `auto`
+
+**Options**
+
+1. Show the scrollbar if there's important information or follow the system's configured behavior:
+
+```json
+"scrollbar": {
+  "show": "auto"
+}
+```
+
+2. Match the system's configured behavior:
+
+```json
+"scrollbar": {
+  "show": "system"
+}
+```
+
+3. Always show the scrollbar:
+
+```json
+"scrollbar": {
+  "show": "always"
+}
+```
+
+4. Never show the scrollbar:
+
+```json
+"scrollbar": {
+  "show": "never"
+}
+```
+
+### Git Diff Indicators
+
+- Description: Whether to show git diff indicators in the scrollbar.
+- Setting: `git_diff`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Search Results Indicators
+
+- Description: Whether to show buffer search results in the scrollbar.
+- Setting: `search_results`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Selected Symbols Indicators
+
+- Description: Whether to show selected symbol occurrences in the scrollbar.
+- Setting: `selected_symbol`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Diagnostics
+
+- Description: Whether to show diagnostic indicators in the scrollbar.
+- Setting: `diagnostics`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ## Editor Toolbar
 
@@ -387,7 +501,7 @@ To override settings for a language, add an entry for that language server's nam
 
 ## Auto close
 
-- Description: Whether or not to automatically type closing characters for you.
+- Description: Whether to automatically add matching closing characters when typing opening parenthesis, bracket, brace, single or double quote characters.
 - Setting: `use_autoclose`
 - Default: `true`
 
@@ -441,9 +555,14 @@ To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
 - Default:
 
 ```json
-"git": {
-  "git_gutter": "tracked_files"
-},
+{
+  "git": {
+    "git_gutter": "tracked_files",
+    "inline_blame": {
+      "enabled": true
+    }
+  }
+}
 ```
 
 ### Git Gutter
@@ -458,7 +577,9 @@ To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
 
 ```json
 {
-  "git_gutter": "tracked_files"
+  "git": {
+    "git_gutter": "tracked_files"
+  }
 }
 ```
 
@@ -466,7 +587,52 @@ To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
 
 ```json
 {
-  "git_gutter": "hide"
+  "git": {
+    "git_gutter": "hide"
+  }
+}
+```
+
+### Inline Git Blame
+
+- Description: Whether or not to show git blame information inline, on the currently focused line (requires Zed `0.132.0`).
+- Setting: `inline_blame`
+- Default:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true
+    }
+  }
+}
+```
+
+**Options**
+
+1. Disable inline git blame:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": false
+    }
+  }
+}
+```
+
+2. Only show inline git blame after a delay (that starts after cursor stops moving):
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": false,
+      "delay_ms": 500
+    }
+  }
 }
 ```
 
@@ -616,12 +782,13 @@ These values take in the same options as the root-level settings with the same n
 ## Preview tabs
 
 - Description:
+  (requires Zed `0.132.x`) \
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
 
   - Double-clicking on the file
   - Double-clicking on the tab header
-  - Using the 'project_panel::OpenPermanent' action
+  - Using the `project_panel::OpenPermanent` action
   - Editing the file
   - Dragging the file to a different pane
 
@@ -634,8 +801,6 @@ These values take in the same options as the root-level settings with the same n
   "enable_preview_from_file_finder": false
 }
 ```
-
-**Options**
 
 ### Enable preview from file finder
 
@@ -812,6 +977,7 @@ These values take in the same options as the root-level settings with the same n
   "font_features": null,
   "font_size": null,
   "option_as_meta": false,
+  "button": false,
   "shell": {},
   "toolbar": {
     "title": true
@@ -990,6 +1156,16 @@ See Buffer Font Features
 
 At the moment, only the `title` option is available, it controls displaying of the terminal title that can be changed via `PROMPT_COMMAND`. If the title is hidden, the terminal toolbar is not displayed.
 
+### Terminal Button
+
+- Description: Control to show or hide the terminal button in the status bar
+- Setting: `button`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ### Working Directory
 
 - Description: What working directory to use when launching the terminal.
@@ -1118,6 +1294,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 "project_panel": {
+  "button": true,
   "dock": "left",
   "git_status": true,
   "default_width": "N/A - width in pixels"
@@ -1179,6 +1356,21 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 **Options**
 
 `boolean` values
+
+## Calls
+
+- Description: Customise behaviour when participating in a call
+- Setting: `calls`
+- Default:
+
+```json
+"calls": {
+  // Join calls with the microphone live by default
+  "mute_on_join": false,
+  // Share your project when you are the first to join a channel
+  "share_on_join": true
+},
+```
 
 ## An example configuration:
 

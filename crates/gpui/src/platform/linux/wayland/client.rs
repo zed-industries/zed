@@ -95,6 +95,7 @@ impl Globals {
 
 pub(crate) struct WaylandClientState {
     globals: Globals,
+    wl_pointer: Option<wl_pointer::WlPointer>,
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
@@ -117,8 +118,8 @@ pub(crate) struct WaylandClientState {
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_icon_name: String,
     cursor: Cursor,
-    clipboard: Clipboard,
-    primary: Primary,
+    clipboard: Option<Clipboard>,
+    primary: Option<Primary>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
 }
@@ -161,6 +162,12 @@ impl WaylandClientStatePtr {
             if !window.ptr_eq(&closed_window) {
                 state.mouse_focused_window = Some(window);
             }
+        }
+        if state.windows.is_empty() {
+            // Drop the clipboard to prevent a seg fault after we've closed all Wayland connections.
+            state.clipboard = None;
+            state.primary = None;
+            state.common.signal.stop();
         }
     }
 }
@@ -240,6 +247,7 @@ impl WaylandClient {
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             globals,
+            wl_pointer: None,
             output_scales: outputs,
             windows: HashMap::default(),
             common,
@@ -276,8 +284,8 @@ impl WaylandClient {
             cursor_icon_name: "arrow".to_string(),
             enter_token: None,
             cursor,
-            clipboard,
-            primary,
+            clipboard: Some(clipboard),
+            primary: Some(primary),
             event_loop: Some(event_loop),
         }));
 
@@ -343,7 +351,15 @@ impl LinuxClient for WaylandClient {
         }
         .to_string();
 
-        self.0.borrow_mut().cursor_icon_name = cursor_icon_name;
+        let mut state = self.0.borrow_mut();
+        state.cursor_icon_name = cursor_icon_name.clone();
+        if state.mouse_focused_window.is_some() {
+            let wl_pointer = state
+                .wl_pointer
+                .clone()
+                .expect("window is focused by pointer");
+            state.cursor.set_icon(&wl_pointer, &cursor_icon_name);
+        }
     }
 
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
@@ -367,14 +383,44 @@ impl LinuxClient for WaylandClient {
             .log_err();
     }
 
+    fn write_to_primary(&self, item: crate::ClipboardItem) {
+        self.0
+            .borrow_mut()
+            .primary
+            .as_mut()
+            .unwrap()
+            .set_contents(item.text);
+    }
+
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
-        self.0.borrow_mut().clipboard.set_contents(item.text);
+        self.0
+            .borrow_mut()
+            .clipboard
+            .as_mut()
+            .unwrap()
+            .set_contents(item.text);
+    }
+
+    fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
+        self.0
+            .borrow_mut()
+            .primary
+            .as_mut()
+            .unwrap()
+            .get_contents()
+            .ok()
+            .map(|s| crate::ClipboardItem {
+                text: s,
+                metadata: None,
+            })
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
         self.0
             .borrow_mut()
             .clipboard
+            .as_mut()
+            .unwrap()
             .get_contents()
             .ok()
             .map(|s| crate::ClipboardItem {
@@ -403,6 +449,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 version,
             } => match &interface[..] {
                 "wl_seat" => {
+                    state.wl_pointer = None;
                     registry.bind::<wl_seat::WlSeat, _, _>(name, wl_seat_version(version), qh, ());
                 }
                 "wl_output" => {
@@ -582,7 +629,9 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                 seat.get_keyboard(qh, ());
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
-                seat.get_pointer(qh, ());
+                let client = state.get_client();
+                let mut state = client.borrow_mut();
+                state.wl_pointer = Some(seat.get_pointer(qh, ()));
             }
         }
     }
@@ -789,10 +838,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.enter_token = Some(());
                     state.mouse_focused_window = Some(window.clone());
+                    state.cursor.mark_dirty();
                     state.cursor.set_serial_id(serial);
                     state
                         .cursor
-                        .set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
+                        .set_icon(&wl_pointer, cursor_icon_name.as_str());
                     drop(state);
                     window.set_focused(true);
                 }
@@ -823,9 +873,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     return;
                 }
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
-                state
-                    .cursor
-                    .set_icon(&wl_pointer, Some(cursor_icon_name.as_str()));
 
                 if let Some(window) = state.mouse_focused_window.clone() {
                     let input = PlatformInput::MouseMove(MouseMoveEvent {

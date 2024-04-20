@@ -39,7 +39,7 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::{RevealStrategy, TaskId};
+use task::TaskId;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -284,17 +284,6 @@ impl Display for TerminalError {
             dir_string, shell, self.source
         )
     }
-}
-
-#[derive(Debug)]
-pub struct SpawnTask {
-    pub id: TaskId,
-    pub full_label: String,
-    pub label: String,
-    pub command: String,
-    pub args: Vec<String>,
-    pub env: HashMap<String, String>,
-    pub reveal: RevealStrategy,
 }
 
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
@@ -598,6 +587,7 @@ pub struct TaskState {
     pub id: TaskId,
     pub full_label: String,
     pub label: String,
+    pub command_label: String,
     pub status: TaskStatus,
     pub completion_rx: Receiver<()>,
 }
@@ -657,13 +647,7 @@ impl Terminal {
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
             }
-            AlacTermEvent::Exit => match &mut self.task {
-                Some(task) => {
-                    task.status.register_terminal_exit();
-                    self.completion_tx.try_send(()).ok();
-                }
-                None => cx.emit(Event::CloseTerminal),
-            },
+            AlacTermEvent::Exit => self.register_task_finished(None, cx),
             AlacTermEvent::MouseCursorDirty => {
                 //NOOP, Handled in render
             }
@@ -679,10 +663,7 @@ impl Terminal {
                     .push_back(InternalEvent::ColorRequest(*idx, fun_ptr.clone()));
             }
             AlacTermEvent::ChildExit(error_code) => {
-                if let Some(task) = &mut self.task {
-                    task.status.register_task_exit(*error_code);
-                    self.completion_tx.try_send(()).ok();
-                }
+                self.register_task_finished(Some(*error_code), cx);
             }
         }
     }
@@ -758,6 +739,11 @@ impl Terminal {
             InternalEvent::SetSelection(selection) => {
                 term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
 
+                #[cfg(target_os = "linux")]
+                if let Some(selection_text) = term.selection_to_string() {
+                    cx.write_to_primary(ClipboardItem::new(selection_text));
+                }
+
                 if let Some((_, head)) = selection {
                     self.selection_head = Some(*head);
                 }
@@ -773,6 +759,11 @@ impl Terminal {
 
                     selection.update(point, side);
                     term.selection = Some(selection);
+
+                    #[cfg(target_os = "linux")]
+                    if let Some(selection_text) = term.selection_to_string() {
+                        cx.write_to_primary(ClipboardItem::new(selection_text));
+                    }
 
                     self.selection_head = Some(point);
                     cx.emit(Event::SelectionsChanged)
@@ -1200,7 +1191,12 @@ impl Terminal {
         Some(scroll_delta)
     }
 
-    pub fn mouse_down(&mut self, e: &MouseDownEvent, origin: Point<Pixels>) {
+    pub fn mouse_down(
+        &mut self,
+        e: &MouseDownEvent,
+        origin: Point<Pixels>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let position = e.position - origin;
         let point = grid_point(
             position,
@@ -1236,6 +1232,11 @@ impl Terminal {
             if let Some(sel) = selection {
                 self.events
                     .push_back(InternalEvent::SetSelection(Some((sel, point))));
+            }
+        } else if e.button == MouseButton::Middle {
+            if let Some(item) = cx.read_from_primary() {
+                let text = item.text().to_string();
+                self.input(text);
             }
         }
     }
@@ -1424,6 +1425,97 @@ impl Terminal {
             }
         }
         Task::ready(())
+    }
+
+    fn register_task_finished(
+        &mut self,
+        error_code: Option<i32>,
+        cx: &mut ModelContext<'_, Terminal>,
+    ) {
+        self.completion_tx.try_send(()).ok();
+        let task = match &mut self.task {
+            Some(task) => task,
+            None => {
+                if error_code.is_none() {
+                    cx.emit(Event::CloseTerminal);
+                }
+                return;
+            }
+        };
+        if task.status != TaskStatus::Running {
+            return;
+        }
+        match error_code {
+            Some(error_code) => {
+                task.status.register_task_exit(error_code);
+            }
+            None => {
+                task.status.register_terminal_exit();
+            }
+        };
+
+        let (task_line, command_line) = task_summary(task, error_code);
+        // SAFETY: the invocation happens on non `TaskStatus::Running` tasks, once,
+        // after either `AlacTermEvent::Exit` or `AlacTermEvent::ChildExit` events that are spawned
+        // when Zed task finishes and no more output is made.
+        // After the task summary is output once, no more text is appended to the terminal.
+        unsafe { append_text_to_term(&mut self.term.lock(), &[&task_line, &command_line]) };
+    }
+}
+
+const TASK_DELIMITER: &str = "⏵ ";
+fn task_summary(task: &TaskState, error_code: Option<i32>) -> (String, String) {
+    let escaped_full_label = task.full_label.replace("\r\n", "\r").replace('\n', "\r");
+    let task_line = match error_code {
+        Some(0) => {
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully")
+        }
+        Some(error_code) => {
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}")
+        }
+        None => {
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished")
+        }
+    };
+    let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
+    let command_line = format!("{TASK_DELIMITER}Command: '{escaped_command_label}'");
+    (task_line, command_line)
+}
+
+/// Appends a stringified task summary to the terminal, after its output.
+///
+/// SAFETY: This function should only be called after terminal's PTY is no longer alive.
+/// New text being added to the terminal here, uses "less public" APIs,
+/// which are not maintaining the entire terminal state intact.
+///
+///
+/// The library
+///
+/// * does not increment inner grid cursor's _lines_ on `input` calls
+/// (but displaying the lines correctly and incrementing cursor's columns)
+///
+/// * ignores `\n` and \r` character input, requiring the `newline` call instead
+///
+/// * does not alter grid state after `newline` call
+/// so its `bottommost_line` is always the the same additions, and
+/// the cursor's `point` is not updated to the new line and column values
+///
+/// * ??? there could be more consequences, and any further "proper" streaming from the PTY might bug and/or panic.
+/// Still, concequent `append_text_to_term` invocations are possible and display the contents correctly.
+///
+/// Despite the quirks, this is the simplest approach to appending text to the terminal: its alternative, `grid_mut` manipulations,
+/// do not properly set the scrolling state and display odd text after appending; also those manipulations are more tedious and error-prone.
+/// The function achieves proper display and scrolling capabilities, at a cost of grid state not properly synchronized.
+/// This is enough for printing moderately-sized texts like task summaries, but might break or perform poorly for larger texts.
+unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str]) {
+    term.newline();
+    term.grid_mut().cursor.point.column = Column(0);
+    for line in text_lines {
+        for c in line.chars() {
+            term.input(c);
+        }
+        term.newline();
+        term.grid_mut().cursor.point.column = Column(0);
     }
 }
 

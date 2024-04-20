@@ -185,7 +185,7 @@ impl TerminalView {
         self.has_bell
     }
 
-    pub fn clear_bel(&mut self, cx: &mut ViewContext<TerminalView>) {
+    pub fn clear_bell(&mut self, cx: &mut ViewContext<TerminalView>) {
         self.has_bell = false;
         cx.emit(Event::Wakeup);
     }
@@ -332,7 +332,7 @@ impl TerminalView {
     }
 
     fn send_text(&mut self, text: &SendText, cx: &mut ViewContext<Self>) {
-        self.clear_bel(cx);
+        self.clear_bell(cx);
         self.terminal.update(cx, |term, _| {
             term.input(text.0.to_string());
         });
@@ -340,7 +340,7 @@ impl TerminalView {
 
     fn send_keystroke(&mut self, text: &SendKeystroke, cx: &mut ViewContext<Self>) {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
-            self.clear_bel(cx);
+            self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
             });
@@ -700,7 +700,7 @@ pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<Re
 
 impl TerminalView {
     fn key_down(&mut self, event: &KeyDownEvent, cx: &mut ViewContext<Self>) {
-        self.clear_bel(cx);
+        self.clear_bell(cx);
         self.pause_cursor_blinking(cx);
 
         self.terminal.update(cx, |term, cx| {

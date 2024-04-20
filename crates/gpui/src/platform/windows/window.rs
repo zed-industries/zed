@@ -52,7 +52,6 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: RefCell<Rc<WindowsDisplay>>,
-    last_ime_input: RefCell<Option<String>>,
     click_state: RefCell<ClickState>,
     fullscreen: Cell<Option<StyleAndBounds>>,
 }
@@ -114,7 +113,6 @@ impl WindowsWindowInner {
         let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
         let callbacks = RefCell::new(Callbacks::default());
         let display = RefCell::new(display);
-        let last_ime_input = RefCell::new(None);
         let click_state = RefCell::new(ClickState::new());
         let fullscreen = Cell::new(None);
         Self {
@@ -129,7 +127,6 @@ impl WindowsWindowInner {
             handle,
             hide_title_bar,
             display,
-            last_ime_input,
             click_state,
             fullscreen,
         }
@@ -256,6 +253,9 @@ impl WindowsWindowInner {
             WM_CREATE => self.handle_create_msg(lparam),
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
+            WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => self.handle_size_move_loop(),
+            WM_EXITSIZEMOVE | WM_EXITMENULOOP => self.handle_size_move_loop_exit(),
+            WM_TIMER => self.handle_timer_msg(wparam),
             WM_NCCALCSIZE => self.handle_calc_client_size(wparam, lparam),
             WM_DPICHANGED => self.handle_dpi_changed_msg(wparam, lparam),
             WM_NCHITTEST => self.handle_hit_test_msg(msg, wparam, lparam),
@@ -287,7 +287,6 @@ impl WindowsWindowInner {
             WM_CHAR => self.handle_char_msg(msg, wparam, lparam),
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(),
             WM_IME_COMPOSITION => self.handle_ime_composition(lparam),
-            WM_IME_CHAR => self.handle_ime_char(wparam),
             WM_SETCURSOR => self.handle_set_cursor(lparam),
             _ => None,
         };
@@ -346,8 +345,36 @@ impl WindowsWindowInner {
             let logical_size = logical_size(new_physical_size, scale_factor);
             callback(logical_size, scale_factor);
         }
-        self.invalidate_client_area();
         Some(0)
+    }
+
+    fn handle_size_move_loop(&self) -> Option<isize> {
+        unsafe {
+            let ret = SetTimer(self.hwnd, SIZE_MOVE_LOOP_TIMER_ID, USER_TIMER_MINIMUM, None);
+            if ret == 0 {
+                log::error!(
+                    "unable to create timer: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+        None
+    }
+
+    fn handle_size_move_loop_exit(&self) -> Option<isize> {
+        unsafe {
+            KillTimer(self.hwnd, SIZE_MOVE_LOOP_TIMER_ID).log_err();
+        }
+        None
+    }
+
+    fn handle_timer_msg(&self, wparam: WPARAM) -> Option<isize> {
+        if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
+            self.platform_inner.run_foreground_tasks();
+            self.handle_paint_msg();
+            return Some(0);
+        }
+        None
     }
 
     fn handle_paint_msg(&self) -> Option<isize> {
@@ -785,7 +812,6 @@ impl WindowsWindowInner {
             let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
             let result = if string_len >= 0 {
                 let mut buffer = vec![0u8; string_len as usize + 2];
-                // let mut buffer = [0u8; MAX_PATH as _];
                 ImmGetCompositionStringW(
                     ctx,
                     GCS_COMPSTR,
@@ -815,7 +841,34 @@ impl WindowsWindowInner {
         }
     }
 
+    fn parse_ime_compostion_result(&self) -> Option<String> {
+        unsafe {
+            let ctx = ImmGetContext(self.hwnd);
+            let string_len = ImmGetCompositionStringW(ctx, GCS_RESULTSTR, None, 0);
+            let result = if string_len >= 0 {
+                let mut buffer = vec![0u8; string_len as usize + 2];
+                ImmGetCompositionStringW(
+                    ctx,
+                    GCS_RESULTSTR,
+                    Some(buffer.as_mut_ptr() as _),
+                    string_len as _,
+                );
+                let wstring = std::slice::from_raw_parts::<u16>(
+                    buffer.as_mut_ptr().cast::<u16>(),
+                    string_len as usize / 2,
+                );
+                let string = String::from_utf16_lossy(wstring);
+                Some(string)
+            } else {
+                None
+            };
+            ImmReleaseContext(self.hwnd, ctx);
+            result
+        }
+    }
+
     fn handle_ime_composition(&self, lparam: LPARAM) -> Option<isize> {
+        let mut ime_input = None;
         if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
             let Some((string, string_len)) = self.parse_ime_compostion_string() else {
                 return None;
@@ -829,10 +882,10 @@ impl WindowsWindowInner {
                 Some(0..string_len),
             );
             self.input_handler.set(Some(input_handler));
-            *self.last_ime_input.borrow_mut() = Some(string);
+            ime_input = Some(string);
         }
         if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
-            let Some(ref comp_string) = *self.last_ime_input.borrow() else {
+            let Some(ref comp_string) = ime_input else {
                 return None;
             };
             let caret_pos = self.retrieve_composition_cursor_position();
@@ -842,30 +895,20 @@ impl WindowsWindowInner {
             input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
             self.input_handler.set(Some(input_handler));
         }
+        if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
+            let Some(comp_result) = self.parse_ime_compostion_result() else {
+                return None;
+            };
+            let Some(mut input_handler) = self.input_handler.take() else {
+                return Some(1);
+            };
+            input_handler.replace_text_in_range(None, &comp_result);
+            self.input_handler.set(Some(input_handler));
+            self.invalidate_client_area();
+            return Some(0);
+        }
         // currently, we don't care other stuff
         None
-    }
-
-    fn parse_ime_char(&self, wparam: WPARAM) -> Option<String> {
-        let src = [wparam.0 as u16];
-        let Ok(first_char) = char::decode_utf16(src).collect::<Vec<_>>()[0] else {
-            return None;
-        };
-        Some(first_char.to_string())
-    }
-
-    fn handle_ime_char(&self, wparam: WPARAM) -> Option<isize> {
-        let Some(ime_char) = self.parse_ime_char(wparam) else {
-            return Some(1);
-        };
-        let Some(mut input_handler) = self.input_handler.take() else {
-            return Some(1);
-        };
-        input_handler.replace_text_in_range(None, &ime_char);
-        self.input_handler.set(Some(input_handler));
-        *self.last_ime_input.borrow_mut() = None;
-        self.invalidate_client_area();
-        Some(0)
     }
 
     fn handle_drag_drop(&self, input: PlatformInput) {
@@ -1871,6 +1914,7 @@ const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
 const DOUBLE_CLICK_SPATIAL_TOLERANCE: i32 = 4;
+const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
 #[cfg(test)]
 mod tests {

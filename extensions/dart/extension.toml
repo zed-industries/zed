@@ -11,5 +11,5 @@ name = "Dart LSP"
 language = "Dart"
 
 [grammars.dart]
-repository = "https://github.com/agent3bood/tree-sitter-dart"
-commit = "48934e3bf757a9b78f17bdfaa3e2b4284656fdc7"
+repository = "https://github.com/UserNobody14/tree-sitter-dart"
+commit = "6da46473ab8accb13da48113f4634e729a71d335"
