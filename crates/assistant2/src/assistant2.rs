@@ -2,7 +2,7 @@ mod completion_provider;
 mod tools;
 
 use anyhow::Result;
-use assistant_tooling::{ToolFunctionCall, ToolRegistry};
+use assistant_tooling::{ToolFunctionCall, ToolFunctionDefinition, ToolRegistry};
 use client::{proto, Client};
 use completion_provider::*;
 use editor::{Editor, EditorEvent};
@@ -164,15 +164,22 @@ impl AssistantChat {
         self.truncate_messages(focused_message_id, cx);
         self.push_new_assistant_message(cx);
 
-        self.pending_completion = Some(cx.spawn(|this, mut cx| async move {
+        let mode = *mode;
+
+        self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
             let complete = async {
                 let completion = this.update(&mut cx, |this, cx| {
+                    let definitions = this.tool_registry.definitions();
+
                     CompletionProvider::get(cx).complete(
                         this.model.clone(),
                         this.completion_messages(cx),
                         Vec::new(),
                         1.0,
-                        this.tool_registry.definitions.as_slice(),
+                        match mode {
+                            SubmitMode::Simple => &[],
+                            _ => definitions,
+                        },
                     )
                 });
 
@@ -265,7 +272,7 @@ impl AssistantChat {
                 let tools =
                     join_all(tool_tasks.into_iter().map(|task| async move { task.await })).await;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, _cx| {
                     if let Some(ChatMessage::Assistant(AssistantMessage { tool_calls, .. })) =
                         this.messages.last_mut()
                     {
@@ -313,15 +320,17 @@ impl AssistantChat {
                         })
                         .expect("user message not found");
                     message.body.update(cx, |body, cx| {
-                        if let Some(editor_style) = body.style() {
+                        let style = body.style();
+
+                        if let Some(editor_style) = style {
                             let row = body.selections.newest_display(cx).head().row();
                             let line_height =
                                 editor_style.text.line_height_in_pixels(cx.rem_size());
                             let row_y = row as f32 * line_height;
                             this.list_state.scroll_to_fit(
                                 message_ix,
-                                row_y,
-                                row_y + 5. * line_height,
+                                Pixels(row_y.into()),
+                                Pixels((row_y + 5. * line_height).into()),
                             );
                         }
                     });
@@ -397,7 +406,11 @@ impl AssistantChat {
         let is_last = ix == self.messages.len() - 1;
 
         match &self.messages[ix] {
-            ChatMessage::User(UserMessage { body, contexts, .. }) => div()
+            ChatMessage::User(UserMessage {
+                body,
+                contexts: _contexts,
+                ..
+            }) => div()
                 .when(!is_last, |element| element.mb_2())
                 .child(div().p_2().child(Label::new("You").color(Color::Default)))
                 .child(
@@ -426,7 +439,7 @@ impl AssistantChat {
                 .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
                 .child(self.render_error(error.clone(), ix, cx))
                 .children(tool_calls.iter().map(|tool_call| {
-                    let result = tool_call.result;
+                    let result = &tool_call.result;
                     let name = tool_call.name.clone();
                     match result {
                         Some(result) => div()

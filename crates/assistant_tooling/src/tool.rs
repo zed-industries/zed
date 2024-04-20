@@ -6,8 +6,10 @@ use serde::Deserialize;
 pub trait ToolFunctionOutput {
     fn render(&self, cx: &mut WindowContext) -> AnyElement;
     fn format(&self) -> String;
+    fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput>;
 }
 
+#[derive(Clone)]
 pub struct DefaultToolFunctionOutput;
 
 impl ToolFunctionOutput for DefaultToolFunctionOutput {
@@ -17,6 +19,10 @@ impl ToolFunctionOutput for DefaultToolFunctionOutput {
 
     fn format(&self) -> String {
         "".to_string()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput> {
+        Box::new((*self).clone())
     }
 }
 
@@ -29,7 +35,18 @@ pub struct ToolFunctionCall {
     pub result: Option<Box<dyn ToolFunctionOutput>>,
 }
 
-#[derive(Debug)]
+impl Clone for ToolFunctionCall {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            arguments: self.arguments.clone(),
+            result: self.result.as_ref().map(|r| r.boxed_clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ToolFunctionDefinition {
     pub name: String,
     pub description: String,
@@ -106,6 +123,10 @@ mod tests {
                 "The current temperature in {} is {} {}",
                 self.location, self.temperature, self.unit
             )
+        }
+
+        fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput> {
+            Box::new((*self).clone())
         }
     }
 

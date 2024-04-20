@@ -12,15 +12,15 @@ use ui::{
 };
 use util::ResultExt as _;
 
-#[derive(Serialize)]
-struct CodebaseExcerpt {
+#[derive(Serialize, Clone)]
+pub struct CodebaseExcerpt {
     path: SharedString,
     text: SharedString,
     score: f32,
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct CodebaseQuery {
+pub struct CodebaseQuery {
     query: String,
 }
 
@@ -29,6 +29,7 @@ pub struct ProjectIndexTool {
     pub fs: Arc<dyn Fs>,
 }
 
+#[derive(Serialize, Clone)]
 pub struct Excerpts {
     pub excerpts: Vec<CodebaseExcerpt>,
 }
@@ -45,7 +46,7 @@ impl ToolFunctionOutput for Excerpts {
         //         .child("Searching codebase..."),
         // Some(excerpts) => {
 
-        let excerpts = self.excerpts;
+        let excerpts = self.excerpts.clone();
 
         div()
             .v_flex()
@@ -81,8 +82,10 @@ impl ToolFunctionOutput for Excerpts {
     }
 
     fn format(&self) -> String {
+        let excerpts = self.excerpts.clone();
         let mut body = "Semantic search results for user query:\n".to_string();
-        for excerpt in self.excerpts {
+
+        for excerpt in excerpts {
             body.push_str("Excerpt from ");
             body.push_str(excerpt.path.as_ref());
             body.push_str(", score ");
@@ -93,6 +96,10 @@ impl ToolFunctionOutput for Excerpts {
             body.push_str("~~~\n");
         }
         body
+    }
+
+    fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput> {
+        Box::new(self.clone())
     }
 }
 
@@ -113,7 +120,7 @@ impl LanguageModelTool for ProjectIndexTool {
         let results = project_index.search(query.query.as_str(), 10, cx);
         let fs = self.fs.clone();
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(|cx| async move {
             let results = results.await;
             let excerpts = results.into_iter().map(|result| {
                 let abs_path = result
