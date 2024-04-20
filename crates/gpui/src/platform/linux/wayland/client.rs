@@ -1218,7 +1218,6 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                         return;
                     };
 
-                    // todo(linux): this should be determined by the gpui user.
                     const ACTIONS: DndAction = DndAction::Copy;
                     data_offer.set_actions(ACTIONS, ACTIONS);
 
@@ -1242,7 +1241,14 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                         .map(|file| PathBuf::from(file.replace("file://", "")))
                         .collect();
                     let position = Point::new(x.into(), y.into());
-                    println!("{paths:?}");
+
+                    // Prevent dropping text from other programs.
+                    if paths.is_empty() {
+                        data_offer.finish();
+                        data_offer.destroy();
+                        return;
+                    }
+
                     let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                         position,
                         paths: crate::ExternalPaths(paths),
@@ -1257,7 +1263,9 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 }
             }
             wl_data_device::Event::Motion { time: _, x, y } => {
-                let drag_window = state.drag.window.clone().unwrap();
+                let Some(drag_window) = state.drag.window.clone() else {
+                    return;
+                };
                 let position = Point::new(x.into(), y.into());
                 state.drag.position = position;
 
@@ -1268,7 +1276,6 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
             wl_data_device::Event::Leave => {
                 println!("Data offer leave");
                 let Some(drag_window) = state.drag.window.clone() else {
-                    // Some compositors (like wlroots) will send a leave event after a drop event.
                     return;
                 };
                 let data_offer = state.drag.data_offer.clone().unwrap();
@@ -1283,8 +1290,9 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
             }
             wl_data_device::Event::Drop => {
                 println!("File dropped!");
-
-                let drag_window = state.drag.window.clone().unwrap();
+                let Some(drag_window) = state.drag.window.clone() else {
+                    return;
+                };
                 let data_offer = state.drag.data_offer.clone().unwrap();
                 data_offer.finish();
                 data_offer.destroy();
@@ -1320,25 +1328,6 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
 
         match event {
-            wl_data_offer::Event::Action {
-                dnd_action: WEnum::Value(dnd_action),
-            } => match dnd_action {
-                DndAction::Ask => println!("An ask action will be performed"),
-                DndAction::Copy => println!("A copy action will be performed"),
-                DndAction::Move => println!("A move action will be performed"),
-                DndAction::None => println!("No action will be performed"),
-                _ => (),
-            },
-            wl_data_offer::Event::SourceActions {
-                source_actions: WEnum::Value(source_actions),
-            } => {
-                if source_actions.contains(DndAction::Move) {
-                    println!("Drag supports the move action");
-                }
-                if source_actions.contains(DndAction::Copy) {
-                    println!("Drag supports the copy action");
-                }
-            }
             wl_data_offer::Event::Offer { mime_type } => {
                 if mime_type == FILES_MIME_TYPE {
                     data_offer.accept(state.serial, Some(mime_type));
