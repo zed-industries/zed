@@ -1,14 +1,32 @@
 use anyhow::Result;
-use gpui::{AppContext, Task};
+use gpui::{div, AnyElement, AppContext, Element, Task, WindowContext};
 use schemars::{schema::SchemaObject, schema_for, JsonSchema};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Default)]
-pub struct ToolFunctionCall<Output> {
+pub trait ToolFunctionOutput {
+    fn render(&self, cx: &mut WindowContext) -> AnyElement;
+    fn format(&self) -> String;
+}
+
+pub struct DefaultToolFunctionOutput;
+
+impl ToolFunctionOutput for DefaultToolFunctionOutput {
+    fn render(&self, _cx: &mut WindowContext) -> AnyElement {
+        div().into_any()
+    }
+
+    fn format(&self) -> String {
+        "".to_string()
+    }
+}
+
+#[derive(Default, Deserialize)]
+pub struct ToolFunctionCall {
     pub id: String,
     pub name: String,
     pub arguments: String,
-    pub result: Output,
+    #[serde(skip)]
+    pub result: Option<Box<dyn ToolFunctionOutput>>,
 }
 
 #[derive(Debug)]
@@ -24,7 +42,7 @@ pub trait LanguageModelTool {
     type Input: for<'de> Deserialize<'de> + JsonSchema;
 
     /// The output returned by executing the tool.
-    type Output: Serialize;
+    type Output: ToolFunctionOutput + 'static;
 
     /// The name of the tool is exposed to the language model to allow
     /// the model to pick which tools to use. As this name is used to
@@ -52,9 +70,9 @@ pub trait LanguageModelTool {
 mod tests {
     use super::*;
 
+    use gpui::{ParentElement, TestAppContext};
+    use serde::{Deserialize, Serialize};
     use serde_json::json;
-
-    use gpui::TestAppContext;
 
     #[derive(Deserialize, Serialize, JsonSchema)]
     struct WeatherQuery {
@@ -71,6 +89,24 @@ mod tests {
         location: String,
         temperature: f64,
         unit: String,
+    }
+
+    impl ToolFunctionOutput for WeatherResult {
+        fn render(&self, _cx: &mut WindowContext) -> AnyElement {
+            div()
+                .child(format!(
+                    "The current temperature in {} is {} {}",
+                    self.location, self.temperature, self.unit
+                ))
+                .into_any()
+        }
+
+        fn format(&self) -> String {
+            format!(
+                "The current temperature in {} is {} {}",
+                self.location, self.temperature, self.unit
+            )
+        }
     }
 
     impl LanguageModelTool for WeatherTool {
