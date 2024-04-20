@@ -1,15 +1,89 @@
-use anyhow::{anyhow, Result};
-use gpui::{AppContext, Task};
+use anyhow::{anyhow, Error, Result};
+use gpui::{div, AnyElement, AppContext, Element, ParentElement, Task, WindowContext};
 use std::collections::HashMap;
 
-use crate::tool::{LanguageModelTool, ToolFunctionCall, ToolFunctionDefinition};
+use crate::tool::{
+    LanguageModelTool, ToolFunctionCall, ToolFunctionDefinition, ToolFunctionOutput,
+};
 
 pub struct ToolRegistry {
-    tools: HashMap<
-        String,
-        Box<dyn Fn(&ToolFunctionCall, &AppContext) -> Task<Result<ToolFunctionCall>>>,
-    >,
+    tools: HashMap<String, Box<dyn Fn(&ToolFunctionCall, &AppContext) -> Task<ToolFunctionCall>>>,
     pub definitions: Vec<ToolFunctionDefinition>,
+}
+
+// Since we're centering on the tool registry always returning Tasks with associated Tool IDs,
+// we will center on always returning a `ToolFunctionCall`. As a result we need to have different
+// error outputs that implement `ToolFunctionOutput`.
+struct NoToolForName {
+    name: String,
+}
+
+impl NoToolForName {
+    pub fn new(name: String) -> Self {
+        Self { name }
+    }
+}
+
+impl ToolFunctionOutput for NoToolForName {
+    fn render(&self, _cx: &mut WindowContext) -> AnyElement {
+        div().child("No tool found for {self.name}").into_any()
+    }
+
+    fn format(&self) -> String {
+        "No tool found for name".to_string()
+    }
+}
+
+struct FailedToParseArguments {
+    name: String,
+    error: serde_json::Error,
+}
+
+impl FailedToParseArguments {
+    pub fn new(name: String, error: serde_json::Error) -> Self {
+        Self { name, error }
+    }
+}
+
+impl ToolFunctionOutput for FailedToParseArguments {
+    fn render(&self, _cx: &mut WindowContext) -> AnyElement {
+        let message = self.error.to_string();
+
+        div()
+            .child(format!("Model sent bad input: {message}"))
+            .into_any()
+    }
+
+    fn format(&self) -> String {
+        self.error.to_string()
+    }
+}
+
+// Generic error output for when a tool fails to execute.
+struct ToolExecutionError {
+    name: String,
+    error: Error,
+}
+
+impl ToolExecutionError {
+    pub fn new(name: String, error: Error) -> Self {
+        Self { name, error }
+    }
+}
+
+impl ToolFunctionOutput for ToolExecutionError {
+    fn render(&self, _cx: &mut WindowContext) -> AnyElement {
+        let error = self.error.to_string();
+        let name = self.name.clone();
+
+        div()
+            .child(format!("Error executing tool {name}: {error}"))
+            .into_any()
+    }
+
+    fn format(&self) -> String {
+        self.error.to_string()
+    }
 }
 
 impl ToolRegistry {
@@ -32,18 +106,36 @@ impl ToolRegistry {
 
                 let result = match serde_json::from_str::<T::Input>(arguments.as_str()) {
                     Ok(input) => tool.execute(input, cx),
-                    Err(error) => return Task::ready(Err(anyhow!(error))),
+                    Err(error) => {
+                        return Task::ready(ToolFunctionCall {
+                            id,
+                            name: name.clone(),
+                            arguments,
+                            result: Some(Box::new(FailedToParseArguments::new(name, error))),
+                        })
+                    }
                 };
 
                 cx.spawn(|_cx| async move {
-                    let result: T::Output = result.await?;
+                    let result = result.await;
 
-                    Ok(ToolFunctionCall {
-                        id,
-                        name,
-                        arguments,
-                        result: Some(Box::new(result)),
-                    })
+                    match result {
+                        Ok(result) => {
+                            let result: T::Output = result;
+                            ToolFunctionCall {
+                                id,
+                                name,
+                                arguments,
+                                result: Some(Box::new(result)),
+                            }
+                        }
+                        Err(error) => ToolFunctionCall {
+                            id,
+                            name: name.clone(),
+                            arguments,
+                            result: Some(Box::new(ToolExecutionError::new(name.clone(), error))),
+                        },
+                    }
                 })
             }),
         );
@@ -55,18 +147,21 @@ impl ToolRegistry {
         Ok(())
     }
 
-    pub fn call(
-        &self,
-        tool_call: &ToolFunctionCall,
-        cx: &AppContext,
-    ) -> Task<Result<ToolFunctionCall>> {
-        let tool = match self.tools.get(&tool_call.name) {
+    pub fn call(&self, tool_call: &ToolFunctionCall, cx: &AppContext) -> Task<ToolFunctionCall> {
+        let name = tool_call.name.clone();
+        let arguments = tool_call.arguments.clone();
+        let id = tool_call.id.clone();
+
+        let tool = match self.tools.get(&name) {
             Some(tool) => tool,
             None => {
-                return Task::ready(Err(anyhow!(
-                    "no tool registered with name {}",
-                    tool_call.name
-                )));
+                let name = name.clone();
+                return Task::ready(ToolFunctionCall {
+                    id,
+                    name: name.clone(),
+                    arguments,
+                    result: Some(Box::new(NoToolForName::new(name))),
+                });
             }
         };
 

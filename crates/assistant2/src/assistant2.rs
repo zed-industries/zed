@@ -262,7 +262,8 @@ impl AssistantChat {
                 .log_err();
 
             if let Some(tool_tasks) = tool_tasks {
-                let tools = join_all(&tool_tasks).await;
+                let tools =
+                    join_all(tool_tasks.into_iter().map(|task| async move { task.await })).await;
 
                 this.update(&mut cx, |this, cx| {
                     if let Some(ChatMessage::Assistant(AssistantMessage { tool_calls, .. })) =
