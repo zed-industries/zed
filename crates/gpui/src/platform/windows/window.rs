@@ -335,11 +335,7 @@ impl WindowsWindowInner {
     fn handle_move_msg(&self, lparam: LPARAM) -> Option<isize> {
         let x = lparam.signed_loword() as i32;
         let y = lparam.signed_hiword() as i32;
-        let new_physical_point = Point {
-            x: DevicePixels(x),
-            y: DevicePixels(y),
-        };
-        self.origin.set(new_physical_point);
+        self.origin.set(point(DevicePixels(x), DevicePixels(y)));
         let size = self.physical_size.get();
         let center_x = x + size.width.0 / 2;
         let center_y = y + size.height.0 / 2;
