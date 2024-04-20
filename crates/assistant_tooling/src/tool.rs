@@ -2,6 +2,7 @@ use anyhow::Result;
 use gpui::{div, AnyElement, AppContext, Element, Task, WindowContext};
 use schemars::{schema::SchemaObject, schema_for, JsonSchema};
 use serde::Deserialize;
+use std::fmt::Debug;
 
 pub trait ToolFunctionOutput {
     fn render(&self, cx: &mut WindowContext) -> AnyElement;
@@ -46,11 +47,24 @@ impl Clone for ToolFunctionCall {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ToolFunctionDefinition {
     pub name: String,
     pub description: String,
     pub parameters: SchemaObject,
+}
+
+impl Debug for ToolFunctionDefinition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let schema = serde_json::to_string(&self.parameters).ok();
+        let schema = schema.unwrap_or("None".to_string());
+
+        f.debug_struct("ToolFunctionDefinition")
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("parameters", &schema)
+            .finish()
+    }
 }
 
 pub trait LanguageModelTool {

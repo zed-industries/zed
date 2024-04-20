@@ -45,6 +45,7 @@ impl CompletionProvider {
         'static,
         Result<BoxStream<'static, Result<proto::LanguageModelResponseMessageDelta>>>,
     > {
+        dbg!(tools);
         self.0.complete(model, messages, stop, temperature, tools)
     }
 }

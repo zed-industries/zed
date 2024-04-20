@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Error, Result};
 use gpui::{div, AnyElement, AppContext, Element, ParentElement, Task, WindowContext};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::tool::{
     LanguageModelTool, ToolFunctionCall, ToolFunctionDefinition, ToolFunctionOutput,
@@ -117,10 +117,6 @@ impl ToolRegistry {
             definitions: Vec::new(),
         }
     }
-
-    // pub fn definitions(&self) -> Arc<&[ToolFunctionDefinition]> {
-    //     Arc::new(self.definitions.as_slice())
-    // }
 
     pub fn definitions(&self) -> &[ToolFunctionDefinition] {
         &self.definitions
