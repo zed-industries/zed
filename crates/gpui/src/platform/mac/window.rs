@@ -528,7 +528,7 @@ impl MacWindow {
         handle: AnyWindowHandle,
         WindowParams {
             window_background,
-            open_status,
+            bounds,
             titlebar,
             kind,
             is_movable,
@@ -590,7 +590,6 @@ impl MacWindow {
                 NSScreen::visibleFrame(screen)
             });
 
-            let bounds = open_status.get_bounds().unwrap();
             let window_rect = NSRect::new(
                 NSPoint::new(
                     screen_frame.origin.x + bounds.origin.x.0 as f64,
@@ -630,22 +629,6 @@ impl MacWindow {
                 )
             };
 
-            let mut maximized = false;
-            let mut fullscreen = false;
-            let mut maximized_restore_bounds = Bounds::default();
-            let mut fullscreen_restore_bounds = Bounds::default();
-            match open_status {
-                WindowOpenStatus::Windowed(_) => {}
-                WindowOpenStatus::Maximized(_) => {
-                    maximized = true;
-                    maximized_restore_bounds = bounds;
-                }
-                WindowOpenStatus::FullScreen(bounds) => {
-                    fullscreen = true;
-                    fullscreen_restore_bounds = bounds;
-                }
-            }
-
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
                 handle,
                 executor,
@@ -681,8 +664,8 @@ impl MacWindow {
                 first_mouse: false,
                 minimized: false,
                 maximized,
-                maximized_restore_bounds,
-                fullscreen_restore_bounds,
+                maximized_restore_bounds: Bounds::default(),
+                fullscreen_restore_bounds: Bounds::default(),
             })));
 
             (*native_window).set_ivar(
