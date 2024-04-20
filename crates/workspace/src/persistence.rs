@@ -396,7 +396,7 @@ impl WorkspaceDb {
             WorkspaceId,
             Option<LocalPaths>,
             Option<u64>,
-            SerializedWindowOpenStatus,
+            Option<SerializedWindowOpenStatus>,
             Option<Uuid>,
             Option<bool>,
             DockStructure,
