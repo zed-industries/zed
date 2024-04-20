@@ -334,10 +334,14 @@ impl WaylandWindowStatePtr {
                 let height = NonZeroU32::new(height as u32);
                 let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
                 let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
-                self.resize(width, height);
-                self.set_fullscreen(fullscreen);
                 let mut state = self.state.borrow_mut();
                 state.maximized = maximized;
+                state.fullscreen = fullscreen;
+                if fullscreen || maximized {
+                    state.restore_bounds = state.bounds.map(|p| DevicePixels(p as i32));
+                }
+                self.resize(width, height);
+                self.set_fullscreen(fullscreen);
 
                 false
             }
@@ -552,13 +556,14 @@ impl PlatformWindow for WaylandWindow {
         false
     }
 
+    // todo(linux)
+    // check if it is right
     fn restore_status(&self) -> WindowOpenStatus {
         let state = self.borrow();
         if state.fullscreen {
             WindowOpenStatus::FullScreen(state.restore_bounds)
         } else if state.maximized {
-            // todo(linux)
-            WindowOpenStatus::Maximized(state.bounds.map(|p| DevicePixels(p as i32)))
+            WindowOpenStatus::Maximized(state.restore_bounds)
         } else {
             WindowOpenStatus::Windowed(Some(state.bounds.map(|p| DevicePixels(p as i32))))
         }
