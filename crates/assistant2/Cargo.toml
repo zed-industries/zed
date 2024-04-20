@@ -38,7 +38,7 @@ nanoid = "0.4"
 # To make sure branches merging into assistant2 pass, we'll override some settings
 # TODO: Remove before assistant2 is merged to `main`
 [package.metadata.cargo-machete]
-ignored = ["workspace"]
+ignored = ["workspace", "assistant_tooling"]
 
 [dev-dependencies]
 assets.workspace = true
