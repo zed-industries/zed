@@ -13,7 +13,6 @@ path = "src/assistant_tooling.rs"
 
 [dependencies]
 anyhow.workspace = true
-futures.workspace = true
 gpui.workspace = true
 schemars.workspace = true
 serde.workspace = true
