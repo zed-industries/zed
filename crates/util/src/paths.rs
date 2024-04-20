@@ -22,23 +22,24 @@ lazy_static::lazy_static! {
     pub static ref CONVERSATIONS_DIR: PathBuf = CONFIG_DIR.join("conversations");
     pub static ref EMBEDDINGS_DIR: PathBuf = CONFIG_DIR.join("embeddings");
     pub static ref THEMES_DIR: PathBuf = CONFIG_DIR.join("themes");
-    pub static ref LOGS_DIR: PathBuf = if cfg!(target_os = "macos") {
-        HOME.join("Library/Logs/Zed")
-    } else if cfg!(target_os = "windows") {
-        dirs::data_local_dir()
-            .expect("failed to determine LocalAppData directory")
-            .join("Zed/logs")
+
+    pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
+        HOME.join("Library/Application Support/Zed")
     } else if cfg!(target_os = "linux") {
         dirs::data_local_dir()
             .expect("failed to determine XDG_DATA_DIR directory")
-            .join("zed/logs")
-    } else {
-        CONFIG_DIR.join("logs")
-    };
-    pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
-        HOME.join("Library/Application Support/Zed")
+            .join("zed")
+    } else if cfg!(target_os = "windows") {
+        dirs::data_local_dir()
+            .expect("failed to determine LocalAppData directory")
+            .join("Zed")
     } else {
         CONFIG_DIR.clone()
+    };
+    pub static ref LOGS_DIR: PathBuf = if cfg!(target_os = "macos") {
+        HOME.join("Library/Logs/Zed")
+    } else {
+        SUPPORT_DIR.join("logs")
     };
     pub static ref EXTENSIONS_DIR: PathBuf = SUPPORT_DIR.join("extensions");
     pub static ref LANGUAGES_DIR: PathBuf = SUPPORT_DIR.join("languages");
@@ -47,19 +48,11 @@ lazy_static::lazy_static! {
     pub static ref DB_DIR: PathBuf = SUPPORT_DIR.join("db");
     pub static ref CRASHES_DIR: PathBuf = if cfg!(target_os = "macos") {
         HOME.join("Library/Logs/DiagnosticReports")
-    } else if cfg!(target_os = "windows") {
-        dirs::data_local_dir()
-            .expect("failed to determine LocalAppData directory")
-            .join("Zed/crashes")
-    } else if cfg!(target_os = "linux") {
-        dirs::data_local_dir()
-            .expect("failed to determine XDG_DATA_DIR directory")
-            .join("zed/crashes")
     } else {
-        CONFIG_DIR.join("crashes")
+        SUPPORT_DIR.join("crashes")
     };
     pub static ref CRASHES_RETIRED_DIR: PathBuf = if cfg!(target_os = "macos") {
-        HOME.join("Library/Logs/DiagnosticReports/Retired")
+        CRASHES_DIR.join("Retired")
     } else {
         CRASHES_DIR.join("retired")
     };
@@ -73,13 +66,13 @@ lazy_static::lazy_static! {
     pub static ref LOCAL_TASKS_RELATIVE_PATH: &'static Path = Path::new(".zed/tasks.json");
     pub static ref LOCAL_VSCODE_TASKS_RELATIVE_PATH: &'static Path = Path::new(".vscode/tasks.json");
     pub static ref TEMP_DIR: PathBuf = if cfg!(target_os = "widows") {
-        dirs::data_local_dir()
+        dirs::cache_dir()
             .expect("failed to determine LocalAppData directory")
-            .join("Temp/Zed")
+            .join("Zed")
     } else if cfg!(target_os = "linux") {
-        dirs::data_local_dir()
-            .expect("failed to determine XDG_DATA_DIR directory")
-            .join("tmp/zed")
+        dirs::cache_dir()
+            .expect("failed to determine XDG_CACHE_HOME directory")
+            .join("zed")
     } else {
         HOME.join(".cache").join("zed")
     };
