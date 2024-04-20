@@ -149,6 +149,11 @@ impl Render for BlameEntryTooltip {
             })
             .unwrap_or("<no commit message>".into_any());
 
+        let pull_request = self
+            .details
+            .as_ref()
+            .and_then(|details| details.pull_request.clone());
+
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
         let message_max_height = cx.line_height() * 12 + (ui_font_size / 0.4);
 
@@ -192,27 +197,51 @@ impl Render for BlameEntryTooltip {
                                 .justify_between()
                                 .child(absolute_timestamp)
                                 .child(
-                                    Button::new("commit-sha-button", short_commit_id.clone())
-                                        .style(ButtonStyle::Transparent)
-                                        .color(Color::Muted)
-                                        .icon(IconName::FileGit)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .disabled(
-                                            self.details.as_ref().map_or(true, |details| {
-                                                details.permalink.is_none()
-                                            }),
-                                        )
-                                        .when_some(
-                                            self.details
-                                                .as_ref()
-                                                .and_then(|details| details.permalink.clone()),
-                                            |this, url| {
-                                                this.on_click(move |_, cx| {
+                                    h_flex()
+                                        .gap_2()
+                                        .when_some(pull_request, |this, pr| {
+                                            this.child(
+                                                Button::new(
+                                                    "pull-request-button",
+                                                    format!("#{}", pr.number),
+                                                )
+                                                .color(Color::Muted)
+                                                .icon(IconName::PullRequest)
+                                                .icon_color(Color::Muted)
+                                                .icon_position(IconPosition::Start)
+                                                .style(ButtonStyle::Transparent)
+                                                .on_click(move |_, cx| {
                                                     cx.stop_propagation();
-                                                    cx.open_url(url.as_str())
-                                                })
-                                            },
+                                                    cx.open_url(pr.url.as_str())
+                                                }),
+                                            )
+                                        })
+                                        .child(
+                                            Button::new(
+                                                "commit-sha-button",
+                                                short_commit_id.clone(),
+                                            )
+                                            .style(ButtonStyle::Transparent)
+                                            .color(Color::Muted)
+                                            .icon(IconName::FileGit)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .disabled(
+                                                self.details.as_ref().map_or(true, |details| {
+                                                    details.permalink.is_none()
+                                                }),
+                                            )
+                                            .when_some(
+                                                self.details
+                                                    .as_ref()
+                                                    .and_then(|details| details.permalink.clone()),
+                                                |this, url| {
+                                                    this.on_click(move |_, cx| {
+                                                        cx.stop_propagation();
+                                                        cx.open_url(url.as_str())
+                                                    })
+                                                },
+                                            ),
                                         ),
                                 ),
                         ),

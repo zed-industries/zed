@@ -646,11 +646,11 @@ impl DirectWriteState {
         let bitmap_stride;
         if params.is_emoji {
             total_bytes = bitmap_size.height.0 as usize * bitmap_size.width.0 as usize * 4;
-            bitmap_format = &GUID_WICPixelFormat32bppPRGBA;
+            bitmap_format = &GUID_WICPixelFormat32bppPBGRA;
             render_target_property = D2D1_RENDER_TARGET_PROPERTIES {
                 r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
                 pixelFormat: D2D1_PIXEL_FORMAT {
-                    format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
                     alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
                 },
                 dpiX: params.scale_factor * 96.0,

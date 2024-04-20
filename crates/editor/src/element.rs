@@ -13,9 +13,9 @@ use crate::{
     mouse_context_menu::{self, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, GutterDimensions, HalfPageDown, HalfPageUp,
-    HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection,
-    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GutterDimensions, HalfPageDown,
+    HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
+    SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -257,6 +257,9 @@ impl EditorElement {
         register_action(view, cx, Editor::move_to_enclosing_bracket);
         register_action(view, cx, Editor::undo_selection);
         register_action(view, cx, Editor::redo_selection);
+        if !view.read(cx).is_singleton(cx) {
+            register_action(view, cx, Editor::expand_excerpts);
+        }
         register_action(view, cx, Editor::go_to_diagnostic);
         register_action(view, cx, Editor::go_to_prev_diagnostic);
         register_action(view, cx, Editor::go_to_hunk);
@@ -980,8 +983,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         bounds: Bounds<Pixels>,
         scroll_position: gpui::Point<f32>,
-        line_height: Pixels,
-        height_in_lines: f32,
+        rows_per_page: f32,
         cx: &mut ElementContext,
     ) -> Option<ScrollbarLayout> {
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
@@ -1012,7 +1014,7 @@ impl EditorElement {
             return None;
         }
 
-        let visible_row_range = scroll_position.y..scroll_position.y + height_in_lines;
+        let visible_row_range = scroll_position.y..scroll_position.y + rows_per_page;
 
         // If a drag took place after we started dragging the scrollbar,
         // cancel the scrollbar drag.
@@ -1027,27 +1029,18 @@ impl EditorElement {
             point(bounds.lower_right().x, bounds.lower_left().y),
         );
 
-        let scroll_height = snapshot.max_point().row() as f32 + height_in_lines;
-        let mut height = bounds.size.height;
-        let mut first_row_y_offset = px(0.0);
-
-        // Impose a minimum height on the scrollbar thumb
-        let row_height = height / scroll_height;
-        let min_thumb_height = line_height;
-        let thumb_height = height_in_lines * row_height;
-        if thumb_height < min_thumb_height {
-            first_row_y_offset = (min_thumb_height - thumb_height) / 2.0;
-            height -= min_thumb_height - thumb_height;
-        }
+        let height = bounds.size.height;
+        let total_rows = snapshot.max_point().row() as f32 + rows_per_page;
+        let px_per_row = height / total_rows;
+        let thumb_height = (rows_per_page * px_per_row).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
+        let row_height = (height - thumb_height) / snapshot.max_point().row() as f32;
 
         Some(ScrollbarLayout {
             hitbox: cx.insert_hitbox(track_bounds, false),
             visible_row_range,
-            height,
-            scroll_height,
-            first_row_y_offset,
             row_height,
             visible: show_scrollbars,
+            thumb_height,
         })
     }
 
@@ -1553,6 +1546,7 @@ impl EditorElement {
                     range,
                     starts_new_buffer,
                     height,
+                    id,
                     ..
                 } => {
                     let include_root = self
@@ -1710,45 +1704,38 @@ impl EditorElement {
                                     )
                                     .h_full()
                                     .child(
-                                        ButtonLike::new("jump-icon")
+                                        ButtonLike::new("expand-icon")
                                             .style(ButtonStyle::Transparent)
                                             .child(
                                                 svg()
-                                                    .path(IconName::ArrowUpRight.path())
+                                                    .path(IconName::ExpandVertical.path())
                                                     .size(IconSize::XSmall.rems())
-                                                    .text_color(cx.theme().colors().border)
-                                                    .group_hover("excerpt-jump-action", |style| {
+                                                    .text_color(
+                                                        cx.theme().colors().editor_line_number,
+                                                    )
+                                                    .group("")
+                                                    .hover(|style| {
                                                         style.text_color(
-                                                            cx.theme().colors().editor_line_number,
+                                                            cx.theme()
+                                                                .colors()
+                                                                .editor_active_line_number,
                                                         )
                                                     }),
                                             )
-                                            .when_some(jump_data.clone(), |this, jump_data| {
-                                                this.on_click(cx.listener_for(&self.editor, {
-                                                    let path = jump_data.path.clone();
-                                                    move |editor, _, cx| {
-                                                        editor.jump(
-                                                            path.clone(),
-                                                            jump_data.position,
-                                                            jump_data.anchor,
-                                                            jump_data.line_offset_from_top,
-                                                            cx,
-                                                        );
-                                                    }
-                                                }))
-                                                .tooltip({
-                                                    move |cx| {
-                                                        Tooltip::for_action(
-                                                            format!(
-                                                                "Jump to {}:L{}",
-                                                                jump_data.path.path.display(),
-                                                                jump_data.position.row + 1
-                                                            ),
-                                                            &OpenExcerpts,
-                                                            cx,
-                                                        )
-                                                    }
-                                                })
+                                            .on_click(cx.listener_for(&self.editor, {
+                                                let id = *id;
+                                                move |editor, _, cx| {
+                                                    editor.expand_excerpt(id, cx);
+                                                }
+                                            }))
+                                            .tooltip({
+                                                move |cx| {
+                                                    Tooltip::for_action(
+                                                        "Expand Excerpt",
+                                                        &ExpandExcerpts { lines: 0 },
+                                                        cx,
+                                                    )
+                                                }
                                             }),
                                     ),
                             )
@@ -2507,8 +2494,7 @@ impl EditorElement {
 
         cx.set_cursor_style(CursorStyle::Arrow, &scrollbar_layout.hitbox);
 
-        let scroll_height = scrollbar_layout.scroll_height;
-        let height = scrollbar_layout.height;
+        let row_height = scrollbar_layout.row_height;
         let row_range = scrollbar_layout.visible_row_range.clone();
 
         cx.on_mouse_event({
@@ -2528,14 +2514,13 @@ impl EditorElement {
                         let new_y = event.position.y;
                         if (hitbox.top()..hitbox.bottom()).contains(&y) {
                             let mut position = editor.scroll_position(cx);
-                            position.y += (new_y - y) * scroll_height / height;
+                            position.y += (new_y - y) / row_height;
                             if position.y < 0.0 {
                                 position.y = 0.0;
                             }
                             editor.set_scroll_position(position, cx);
                         }
 
-                        mouse_position = event.position;
                         cx.stop_propagation();
                     } else {
                         editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
@@ -2543,6 +2528,7 @@ impl EditorElement {
                             editor.scroll_manager.show_scrollbar(cx);
                         }
                     }
+                    mouse_position = event.position;
                 })
             }
         });
@@ -2575,8 +2561,7 @@ impl EditorElement {
 
                         let y = event.position.y;
                         if y < thumb_bounds.top() || thumb_bounds.bottom() < y {
-                            let center_row =
-                                ((y - hitbox.top()) * scroll_height / height).round() as u32;
+                            let center_row = ((y - hitbox.top()) / row_height).round() as u32;
                             let top_row = center_row
                                 .saturating_sub((row_range.end - row_range.start) as u32 / 2);
                             let mut position = editor.scroll_position(cx);
@@ -3664,14 +3649,8 @@ impl Element for EditorElement {
                     cx,
                 );
 
-                let scrollbar_layout = self.layout_scrollbar(
-                    &snapshot,
-                    bounds,
-                    scroll_position,
-                    line_height,
-                    height_in_lines,
-                    cx,
-                );
+                let scrollbar_layout =
+                    self.layout_scrollbar(&snapshot, bounds, scroll_position, height_in_lines, cx);
 
                 let folds = cx.with_element_id(Some("folds"), |cx| {
                     self.layout_folds(
@@ -3929,19 +3908,18 @@ struct ScrollbarLayout {
     hitbox: Hitbox,
     visible_row_range: Range<f32>,
     visible: bool,
-    height: Pixels,
-    scroll_height: f32,
-    first_row_y_offset: Pixels,
     row_height: Pixels,
+    thumb_height: Pixels,
 }
 
 impl ScrollbarLayout {
     const BORDER_WIDTH: Pixels = px(1.0);
     const MIN_MARKER_HEIGHT: Pixels = px(2.0);
+    const MIN_THUMB_HEIGHT: Pixels = px(20.0);
 
     fn thumb_bounds(&self) -> Bounds<Pixels> {
-        let thumb_top = self.y_for_row(self.visible_row_range.start) - self.first_row_y_offset;
-        let thumb_bottom = self.y_for_row(self.visible_row_range.end) + self.first_row_y_offset;
+        let thumb_top = self.y_for_row(self.visible_row_range.start);
+        let thumb_bottom = thumb_top + self.thumb_height;
         Bounds::from_corners(
             point(self.hitbox.left(), thumb_top),
             point(self.hitbox.right(), thumb_bottom),
@@ -3949,7 +3927,7 @@ impl ScrollbarLayout {
     }
 
     fn y_for_row(&self, row: f32) -> Pixels {
-        self.hitbox.top() + self.first_row_y_offset + row * self.row_height
+        self.hitbox.top() + row * self.row_height
     }
 
     fn marker_quads_for_ranges(
@@ -3966,8 +3944,8 @@ impl ScrollbarLayout {
         let mut background_pixel_ranges = row_ranges
             .into_iter()
             .map(|range| {
-                let start_y = self.first_row_y_offset + range.start as f32 * self.row_height;
-                let end_y = self.first_row_y_offset + (range.end + 1) as f32 * self.row_height;
+                let start_y = range.start as f32 * self.row_height;
+                let end_y = (range.end + 1) as f32 * self.row_height;
                 ColoredRange {
                     start: start_y,
                     end: end_y,

@@ -47,6 +47,7 @@ pub enum IconName {
     ChevronLeft,
     ChevronRight,
     ChevronUp,
+    ExpandVertical,
     Close,
     Collab,
     Command,
@@ -121,6 +122,7 @@ pub enum IconName {
     WholeWord,
     XCircle,
     ZedXCopilot,
+    PullRequest,
 }
 
 impl IconName {
@@ -148,6 +150,7 @@ impl IconName {
             IconName::ChevronLeft => "icons/chevron_left.svg",
             IconName::ChevronRight => "icons/chevron_right.svg",
             IconName::ChevronUp => "icons/chevron_up.svg",
+            IconName::ExpandVertical => "icons/expand_vertical.svg",
             IconName::Close => "icons/x.svg",
             IconName::Collab => "icons/user_group_16.svg",
             IconName::Command => "icons/command.svg",
@@ -222,6 +225,7 @@ impl IconName {
             IconName::WholeWord => "icons/word_search.svg",
             IconName::XCircle => "icons/error.svg",
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
+            IconName::PullRequest => "icons/pull_request.svg",
         }
     }
 }

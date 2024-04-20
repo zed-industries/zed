@@ -25,6 +25,7 @@ time.workspace = true
 url.workspace = true
 util.workspace = true
 serde.workspace = true
+regex.workspace = true
 rope.workspace = true
 parking_lot.workspace = true
 windows.workspace = true
