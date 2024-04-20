@@ -3650,13 +3650,7 @@ impl Workspace {
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
-            let open_status = if cx.is_fullscreen() {
-                Some(SerializedWindowOpenStatus(WindowOpenStatus::FullScreen(
-                        Bounds::default(),
-                    )))
-            } else {
-                None
-            };
+            let open_status = cx.restore_status();
             let serialized_workspace = SerializedWorkspace {
                 id: self.database_id,
                 location,
