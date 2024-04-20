@@ -580,7 +580,7 @@ pub enum WindowOpenStatus {
     Maximized(Bounds<DevicePixels>),
     /// Indicates that the window should open in fullscreen mode.
     /// The bounds provided here represent the restore size of the window.
-    FullScreen(Bounds<DevicePixels>),
+    Fullscreen(Bounds<DevicePixels>),
 }
 
 impl Default for WindowOpenStatus {
@@ -595,7 +595,7 @@ impl WindowOpenStatus {
         match self {
             WindowOpenStatus::Windowed(bounds) => *bounds,
             WindowOpenStatus::Maximized(bounds) => Some(*bounds),
-            WindowOpenStatus::FullScreen(bounds) => Some(*bounds),
+            WindowOpenStatus::Fullscreen(bounds) => Some(*bounds),
         }
     }
 }
