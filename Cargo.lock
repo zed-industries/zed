@@ -9418,6 +9418,7 @@ dependencies = [
  "log",
  "menu",
  "picker",
+ "project",
  "rust-embed",
  "settings",
  "simplelog",
