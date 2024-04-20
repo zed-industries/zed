@@ -19,8 +19,16 @@ lazy_static::lazy_static! {
     } else {
         HOME.join(".config").join("zed")
     };
-    pub static ref CONVERSATIONS_DIR: PathBuf = CONFIG_DIR.join("conversations");
-    pub static ref EMBEDDINGS_DIR: PathBuf = CONFIG_DIR.join("embeddings");
+    pub static ref CONVERSATIONS_DIR: PathBuf = if cfg!(target_os = "macos") {
+        CONFIG_DIR.join("conversations")
+    } else {
+        SUPPORT_DIR.join("conversations")
+    };
+    pub static ref EMBEDDINGS_DIR: PathBuf = if cfg!(target_os = "macos") {
+        CONFIG_DIR.join("embeddings")
+    } else {
+        SUPPORT_DIR.join("embeddings")
+    };
     pub static ref THEMES_DIR: PathBuf = CONFIG_DIR.join("themes");
 
     pub static ref SUPPORT_DIR: PathBuf = if cfg!(target_os = "macos") {
