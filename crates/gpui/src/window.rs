@@ -603,11 +603,6 @@ impl Window {
             app_id,
         } = options;
 
-        // let open_status = if open_status == WindowOpenStatus::Windowed(None) {
-        //     WindowOpenStatus::Windowed(Some(default_bounds(display_id, cx)))
-        // } else {
-        //     open_status
-        // };
         let bounds = open_status
             .get_bounds()
             .unwrap_or_else(|| default_bounds(display_id, cx));
