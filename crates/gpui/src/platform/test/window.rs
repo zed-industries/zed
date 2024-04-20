@@ -120,10 +120,6 @@ impl PlatformWindow for TestWindow {
         false
     }
 
-    fn is_minimized(&self) -> bool {
-        false
-    }
-
     fn content_size(&self) -> Size<Pixels> {
         self.bounds().size.into()
     }

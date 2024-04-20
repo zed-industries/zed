@@ -549,11 +549,6 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().maximized
     }
 
-    fn is_minimized(&self) -> bool {
-        // This cannot be determined by the client
-        false
-    }
-
     // todo(linux)
     // check if it is right
     fn restore_status(&self) -> WindowOpenStatus {

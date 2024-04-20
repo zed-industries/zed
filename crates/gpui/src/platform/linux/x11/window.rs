@@ -418,11 +418,6 @@ impl PlatformWindow for X11Window {
     }
 
     // todo(linux)
-    fn is_minimized(&self) -> bool {
-        false
-    }
-
-    // todo(linux)
     fn restore_status(&self) -> WindowOpenStatus {
         let state = self.state.borrow();
         WindowOpenStatus::Windowed(Some(state.bounds.map(|p| DevicePixels(p))))

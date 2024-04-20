@@ -138,10 +138,6 @@ impl WindowsWindowInner {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
-    fn is_minimized(&self) -> bool {
-        unsafe { IsIconic(self.hwnd) }.as_bool()
-    }
-
     fn restore_status(&self) -> WindowOpenStatus {
         let placement = unsafe {
             let mut placement = WINDOWPLACEMENT {
@@ -1391,10 +1387,6 @@ impl PlatformWindow for WindowsWindow {
 
     fn is_maximized(&self) -> bool {
         self.inner.is_maximized()
-    }
-
-    fn is_minimized(&self) -> bool {
-        self.inner.is_minimized()
     }
 
     fn restore_status(&self) -> WindowOpenStatus {
