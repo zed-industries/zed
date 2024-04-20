@@ -532,7 +532,7 @@ impl PlatformWindow for X11Window {
 
     // todo(linux)
     fn restore_status(&self) -> WindowOpenStatus {
-        let state = self.borrow();
+        let state = self.state.borrow();
         WindowOpenStatus::Windowed(Some(state.bounds.map(|p| DevicePixels(p as i32))))
     }
 
