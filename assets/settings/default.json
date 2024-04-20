@@ -155,6 +155,8 @@
     // 4. Never show the scrollbar:
     //    "never"
     "show": "auto",
+    // Whether to show cursor positions in the scrollbar.
+    "cursors": true,
     // Whether to show git diff indicators in the scrollbar.
     "git_diff": true,
     // Whether to show buffer search results in the scrollbar.
@@ -162,9 +164,7 @@
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
     // Whether to show diagnostic indicators in the scrollbar.
-    "diagnostics": true,
-    // Whether to show cursor positions in the scrollbar.
-    "cursors": true
+    "diagnostics": true
   },
   // What to do when multibuffer is double clicked in some of its excerpts
   // (parts of singleton buffers).

@@ -491,7 +491,6 @@ pub struct EditorSnapshot {
     is_focused: bool,
     scroll_anchor: ScrollAnchor,
     ongoing_scroll: OngoingScroll,
-    selection_anchors: Vec<Anchor>,
 }
 
 const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
@@ -1657,17 +1656,6 @@ impl Editor {
     }
 
     pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
-        let mut selection_anchors = Vec::with_capacity(self.selections.disjoint.len() + 1);
-        selection_anchors.extend(self.selections.disjoint.iter().map(|selection| {
-            if selection.reversed {
-                selection.start.clone()
-            } else {
-                selection.end.clone()
-            }
-        }));
-        if let Some(selection) = &self.selections.pending_anchor() {
-            selection_anchors.push(selection.end.clone());
-        }
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
@@ -1677,7 +1665,6 @@ impl Editor {
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
             is_focused: self.focus_handle.is_focused(cx),
-            selection_anchors,
         }
     }
 
