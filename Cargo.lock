@@ -406,7 +406,6 @@ name = "assistant_tooling"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "futures 0.3.28",
  "gpui",
  "schemars",
  "serde",
