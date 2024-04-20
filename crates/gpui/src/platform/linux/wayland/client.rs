@@ -1267,7 +1267,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
             }
             wl_data_device::Event::Leave => {
                 println!("Data offer leave");
-                let drag_window = state.drag.window.clone().unwrap();
+                let Some(drag_window) = state.drag.window.clone() else {
+                    // Some compositors (like wlroots) will send a leave event after a drop event.
+                    return;
+                };
                 let data_offer = state.drag.data_offer.clone().unwrap();
                 data_offer.destroy();
 
