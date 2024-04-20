@@ -258,23 +258,21 @@ impl WaylandClient {
         });
 
         let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
-        // let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
-
         handle.insert_source(main_receiver, |event, _, _: &mut WaylandClientStatePtr| {
             if let calloop::channel::Event::Msg(runnable) = event {
                 runnable.run();
             }
         });
 
+        let seat = seat.unwrap();
         let globals = Globals::new(globals, common.foreground_executor.clone(), qh.clone());
 
-        let seat = seat.unwrap();
         let data_device = globals.data_device_manager.get_data_device(&seat, &qh, ());
         // TODO: data_device.release();
 
@@ -1188,6 +1186,8 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
     }
 }
 
+const FILES_MIME_TYPE: &str = "text/uri-list";
+
 impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
@@ -1199,7 +1199,6 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
     ) {
         let client = this.get_client();
         let mut state = client.borrow_mut();
-        // println!("wl_data_device: {event:?}");
 
         match event {
             wl_data_device::Event::Enter {
@@ -1223,8 +1222,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     data_offer.set_actions(ACTIONS, ACTIONS);
 
                     let pipe = Pipe::new().unwrap();
-                    // TODO: move mime type to constant
-                    data_offer.receive("text/uri-list".to_string(), unsafe {
+                    data_offer.receive(FILES_MIME_TYPE.to_string(), unsafe {
                         BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
                     });
                     let fd = pipe.read;
@@ -1297,24 +1295,6 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
         }
     }
 
-    // fn event_created_child(
-    //     opcode: u16,
-    //     qh: &QueueHandle<Self>,
-    // ) -> Arc<dyn wayland_backend::client::ObjectData> {
-    //     println!("{opcode}");
-    //     match opcode {
-    //         wl_data_device::EVT_DATA_OFFER_OPCODE => {
-    //             qh.make_data::<wl_data_offer::WlDataOffer, _>(())
-    //         }
-    //         _ => {
-    //             panic!(
-    //                 "Missing event_created_child specialization for event opcode {} of {}",
-    //                 opcode, "wl_data_device"
-    //             );
-    //         }
-    //     }
-    // }
-
     event_created_child!(WaylandClientStatePtr, wl_data_device::WlDataDevice, [
         wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ()),
     ]);
@@ -1331,7 +1311,6 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
     ) {
         let client = this.get_client();
         let mut state = client.borrow_mut();
-        // println!("wl_data_offer: {event:?}");
 
         match event {
             wl_data_offer::Event::Action {
@@ -1354,8 +1333,6 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
                 }
             }
             wl_data_offer::Event::Offer { mime_type } => {
-                // println!("Mime type: {mime_type}");
-                const FILES_MIME_TYPE: &str = "text/uri-list";
                 if mime_type == FILES_MIME_TYPE {
                     data_offer.accept(state.serial, Some(mime_type));
                 }
@@ -1364,18 +1341,3 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
         }
     }
 }
-
-// impl Dispatch<wl_data_source::WlDataSource, ObjectId> for WaylandClientStatePtr {
-//     fn event(
-//         this: &mut Self,
-//         _: &wl_data_source::WlDataSource,
-//         event: wl_data_source::Event,
-//         surface_id: &ObjectId,
-//         _: &Connection,
-//         _: &QueueHandle<Self>,
-//     ) {
-//         let client = this.get_client();
-//         let mut state = client.borrow_mut();
-//         println!("wl_data_source: {event:?}");
-//     }
-// }
