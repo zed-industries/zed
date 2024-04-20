@@ -348,7 +348,7 @@ impl TerminalView {
     }
 
     fn dispatch_context(&self, cx: &AppContext) -> KeyContext {
-        let mut dispatch_context = KeyContext::default();
+        let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("Terminal");
 
         let mode = self.terminal.read(cx).last_content.mode;
