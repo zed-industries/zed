@@ -523,8 +523,6 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
 
 delegate_noop!(WaylandClientStatePtr: ignore wl_compositor::WlCompositor);
 delegate_noop!(WaylandClientStatePtr: ignore wl_data_device_manager::WlDataDeviceManager);
-// delegate_noop!(WaylandClientStatePtr: ignore wl_data_device::WlDataDevice);
-// delegate_noop!(WaylandClientStatePtr: ignore wl_data_source::WlDataSource);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientStatePtr: ignore wl_buffer::WlBuffer);
@@ -1239,7 +1237,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                         }
                     };
 
-                    let paths: SmallVec<[_; 2]> = file_list.lines().map(PathBuf::from).collect();
+                    let paths: SmallVec<[_; 2]> = file_list
+                        .lines()
+                        .map(|file| PathBuf::from(file.replace("file://", "")))
+                        .collect();
                     let position = Point::new(x.into(), y.into());
                     println!("{paths:?}");
                     let input = PlatformInput::FileDrop(FileDropEvent::Entered {
