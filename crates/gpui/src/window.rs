@@ -951,12 +951,6 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
-    /// Check if the platform window is minimized
-    /// On some platforms (namely Windows) the position is incorrect when minimized
-    pub fn is_minimized(&self) -> bool {
-        self.window.platform_window.is_minimized()
-    }
-
     /// Return the restore size to indicate that how a window should be opened
     /// after it has been closed
     pub fn restore_status(&self) -> WindowOpenStatus {
