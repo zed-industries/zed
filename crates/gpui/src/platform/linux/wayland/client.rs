@@ -1,7 +1,12 @@
+use core::hash;
 use std::cell::{RefCell, RefMut};
+use std::os::fd::{AsRawFd, BorrowedFd};
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use anyhow::bail;
 use async_task::Runnable;
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::{EventLoop, LoopHandle};
@@ -9,13 +14,19 @@ use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
 use copypasta::ClipboardProvider;
+use filedescriptor::Pipe;
+use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
+use wayland_client::event_created_child;
 use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
-use wayland_client::protocol::wl_output;
+use wayland_client::protocol::wl_data_device_manager::DndAction;
 use wayland_client::protocol::wl_pointer::{AxisRelativeDirection, AxisSource};
+use wayland_client::protocol::{
+    wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output,
+};
 use wayland_client::{
     delegate_noop,
     protocol::{
@@ -35,14 +46,14 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
-use super::super::DOUBLE_CLICK_INTERVAL;
+use super::super::{read_pipe_with_timeout, DOUBLE_CLICK_INTERVAL};
 use super::window::{WaylandWindowState, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
-use crate::{point, px, ForegroundExecutor, MouseExitEvent};
+use crate::{point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent};
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -58,6 +69,7 @@ const MIN_KEYCODE: u32 = 8;
 pub struct Globals {
     pub qh: QueueHandle<WaylandClientStatePtr>,
     pub compositor: wl_compositor::WlCompositor,
+    pub data_device_manager: wl_data_device_manager::WlDataDeviceManager, // TODO: optional?
     pub wm_base: xdg_wm_base::XdgWmBase,
     pub shm: wl_shm::WlShm,
     pub viewporter: Option<wp_viewporter::WpViewporter>,
@@ -82,6 +94,13 @@ impl Globals {
                     (),
                 )
                 .unwrap(),
+            data_device_manager: globals
+                .bind(
+                    &qh,
+                    WL_DATA_DEVICE_MANAGER_VERSION..=WL_DATA_DEVICE_MANAGER_VERSION,
+                    (),
+                )
+                .unwrap(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
@@ -94,6 +113,7 @@ impl Globals {
 }
 
 pub(crate) struct WaylandClientState {
+    serial: u32,
     globals: Globals,
     wl_pointer: Option<wl_pointer::WlPointer>,
     // Surface to Window mapping
@@ -118,6 +138,8 @@ pub(crate) struct WaylandClientState {
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_icon_name: String,
     cursor: Cursor,
+    current_drag_offer: Option<wl_data_offer::WlDataOffer>,
+    current_drag_window: Option<WaylandWindowStatePtr>,
     clipboard: Option<Clipboard>,
     primary: Option<Primary>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
@@ -175,6 +197,7 @@ impl WaylandClientStatePtr {
 #[derive(Clone)]
 pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
 
+const WL_DATA_DEVICE_MANAGER_VERSION: u32 = 3;
 const WL_OUTPUT_VERSION: u32 = 2;
 
 fn wl_seat_version(version: u32) -> u32 {
@@ -199,18 +222,20 @@ impl WaylandClient {
         let (globals, mut event_queue) =
             registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
-        let mut outputs = HashMap::default();
 
+        let mut seat: Option<wl_seat::WlSeat> = None;
+        let mut outputs = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
                     "wl_seat" => {
-                        globals.registry().bind::<wl_seat::WlSeat, _, _>(
+                        // TODO: we need multiple seats?
+                        seat = Some(globals.registry().bind::<wl_seat::WlSeat, _, _>(
                             global.name,
                             wl_seat_version(global.version),
                             &qh,
                             (),
-                        );
+                        ));
                     }
                     "wl_output" => {
                         let output = globals.registry().bind::<wl_output::WlOutput, _, _>(
@@ -227,7 +252,7 @@ impl WaylandClient {
         });
 
         let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
-        let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
+        // let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
@@ -241,11 +266,19 @@ impl WaylandClient {
             }
         });
 
-        let globals = Globals::new(globals, common.foreground_executor.clone(), qh);
+        let globals = Globals::new(globals, common.foreground_executor.clone(), qh.clone());
+
+        let seat = seat.unwrap();
+        let data_device = globals.data_device_manager.get_data_device(&seat, &qh, ());
+        // TODO: data_device.release();
+
+        let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
         let cursor = Cursor::new(&conn, &globals, 24);
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
+            // TODO: always update serial
+            serial: 0,
             globals,
             wl_pointer: None,
             output_scales: outputs,
@@ -284,6 +317,8 @@ impl WaylandClient {
             cursor_icon_name: "arrow".to_string(),
             enter_token: None,
             cursor,
+            current_drag_offer: None,
+            current_drag_window: None,
             clipboard: Some(clipboard),
             primary: Some(primary),
             event_loop: Some(event_loop),
@@ -452,6 +487,16 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                     state.wl_pointer = None;
                     registry.bind::<wl_seat::WlSeat, _, _>(name, wl_seat_version(version), qh, ());
                 }
+                // TODO: is this needed?
+                // "wl_data_device_manager" => {
+                //     let data_device_manager = registry
+                //         .bind::<wl_data_device_manager::WlDataDeviceManager, _, _>(
+                //             name,
+                //             WL_DATA_DEVICE_MANAGER_VERSION,
+                //             qh,
+                //             (),
+                //         );
+                // }
                 "wl_output" => {
                     let output =
                         registry.bind::<wl_output::WlOutput, _, _>(name, WL_OUTPUT_VERSION, qh, ());
@@ -467,6 +512,9 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
 }
 
 delegate_noop!(WaylandClientStatePtr: ignore wl_compositor::WlCompositor);
+delegate_noop!(WaylandClientStatePtr: ignore wl_data_device_manager::WlDataDeviceManager);
+// delegate_noop!(WaylandClientStatePtr: ignore wl_data_device::WlDataDevice);
+// delegate_noop!(WaylandClientStatePtr: ignore wl_data_source::WlDataSource);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientStatePtr: ignore wl_buffer::WlBuffer);
@@ -599,7 +647,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClientStatePtr {
     fn event(
-        _: &mut Self,
+        this: &mut Self,
         wm_base: &xdg_wm_base::XdgWmBase,
         event: <xdg_wm_base::XdgWmBase as Proxy>::Event,
         _: &(),
@@ -607,6 +655,9 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClientStatePtr {
         _: &QueueHandle<Self>,
     ) {
         if let xdg_wm_base::Event::Ping { serial } = event {
+            let client = this.get_client();
+            let mut state = client.borrow_mut();
+            state.serial = serial;
             wm_base.pong(serial);
         }
     }
@@ -721,8 +772,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             wl_keyboard::Event::Key {
                 key,
                 state: WEnum::Value(key_state),
+                serial,
                 ..
             } => {
+                state.serial = serial;
+
                 let focused_window = state.keyboard_focused_window.clone();
                 let Some(focused_window) = focused_window else {
                     return;
@@ -833,6 +887,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 surface_y,
                 ..
             } => {
+                state.serial = serial;
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
@@ -1123,3 +1178,182 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
         window.handle_toplevel_decoration_event(event);
     }
 }
+
+impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &wl_data_device::WlDataDevice,
+        event: wl_data_device::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        // println!("wl_data_device: {event:?}");
+
+        match event {
+            wl_data_device::Event::Enter {
+                serial,
+                surface,
+                x,
+                y,
+                id: data_offer,
+            } => {
+                println!("Drag entered our surface at x={x} y={y}");
+                state.serial = serial;
+                if let Some(data_offer) = data_offer {
+                    let drag_window = get_window(&mut state, &surface.id());
+                    let Some(drag_window) = drag_window else {
+                        println!("no drag window on enter");
+                        return;
+                    };
+
+                    let actions = DndAction::Copy;
+                    data_offer.set_actions(actions, actions);
+
+                    let pipe = Pipe::new().unwrap();
+                    // TODO: move mime type to constant
+                    data_offer.receive("text/uri-list".to_string(), unsafe {
+                        BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
+                    });
+                    let fd = pipe.read;
+                    drop(pipe.write);
+                    // data_offer.receive("text/uri-list".to_string(), fd);
+
+                    let read = match read_pipe_with_timeout(fd) {
+                        Ok(read) => read,
+                        Err(err) => {
+                            log::error!("error reading dnd pipe: {err:?}");
+                            return;
+                        }
+                    };
+
+                    // let file_list: Vec<String> = read.lines().collect();
+
+                    let mut paths = SmallVec::<[PathBuf; 2]>::new();
+                    let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                        position: Point::new(x.into(), y.into()),
+                        paths: crate::ExternalPaths(paths),
+                    });
+
+                    state.current_drag_offer = Some(data_offer);
+                    state.current_drag_window = Some(drag_window.clone());
+
+                    drop(state);
+                    drag_window.handle_input(input);
+                }
+            }
+            wl_data_device::Event::Motion { time: _, x, y } => {
+                let drag_window = state.current_drag_window.clone().unwrap();
+                let input = PlatformInput::FileDrop(FileDropEvent::Pending {
+                    position: Point::new(x.into(), y.into()),
+                });
+                drop(state);
+                drag_window.handle_input(input);
+            }
+            wl_data_device::Event::Leave => {
+                println!("Data offer leave");
+                let drag_window = state.current_drag_window.clone().unwrap();
+                state.current_drag_offer = None;
+                state.current_drag_window = None;
+
+                let input = PlatformInput::FileDrop(FileDropEvent::Exited {});
+                drop(state);
+                drag_window.handle_input(input);
+            }
+            wl_data_device::Event::Drop => {
+                // TODO: handle drop
+                println!("File dropped!");
+
+                let drag_offer = state.current_drag_offer.clone().unwrap();
+                let drag_window = state.current_drag_window.clone().unwrap();
+
+                // drag_offer.receive(mime_type, fd)
+            }
+            _ => {}
+        }
+    }
+
+    // fn event_created_child(
+    //     opcode: u16,
+    //     qh: &QueueHandle<Self>,
+    // ) -> Arc<dyn wayland_backend::client::ObjectData> {
+    //     println!("{opcode}");
+    //     match opcode {
+    //         wl_data_device::EVT_DATA_OFFER_OPCODE => {
+    //             qh.make_data::<wl_data_offer::WlDataOffer, _>(())
+    //         }
+    //         _ => {
+    //             panic!(
+    //                 "Missing event_created_child specialization for event opcode {} of {}",
+    //                 opcode, "wl_data_device"
+    //             );
+    //         }
+    //     }
+    // }
+
+    event_created_child!(WaylandClientStatePtr, wl_data_device::WlDataDevice, [
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ()),
+    ]);
+}
+
+impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        data_offer: &wl_data_offer::WlDataOffer,
+        event: wl_data_offer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        // println!("wl_data_offer: {event:?}");
+
+        match event {
+            wl_data_offer::Event::Action {
+                dnd_action: WEnum::Value(dnd_action),
+            } => match dnd_action {
+                DndAction::Ask => println!("An ask action will be performed"),
+                DndAction::Copy => println!("A copy action will be performed"),
+                DndAction::Move => println!("A move action will be performed"),
+                DndAction::None => println!("No action will be performed"),
+                _ => (),
+            },
+            wl_data_offer::Event::SourceActions {
+                source_actions: WEnum::Value(source_actions),
+            } => {
+                if source_actions.contains(DndAction::Move) {
+                    println!("Drag supports the move action");
+                }
+                if source_actions.contains(DndAction::Copy) {
+                    println!("Drag supports the copy action");
+                }
+            }
+            wl_data_offer::Event::Offer { mime_type } => {
+                // println!("Mime type: {mime_type}");
+                const FILES_MIME_TYPE: &str = "text/uri-list";
+                if mime_type == FILES_MIME_TYPE {
+                    data_offer.accept(state.serial, Some(mime_type));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// impl Dispatch<wl_data_source::WlDataSource, ObjectId> for WaylandClientStatePtr {
+//     fn event(
+//         this: &mut Self,
+//         _: &wl_data_source::WlDataSource,
+//         event: wl_data_source::Event,
+//         surface_id: &ObjectId,
+//         _: &Connection,
+//         _: &QueueHandle<Self>,
+//     ) {
+//         let client = this.get_client();
+//         let mut state = client.borrow_mut();
+//         println!("wl_data_source: {event:?}");
+//     }
+// }
