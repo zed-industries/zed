@@ -4,7 +4,7 @@
 use crate::{
     platform::blade::BladeRenderer, size, Bounds, DevicePixels, ForegroundExecutor, Modifiers,
     Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance,
+    PlatformWindow, Point, PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOpenStatus, 
     WindowOptions, WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
 };
 use blade_graphics as gpu;
@@ -420,6 +420,12 @@ impl PlatformWindow for X11Window {
     // todo(linux)
     fn is_minimized(&self) -> bool {
         false
+    }
+
+    // todo(linux)
+    fn restore_status(&self) -> WindowOpenStatus {
+        let state = self.borrow();
+        WindowOpenStatus::Windowed(Some(state.bounds.map(|p| DevicePixels(p as i32))))
     }
 
     fn content_size(&self) -> Size<Pixels> {
