@@ -20,7 +20,7 @@ use crate::{
 };
 use anyhow::Result;
 use client::ParticipantIndex;
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, HashSet};
 use git::{
     blame::BlameEntry,
     diff::{DiffHunk, DiffHunkStatus},
@@ -2336,7 +2336,6 @@ impl EditorElement {
     }
 
     fn paint_diff_hunks(
-        // TODO kb get `expanded_hunks`, map them to rows
         editor: &View<Editor>,
         bounds: Bounds<Pixels>,
         layout: &EditorLayout,
@@ -2348,10 +2347,26 @@ impl EditorElement {
             return clickable_hunks;
         }
 
-        // TODO kb use larger hunk bounds
+        let expanded_hunk_rows = editor
+            .read(cx)
+            .expanded_hunks
+            .iter()
+            .peekable()
+            .map(|expanded_hunk| expanded_hunk.hunk_range.start)
+            .map(|expanded_hunk_start| {
+                expanded_hunk_start
+                    .to_display_point(&layout.position_map.snapshot.display_snapshot)
+                    .row()
+            })
+            .collect::<HashSet<_>>();
+
         let line_height = layout.position_map.line_height;
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            for hunk in &layout.display_hunks {
+            for hunk in layout
+                .display_hunks
+                .iter()
+                .filter(|hunk| !expanded_hunk_rows.contains(&hunk.start_display_row()))
+            {
                 let (clickable_hunk, background_color, corner_radii) = match hunk {
                     DisplayDiffHunk::Folded { .. } => (
                         None,
@@ -3350,9 +3365,10 @@ fn deploy_blame_entry_context_menu(
 }
 
 // TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
-// TODO kb do not draw git diff hunks for the expanded ones
 // TODO kb update the expanded hunks on editor changes
 // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
+// TODO kb use larger hunk bounds to simplify clicking
+// TODO kb do not scroll on hunk click (see `autoscroll.rs` and `&self.highlighted_display_rows(cx).first_entry()`)
 fn try_click_diff_hunk(
     editor: &mut Editor,
     hovered_hunk: &HoveredHunk,
