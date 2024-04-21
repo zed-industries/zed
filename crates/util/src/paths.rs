@@ -54,16 +54,12 @@ lazy_static::lazy_static! {
     pub static ref COPILOT_DIR: PathBuf = SUPPORT_DIR.join("copilot");
     pub static ref DEFAULT_PRETTIER_DIR: PathBuf = SUPPORT_DIR.join("prettier");
     pub static ref DB_DIR: PathBuf = SUPPORT_DIR.join("db");
-    pub static ref CRASHES_DIR: PathBuf = if cfg!(target_os = "macos") {
-        HOME.join("Library/Logs/DiagnosticReports")
-    } else {
-        SUPPORT_DIR.join("crashes")
-    };
-    pub static ref CRASHES_RETIRED_DIR: PathBuf = if cfg!(target_os = "macos") {
-        CRASHES_DIR.join("Retired")
-    } else {
-        CRASHES_DIR.join("retired")
-    };
+    pub static ref CRASHES_DIR: Option<PathBuf> = cfg!(target_os = "macos")
+        .then_some(HOME.join("Library/Logs/DiagnosticReports"));
+    pub static ref CRASHES_RETIRED_DIR: Option<PathBuf> = CRASHES_DIR
+        .as_ref()
+        .map(|dir| dir.join("Retired"));
+
     pub static ref SETTINGS: PathBuf = CONFIG_DIR.join("settings.json");
     pub static ref KEYMAP: PathBuf = CONFIG_DIR.join("keymap.json");
     pub static ref TASKS: PathBuf = CONFIG_DIR.join("tasks.json");
