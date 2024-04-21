@@ -475,10 +475,13 @@ impl AssistantChat {
                         body: body.read(cx).text(cx),
                     });
                 }
-                ChatMessage::Assistant(AssistantMessage { body, .. }) => {
+                ChatMessage::Assistant(AssistantMessage {
+                    body, tool_calls, ..
+                }) => {
                     completion_messages.push(CompletionMessage {
                         role: CompletionRole::Assistant,
                         body: body.text.to_string(),
+                        tool_calls: todo!(),
                     });
                 }
             }

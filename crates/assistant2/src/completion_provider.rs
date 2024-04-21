@@ -99,7 +99,7 @@ impl CompletionProviderBackend for CloudCompletionProvider {
         Result<BoxStream<'static, Result<proto::LanguageModelResponseMessageDelta>>>,
     > {
         let client = self.client.clone();
-        let tools = tools
+        let tools: Vec<proto::ChatCompletionTool> = tools
             .iter()
             .filter_map(|tool| {
                 Some(proto::ChatCompletionTool {
@@ -113,6 +113,11 @@ impl CompletionProviderBackend for CloudCompletionProvider {
                 })
             })
             .collect();
+
+        let tool_choice = match tools.is_empty() {
+            true => None,
+            false => Some("auto".into()),
+        };
 
         async move {
             let stream = client
@@ -142,7 +147,7 @@ impl CompletionProviderBackend for CloudCompletionProvider {
                         .collect(),
                     stop,
                     temperature,
-                    tool_choice: Some("auto".into()),
+                    tool_choice,
                     tools,
                 })
                 .await?;

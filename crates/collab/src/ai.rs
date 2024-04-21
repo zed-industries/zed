@@ -5,6 +5,7 @@ use util::ResultExt as _;
 pub fn language_model_request_to_open_ai(
     request: proto::CompleteWithLanguageModel,
 ) -> Result<open_ai::Request> {
+    dbg!("HOPE AND PRAY THIS MAKE BUG GO AWAY");
     Ok(open_ai::Request {
         model: open_ai::Model::from_id(&request.model).unwrap_or(open_ai::Model::FourTurbo),
         messages: request

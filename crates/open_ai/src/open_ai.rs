@@ -97,7 +97,7 @@ pub struct Request {
     pub temperature: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<String>,
-    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
 }
 
@@ -120,7 +120,7 @@ pub enum ToolDefinition {
 pub enum RequestMessage {
     Assistant {
         content: Option<String>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
     User {
@@ -152,7 +152,7 @@ pub enum ToolCallContent {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
-    #[serde(default, skip_serializing_if = "<[_]>::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCallChunk>,
 }
 
@@ -203,6 +203,8 @@ pub async fn stream_completion(
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{api_url}/chat/completions");
+
+    dbg!(serde_json::to_string(&request)?);
 
     let request = HttpRequest::builder()
         .method(Method::POST)

@@ -4039,14 +4039,15 @@ async fn complete_with_open_ai(
     session: UserSession,
     api_key: Arc<str>,
 ) -> Result<()> {
+    dbg!("LET US COMPLETE -- SNOWMAN");
     let mut completion_stream = open_ai::stream_completion(
         &session.http_client,
         OPEN_AI_API_URL,
         &api_key,
-        crate::ai::language_model_request_to_open_ai(request)?,
+        dbg!(crate::ai::language_model_request_to_open_ai(request))?,
     )
     .await
-    .context("open_ai::stream_completion request failed")?;
+    .context("open_ai::stream_completion request failed within collab")?;
 
     while let Some(event) = completion_stream.next().await {
         let event = event?;
