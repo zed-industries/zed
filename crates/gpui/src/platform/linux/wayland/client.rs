@@ -196,14 +196,12 @@ impl WaylandClientStatePtr {
             // Drop the clipboard to prevent a seg fault after we've closed all Wayland connections.
             state.clipboard = None;
             state.primary = None;
-            state
-                .wl_pointer
-                .as_ref()
-                .map(|wl_pointer| wl_pointer.release());
-            state
-                .data_device
-                .as_ref()
-                .map(|data_device| data_device.release());
+            if let Some(wl_pointer) = &state.wl_pointer {
+                wl_pointer.release();
+            }
+            if let Some(data_device) = &state.data_device {
+                data_device.release();
+            }
             state.common.signal.stop();
         }
     }
