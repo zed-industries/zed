@@ -284,7 +284,6 @@ impl WaylandClient {
         let cursor = Cursor::new(&conn, &globals, 24);
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
-            // TODO: always update serial
             serial: 0,
             globals,
             wl_pointer: None,
@@ -496,17 +495,8 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 "wl_seat" => {
                     state.wl_pointer = None;
                     registry.bind::<wl_seat::WlSeat, _, _>(name, wl_seat_version(version), qh, ());
+                    // todo: update state seats
                 }
-                // TODO: is this needed?
-                // "wl_data_device_manager" => {
-                //     let data_device_manager = registry
-                //         .bind::<wl_data_device_manager::WlDataDeviceManager, _, _>(
-                //             name,
-                //             WL_DATA_DEVICE_MANAGER_VERSION,
-                //             qh,
-                //             (),
-                //         );
-                // }
                 "wl_output" => {
                     let output =
                         registry.bind::<wl_output::WlOutput, _, _>(name, WL_OUTPUT_VERSION, qh, ());
@@ -737,7 +727,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 state.keymap_state = Some(xkb::State::new(&keymap));
             }
-            wl_keyboard::Event::Enter { surface, .. } => {
+            wl_keyboard::Event::Enter {
+                serial, surface, ..
+            } => {
+                state.serial = serial;
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
 
                 if let Some(window) = state.keyboard_focused_window.clone() {
@@ -745,7 +738,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     window.set_focused(true);
                 }
             }
-            wl_keyboard::Event::Leave { surface, .. } => {
+            wl_keyboard::Event::Leave {
+                serial, surface, ..
+            } => {
+                state.serial = serial;
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
 
@@ -755,12 +751,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 }
             }
             wl_keyboard::Event::Modifiers {
+                serial,
                 mods_depressed,
                 mods_latched,
                 mods_locked,
                 group,
                 ..
             } => {
+                state.serial = serial;
                 let focused_window = state.keyboard_focused_window.clone();
                 let Some(focused_window) = focused_window else {
                     return;
@@ -948,10 +946,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
             }
             wl_pointer::Event::Button {
+                serial,
                 button,
                 state: WEnum::Value(button_state),
                 ..
             } => {
+                state.serial = serial;
                 let button = linux_button_to_gpui(button);
                 let Some(button) = button else { return };
                 if state.mouse_focused_window.is_none() {
@@ -1262,7 +1262,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     drag_window.handle_input(input);
                 }
             }
-            wl_data_device::Event::Motion { time: _, x, y } => {
+            wl_data_device::Event::Motion { x, y, .. } => {
                 let Some(drag_window) = state.drag.window.clone() else {
                     return;
                 };
