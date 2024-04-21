@@ -284,7 +284,7 @@ mod test {
 
         registry.register(tool).unwrap();
 
-        let result = cx
+        let _result = cx
             .update(|cx| {
                 registry.call(
                     &ToolFunctionCall {

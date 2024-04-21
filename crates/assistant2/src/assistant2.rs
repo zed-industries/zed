@@ -2,7 +2,7 @@ mod completion_provider;
 mod tools;
 
 use anyhow::Result;
-use assistant_tooling::{ToolFunctionCall, ToolFunctionDefinition, ToolRegistry};
+use assistant_tooling::{ToolFunctionCall, ToolRegistry};
 use client::{proto, Client};
 use completion_provider::*;
 use editor::{Editor, EditorEvent};
