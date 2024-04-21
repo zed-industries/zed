@@ -2483,7 +2483,7 @@ impl EditorElement {
                     let start_y = row as f32 * line_height - offset - scroll_top;
                     let end_y = start_y + line_height;
 
-                    let width = 0.275 * line_height;
+                    let width = 0.35 * line_height;
                     let highlight_origin = bounds.origin + point(-width, start_y);
                     let highlight_size = size(width * 2., end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
@@ -3367,7 +3367,6 @@ fn deploy_blame_entry_context_menu(
 // TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
 // TODO kb update the expanded hunks on editor changes
 // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
-// TODO kb use larger hunk bounds to simplify clicking
 fn try_click_diff_hunk(
     editor: &mut Editor,
     hovered_hunk: &HoveredHunk,
