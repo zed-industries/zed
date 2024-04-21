@@ -48,14 +48,24 @@ impl ModeIndicator {
 }
 
 impl Render for ModeIndicator {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let Some(mode) = self.mode.as_ref() else {
             return div().into_any();
         };
 
-        Label::new(format!("{} -- {} --", self.operators, mode))
-            .size(LabelSize::Small)
-            .into_any_element()
+        Button::new(
+            "vim-mode-indicator-toggle",
+            format!("{} – {} –", self.operators, mode),
+        )
+        .label_size(LabelSize::Small)
+        .on_click(cx.listener(|this, _, cx| {
+            Vim::update(cx, |vim, cx| match this.mode {
+                Some(Mode::Normal) => vim.switch_mode(Mode::Insert, true, cx),
+                _ => vim.switch_mode(Mode::Normal, true, cx),
+            });
+        }))
+        .tooltip(|cx| ui::Tooltip::text("Toggle vim mode", cx))
+        .into_any_element()
     }
 }
 
