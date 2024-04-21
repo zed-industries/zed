@@ -1864,6 +1864,7 @@ message CompleteWithLanguageModel {
     optional string tool_choice = 6;
 }
 
+// A tool presented to the language model for its use
 message ChatCompletionTool {
     oneof variant {
         FunctionObject function = 1;
@@ -1890,12 +1891,13 @@ enum LanguageModelRole {
     LanguageModelTool = 3;
 }
 
-message LanguageModelResponseMessageDelta {
+message LanguageModelResponseMessage {
     optional LanguageModelRole role = 1;
     optional string content = 2;
     repeated ToolCallDelta tool_calls = 3;
 }
 
+// A request to call a tool, by the language model
 message ToolCall {
     string id = 1;
 
@@ -1929,7 +1931,7 @@ message LanguageModelResponse {
 
 message LanguageModelChoiceDelta {
     uint32 index = 1;
-    LanguageModelResponseMessageDelta delta = 2;
+    LanguageModelResponseMessage delta = 2;
     optional string finish_reason = 3;
 }
 

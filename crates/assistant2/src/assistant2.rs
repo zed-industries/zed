@@ -1,17 +1,18 @@
 mod completion_provider;
 mod tools;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use assistant_tooling::{ToolFunctionCall, ToolRegistry};
 use client::{proto, Client};
 use completion_provider::*;
 use editor::{Editor, EditorEvent};
-use futures::{channel::oneshot, future::join_all, Future, FutureExt as _, StreamExt};
+use futures::{channel::oneshot, future::join_all, Future, FutureExt, StreamExt};
 use gpui::{
     list, prelude::*, AnyElement, AppContext, FocusHandle, Global, ListAlignment, ListState, Model,
     Render, Task, View,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
+use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use project::Fs;
 use rich_text::RichText;
 use semantic_index::ProjectIndex;
@@ -97,8 +98,6 @@ struct AssistantChat {
     messages: Vec<ChatMessage>,
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
-    project_index: Model<ProjectIndex>,
-    fs: Arc<dyn Fs>,
     next_message_id: MessageId,
     pending_completion: Option<Task<()>>,
     tool_registry: ToolRegistry,
@@ -124,18 +123,19 @@ impl AssistantChat {
         );
 
         let mut tool_registry = ToolRegistry::new();
-        tool_registry.register(ProjectIndexTool {
-            project_index: project_index.clone(),
-            fs: fs.clone(),
-        });
+        tool_registry
+            .register(ProjectIndexTool {
+                project_index: project_index.clone(),
+                fs: fs.clone(),
+            })
+            .context("failed to register ProjectIndexTool")
+            .log_err();
 
         let mut this = Self {
             model,
             messages: Vec::new(),
             list_state,
             language_registry,
-            project_index,
-            fs,
             next_message_id: MessageId(0),
             pending_completion: None,
             tool_registry,
@@ -162,11 +162,30 @@ impl AssistantChat {
         };
 
         self.truncate_messages(focused_message_id, cx);
-        self.push_new_assistant_message(cx);
 
-        let mode = *mode;
+        let task = self.submit_loop(*mode, cx);
 
         self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
+            task.await;
+            this.update(&mut cx, |this, cx| {
+                let focus = this
+                    .user_message(focused_message_id)
+                    .body
+                    .focus_handle(cx)
+                    .contains_focused(cx);
+                this.push_new_user_message(focus, cx);
+            })
+            .context("Failed to push new user message")
+            .log_err();
+        }));
+    }
+
+    fn submit_loop(&mut self, mode: SubmitMode, cx: &mut ViewContext<Self>) -> Task<()> {
+        self.push_new_assistant_message(cx);
+
+        let mode = mode;
+
+        let task = cx.spawn(move |this, mut cx| async move {
             let complete = async {
                 let completion = this.update(&mut cx, |this, cx| {
                     let definitions = this.tool_registry.definitions();
@@ -257,30 +276,40 @@ impl AssistantChat {
                         }
                     }
 
-                    let focus = this
-                        .user_message(focused_message_id)
-                        .body
-                        .focus_handle(cx)
-                        .contains_focused(cx);
-                    this.push_new_user_message(focus, cx);
-
                     tool_tasks
                 })
                 .log_err();
 
             if let Some(tool_tasks) = tool_tasks {
-                let tools =
-                    join_all(tool_tasks.into_iter().map(|task| async move { task.await })).await;
+                let tools = join_all(tool_tasks.into_iter()).await;
 
-                this.update(&mut cx, |this, _cx| {
-                    if let Some(ChatMessage::Assistant(AssistantMessage { tool_calls, .. })) =
-                        this.messages.last_mut()
-                    {
-                        *tool_calls = tools;
-                    }
-                });
+                if tools.is_empty() {
+                    // If we don't have tools, we must not allow the submit_loop to continue
+                    return;
+                }
+
+                let inner_task = this
+                    .update(&mut cx, |this, cx| {
+                        if let Some(ChatMessage::Assistant(AssistantMessage {
+                            tool_calls, ..
+                        })) = this.messages.last_mut()
+                        {
+                            *tool_calls = tools;
+                        }
+
+                        // TODO: Determine best path for dealing with continual submissions
+                        // Our structure _maybe_ requires we next add another blank assistant message?
+                        // Otherwise we're doing it on top of the existing one?
+                        this.submit_loop(mode, cx)
+                    })
+                    .context("Failed to continue loop")
+                    .unwrap();
+
+                inner_task.await;
             }
-        }));
+        });
+
+        return task;
     }
 
     fn user_message(&mut self, message_id: MessageId) -> &mut UserMessage {
@@ -429,32 +458,40 @@ impl AssistantChat {
                 error,
                 tool_calls,
                 ..
-            }) => div()
-                .when(!is_last, |element| element.mb_2())
-                .child(
+            }) => {
+                let assistant_body = if body.text.is_empty() && !tool_calls.is_empty() {
                     div()
-                        .p_2()
-                        .child(Label::new("Assistant").color(Color::Modified)),
-                )
-                .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
-                .child(self.render_error(error.clone(), ix, cx))
-                .children(tool_calls.iter().map(|tool_call| {
-                    let result = &tool_call.result;
-                    let name = tool_call.name.clone();
-                    match result {
-                        Some(result) => div()
+                } else {
+                    div().p_2().child(body.element(ElementId::from(id.0), cx))
+                };
+
+                div()
+                    .when(!is_last, |element| element.mb_2())
+                    .child(
+                        div()
                             .p_2()
-                            .child(Label::new(name).color(Color::Modified))
-                            .child(result.render(cx))
-                            .into_any(),
-                        None => div()
-                            .p_2()
-                            .child(Label::new(name).color(Color::Modified))
-                            .child("Running...")
-                            .into_any(),
-                    }
-                }))
-                .into_any(),
+                            .child(Label::new("Assistant").color(Color::Modified)),
+                    )
+                    .child(assistant_body)
+                    .child(self.render_error(error.clone(), ix, cx))
+                    .children(tool_calls.iter().map(|tool_call| {
+                        let result = &tool_call.result;
+                        let name = tool_call.name.clone();
+                        match result {
+                            Some(result) => div()
+                                .p_2()
+                                .child(Label::new(name).color(Color::Modified))
+                                .child(result.render(cx))
+                                .into_any(),
+                            None => div()
+                                .p_2()
+                                .child(Label::new(name).color(Color::Modified))
+                                .child("Running...")
+                                .into_any(),
+                        }
+                    }))
+                    .into_any()
+            }
         }
     }
 
@@ -470,19 +507,51 @@ impl AssistantChat {
                     });
 
                     // Show user's message last so that the assistant is grounded in the user's request
-                    completion_messages.push(CompletionMessage {
-                        role: CompletionRole::User,
-                        body: body.read(cx).text(cx),
+                    completion_messages.push(CompletionMessage::User {
+                        content: body.read(cx).text(cx),
                     });
                 }
                 ChatMessage::Assistant(AssistantMessage {
                     body, tool_calls, ..
                 }) => {
-                    completion_messages.push(CompletionMessage {
-                        role: CompletionRole::Assistant,
-                        body: body.text.to_string(),
-                        tool_calls: todo!(),
+                    // In no case do we want to send an empty message. This shouldn't happen, but we might as well
+                    // not break the Chat API if it does.
+                    if body.text.is_empty() && tool_calls.is_empty() {
+                        continue;
+                    }
+
+                    let tool_calls_from_assistant = tool_calls
+                        .iter()
+                        .map(|tool_call| ToolCall {
+                            content: ToolCallContent::Function {
+                                function: FunctionContent {
+                                    name: tool_call.name.clone(),
+                                    arguments: tool_call.arguments.clone(),
+                                },
+                            },
+                            id: tool_call.id.clone(),
+                        })
+                        .collect();
+
+                    completion_messages.push(CompletionMessage::Assistant {
+                        content: Some(body.text.to_string()),
+                        tool_calls: tool_calls_from_assistant,
                     });
+
+                    for tool_call in tool_calls {
+                        // todo!(): we should not be sending when the tool is still running / has no result
+                        // For now I'm going to have to assume we send an empty string because otherwise
+                        // the Chat API will break -- there is a required message for every tool call by ID
+                        let content = match &tool_call.result {
+                            Some(result) => result.format(),
+                            None => "".to_string(),
+                        };
+
+                        completion_messages.push(CompletionMessage::Tool {
+                            content,
+                            tool_call_id: tool_call.id.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -589,9 +658,6 @@ struct UserMessage {
     _subscription: gpui::Subscription,
 }
 
-// chain_of_thought: ... -> search -> search_results -> produce_new_message -> send for the real chat message
-struct BuiltToolCall {}
-
 struct AssistantMessage {
     id: MessageId,
     body: RichText,
@@ -599,10 +665,15 @@ struct AssistantMessage {
     error: Option<SharedString>,
 }
 
+// Since we're swapping out for direct query usage, we might not need to use this injected context
+// It will be useful though for when the user _definitely_ wants the model to see a specific file,
+// query, error, etc.
+#[allow(dead_code)]
 enum AssistantContext {
     Codebase(View<CodebaseContext>),
 }
 
+#[allow(dead_code)]
 struct CodebaseExcerpt {
     element_id: ElementId,
     path: SharedString,
@@ -612,6 +683,7 @@ struct CodebaseExcerpt {
 }
 
 impl AssistantContext {
+    #[allow(dead_code)]
     fn render(&self, _cx: &mut ViewContext<AssistantChat>) -> AnyElement {
         match self {
             AssistantContext::Codebase(context) => context.clone().into_any_element(),
@@ -682,12 +754,13 @@ impl Render for CodebaseContext {
                             )
                     }))
             }
-            CodebaseContext::Done(Err(error)) => div().child(error.to_string()), // todo!,
+            CodebaseContext::Done(Err(error)) => div().child(error.to_string()),
         }
     }
 }
 
 impl CodebaseContext {
+    #[allow(dead_code)]
     fn new(
         query: impl 'static + Future<Output = Result<String>>,
         populated: oneshot::Sender<bool>,
@@ -749,6 +822,7 @@ impl CodebaseContext {
         Self::Pending { _task }
     }
 
+    #[allow(dead_code)]
     fn populate(
         &mut self,
         result: Result<Vec<CodebaseExcerpt>>,
@@ -792,10 +866,7 @@ impl CodebaseContext {
                     body.push_str("~~~\n");
                 }
 
-                vec![CompletionMessage {
-                    role: CompletionRole::System,
-                    body,
-                }]
+                vec![CompletionMessage::System { content: body }]
             }
             _ => vec![],
         }

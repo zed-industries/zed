@@ -5,17 +5,16 @@ use util::ResultExt as _;
 pub fn language_model_request_to_open_ai(
     request: proto::CompleteWithLanguageModel,
 ) -> Result<open_ai::Request> {
-    dbg!("HOPE AND PRAY THIS MAKE BUG GO AWAY");
     Ok(open_ai::Request {
         model: open_ai::Model::from_id(&request.model).unwrap_or(open_ai::Model::FourTurbo),
         messages: request
             .messages
             .into_iter()
-            .map(|message| {
+            .map(|message: proto::LanguageModelRequestMessage| {
                 let role = proto::LanguageModelRole::from_i32(message.role)
                     .ok_or_else(|| anyhow!("invalid role {}", message.role))?;
 
-                let message = match role {
+                let openai_message = match role {
                     proto::LanguageModelRole::LanguageModelUser => open_ai::RequestMessage::User {
                         content: message.content,
                     },
@@ -31,8 +30,10 @@ pub fn language_model_request_to_open_ai(
                                         content: match call.variant? {
                                             proto::tool_call::Variant::Function(f) => {
                                                 open_ai::ToolCallContent::Function {
-                                                    name: f.name,
-                                                    arguments: f.arguments,
+                                                    function: open_ai::FunctionContent {
+                                                        name: f.name,
+                                                        arguments: f.arguments,
+                                                    },
                                                 }
                                             }
                                         },
@@ -54,7 +55,7 @@ pub fn language_model_request_to_open_ai(
                     },
                 };
 
-                Ok(message)
+                Ok(openai_message)
             })
             .collect::<Result<Vec<open_ai::RequestMessage>>>()?,
         stream: true,

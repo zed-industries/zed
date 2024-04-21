@@ -5,18 +5,7 @@ use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::Global;
 use std::sync::Arc;
 
-pub enum CompletionRole {
-    User,
-    Assistant,
-    System,
-    #[allow(dead_code)]
-    Tool,
-}
-
-pub struct CompletionMessage {
-    pub role: CompletionRole,
-    pub body: String,
-}
+pub use open_ai::RequestMessage as CompletionMessage;
 
 #[derive(Clone)]
 pub struct CompletionProvider(Arc<dyn CompletionProviderBackend>);
@@ -41,11 +30,8 @@ impl CompletionProvider {
         stop: Vec<String>,
         temperature: f32,
         tools: &[ToolFunctionDefinition],
-    ) -> BoxFuture<
-        'static,
-        Result<BoxStream<'static, Result<proto::LanguageModelResponseMessageDelta>>>,
-    > {
-        dbg!(tools);
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::LanguageModelResponseMessage>>>>
+    {
         self.0.complete(model, messages, stop, temperature, tools)
     }
 }
@@ -62,10 +48,7 @@ pub trait CompletionProviderBackend: 'static {
         stop: Vec<String>,
         temperature: f32,
         tools: &[ToolFunctionDefinition],
-    ) -> BoxFuture<
-        'static,
-        Result<BoxStream<'static, Result<proto::LanguageModelResponseMessageDelta>>>,
-    >;
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::LanguageModelResponseMessage>>>>;
 }
 
 pub struct CloudCompletionProvider {
@@ -94,10 +77,8 @@ impl CompletionProviderBackend for CloudCompletionProvider {
         stop: Vec<String>,
         temperature: f32,
         tools: &[ToolFunctionDefinition],
-    ) -> BoxFuture<
-        'static,
-        Result<BoxStream<'static, Result<proto::LanguageModelResponseMessageDelta>>>,
-    > {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::LanguageModelResponseMessage>>>>
+    {
         let client = self.client.clone();
         let tools: Vec<proto::ChatCompletionTool> = tools
             .iter()
@@ -125,24 +106,56 @@ impl CompletionProviderBackend for CloudCompletionProvider {
                     model,
                     messages: messages
                         .into_iter()
-                        .map(|message| proto::LanguageModelRequestMessage {
-                            role: match message.role {
-                                CompletionRole::User => {
-                                    proto::LanguageModelRole::LanguageModelUser as i32
-                                }
-                                CompletionRole::Assistant => {
-                                    proto::LanguageModelRole::LanguageModelAssistant as i32
-                                }
-                                CompletionRole::System => {
-                                    proto::LanguageModelRole::LanguageModelSystem as i32
-                                }
-                                CompletionRole::Tool => {
-                                    proto::LanguageModelRole::LanguageModelTool as i32
-                                }
+                        .map(|message| match message {
+                            CompletionMessage::Assistant {
+                                content,
+                                tool_calls,
+                            } => proto::LanguageModelRequestMessage {
+                                role: proto::LanguageModelRole::LanguageModelAssistant as i32,
+                                content: content.unwrap_or_default(),
+                                tool_call_id: None,
+                                tool_calls: tool_calls
+                                    .into_iter()
+                                    .map(|tool_call| match tool_call.content {
+                                        open_ai::ToolCallContent::Function { function } => {
+                                            proto::ToolCall {
+                                                id: tool_call.id,
+                                                variant: Some(proto::tool_call::Variant::Function(
+                                                    proto::tool_call::FunctionCall {
+                                                        name: function.name,
+                                                        arguments: function.arguments,
+                                                    },
+                                                )),
+                                            }
+                                        }
+                                    })
+                                    .collect(),
                             },
-                            tool_calls: Default::default(),
-                            tool_call_id: None,
-                            content: message.body,
+                            CompletionMessage::User { content } => {
+                                proto::LanguageModelRequestMessage {
+                                    role: proto::LanguageModelRole::LanguageModelUser as i32,
+                                    content,
+                                    tool_call_id: None,
+                                    tool_calls: Vec::new(),
+                                }
+                            }
+                            CompletionMessage::System { content } => {
+                                proto::LanguageModelRequestMessage {
+                                    role: proto::LanguageModelRole::LanguageModelSystem as i32,
+                                    content,
+                                    tool_calls: Vec::new(),
+                                    tool_call_id: None,
+                                }
+                            }
+                            CompletionMessage::Tool {
+                                content,
+                                tool_call_id,
+                            } => proto::LanguageModelRequestMessage {
+                                role: proto::LanguageModelRole::LanguageModelTool as i32,
+                                content,
+                                tool_call_id: Some(tool_call_id),
+                                tool_calls: Vec::new(),
+                            },
                         })
                         .collect(),
                     stop,

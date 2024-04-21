@@ -4039,12 +4039,11 @@ async fn complete_with_open_ai(
     session: UserSession,
     api_key: Arc<str>,
 ) -> Result<()> {
-    dbg!("LET US COMPLETE -- SNOWMAN");
     let mut completion_stream = open_ai::stream_completion(
         &session.http_client,
         OPEN_AI_API_URL,
         &api_key,
-        dbg!(crate::ai::language_model_request_to_open_ai(request))?,
+        crate::ai::language_model_request_to_open_ai(request)?,
     )
     .await
     .context("open_ai::stream_completion request failed within collab")?;
@@ -4057,7 +4056,7 @@ async fn complete_with_open_ai(
                 .into_iter()
                 .map(|choice| proto::LanguageModelChoiceDelta {
                     index: choice.index,
-                    delta: Some(proto::LanguageModelResponseMessageDelta {
+                    delta: Some(proto::LanguageModelResponseMessage {
                         role: choice.delta.role.map(|role| match role {
                             open_ai::Role::User => LanguageModelRole::LanguageModelUser,
                             open_ai::Role::Assistant => LanguageModelRole::LanguageModelAssistant,
@@ -4072,8 +4071,11 @@ async fn complete_with_open_ai(
                             .map(|delta| proto::ToolCallDelta {
                                 index: delta.index as u32,
                                 id: delta.id,
-                                variant: match delta.content {
-                                    open_ai::ToolCallChunkContent::Function { name, arguments } => {
+                                variant: match delta.function {
+                                    Some(function) => {
+                                        let name = function.name;
+                                        let arguments = function.arguments;
+
                                         Some(proto::tool_call_delta::Variant::Function(
                                             proto::tool_call_delta::FunctionCallDelta {
                                                 name,
@@ -4081,6 +4083,7 @@ async fn complete_with_open_ai(
                                             },
                                         ))
                                     }
+                                    None => None,
                                 },
                             })
                             .collect(),
@@ -4118,7 +4121,7 @@ async fn complete_with_google_ai(
                 .into_iter()
                 .map(|candidate| proto::LanguageModelChoiceDelta {
                     index: candidate.index as u32,
-                    delta: Some(proto::LanguageModelResponseMessageDelta {
+                    delta: Some(proto::LanguageModelResponseMessage {
                         role: Some(match candidate.content.role {
                             google_ai::Role::User => LanguageModelRole::LanguageModelUser,
                             google_ai::Role::Model => LanguageModelRole::LanguageModelAssistant,
@@ -4220,7 +4223,7 @@ async fn complete_with_anthropic(
                             response.send(proto::LanguageModelResponse {
                                 choices: vec![proto::LanguageModelChoiceDelta {
                                     index: 0,
-                                    delta: Some(proto::LanguageModelResponseMessageDelta {
+                                    delta: Some(proto::LanguageModelResponseMessage {
                                         role: Some(current_role as i32),
                                         content: Some(text),
                                         tool_calls: Vec::new(),
@@ -4237,7 +4240,7 @@ async fn complete_with_anthropic(
                     response.send(proto::LanguageModelResponse {
                         choices: vec![proto::LanguageModelChoiceDelta {
                             index: 0,
-                            delta: Some(proto::LanguageModelResponseMessageDelta {
+                            delta: Some(proto::LanguageModelResponseMessage {
                                 role: Some(current_role as i32),
                                 content: Some(text),
                                 tool_calls: Vec::new(),

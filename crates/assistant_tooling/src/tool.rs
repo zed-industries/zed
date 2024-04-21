@@ -10,6 +10,12 @@ pub trait ToolFunctionOutput {
     fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput>;
 }
 
+impl Debug for dyn ToolFunctionOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.format().fmt(f)
+    }
+}
+
 #[derive(Clone)]
 pub struct DefaultToolFunctionOutput;
 
@@ -27,7 +33,7 @@ impl ToolFunctionOutput for DefaultToolFunctionOutput {
     }
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, Debug)]
 pub struct ToolFunctionCall {
     pub id: String,
     pub name: String,

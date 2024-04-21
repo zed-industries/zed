@@ -145,7 +145,13 @@ pub struct ToolCall {
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolCallContent {
-    Function { name: String, arguments: String },
+    Function { function: FunctionContent },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionContent {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -161,17 +167,16 @@ pub struct ToolCallChunk {
     pub index: usize,
     pub id: Option<String>,
 
-    #[serde(flatten)]
-    pub content: ToolCallChunkContent,
+    // There is also an optional `type` field that would determine if a
+    // function is there. Sometimes this streams in with the `function` before
+    // it streams in the `type`
+    pub function: Option<FunctionChunk>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ToolCallChunkContent {
-    Function {
-        name: Option<String>,
-        arguments: Option<String>,
-    },
+pub struct FunctionChunk {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -204,15 +209,17 @@ pub async fn stream_completion(
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{api_url}/chat/completions");
 
-    dbg!(serde_json::to_string(&request)?);
+    let body = serde_json::to_string(&request)?;
 
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
-        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        .body(AsyncBody::from(body))?;
+
     let mut response = client.send(request).await?;
+
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
         Ok(reader
@@ -224,9 +231,13 @@ pub async fn stream_completion(
                         if line == "[DONE]" {
                             None
                         } else {
+                            println!("LINE: {}", line);
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(error))),
+                                Err(error) => {
+                                    Some(Err(anyhow!(error)
+                                        .context("Failed to parse OpenAI Delta response")))
+                                }
                             }
                         }
                     }
