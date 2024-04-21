@@ -4,6 +4,9 @@ use anyhow::Result;
 use collections::HashMap;
 use git::{
     blame::{Blame, BlameEntry},
+    hosting_provider::HostingProvider,
+    permalink::{build_commit_permalink, parse_git_remote_url},
+    pull_request::{extract_pull_request, PullRequest},
     Oid,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
@@ -12,6 +15,7 @@ use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
 use url::Url;
+use util::http::HttpClient;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -47,10 +51,33 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
 }
 
 #[derive(Clone, Debug)]
+pub struct GitRemote {
+    pub host: HostingProvider,
+    pub owner: String,
+    pub repo: String,
+}
+
+impl GitRemote {
+    pub fn host_supports_avatars(&self) -> bool {
+        self.host.supports_avatars()
+    }
+
+    pub async fn avatar_url(&self, commit: Oid, client: Arc<dyn HttpClient>) -> Option<Url> {
+        self.host
+            .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
+            .await
+            .ok()
+            .flatten()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct CommitDetails {
     pub message: String,
     pub parsed_message: ParsedMarkdown,
     pub permalink: Option<Url>,
+    pub pull_request: Option<PullRequest>,
+    pub remote: Option<GitRemote>,
 }
 
 pub struct GitBlame {
@@ -286,11 +313,13 @@ impl GitBlame {
                             entries,
                             permalinks,
                             messages,
+                            remote_url,
                         } = blame.await?;
 
                         let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
                         let commit_details =
-                            parse_commit_messages(messages, &permalinks, &languages).await;
+                            parse_commit_messages(messages, remote_url, &permalinks, &languages)
+                                .await;
 
                         anyhow::Ok((entries, commit_details))
                     }
@@ -334,7 +363,7 @@ impl GitBlame {
             this.update(&mut cx, |this, cx| {
                 this.generate(cx);
             })
-        });
+        })
     }
 }
 
@@ -379,13 +408,41 @@ fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree
 
 async fn parse_commit_messages(
     messages: impl IntoIterator<Item = (Oid, String)>,
-    permalinks: &HashMap<Oid, Url>,
+    remote_url: Option<String>,
+    deprecated_permalinks: &HashMap<Oid, Url>,
     languages: &Arc<LanguageRegistry>,
 ) -> HashMap<Oid, CommitDetails> {
     let mut commit_details = HashMap::default();
+
+    let parsed_remote_url = remote_url.as_deref().and_then(parse_git_remote_url);
+
     for (oid, message) in messages {
         let parsed_message = parse_markdown(&message, &languages).await;
-        let permalink = permalinks.get(&oid).cloned();
+
+        let permalink = if let Some(git_remote) = parsed_remote_url.as_ref() {
+            Some(build_commit_permalink(
+                git::permalink::BuildCommitPermalinkParams {
+                    remote: git_remote,
+                    sha: oid.to_string().as_str(),
+                },
+            ))
+        } else {
+            // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
+            // now do the parsing. This is here for backwards compatibility, so that
+            // when an old peer sends a client no `parsed_remote_url` but `deprecated_permalinks`,
+            // we fall back to that.
+            deprecated_permalinks.get(&oid).cloned()
+        };
+
+        let remote = parsed_remote_url.as_ref().map(|remote| GitRemote {
+            host: remote.provider.clone(),
+            owner: remote.owner.to_string(),
+            repo: remote.repo.to_string(),
+        });
+
+        let pull_request = parsed_remote_url
+            .as_ref()
+            .and_then(|remote| extract_pull_request(remote, &message));
 
         commit_details.insert(
             oid,
@@ -393,6 +450,8 @@ async fn parse_commit_messages(
                 message,
                 parsed_message,
                 permalink,
+                remote,
+                pull_request,
             },
         );
     }

@@ -1299,7 +1299,7 @@ impl<'a> WindowContext<'a> {
         });
         self.window.rendered_frame.mouse_listeners = mouse_listeners;
 
-        if self.app.propagate_event && self.has_active_drag() {
+        if self.has_active_drag() {
             if event.is::<MouseMoveEvent>() {
                 // If this was a mouse move event, redraw the window so that the
                 // active drag can follow the mouse cursor.

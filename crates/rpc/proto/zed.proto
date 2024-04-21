@@ -1963,6 +1963,7 @@ message BlameBufferResponse {
     repeated BlameEntry entries = 1;
     repeated CommitMessage messages = 2;
     repeated CommitPermalink permalinks = 3;
+    optional string remote_url = 4;
 }
 
 message MultiLspQuery {

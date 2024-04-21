@@ -289,7 +289,6 @@ define_connection! {
     sql!(
         ALTER TABLE workspaces ADD COLUMN centered_layout INTEGER; //bool
     ),
-
     ];
 }
 

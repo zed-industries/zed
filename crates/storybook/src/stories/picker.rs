@@ -1,6 +1,7 @@
 use fuzzy::StringMatchCandidate;
 use gpui::{div, prelude::*, KeyBinding, Render, SharedString, Styled, Task, View, WindowContext};
 use picker::{Picker, PickerDelegate};
+use project::Project;
 use std::sync::Arc;
 use ui::{prelude::*, ListItemSpacing};
 use ui::{Label, ListItem};
@@ -190,6 +191,7 @@ impl PickerStory {
                     ]);
                     delegate.update_matches("".into(), cx).detach();
 
+                    Project::init_settings(cx);
                     let picker = Picker::uniform_list(delegate, cx);
                     picker.focus(cx);
                     picker
