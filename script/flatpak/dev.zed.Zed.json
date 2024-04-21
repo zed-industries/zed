@@ -13,8 +13,10 @@
         "--socket=wayland",
         "--socket=pulseaudio",
         "--share=network",
+        "--share=ipc",
         "--socket=session-bus",
-        "--filesystem=host"
+        "--filesystem=host",
+        "--device=dri"
     ],
     "build-options": {
         "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/golang/bin"
