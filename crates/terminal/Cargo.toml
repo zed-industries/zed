@@ -12,6 +12,8 @@ workspace = true
 path = "src/terminal.rs"
 doctest = false
 
+[features]
+flatpak = []
 
 [dependencies]
 alacritty_terminal = "0.23"

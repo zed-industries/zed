@@ -325,15 +325,58 @@ impl TerminalBuilder {
 
         env.insert("ZED_TERM".to_string(), "true".to_string());
 
+        // Setup Alacritty's env
+        setup_env();
+        std::env::set_var("TERM", "xterm-256color"); // override terminfo because flatpak cannot install the required alacritty terminfo file to the host
+
         let pty_options = {
-            let alac_shell = match shell.clone() {
-                Shell::System => None,
+            // Create shell command
+            let mut shell_command = Vec::new();
+
+            #[cfg(feature = "flatpak")]
+            {
+                shell_command.push("/app/bin/host-spawn".to_string()); // host-spawn is used over flatpak-spawn due to problems with pty (https://github.com/flatpak/flatpak/issues/3285)
+                shell_command.push("-pty".to_string());
+                let env_passthrough_keys = std::env::vars()
+                    .map(|(key, _)| key)
+                    .chain(env.keys().map(|key| key.clone()))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if !env_passthrough_keys.is_empty() {
+                    shell_command.push("-env".to_string());
+                    shell_command.push(env_passthrough_keys);
+                }
+            }
+
+            let alacritty_picks_shell = match shell.clone() {
+                Shell::System => {
+                    #[cfg(feature = "flatpak")]
+                    {
+                        shell_command
+                            .push(flatpak_get_user_shell().unwrap_or("/bin/bash".to_string()));
+                        false
+                    }
+                    #[cfg(not(feature = "flatpak"))]
+                    true
+                }
                 Shell::Program(program) => {
-                    Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
+                    shell_command.push(program);
+                    false
                 }
-                Shell::WithArguments { program, args } => {
-                    Some(alacritty_terminal::tty::Shell::new(program, args))
+                Shell::WithArguments { program, mut args } => {
+                    shell_command.push(program);
+                    shell_command.append(&mut args);
+                    false
                 }
+            };
+
+            let alac_shell = if alacritty_picks_shell {
+                None
+            } else {
+                Some(alacritty_terminal::tty::Shell::new(
+                    shell_command[0].clone(),
+                    shell_command[1..].to_vec(),
+                ))
             };
 
             alacritty_terminal::tty::Options {
@@ -343,9 +386,6 @@ impl TerminalBuilder {
                 env: env.into_iter().collect(),
             }
         };
-
-        // Setup Alacritty's env
-        setup_env();
 
         let scrolling_history = if task.is_some() {
             // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
@@ -384,7 +424,7 @@ impl TerminalBuilder {
 
         let term = Arc::new(FairMutex::new(term));
 
-        //Setup the pty...
+        // Setup the pty...
         let pty = match tty::new(
             &pty_options,
             TerminalSize::default().into(),
@@ -1395,6 +1435,8 @@ impl Terminal {
                         .unwrap_or_default();
 
                     let argv = fpi.argv.clone();
+
+                    #[cfg(not(feature = "flatpak"))]
                     let process_name = format!(
                         "{}{}",
                         fpi.name,
@@ -1404,6 +1446,14 @@ impl Terminal {
                             "".to_string()
                         }
                     );
+
+                    #[cfg(feature = "flatpak")]
+                    let process_name = if argv[2] == "-env" {
+                        argv[4..].join(" ")
+                    } else {
+                        argv[2..].join(" ")
+                    };
+
                     let (process_file, process_name) = if truncate {
                         (
                             truncate_and_trailoff(&process_file, MAX_CHARS),
@@ -1537,6 +1587,27 @@ impl Drop for Terminal {
 }
 
 impl EventEmitter<Event> for Terminal {}
+
+#[cfg(feature = "flatpak")]
+fn flatpak_get_user_shell() -> Option<String> {
+    let mut command = std::process::Command::new("/app/bin/host-spawn");
+    command.args([
+        "-no-pty",
+        "getent",
+        "passwd",
+        &std::env::var("USER").unwrap(),
+    ]);
+
+    let output = command.output();
+    println!("{:?}", output);
+    match output {
+        Ok(output) => match String::from_utf8(output.stdout) {
+            Ok(output) => output.trim().split(':').last().map(|str| str.to_string()),
+            Err(_) => None,
+        },
+        Err(_) => None,
+    }
+}
 
 /// Based on alacritty/src/display/hint.rs > regex_match_at
 /// Retrieve the match, if the specified point is inside the content matching the regex.

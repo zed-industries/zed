@@ -14,6 +14,9 @@ workspace = true
 name = "Zed"
 path = "src/main.rs"
 
+[features]
+flatpak = ["terminal_view/flatpak"]
+
 [dependencies]
 activity_indicator.workspace = true
 anyhow.workspace = true

@@ -4,7 +4,8 @@
     "runtime-version": "23.08",
     "sdk": "org.freedesktop.Sdk",
     "sdk-extensions": [
-        "org.freedesktop.Sdk.Extension.rust-stable"
+        "org.freedesktop.Sdk.Extension.rust-stable",
+        "org.freedesktop.Sdk.Extension.golang"
     ],
     "command": "Zed",
     "finish-args": [
@@ -12,10 +13,11 @@
         "--socket=wayland",
         "--socket=pulseaudio",
         "--share=network",
+        "--socket=session-bus",
         "--filesystem=host"
     ],
     "build-options": {
-        "append-path": "/usr/lib/sdk/rust-stable/bin"
+        "append-path": "/usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/golang/bin"
     },
     "modules": [
         {
@@ -28,7 +30,7 @@
             },
             "build-commands": [
                 "cargo --offline fetch --manifest-path Cargo.toml --verbose",
-                "cargo --offline build --release --verbose",
+                "cargo --offline build --release --verbose --features flatpak",
                 "install -Dm755 ./target/release/Zed -t /app/bin",
                 "mkdir -p /app/share/metainfo",
                 "mkdir -p /app/share/applications",
@@ -43,6 +45,17 @@
                     "path": "../../"
                 },
                 "generated-sources.json"
+            ]
+        },
+        {
+            "name": "host-spawn",
+            "buildsystem": "simple",
+            "build-commands": [
+                "go build",
+                "install -Dm755 ./host-spawn -t /app/bin"
+            ],
+            "sources": [
+                "host-spawn/sources.json"
             ]
         }
     ]
