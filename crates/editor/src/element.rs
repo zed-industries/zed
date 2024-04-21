@@ -3369,7 +3369,6 @@ fn try_click_diff_hunk(
         Some((buffer_snapshot, original_text))
     })?;
     let hunk_start = multi_buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-    // TODO kb highlights one extra line, fix
     let hunk_end = multi_buffer_snapshot.anchor_at(buffer_range.end, Bias::Left);
 
     let block_insert_index = match editor.expanded_hunks.binary_search_by(|probe| {
@@ -3543,8 +3542,13 @@ fn buffer_range(
     display_row_range: &Range<u32>,
     display_snapshot: &DisplaySnapshot,
 ) -> Range<Point> {
+    let end = if display_row_range.is_empty() {
+        display_row_range.end
+    } else {
+        display_row_range.end.saturating_sub(1)
+    };
     DisplayPoint::new(display_row_range.start, 0).to_point(display_snapshot)
-        ..DisplayPoint::new(display_row_range.end, 0).to_point(display_snapshot)
+        ..DisplayPoint::new(end, 0).to_point(display_snapshot)
 }
 
 #[derive(Debug)]
