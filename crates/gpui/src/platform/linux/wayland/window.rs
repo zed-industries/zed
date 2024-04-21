@@ -164,13 +164,12 @@ impl Drop for WaylandWindow {
         let client = state.client.clone();
 
         state.renderer.destroy();
-        if let Some(decoration) = &state.decoration {
-            decoration.destroy();
-        }
+        state
+            .decoration
+            .as_ref()
+            .map(|decoration| decoration.destroy());
         state.toplevel.destroy();
-        if let Some(viewport) = &state.viewport {
-            viewport.destroy();
-        }
+        state.viewport.as_ref().map(|viewport| viewport.destroy());
         state.xdg_surface.destroy();
         state.surface.destroy();
 

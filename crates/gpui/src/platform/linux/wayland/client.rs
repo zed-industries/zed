@@ -117,6 +117,7 @@ pub(crate) struct WaylandClientState {
     serial: u32,
     globals: Globals,
     wl_pointer: Option<wl_pointer::WlPointer>,
+    data_device: Option<wl_data_device::WlDataDevice>,
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
@@ -195,6 +196,14 @@ impl WaylandClientStatePtr {
             // Drop the clipboard to prevent a seg fault after we've closed all Wayland connections.
             state.clipboard = None;
             state.primary = None;
+            state
+                .wl_pointer
+                .as_ref()
+                .map(|wl_pointer| wl_pointer.release());
+            state
+                .data_device
+                .as_ref()
+                .map(|data_device| data_device.release());
             state.common.signal.stop();
         }
     }
@@ -235,7 +244,7 @@ impl WaylandClient {
             for global in list {
                 match &global.interface[..] {
                     "wl_seat" => {
-                        // TODO: we need multiple seats?
+                        // TODO: multi-seat support
                         seat = Some(globals.registry().bind::<wl_seat::WlSeat, _, _>(
                             global.name,
                             wl_seat_version(global.version),
@@ -277,7 +286,6 @@ impl WaylandClient {
             .data_device_manager
             .as_ref()
             .map(|data_device_manager| data_device_manager.get_data_device(&seat, &qh, ()));
-        // TODO: data_device.release();
 
         let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
@@ -287,6 +295,7 @@ impl WaylandClient {
             serial: 0,
             globals,
             wl_pointer: None,
+            data_device,
             output_scales: outputs,
             windows: HashMap::default(),
             common,
@@ -495,7 +504,6 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                 "wl_seat" => {
                     state.wl_pointer = None;
                     registry.bind::<wl_seat::WlSeat, _, _>(name, wl_seat_version(version), qh, ());
-                    // todo: update state seats
                 }
                 "wl_output" => {
                     let output =
