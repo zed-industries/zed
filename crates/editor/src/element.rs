@@ -3368,7 +3368,6 @@ fn deploy_blame_entry_context_menu(
 // TODO kb update the expanded hunks on editor changes
 // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
 // TODO kb use larger hunk bounds to simplify clicking
-// TODO kb do not scroll on hunk click (see `autoscroll.rs` and `&self.highlighted_display_rows(cx).first_entry()`)
 fn try_click_diff_hunk(
     editor: &mut Editor,
     hovered_hunk: &HoveredHunk,
@@ -3951,9 +3950,9 @@ impl Element for EditorElement {
                     )
                 };
 
-                let highlighted_rows = self
-                    .editor
-                    .update(cx, |editor, cx| editor.highlighted_display_rows(cx));
+                let highlighted_rows = self.editor.update(cx, |editor, cx| {
+                    editor.highlighted_display_rows(HashSet::default(), cx)
+                });
                 let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(
                     start_anchor..end_anchor,
                     &snapshot.display_snapshot,

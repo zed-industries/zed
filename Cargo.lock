@@ -4467,6 +4467,7 @@ name = "go_to_line"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "editor",
  "gpui",
  "indoc",
@@ -6787,6 +6788,7 @@ dependencies = [
 name = "outline"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "editor",
  "fuzzy",
  "gpui",

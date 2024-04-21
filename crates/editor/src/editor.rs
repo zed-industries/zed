@@ -9286,13 +9286,19 @@ impl Editor {
         )
     }
 
-    // Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
-    // Rerturns a map of display rows that are highlighted and their corresponding highlight color.
-    pub fn highlighted_display_rows(&mut self, cx: &mut WindowContext) -> BTreeMap<u32, Hsla> {
+    /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
+    /// Rerturns a map of display rows that are highlighted and their corresponding highlight color.
+    /// Allows to ignore certain kinds of highlights.
+    pub fn highlighted_display_rows(
+        &mut self,
+        exclude_highlights: HashSet<TypeId>,
+        cx: &mut WindowContext,
+    ) -> BTreeMap<u32, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
+            .filter(|(type_id, _)| !exclude_highlights.contains(type_id))
             .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
             .fold(
                 BTreeMap::<u32, Hsla>::new(),
