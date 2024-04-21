@@ -1195,7 +1195,7 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
     }
 }
 
-const FILES_MIME_TYPE: &str = "text/uri-list";
+const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
 
 impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
     fn event(
@@ -1217,12 +1217,9 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 y,
                 id: data_offer,
             } => {
-                println!("Drag entered our surface at x={x} y={y}");
                 state.serial = serial;
                 if let Some(data_offer) = data_offer {
-                    let drag_window = get_window(&mut state, &surface.id());
-                    let Some(drag_window) = drag_window else {
-                        println!("no drag window on enter");
+                    let Some(drag_window) = get_window(&mut state, &surface.id()) else {
                         return;
                     };
 
@@ -1230,16 +1227,16 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     data_offer.set_actions(ACTIONS, ACTIONS);
 
                     let pipe = Pipe::new().unwrap();
-                    data_offer.receive(FILES_MIME_TYPE.to_string(), unsafe {
+                    data_offer.receive(FILE_LIST_MIME_TYPE.to_string(), unsafe {
                         BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
                     });
                     let fd = pipe.read;
                     drop(pipe.write);
 
                     let file_list = match read_pipe_with_timeout(fd) {
-                        Ok(read) => read,
+                        Ok(list) => list,
                         Err(err) => {
-                            log::error!("error reading dnd pipe: {err:?}");
+                            log::error!("error reading drag and drop pipe: {err:?}");
                             return;
                         }
                     };
@@ -1282,7 +1279,6 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 drag_window.handle_input(input);
             }
             wl_data_device::Event::Leave => {
-                println!("Data offer leave");
                 let Some(drag_window) = state.drag.window.clone() else {
                     return;
                 };
@@ -1297,7 +1293,6 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 drag_window.handle_input(input);
             }
             wl_data_device::Event::Drop => {
-                println!("File dropped!");
                 let Some(drag_window) = state.drag.window.clone() else {
                     return;
                 };
@@ -1337,7 +1332,7 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
 
         match event {
             wl_data_offer::Event::Offer { mime_type } => {
-                if mime_type == FILES_MIME_TYPE {
+                if mime_type == FILE_LIST_MIME_TYPE {
                     data_offer.accept(state.serial, Some(mime_type));
                 }
             }
