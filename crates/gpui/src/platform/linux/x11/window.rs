@@ -13,10 +13,7 @@ use raw_window_handle as rwh;
 use util::ResultExt;
 use x11rb::{
     connection::Connection,
-    protocol::{
-        xinput,
-        xproto::{self, ConnectionExt as _, CreateWindowAux},
-    },
+    protocol::xproto::{self, ConnectionExt as _, CreateWindowAux},
     wrapper::ConnectionExt,
     xcb_ffi::XCBConnection,
 };
@@ -143,7 +140,6 @@ impl X11WindowState {
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
-        scroll_devices: &Vec<xinput::DeviceInfo>,
     ) -> Self {
         let x_screen_index = params
             .display_id
@@ -164,6 +160,8 @@ impl X11WindowState {
                 | xproto::EventMask::BUTTON1_MOTION
                 | xproto::EventMask::BUTTON2_MOTION
                 | xproto::EventMask::BUTTON3_MOTION
+                | xproto::EventMask::BUTTON4_MOTION
+                | xproto::EventMask::BUTTON5_MOTION
                 | xproto::EventMask::BUTTON_MOTION,
         );
 
@@ -182,20 +180,6 @@ impl X11WindowState {
                 &win_aux,
             )
             .unwrap();
-
-        for device in scroll_devices {
-            xinput::ConnectionExt::xinput_xi_select_events(
-                &xcb_connection,
-                x_window,
-                &[xinput::EventMask {
-                    deviceid: device.device_id as u16,
-                    mask: vec![xinput::XIEventMask::MOTION],
-                }],
-            )
-            .unwrap()
-            .check()
-            .unwrap();
-        }
 
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
@@ -278,7 +262,6 @@ impl X11Window {
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
-        scroll_devices: &Vec<xinput::DeviceInfo>,
     ) -> Self {
         X11Window {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -287,7 +270,6 @@ impl X11Window {
                 x_main_screen_index,
                 x_window,
                 atoms,
-                scroll_devices,
             ))),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
