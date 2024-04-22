@@ -218,6 +218,48 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_increment_with_dot(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            1ˇ.2
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes(["ctrl-a"]).await;
+        cx.assert_shared_state(indoc! {"
+            1.ˇ3
+            "})
+            .await;
+        cx.simulate_shared_keystrokes(["ctrl-x"]).await;
+        cx.assert_shared_state(indoc! {"
+            1.ˇ2
+            "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_increment_with_two_dots(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            111.ˇ.2
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes(["ctrl-a"]).await;
+        cx.assert_shared_state(indoc! {"
+            1..ˇ3
+            "})
+            .await;
+        cx.simulate_shared_keystrokes(["ctrl-x"]).await;
+        cx.assert_shared_state(indoc! {"
+            1..ˇ2
+            "})
+            .await;
+    }
+
+    #[gpui::test]
     async fn test_increment_radix(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
