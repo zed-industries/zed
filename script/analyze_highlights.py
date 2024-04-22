@@ -50,7 +50,7 @@ def main():
 
     base_dir = Path(__file__).parent.parent
     core_path = base_dir / 'crates/languages/src'
-    extension_path = base_dir / 'extensions/astro/languages'
+    extension_path = base_dir / 'extensions/'
 
     core_instances = count_instances(find_highlight_files(core_path))
     extension_instances = count_instances(find_highlight_files(extension_path))
