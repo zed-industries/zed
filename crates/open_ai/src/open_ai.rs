@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::{convert::TryFrom, future::Future};
 use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
@@ -105,7 +105,7 @@ pub struct Request {
 pub struct FunctionDefinition {
     pub name: String,
     pub description: Option<String>,
-    pub parameters: Option<Value>,
+    pub parameters: Option<Map<String, Value>>,
 }
 
 #[derive(Serialize, Debug)]
