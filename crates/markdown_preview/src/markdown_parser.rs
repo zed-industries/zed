@@ -480,7 +480,7 @@ impl<'a> MarkdownParser<'a> {
     }
 
     async fn parse_list(&mut self, order: Option<u64>) -> Vec<ParsedMarkdownListItem> {
-        let (_event, list_source_range) = self.previous().unwrap();
+        let (_, list_source_range) = self.previous().unwrap();
 
         let mut items = Vec::new();
         let mut items_stack = vec![Vec::new()];
@@ -492,6 +492,7 @@ impl<'a> MarkdownParser<'a> {
         let mut insertion_index_stack = Vec::new();
         let mut insertion_index = None;
         let mut list_item_source_range = list_source_range.clone();
+        let mut list_item_source_range_stack = Vec::new();
 
         while !self.eof() {
             let (current, source_range) = self.current().unwrap();
@@ -502,7 +503,10 @@ impl<'a> MarkdownParser<'a> {
                         insertion_index_stack.push(items.len());
                     }
 
-                    list_item_source_range = list_item_source_range.start..source_range.start;
+                    // We will use the start of the nested list as the end for the current item's range,
+                    // because we don't care about the hierarchy of list items
+                    list_item_source_range_stack
+                        .push(list_item_source_range.start..source_range.start);
 
                     order_stack.push(order);
                     order = *new_order;
@@ -514,12 +518,14 @@ impl<'a> MarkdownParser<'a> {
                     depth -= 1;
                     insertion_index = insertion_index_stack.pop();
                     order = order_stack.pop().flatten();
+                    list_item_source_range = list_item_source_range_stack.pop().unwrap_or_default();
                     if depth == 0 {
                         break;
                     }
                 }
                 Event::Start(Tag::Item) => {
                     list_item_source_range = source_range.clone();
+
                     self.cursor += 1;
                     inside_list_item = true;
                     items_stack.push(Vec::new());
@@ -994,21 +1000,21 @@ Some other content
         assert_eq!(
             parsed.children,
             vec![
-                list_item(0..9, 1, Unordered, vec![p("Item 1", 0..9)]),
-                list_item(9..18, 1, Unordered, vec![p("Item 2", 9..18)]),
-                list_item(18..28, 1, Unordered, vec![p("Item 3", 18..28)]),
-                list_item(28..37, 1, Ordered(1), vec![p("Hello", 28..37)]),
-                list_item(37..56, 1, Ordered(2), vec![p("Two", 37..56),]),
-                list_item(47..56, 2, Ordered(1), vec![p("Three", 47..56)]),
-                list_item(56..64, 1, Ordered(3), vec![p("Four", 56..64)]),
-                list_item(64..73, 1, Ordered(4), vec![p("Five", 64..73)]),
-                list_item(73..81, 1, Unordered, vec![p("First", 64..73)]),
-                list_item(81..91, 2, Ordered(1), vec![p("Hello", 64..73)]),
-                list_item(91..99, 3, Ordered(1), vec![p("Goodbyte", 64..73)]),
-                list_item(99..108, 4, Unordered, vec![p("Inner", 64..73)]),
-                list_item(108..120, 4, Unordered, vec![p("Inner", 64..73)]),
-                list_item(120..130, 2, Ordered(2), vec![p("Goodbyte", 64..73)]),
-                list_item(130..135, 1, Unordered, vec![p("Last", 64..73)]),
+                list_item(0..9, 1, Unordered, vec![p("Item 1", 2..8)]),
+                list_item(9..18, 1, Unordered, vec![p("Item 2", 11..17)]),
+                list_item(18..28, 1, Unordered, vec![p("Item 3", 20..26)]),
+                list_item(28..37, 1, Ordered(1), vec![p("Hello", 31..36)]),
+                list_item(37..47, 1, Ordered(2), vec![p("Two", 40..43),]),
+                list_item(47..56, 2, Ordered(1), vec![p("Three", 50..55)]),
+                list_item(56..64, 1, Ordered(3), vec![p("Four", 59..63)]),
+                list_item(64..73, 1, Ordered(4), vec![p("Five", 67..71)]),
+                list_item(73..83, 1, Unordered, vec![p("First", 75..80)]),
+                list_item(83..97, 2, Ordered(1), vec![p("Hello", 86..91)]),
+                list_item(97..117, 3, Ordered(1), vec![p("Goodbyte", 100..108)]),
+                list_item(117..125, 4, Unordered, vec![p("Inner", 119..124)]),
+                list_item(133..141, 4, Unordered, vec![p("Inner", 135..140)]),
+                list_item(143..155, 2, Ordered(2), vec![p("Goodbyte", 146..154)]),
+                list_item(155..162, 1, Unordered, vec![p("Last", 157..161)]),
             ]
         );
     }
