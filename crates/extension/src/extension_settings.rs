@@ -5,7 +5,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use std::sync::Arc;
-use util::merge_non_null_json_value_into;
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
 pub struct ExtensionSettings {
@@ -42,10 +41,8 @@ impl Settings for ExtensionSettings {
     type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut AppContext) -> Result<Self> {
-        let mut merged = serde_json::Value::Null;
-        for value in [sources.default].into_iter().chain(sources.user) {
-            merge_non_null_json_value_into(serde_json::to_value(value).unwrap(), &mut merged);
-        }
-        Ok(serde_json::from_value(merged)?)
+        SettingsSources::<Self::FileContent>::json_merge_with(
+            [sources.default].into_iter().chain(sources.user),
+        )
     }
 }
