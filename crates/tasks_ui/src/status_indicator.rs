@@ -1,10 +1,10 @@
-use gpui::{IntoElement, Render, View, WeakView};
+use gpui::{IntoElement, WeakView};
 use settings::Settings;
 use ui::{
     div, ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, RenderOnce, Tooltip,
-    VisualContext, WindowContext,
+    WindowContext,
 };
-use workspace::{item::ItemHandle, Workspace};
+use workspace::Workspace;
 
 use crate::{modal::Spawn, settings::TaskSettings};
 
@@ -77,9 +77,6 @@ impl RenderOnce for TaskStatusIndicator {
         let workspace = self.workspace.clone();
         IconButton::new("tasks-activity-indicator", IconName::Play)
             .when_some(color, |this, color| this.icon_color(color))
-            .on_click(|_, _| {
-                dbg!("AAA");
-            })
             .on_click(move |_, cx| {
                 workspace
                     .update(cx, |this, cx| {
