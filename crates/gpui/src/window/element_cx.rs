@@ -783,6 +783,20 @@ impl<'a> ElementContext<'a> {
         result
     }
 
+    /// When you call this method during [`before_paint`], containing elements will attempt to
+    /// scroll to cause the specified bounds to become visible. When they decide to autoscroll, they will call
+    /// [`before_paint`] again with a new set of bounds. See [`List`] for an example of an element
+    /// that supports this method being called on the elements it contains.
+    pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
+        self.window.requested_autoscroll = Some(bounds);
+    }
+
+    /// This method can be called from a containing element such as [`List`] to support the autoscroll behavior
+    /// described in [`request_autoscroll`].
+    pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
+        self.window.requested_autoscroll.take()
+    }
+
     /// Remove an asset from GPUI's cache
     pub fn remove_cached_asset<A: Asset + 'static>(
         &mut self,
