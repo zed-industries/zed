@@ -8885,7 +8885,6 @@ impl Editor {
         self.style = Some(style);
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn style(&self) -> Option<&EditorStyle> {
         self.style.as_ref()
     }

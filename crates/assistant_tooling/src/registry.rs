@@ -1,15 +1,14 @@
 use anyhow::{anyhow, Result};
-use gpui::{AppContext, Task};
-use std::collections::HashMap;
+use gpui::{AnyElement, AppContext, Task, WindowContext};
+use std::{any::Any, collections::HashMap};
 
-use crate::tool::{LanguageModelTool, ToolFunctionCall, ToolFunctionDefinition};
+use crate::tool::{
+    LanguageModelTool, ToolFunctionCall, ToolFunctionCallResult, ToolFunctionDefinition,
+};
 
 pub struct ToolRegistry {
-    tools: HashMap<
-        String,
-        Box<dyn Fn(&ToolFunctionCall, &AppContext) -> Task<Result<ToolFunctionCall>>>,
-    >,
-    pub definitions: Vec<ToolFunctionDefinition>,
+    tools: HashMap<String, Box<dyn Fn(&ToolFunctionCall, &AppContext) -> Task<ToolFunctionCall>>>,
+    definitions: Vec<ToolFunctionDefinition>,
 }
 
 impl ToolRegistry {
@@ -20,7 +19,35 @@ impl ToolRegistry {
         }
     }
 
+    pub fn definitions(&self) -> &[ToolFunctionDefinition] {
+        &self.definitions
+    }
+
     pub fn register<T: 'static + LanguageModelTool>(&mut self, tool: T) -> Result<()> {
+        fn render<T: 'static + LanguageModelTool>(
+            tool_call_id: &str,
+            input: &Box<dyn Any>,
+            output: &Box<dyn Any>,
+            cx: &mut WindowContext,
+        ) -> AnyElement {
+            T::render(
+                tool_call_id,
+                input.as_ref().downcast_ref::<T::Input>().unwrap(),
+                output.as_ref().downcast_ref::<T::Output>().unwrap(),
+                cx,
+            )
+        }
+
+        fn format<T: 'static + LanguageModelTool>(
+            input: &Box<dyn Any>,
+            output: &Box<dyn Any>,
+        ) -> String {
+            T::format(
+                input.as_ref().downcast_ref::<T::Input>().unwrap(),
+                output.as_ref().downcast_ref::<T::Output>().unwrap(),
+            )
+        }
+
         self.definitions.push(tool.definition());
         let name = tool.name();
         let previous = self.tools.insert(
@@ -30,20 +57,42 @@ impl ToolRegistry {
                 let arguments = tool_call.arguments.clone();
                 let id = tool_call.id.clone();
 
-                let result = match serde_json::from_str::<T::Input>(arguments.as_str()) {
-                    Ok(input) => tool.execute(input, cx),
-                    Err(error) => return Task::ready(Err(anyhow!(error))),
+                let Ok(input) = serde_json::from_str::<T::Input>(arguments.as_str()) else {
+                    return Task::ready(ToolFunctionCall {
+                        id,
+                        name: name.clone(),
+                        arguments,
+                        result: Some(ToolFunctionCallResult::ParsingFailed),
+                    });
                 };
 
-                cx.spawn(|_cx| async move {
-                    let result: T::Output = result.await?;
+                let result = tool.execute(&input, cx);
 
-                    Ok(ToolFunctionCall {
-                        id,
-                        name,
-                        arguments,
-                        result: Some(Box::new(result)),
-                    })
+                cx.spawn(move |_cx| async move {
+                    match result.await {
+                        Ok(result) => {
+                            let result: T::Output = result;
+                            ToolFunctionCall {
+                                id,
+                                name: name.clone(),
+                                arguments,
+                                result: Some(ToolFunctionCallResult::Finished {
+                                    input: Box::new(input),
+                                    output: Box::new(result),
+                                    render_fn: render::<T>,
+                                    format_fn: format::<T>,
+                                }),
+                            }
+                        }
+                        Err(_error) => ToolFunctionCall {
+                            id,
+                            name: name.clone(),
+                            arguments,
+                            result: Some(ToolFunctionCallResult::ExecutionFailed {
+                                input: Box::new(input),
+                            }),
+                        },
+                    }
                 })
             }),
         );
@@ -55,18 +104,21 @@ impl ToolRegistry {
         Ok(())
     }
 
-    pub fn call(
-        &self,
-        tool_call: &ToolFunctionCall,
-        cx: &AppContext,
-    ) -> Task<Result<ToolFunctionCall>> {
-        let tool = match self.tools.get(&tool_call.name) {
+    pub fn call(&self, tool_call: &ToolFunctionCall, cx: &AppContext) -> Task<ToolFunctionCall> {
+        let name = tool_call.name.clone();
+        let arguments = tool_call.arguments.clone();
+        let id = tool_call.id.clone();
+
+        let tool = match self.tools.get(&name) {
             Some(tool) => tool,
             None => {
-                return Task::ready(Err(anyhow!(
-                    "no tool registered with name {}",
-                    tool_call.name
-                )));
+                let name = name.clone();
+                return Task::ready(ToolFunctionCall {
+                    id,
+                    name: name.clone(),
+                    arguments,
+                    result: Some(ToolFunctionCallResult::NoSuchTool),
+                });
             }
         };
 
@@ -76,13 +128,15 @@ impl ToolRegistry {
 
 #[cfg(test)]
 mod test {
-    use crate::tool::ToolFunctionOutput;
 
     use super::*;
+
+    use schemars::schema_for;
 
     use gpui::{div, AnyElement, Element, ParentElement, TestAppContext, WindowContext};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
+    use serde_json::json;
 
     #[derive(Deserialize, Serialize, JsonSchema)]
     struct WeatherQuery {
@@ -101,24 +155,6 @@ mod test {
         unit: String,
     }
 
-    impl ToolFunctionOutput for WeatherResult {
-        fn render(&self, _cx: &mut WindowContext) -> AnyElement {
-            div()
-                .child(format!(
-                    "The current temperature in {} is {} {}",
-                    self.location, self.temperature, self.unit
-                ))
-                .into_any()
-        }
-
-        fn format(&self) -> String {
-            format!(
-                "The current temperature in {} is {} {}",
-                self.location, self.temperature, self.unit
-            )
-        }
-    }
-
     impl LanguageModelTool for WeatherTool {
         type Input = WeatherQuery;
         type Output = WeatherResult;
@@ -131,13 +167,34 @@ mod test {
             "Fetches the current weather for a given location.".to_string()
         }
 
-        fn execute(&self, input: WeatherQuery, _cx: &AppContext) -> Task<Result<Self::Output>> {
+        fn execute(&self, input: &WeatherQuery, _cx: &AppContext) -> Task<Result<Self::Output>> {
             let _location = input.location.clone();
             let _unit = input.unit.clone();
 
             let weather = self.current_weather.clone();
 
             Task::ready(Ok(weather))
+        }
+
+        fn render(
+            _tool_call_id: &str,
+            _input: &Self::Input,
+            output: &Self::Output,
+            _cx: &mut WindowContext,
+        ) -> AnyElement {
+            div()
+                .child(format!(
+                    "The current temperature in {} is {} {}",
+                    output.location, output.temperature, output.unit
+                ))
+                .into_any()
+        }
+
+        fn format(_input: &Self::Input, output: &Self::Output) -> String {
+            format!(
+                "The current temperature in {} is {} {}",
+                output.location, output.temperature, output.unit
+            )
         }
     }
 
@@ -157,7 +214,7 @@ mod test {
 
         registry.register(tool).unwrap();
 
-        let result = cx
+        let _result = cx
             .update(|cx| {
                 registry.call(
                     &ToolFunctionCall {
@@ -172,12 +229,70 @@ mod test {
             })
             .await;
 
-        assert!(result.is_ok());
+        // assert!(result.is_ok());
         // let result = result.unwrap();
 
         // let expected = r#"{"location":"San Francisco","temperature":21.0,"unit":"Celsius"}"#;
 
         // todo!(): Put this back in after the interface is stabilized
         // assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_openai_weather_example(cx: &mut TestAppContext) {
+        cx.background_executor.run_until_parked();
+
+        let tool = WeatherTool {
+            current_weather: WeatherResult {
+                location: "San Francisco".to_string(),
+                temperature: 21.0,
+                unit: "Celsius".to_string(),
+            },
+        };
+
+        let tools = vec![tool.definition()];
+        assert_eq!(tools.len(), 1);
+
+        let expected = ToolFunctionDefinition {
+            name: "get_current_weather".to_string(),
+            description: "Fetches the current weather for a given location.".to_string(),
+            parameters: schema_for!(WeatherQuery).schema,
+        };
+
+        assert_eq!(tools[0].name, expected.name);
+        assert_eq!(tools[0].description, expected.description);
+
+        let expected_schema = serde_json::to_value(&tools[0].parameters).unwrap();
+
+        assert_eq!(
+            expected_schema,
+            json!({
+                "title": "WeatherQuery",
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string"
+                    },
+                    "unit": {
+                        "type": "string"
+                    }
+                },
+                "required": ["location", "unit"]
+            })
+        );
+
+        let args = json!({
+            "location": "San Francisco",
+            "unit": "Celsius"
+        });
+
+        let query: WeatherQuery = serde_json::from_value(args).unwrap();
+
+        let result = cx.update(|cx| tool.execute(&query, cx)).await;
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+
+        assert_eq!(result, tool.current_weather);
     }
 }

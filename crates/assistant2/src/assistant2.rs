@@ -1,15 +1,18 @@
 mod completion_provider;
+mod tools;
 
-use anyhow::Result;
-use client::Client;
+use anyhow::{Context, Result};
+use assistant_tooling::{ToolFunctionCall, ToolRegistry};
+use client::{proto, Client};
 use completion_provider::*;
 use editor::{Editor, EditorEvent};
-use futures::{channel::oneshot, Future, FutureExt as _, StreamExt};
+use futures::{channel::oneshot, future::join_all, Future, FutureExt, StreamExt};
 use gpui::{
-    list, prelude::*, AnyElement, AppContext, FocusHandle, Global, ListAlignment, ListState, Model,
-    Render, Task, View,
+    list, prelude::*, AnyElement, AppContext, AsyncWindowContext, FocusHandle, Global,
+    ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
+use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use project::Fs;
 use rich_text::RichText;
 use semantic_index::ProjectIndex;
@@ -17,8 +20,11 @@ use serde::Deserialize;
 use settings::Settings;
 use std::{cmp, sync::Arc};
 use theme::ThemeSettings;
+use tools::ProjectIndexTool;
 use ui::{popover_menu, prelude::*, ButtonLike, CollapsibleContainer, Color, ContextMenu, Tooltip};
 use util::ResultExt;
+
+const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
 
 // gpui::actions!(assistant, [Submit]);
 
@@ -94,10 +100,9 @@ struct AssistantChat {
     messages: Vec<ChatMessage>,
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
-    project_index: Model<ProjectIndex>,
-    fs: Arc<dyn Fs>,
     next_message_id: MessageId,
     pending_completion: Option<Task<()>>,
+    tool_registry: ToolRegistry,
 }
 
 impl AssistantChat {
@@ -119,15 +124,23 @@ impl AssistantChat {
             },
         );
 
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry
+            .register(ProjectIndexTool {
+                project_index: project_index.clone(),
+                fs: fs.clone(),
+            })
+            .context("failed to register ProjectIndexTool")
+            .log_err();
+
         let mut this = Self {
             model,
             messages: Vec::new(),
             list_state,
             language_registry,
-            project_index,
-            fs,
             next_message_id: MessageId(0),
             pending_completion: None,
+            tool_registry,
         };
         this.push_new_user_message(true, cx);
         this
@@ -151,36 +164,99 @@ impl AssistantChat {
         };
 
         self.truncate_messages(focused_message_id, cx);
-        self.push_new_assistant_message(cx);
 
-        let populate = self.populate_context_on_submit(focused_message_id, mode, cx);
+        let mode = *mode;
+        self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
+            Self::request_completion(
+                this.clone(),
+                mode,
+                MAX_COMPLETION_CALLS_PER_SUBMISSION,
+                &mut cx,
+            )
+            .await
+            .log_err();
 
-        self.pending_completion = Some(cx.spawn(|this, mut cx| async move {
+            this.update(&mut cx, |this, cx| {
+                let focus = this
+                    .user_message(focused_message_id)
+                    .body
+                    .focus_handle(cx)
+                    .contains_focused(cx);
+                this.push_new_user_message(focus, cx);
+            })
+            .context("Failed to push new user message")
+            .log_err();
+        }));
+    }
+
+    async fn request_completion(
+        this: WeakView<Self>,
+        mode: SubmitMode,
+        limit: usize,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        let mut call_count = 0;
+        loop {
             let complete = async {
-                populate.await?;
+                let completion = this.update(cx, |this, cx| {
+                    this.push_new_assistant_message(cx);
 
-                let completion = this.update(&mut cx, |this, cx| {
+                    let definitions = if call_count < limit && matches!(mode, SubmitMode::Codebase)
+                    {
+                        this.tool_registry.definitions()
+                    } else {
+                        &[]
+                    };
+                    call_count += 1;
+
                     CompletionProvider::get(cx).complete(
                         this.model.clone(),
                         this.completion_messages(cx),
                         Vec::new(),
                         1.0,
+                        definitions,
                     )
                 });
 
                 let mut stream = completion?.await?;
-
                 let mut body = String::new();
-
-                while let Some(chunk) = stream.next().await {
-                    let chunk = chunk?;
-                    this.update(&mut cx, |this, cx| {
+                while let Some(delta) = stream.next().await {
+                    let delta = delta?;
+                    this.update(cx, |this, cx| {
                         if let Some(ChatMessage::Assistant(AssistantMessage {
                             body: message_body,
+                            tool_calls: message_tool_calls,
                             ..
                         })) = this.messages.last_mut()
                         {
-                            body.push_str(&chunk);
+                            if let Some(content) = &delta.content {
+                                body.push_str(content);
+                            }
+
+                            for tool_call in delta.tool_calls {
+                                let index = tool_call.index as usize;
+                                if index >= message_tool_calls.len() {
+                                    message_tool_calls.resize_with(index + 1, Default::default);
+                                }
+                                let call = &mut message_tool_calls[index];
+
+                                if let Some(id) = &tool_call.id {
+                                    call.id.push_str(id);
+                                }
+
+                                match tool_call.variant {
+                                    Some(proto::tool_call_delta::Variant::Function(tool_call)) => {
+                                        if let Some(name) = &tool_call.name {
+                                            call.name.push_str(name);
+                                        }
+                                        if let Some(arguments) = &tool_call.arguments {
+                                            call.arguments.push_str(arguments);
+                                        }
+                                    }
+                                    None => {}
+                                }
+                            }
+
                             *message_body =
                                 RichText::new(body.clone(), &[], &this.language_registry);
                             cx.notify();
@@ -194,108 +270,39 @@ impl AssistantChat {
             }
             .await;
 
-            this.update(&mut cx, |this, cx| {
-                if let Err(error) = complete {
-                    if let Some(ChatMessage::Assistant(AssistantMessage {
-                        error: message_error,
-                        ..
-                    })) = this.messages.last_mut()
-                    {
+            let mut tool_tasks = Vec::new();
+            this.update(cx, |this, cx| {
+                if let Some(ChatMessage::Assistant(AssistantMessage {
+                    error: message_error,
+                    tool_calls,
+                    ..
+                })) = this.messages.last_mut()
+                {
+                    if let Err(error) = complete {
                         message_error.replace(SharedString::from(error.to_string()));
                         cx.notify();
                     } else {
-                        unreachable!()
+                        for tool_call in tool_calls.iter() {
+                            tool_tasks.push(this.tool_registry.call(tool_call, cx));
+                        }
                     }
                 }
+            })?;
 
-                let focus = this
-                    .user_message(focused_message_id)
-                    .body
-                    .focus_handle(cx)
-                    .contains_focused(cx);
-                this.push_new_user_message(focus, cx);
-            })
-            .log_err();
-        }));
-    }
-
-    /// Set up the query designed for the semantic index, based on previous conversation
-    fn setup_query(&self, cx: &mut ViewContext<Self>) -> Task<Result<String>> {
-        // Let's try another approach where we take the user's previous messages and turn that into a query
-        // by calling for a completion.
-
-        // For now, we'll set up a summary request message, where we tell the model we need something simple to summarize
-
-        let mut query_creation_messages = self.completion_messages(cx);
-
-        query_creation_messages.push(CompletionMessage {
-                role: CompletionRole::System,
-                body: r#"
-                    Turn the user's query into a single search string that can be used to search for code base snippets relevant to the user's query. Everything you respond with will be fed directly to a semantic index.
-
-                    ## Example
-
-                    **User**: How can I create a component in GPUI that works like a `<details>` / `<summary>` pair in HTML?
-
-                    GPUI create component like HTML details summary example
-                    "#.into(),
-            });
-
-        let query = CompletionProvider::get(cx).complete(
-            self.model.clone(),
-            query_creation_messages,
-            Vec::new(),
-            1.0,
-        );
-
-        cx.spawn(|_, _| async move {
-            let mut stream = query.await?;
-
-            // todo!(): Show the query in the UI as part of the context view
-            let mut query = String::new();
-
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk?;
-                query.push_str(&chunk);
+            if tool_tasks.is_empty() {
+                return Ok(());
             }
 
-            anyhow::Ok(query)
-        })
-    }
-
-    // Returns a oneshot channel which resolves to true when the context is successfully populated.
-    fn populate_context_on_submit(
-        &mut self,
-        submitted_id: MessageId,
-        mode: &SubmitMode,
-        cx: &mut ViewContext<Self>,
-    ) -> oneshot::Receiver<bool> {
-        let (tx, rx) = oneshot::channel();
-
-        match mode {
-            SubmitMode::Simple => {
-                tx.send(true).ok();
-            }
-            SubmitMode::CurrentFile => {
-                tx.send(true).ok();
-            }
-            SubmitMode::Codebase => {
-                self.user_message(submitted_id).contexts.clear();
-
-                let query = self.setup_query(cx);
-
-                let project_index = self.project_index.clone();
-                let fs = self.fs.clone();
-
-                self.user_message(submitted_id)
-                    .contexts
-                    .push(AssistantContext::Codebase(cx.new_view(|cx| {
-                        CodebaseContext::new(query, tx, project_index, fs, cx)
-                    })));
-            }
+            let tools = join_all(tool_tasks.into_iter()).await;
+            this.update(cx, |this, cx| {
+                if let Some(ChatMessage::Assistant(AssistantMessage { tool_calls, .. })) =
+                    this.messages.last_mut()
+                {
+                    *tool_calls = tools;
+                    cx.notify();
+                }
+            })?;
         }
-
-        rx
     }
 
     fn user_message(&mut self, message_id: MessageId) -> &mut UserMessage {
@@ -335,15 +342,17 @@ impl AssistantChat {
                         })
                         .expect("user message not found");
                     message.body.update(cx, |body, cx| {
-                        if let Some(editor_style) = body.style() {
+                        let style = body.style();
+
+                        if let Some(editor_style) = style {
                             let row = body.selections.newest_display(cx).head().row();
                             let line_height =
                                 editor_style.text.line_height_in_pixels(cx.rem_size());
                             let row_y = row as f32 * line_height;
                             this.list_state.scroll_to_fit(
                                 message_ix,
-                                row_y,
-                                row_y + 5. * line_height,
+                                Pixels(row_y.into()),
+                                Pixels((row_y + 5. * line_height).into()),
                             );
                         }
                     });
@@ -364,6 +373,7 @@ impl AssistantChat {
         let message = ChatMessage::Assistant(AssistantMessage {
             id: self.next_message_id.post_inc(),
             body: RichText::default(),
+            tool_calls: Vec::new(),
             error: None,
         });
         self.push_message(message, cx);
@@ -418,7 +428,11 @@ impl AssistantChat {
         let is_last = ix == self.messages.len() - 1;
 
         match &self.messages[ix] {
-            ChatMessage::User(UserMessage { body, contexts, .. }) => div()
+            ChatMessage::User(UserMessage {
+                body,
+                contexts: _contexts,
+                ..
+            }) => div()
                 .when(!is_last, |element| element.mb_2())
                 .child(div().p_2().child(Label::new("You").color(Color::Default)))
                 .child(
@@ -428,20 +442,48 @@ impl AssistantChat {
                         .text_color(cx.theme().colors().editor_foreground)
                         .font(ThemeSettings::get_global(cx).buffer_font.clone())
                         .bg(cx.theme().colors().editor_background)
-                        .child(body.clone())
-                        .children(contexts.iter().map(|context| context.render(cx))),
+                        .child(body.clone()), // .children(contexts.iter().map(|context| context.render(cx))),
                 )
                 .into_any(),
-            ChatMessage::Assistant(AssistantMessage { id, body, error }) => div()
-                .when(!is_last, |element| element.mb_2())
-                .child(
+            ChatMessage::Assistant(AssistantMessage {
+                id,
+                body,
+                error,
+                tool_calls,
+                ..
+            }) => {
+                let assistant_body = if body.text.is_empty() && !tool_calls.is_empty() {
                     div()
-                        .p_2()
-                        .child(Label::new("Assistant").color(Color::Modified)),
-                )
-                .child(div().p_2().child(body.element(ElementId::from(id.0), cx)))
-                .child(self.render_error(error.clone(), ix, cx))
-                .into_any(),
+                } else {
+                    div().p_2().child(body.element(ElementId::from(id.0), cx))
+                };
+
+                div()
+                    .when(!is_last, |element| element.mb_2())
+                    .child(
+                        div()
+                            .p_2()
+                            .child(Label::new("Assistant").color(Color::Modified)),
+                    )
+                    .child(assistant_body)
+                    .child(self.render_error(error.clone(), ix, cx))
+                    .children(tool_calls.iter().map(|tool_call| {
+                        let result = &tool_call.result;
+                        let name = tool_call.name.clone();
+                        match result {
+                            Some(result) => div()
+                                .p_2()
+                                .child(result.render(&name, &tool_call.id, cx))
+                                .into_any(),
+                            None => div()
+                                .p_2()
+                                .child(Label::new(name).color(Color::Modified))
+                                .child("Running...")
+                                .into_any(),
+                        }
+                    }))
+                    .into_any()
+            }
         }
     }
 
@@ -457,16 +499,51 @@ impl AssistantChat {
                     });
 
                     // Show user's message last so that the assistant is grounded in the user's request
-                    completion_messages.push(CompletionMessage {
-                        role: CompletionRole::User,
-                        body: body.read(cx).text(cx),
+                    completion_messages.push(CompletionMessage::User {
+                        content: body.read(cx).text(cx),
                     });
                 }
-                ChatMessage::Assistant(AssistantMessage { body, .. }) => {
-                    completion_messages.push(CompletionMessage {
-                        role: CompletionRole::Assistant,
-                        body: body.text.to_string(),
+                ChatMessage::Assistant(AssistantMessage {
+                    body, tool_calls, ..
+                }) => {
+                    // In no case do we want to send an empty message. This shouldn't happen, but we might as well
+                    // not break the Chat API if it does.
+                    if body.text.is_empty() && tool_calls.is_empty() {
+                        continue;
+                    }
+
+                    let tool_calls_from_assistant = tool_calls
+                        .iter()
+                        .map(|tool_call| ToolCall {
+                            content: ToolCallContent::Function {
+                                function: FunctionContent {
+                                    name: tool_call.name.clone(),
+                                    arguments: tool_call.arguments.clone(),
+                                },
+                            },
+                            id: tool_call.id.clone(),
+                        })
+                        .collect();
+
+                    completion_messages.push(CompletionMessage::Assistant {
+                        content: Some(body.text.to_string()),
+                        tool_calls: tool_calls_from_assistant,
                     });
+
+                    for tool_call in tool_calls {
+                        // todo!(): we should not be sending when the tool is still running / has no result
+                        // For now I'm going to have to assume we send an empty string because otherwise
+                        // the Chat API will break -- there is a required message for every tool call by ID
+                        let content = match &tool_call.result {
+                            Some(result) => result.format(&tool_call.name),
+                            None => "".to_string(),
+                        };
+
+                        completion_messages.push(CompletionMessage::Tool {
+                            content,
+                            tool_call_id: tool_call.id.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -573,18 +650,22 @@ struct UserMessage {
     _subscription: gpui::Subscription,
 }
 
-// chain_of_thought: ... -> search -> search_results -> produce_new_message -> send for the real chat message
-
 struct AssistantMessage {
     id: MessageId,
     body: RichText,
+    tool_calls: Vec<ToolFunctionCall>,
     error: Option<SharedString>,
 }
 
+// Since we're swapping out for direct query usage, we might not need to use this injected context
+// It will be useful though for when the user _definitely_ wants the model to see a specific file,
+// query, error, etc.
+#[allow(dead_code)]
 enum AssistantContext {
     Codebase(View<CodebaseContext>),
 }
 
+#[allow(dead_code)]
 struct CodebaseExcerpt {
     element_id: ElementId,
     path: SharedString,
@@ -594,6 +675,7 @@ struct CodebaseExcerpt {
 }
 
 impl AssistantContext {
+    #[allow(dead_code)]
     fn render(&self, _cx: &mut ViewContext<AssistantChat>) -> AnyElement {
         match self {
             AssistantContext::Codebase(context) => context.clone().into_any_element(),
@@ -664,12 +746,13 @@ impl Render for CodebaseContext {
                             )
                     }))
             }
-            CodebaseContext::Done(Err(error)) => div().child(error.to_string()), // todo!,
+            CodebaseContext::Done(Err(error)) => div().child(error.to_string()),
         }
     }
 }
 
 impl CodebaseContext {
+    #[allow(dead_code)]
     fn new(
         query: impl 'static + Future<Output = Result<String>>,
         populated: oneshot::Sender<bool>,
@@ -731,6 +814,7 @@ impl CodebaseContext {
         Self::Pending { _task }
     }
 
+    #[allow(dead_code)]
     fn populate(
         &mut self,
         result: Result<Vec<CodebaseExcerpt>>,
@@ -761,7 +845,7 @@ impl CodebaseContext {
                     return Vec::new();
                 }
 
-                let mut body = "Semantic search reasults for user query:\n".to_string();
+                let mut body = "Semantic search results for user query:\n".to_string();
 
                 for excerpt in excerpts {
                     body.push_str("Excerpt from ");
@@ -774,10 +858,7 @@ impl CodebaseContext {
                     body.push_str("~~~\n");
                 }
 
-                vec![CompletionMessage {
-                    role: CompletionRole::System,
-                    body,
-                }]
+                vec![CompletionMessage::System { content: body }]
             }
             _ => vec![],
         }
