@@ -33,7 +33,6 @@ settings.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace.workspace = true
 nanoid = "0.4"
 
 [dev-dependencies]
@@ -49,7 +48,6 @@ release_channel.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-workspace = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
