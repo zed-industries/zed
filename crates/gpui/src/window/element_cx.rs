@@ -748,6 +748,41 @@ impl<'a> ElementContext<'a> {
         result
     }
 
+    /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
+    /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
+    /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
+    /// element offset and prepaint again. See [`List`] for an example.
+    pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
+        let index = self.before_paint_index();
+        let result = f(self);
+        if result.is_err() {
+            self.window
+                .next_frame
+                .hitboxes
+                .truncate(index.hitboxes_index);
+            self.window
+                .next_frame
+                .tooltip_requests
+                .truncate(index.tooltips_index);
+            self.window
+                .next_frame
+                .deferred_draws
+                .truncate(index.deferred_draws_index);
+            self.window
+                .next_frame
+                .dispatch_tree
+                .truncate(index.dispatch_tree_index);
+            self.window
+                .next_frame
+                .accessed_element_states
+                .truncate(index.accessed_element_states_index);
+            self.window
+                .text_system
+                .truncate_layouts(index.line_layout_index);
+        }
+        result
+    }
+
     /// Remove an asset from GPUI's cache
     pub fn remove_cached_asset<A: Asset + 'static>(
         &mut self,
