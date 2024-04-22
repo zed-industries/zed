@@ -767,9 +767,7 @@ impl Server {
             Box::new(move |envelope, session| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                 let received_at = envelope.received_at;
-                    tracing::info!(
-                        "message received"
-                    );
+                tracing::info!("message received");
                 let start_time = Instant::now();
                 let future = (handler)(*envelope, session);
                 async move {
@@ -778,12 +776,24 @@ impl Server {
                     let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
                     let queue_duration_ms = total_duration_ms - processing_duration_ms;
                     let payload_type = M::NAME;
+
                     match result {
                         Err(error) => {
-                            // todo!(), why isn't this logged inside the span?
-                            tracing::error!(%error, total_duration_ms, processing_duration_ms, queue_duration_ms, payload_type, "error handling message")
+                            tracing::error!(
+                                ?error,
+                                total_duration_ms,
+                                processing_duration_ms,
+                                queue_duration_ms,
+                                payload_type,
+                                "error handling message"
+                            )
                         }
-                        Ok(()) => tracing::info!(total_duration_ms, processing_duration_ms, queue_duration_ms, "finished handling message"),
+                        Ok(()) => tracing::info!(
+                            total_duration_ms,
+                            processing_duration_ms,
+                            queue_duration_ms,
+                            "finished handling message"
+                        ),
                     }
                 }
                 .boxed()
