@@ -925,7 +925,11 @@ async fn upload_previous_crashes(
 
     let crash_report_url = http.build_zed_api_url("/telemetry/crashes", &[])?;
 
-    for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR] {
+    // crash directories are only set on MacOS
+    for dir in [&*CRASHES_DIR, &*CRASHES_RETIRED_DIR]
+        .iter()
+        .filter_map(|d| d.as_deref())
+    {
         let mut children = smol::fs::read_dir(&dir).await?;
         while let Some(child) = children.next().await {
             let child = child?;
