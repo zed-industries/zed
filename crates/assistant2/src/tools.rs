@@ -92,16 +92,6 @@ impl LanguageModelTool for ProjectIndexTool {
         excerpts: &Self::Output,
         cx: &mut WindowContext,
     ) -> AnyElement {
-        // For if/when we have indeterminate loading
-        // match output {
-        //     None => div()
-        //         .h_flex()
-        //         .items_center()
-        //         .gap_1()
-        //         .child(Icon::new(IconName::Ai).color(Color::Muted).into_element())
-        //         .child("Searching codebase..."),
-        // Some(excerpts) => {
-
         let query = input.query.clone();
 
         div()
