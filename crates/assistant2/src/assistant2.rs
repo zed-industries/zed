@@ -2,17 +2,17 @@ mod completion_provider;
 mod tools;
 
 use anyhow::{Context, Result};
-use assistant_tooling::{ToolFunctionCall, ToolRegistry};
+use assistant_tooling::{ToolFunctionCall, ToolFunctionDefinition, ToolRegistry};
 use client::{proto, Client};
 use completion_provider::*;
 use editor::{Editor, EditorEvent};
 use futures::{channel::oneshot, future::join_all, Future, FutureExt, StreamExt};
 use gpui::{
-    list, prelude::*, AnyElement, AppContext, FocusHandle, Global, ListAlignment, ListState, Model,
-    Render, Task, View,
+    list, prelude::*, AnyElement, AppContext, AsyncWindowContext, FocusHandle, Global,
+    ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
-use open_ai::{FunctionContent, ToolCall, ToolCallContent};
+use open_ai::{FunctionContent, ToolCall, ToolCallContent, ToolDefinition};
 use project::Fs;
 use rich_text::RichText;
 use semantic_index::ProjectIndex;
@@ -23,6 +23,8 @@ use theme::ThemeSettings;
 use tools::ProjectIndexTool;
 use ui::{popover_menu, prelude::*, ButtonLike, CollapsibleContainer, Color, ContextMenu, Tooltip};
 use util::ResultExt;
+
+const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
 
 // gpui::actions!(assistant, [Submit]);
 
@@ -163,10 +165,17 @@ impl AssistantChat {
 
         self.truncate_messages(focused_message_id, cx);
 
-        let task = self.submit_loop(*mode, cx);
-
+        let mode = *mode;
         self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
-            task.await;
+            Self::request_completion(
+                this.clone(),
+                mode,
+                MAX_COMPLETION_CALLS_PER_SUBMISSION,
+                &mut cx,
+            )
+            .await
+            .log_err();
+
             this.update(&mut cx, |this, cx| {
                 let focus = this
                     .user_message(focused_message_id)
@@ -180,33 +189,40 @@ impl AssistantChat {
         }));
     }
 
-    fn submit_loop(&mut self, mode: SubmitMode, cx: &mut ViewContext<Self>) -> Task<()> {
-        self.push_new_assistant_message(cx);
-
-        let task = cx.spawn(move |this, mut cx| async move {
+    async fn request_completion(
+        this: WeakView<Self>,
+        mode: SubmitMode,
+        limit: usize,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        let mut call_count = 0;
+        loop {
             let complete = async {
-                let completion = this.update(&mut cx, |this, cx| {
-                    let definitions = this.tool_registry.definitions();
+                let completion = this.update(cx, |this, cx| {
+                    this.push_new_assistant_message(cx);
+
+                    let definitions = if call_count < limit && matches!(mode, SubmitMode::Codebase)
+                    {
+                        this.tool_registry.definitions()
+                    } else {
+                        &[]
+                    };
+                    call_count += 1;
 
                     CompletionProvider::get(cx).complete(
                         this.model.clone(),
                         this.completion_messages(cx),
                         Vec::new(),
                         1.0,
-                        match mode {
-                            SubmitMode::Simple => &[],
-                            _ => definitions,
-                        },
+                        definitions,
                     )
                 });
 
                 let mut stream = completion?.await?;
-
                 let mut body = String::new();
-
                 while let Some(delta) = stream.next().await {
                     let delta = delta?;
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if let Some(ChatMessage::Assistant(AssistantMessage {
                             body: message_body,
                             tool_calls: message_tool_calls,
@@ -254,60 +270,39 @@ impl AssistantChat {
             }
             .await;
 
-            let tool_tasks = this
-                .update(&mut cx, |this, cx| {
-                    let mut tool_tasks = Vec::new();
-
-                    if let Some(ChatMessage::Assistant(AssistantMessage {
-                        error: message_error,
-                        tool_calls,
-                        ..
-                    })) = this.messages.last_mut()
-                    {
-                        if let Err(error) = complete {
-                            message_error.replace(SharedString::from(error.to_string()));
-                            cx.notify();
-                        } else {
-                            for tool_call in tool_calls.iter() {
-                                tool_tasks.push(this.tool_registry.call(tool_call, cx));
-                            }
+            let mut tool_tasks = Vec::new();
+            this.update(cx, |this, cx| {
+                if let Some(ChatMessage::Assistant(AssistantMessage {
+                    error: message_error,
+                    tool_calls,
+                    ..
+                })) = this.messages.last_mut()
+                {
+                    if let Err(error) = complete {
+                        message_error.replace(SharedString::from(error.to_string()));
+                        cx.notify();
+                    } else {
+                        for tool_call in tool_calls.iter() {
+                            tool_tasks.push(this.tool_registry.call(tool_call, cx));
                         }
                     }
-
-                    tool_tasks
-                })
-                .log_err();
-
-            if let Some(tool_tasks) = tool_tasks {
-                let tools = join_all(tool_tasks.into_iter()).await;
-
-                if tools.is_empty() {
-                    // If we don't have tools, we must not allow the submit_loop to continue
-                    return;
                 }
+            })?;
 
-                let inner_task = this
-                    .update(&mut cx, |this, cx| {
-                        if let Some(ChatMessage::Assistant(AssistantMessage {
-                            tool_calls, ..
-                        })) = this.messages.last_mut()
-                        {
-                            *tool_calls = tools;
-                        }
-
-                        // TODO: Determine best path for dealing with continual submissions
-                        // Our structure _maybe_ requires we next add another blank assistant message?
-                        // Otherwise we're doing it on top of the existing one?
-                        this.submit_loop(mode, cx)
-                    })
-                    .context("Failed to continue loop")
-                    .unwrap();
-
-                inner_task.await;
+            if tool_tasks.is_empty() {
+                return Ok(());
             }
-        });
 
-        return task;
+            let tools = join_all(tool_tasks.into_iter()).await;
+            this.update(cx, |this, cx| {
+                if let Some(ChatMessage::Assistant(AssistantMessage { tool_calls, .. })) =
+                    this.messages.last_mut()
+                {
+                    *tool_calls = tools;
+                    cx.notify();
+                }
+            })?;
+        }
     }
 
     fn user_message(&mut self, message_id: MessageId) -> &mut UserMessage {
