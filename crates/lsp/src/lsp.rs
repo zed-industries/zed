@@ -707,6 +707,7 @@ impl LanguageServer {
                 }
             }),
             locale: None,
+            ..Default::default()
         };
 
         cx.spawn(|_| async move {

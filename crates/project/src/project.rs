@@ -55,7 +55,7 @@ use language::{
 use log::error;
 use lsp::{
     DiagnosticSeverity, DiagnosticTag, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlightKind, LanguageServer, LanguageServerBinary, LanguageServerId,
+    DocumentHighlightKind, Edit, LanguageServer, LanguageServerBinary, LanguageServerId,
     LspRequestFuture, MessageActionItem, OneOf, ServerCapabilities, ServerHealthStatus,
     ServerStatus,
 };
@@ -67,6 +67,7 @@ use prettier_support::{DefaultPrettier, PrettierInstance};
 use project_settings::{LspSettings, ProjectSettings};
 use rand::prelude::*;
 use search_history::SearchHistory;
+use snippet::Snippet;
 use worktree::LocalSnapshot;
 
 use rpc::{ErrorCode, ErrorExt as _};
@@ -209,6 +210,7 @@ pub struct Project {
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
     search_history: SearchHistory,
+    buffer_snippets_listeners: HashMap<Model<Buffer>, Vec<Box<dyn FnMut(Snippet) -> bool>>>,
 }
 
 pub enum LanguageServerToQuery {
@@ -725,6 +727,7 @@ impl Project {
                 tasks,
                 hosted_project_id: None,
                 search_history: Self::new_search_history(),
+                buffer_snippets_listeners: Default::default(),
             }
         })
     }
@@ -879,6 +882,7 @@ impl Project {
                 tasks,
                 hosted_project_id: None,
                 search_history: Self::new_search_history(),
+                buffer_snippets_listeners: Default::default(),
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -5760,6 +5764,13 @@ impl Project {
         }
     }
 
+    pub fn register_snippet_listener(
+        &mut self,
+        buffer: Model<Buffer>,
+        callback: Box<dyn FnMut(Snippet) -> bool>,
+        cx: &mut ModelContext<Self>,
+    ) {
+    }
     fn code_actions_impl(
         &mut self,
         buffer_handle: &Model<Buffer>,
@@ -6064,7 +6075,7 @@ impl Project {
                         uri,
                         version: None,
                     },
-                    edits: edits.into_iter().map(OneOf::Left).collect(),
+                    edits: edits.into_iter().map(Edit::Plain).collect(),
                 })
             }));
         }
@@ -6153,8 +6164,12 @@ impl Project {
                     let edits = this
                         .update(cx, |this, cx| {
                             let edits = op.edits.into_iter().map(|edit| match edit {
-                                OneOf::Left(edit) => edit,
-                                OneOf::Right(edit) => edit.text_edit,
+                                Edit::Plain(edit) => edit,
+                                Edit::Annotated(edit) => edit.text_edit,
+                                Edit::Snippet(edit) => lsp::TextEdit {
+                                    new_text: Snippet::parse(&edit.snippet).unwrap().text,
+                                    range: edit.range,
+                                },
                             });
                             this.edits_from_lsp(
                                 &buffer_to_edit,

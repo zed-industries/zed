@@ -104,6 +104,7 @@ use selections_collection::{resolve_multiple, MutableSelectionsCollection, Selec
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
+use smol::stream::StreamExt;
 use snippet::Snippet;
 use std::ops::Not as _;
 use std::{
@@ -1424,7 +1425,27 @@ impl Editor {
             &buffer.read(cx).snapshot(cx),
             cx,
         );
+        let completion_provider = project.clone().map(|project| Box::new(project) as _);
+        completion_provider
+            .as_ref()
+            .map(|provider: &Box<dyn CompletionProvider>| {
+                let mut sink = provider.pending_snippets(&buffer, cx);
+                cx.spawn(|this, mut cx| async move {
+                    while let Some(snippet) = sink.next().await {
+                        let Ok(_) = this.update(&mut cx, |this, cx| {
+                            if this.focus_handle.contains_focused(cx) {
+                                dbg!(snippet);
+                            }
 
+                            // todo po: push snippets.
+                        }) else {
+                            // Editor is no longer around, we shouldn't poll anymore.
+                            return;
+                        };
+                    }
+                })
+                .detach();
+            });
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
@@ -1446,7 +1467,7 @@ impl Editor {
             ime_transaction: Default::default(),
             active_diagnostics: None,
             soft_wrap_mode_override,
-            completion_provider: project.clone().map(|project| Box::new(project) as _),
+            completion_provider,
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
@@ -10048,6 +10069,15 @@ pub trait CompletionProvider {
         push_to_history: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>>;
+
+    fn pending_snippets(
+        &self,
+        buffer: &Model<MultiBuffer>,
+        cx: &mut ViewContext<Editor>,
+    ) -> futures::channel::mpsc::Receiver<Snippet> {
+        // By default we return a channel that's closed straight away
+        futures::channel::mpsc::channel(0).1
+    }
 }
 
 impl CompletionProvider for Model<Project> {
@@ -10084,6 +10114,19 @@ impl CompletionProvider for Model<Project> {
             project.apply_additional_edits_for_completion(buffer, completion, push_to_history, cx)
         })
     }
+    // fn pending_snippets(
+    //     &self,
+    //     buffer: &Model<MultiBuffer>,
+    //     cx: &mut ViewContext<Editor>,
+    // ) -> futures::channel::mpsc::Receiver<Snippet> {
+    //     let (tx, rx) = futures::channel::mpsc::channel(1024);
+    //     self.update(cx, |project, cx| {
+    //         buffer.read(cx).for_each_buffer(|buffer| {
+    //             project.
+    //         })
+    //     });
+    //     rx
+    // }
 }
 
 fn inlay_hint_settings(
