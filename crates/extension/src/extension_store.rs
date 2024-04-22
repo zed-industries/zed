@@ -487,16 +487,21 @@ impl ExtensionStore {
     /// This can be used to make certain functionality provided by extensions
     /// available out-of-the-box.
     pub fn auto_install_extensions(&mut self, cx: &mut ModelContext<Self>) {
-        let auto_installed_extensions = ["html".into()];
+        let extension_settings = ExtensionSettings::get_global(cx);
 
-        let extensions_to_install = auto_installed_extensions
+        let extensions_to_install = extension_settings
+            .auto_install_extensions
+            .keys()
             .into_iter()
-            .filter(|extension_id: &Arc<str>| {
-                !self
+            .filter(|extension_id| extension_settings.should_auto_install(extension_id))
+            .filter(|extension_id| {
+                let is_already_installed = self
                     .extension_index
                     .extensions
-                    .contains_key(extension_id.as_ref())
+                    .contains_key(extension_id.as_ref());
+                !is_already_installed
             })
+            .cloned()
             .collect::<Vec<_>>();
 
         cx.spawn(move |this, mut cx| async move {
