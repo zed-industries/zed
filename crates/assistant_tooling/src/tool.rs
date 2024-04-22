@@ -7,7 +7,6 @@ use std::fmt::Debug;
 pub trait ToolFunctionOutput {
     fn render(&self, cx: &mut WindowContext) -> AnyElement;
     fn format(&self) -> String;
-    fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput>;
 }
 
 impl Debug for dyn ToolFunctionOutput {
@@ -27,10 +26,6 @@ impl ToolFunctionOutput for DefaultToolFunctionOutput {
     fn format(&self) -> String {
         "".to_string()
     }
-
-    fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput> {
-        Box::new((*self).clone())
-    }
 }
 
 #[derive(Default, Deserialize, Debug)]
@@ -40,17 +35,6 @@ pub struct ToolFunctionCall {
     pub arguments: String,
     #[serde(skip)]
     pub result: Option<Box<dyn ToolFunctionOutput>>,
-}
-
-impl Clone for ToolFunctionCall {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id.clone(),
-            name: self.name.clone(),
-            arguments: self.arguments.clone(),
-            result: self.result.as_ref().map(|r| r.boxed_clone()),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -143,10 +127,6 @@ mod tests {
                 "The current temperature in {} is {} {}",
                 self.location, self.temperature, self.unit
             )
-        }
-
-        fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput> {
-            Box::new((*self).clone())
         }
     }
 

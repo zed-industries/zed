@@ -97,10 +97,6 @@ impl ToolFunctionOutput for Excerpts {
         }
         body
     }
-
-    fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput> {
-        Box::new(self.clone())
-    }
 }
 
 impl LanguageModelTool for ProjectIndexTool {

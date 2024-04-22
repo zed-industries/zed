@@ -35,10 +35,6 @@ impl ToolFunctionOutput for NoToolForName {
         let name = self.name.clone();
         format!("No tool found for {name}")
     }
-
-    fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput> {
-        Box::new((*self).clone())
-    }
 }
 
 #[derive(Clone)]
@@ -68,10 +64,6 @@ impl ToolFunctionOutput for FailedToParseArguments {
 
     fn format(&self) -> String {
         self.error.clone()
-    }
-
-    fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput> {
-        Box::new((*self).clone())
     }
 }
 
@@ -103,10 +95,6 @@ impl ToolFunctionOutput for ToolExecutionError {
 
     fn format(&self) -> String {
         self.error.clone()
-    }
-
-    fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput> {
-        Box::new((*self).clone())
     }
 }
 
@@ -239,10 +227,6 @@ mod test {
                 "The current temperature in {} is {} {}",
                 self.location, self.temperature, self.unit
             )
-        }
-
-        fn boxed_clone(&self) -> Box<dyn ToolFunctionOutput> {
-            Box::new(self.clone())
         }
     }
 
