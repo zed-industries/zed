@@ -492,7 +492,6 @@ impl ExtensionStore {
         let extensions_to_install = extension_settings
             .auto_install_extensions
             .keys()
-            .into_iter()
             .filter(|extension_id| extension_settings.should_auto_install(extension_id))
             .filter(|extension_id| {
                 let is_already_installed = self
