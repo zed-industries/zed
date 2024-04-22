@@ -1177,8 +1177,8 @@ impl EditorElement {
         indicators
     }
 
-    //Folds contained in a hunk are ignored apart from shrinking visual size
-    //If a fold contains any hunks then that fold line is marked as modified
+    // Folds contained in a hunk are ignored apart from shrinking visual size
+    // If a fold contains any hunks then that fold line is marked as modified
     fn layout_git_gutters(
         &self,
         display_rows: Range<u32>,
@@ -2335,6 +2335,7 @@ impl EditorElement {
         clickable_hunks
     }
 
+    // TODO kb split into functions
     fn paint_diff_hunks(
         editor: &View<Editor>,
         bounds: Bounds<Pixels>,
@@ -2347,53 +2348,245 @@ impl EditorElement {
             return clickable_hunks;
         }
 
-        let expanded_hunk_rows = editor
-            .read(cx)
-            .expanded_hunks
-            .iter()
-            .peekable()
-            .map(|expanded_hunk| expanded_hunk.hunk_range.start)
-            .map(|expanded_hunk_start| {
-                expanded_hunk_start
-                    .to_display_point(&layout.position_map.snapshot.display_snapshot)
-                    .row()
-            })
-            .collect::<HashSet<_>>();
+        let display_snapshot = &layout.position_map.snapshot.display_snapshot;
+        let mut hunks_to_remove = Vec::with_capacity(layout.display_hunks.len());
+        let mut hunks_to_reexpand = Vec::with_capacity(layout.display_hunks.len());
+        let mut added_row_highlights = Vec::with_capacity(layout.display_hunks.len());
+        let mut removed_row_highlights = Vec::with_capacity(layout.display_hunks.len());
+        let mut expanded_hunks = editor.update(cx, |editor, cx| {
+            editor
+                .expanded_hunks
+                .iter()
+                .peekable()
+                .filter_map(|expanded_hunk| {
+                    let start_row = expanded_hunk
+                        .hunk_range
+                        .start
+                        .to_display_point(display_snapshot)
+                        .row();
+                    let end_row = expanded_hunk
+                        .hunk_range
+                        .end
+                        .to_display_point(display_snapshot)
+                        .row();
+                    let (_, buffer, _) = editor.buffer.read(cx).excerpt_containing(
+                        DisplayPoint::new(start_row, 0).to_point(display_snapshot),
+                        cx,
+                    )?;
+                    let diff_base_version = buffer.read(cx).diff_base_version();
+                    if diff_base_version != expanded_hunk.diff_base_version {
+                        hunks_to_remove.push(expanded_hunk.clone());
+                        None
+                    } else {
+                        Some((start_row, (end_row, expanded_hunk.clone())))
+                    }
+                })
+                .sorted_by_key(|(hunk_row, _)| *hunk_row)
+                .fuse()
+        });
 
         let line_height = layout.position_map.line_height;
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            for hunk in layout
-                .display_hunks
-                .iter()
-                .filter(|hunk| !expanded_hunk_rows.contains(&hunk.start_display_row()))
-            {
+            let mut current_expanded_hunk = expanded_hunks.next();
+            for hunk in &layout.display_hunks {
                 let (clickable_hunk, background_color, corner_radii) = match hunk {
-                    DisplayDiffHunk::Folded { .. } => (
-                        None,
-                        cx.theme().status().modified,
-                        Corners::all(1. * line_height),
-                    ),
+                    DisplayDiffHunk::Folded { display_row } => {
+                        loop {
+                            if let Some((
+                                expanded_hunk_row_start,
+                                (expanded_hunk_row_end, expanded_hunk),
+                            )) = &current_expanded_hunk
+                            {
+                                if expanded_hunk_row_end < display_row {
+                                    current_expanded_hunk = expanded_hunks.next();
+                                } else if expanded_hunk_row_start > display_row {
+                                    break;
+                                } else {
+                                    hunks_to_remove.push(expanded_hunk.clone());
+                                    current_expanded_hunk = expanded_hunks.next();
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+
+                        (
+                            None,
+                            cx.theme().status().modified,
+                            Corners::all(1. * line_height),
+                        )
+                    }
+                    // TODO kb revert (cmd-z) is not always properly updated
+                    // TODO kb does not properly handle added -> deleted hunk transformation yet
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
                         diff_base_version,
-                    } => match status {
-                        DiffHunkStatus::Added => (
-                            Some((display_row_range, status, diff_base_version)),
-                            cx.theme().status().created,
-                            Corners::all(0.05 * line_height),
-                        ),
-                        DiffHunkStatus::Modified => (
-                            Some((display_row_range, status, diff_base_version)),
-                            cx.theme().status().modified,
-                            Corners::all(0.05 * line_height),
-                        ),
-                        DiffHunkStatus::Removed => (
-                            Some((display_row_range, status, diff_base_version)),
-                            cx.theme().status().deleted,
-                            Corners::all(1. * line_height),
-                        ),
-                    },
+                        diff_base_byte_range,
+                    } => {
+                        let mut new_hunk_to_expand = Some((
+                            display_row_range,
+                            diff_base_byte_range,
+                            status,
+                            diff_base_version,
+                        ));
+                        loop {
+                            if let Some((
+                                expanded_hunk_row_start,
+                                (expanded_hunk_row_end, expanded_hunk),
+                            )) = &current_expanded_hunk
+                            {
+                                let expanded_hunk_row_start = *expanded_hunk_row_start;
+                                let expanded_hunk_row_end = *expanded_hunk_row_end;
+                                if expanded_hunk_row_end < display_row_range.start {
+                                    current_expanded_hunk = expanded_hunks.next();
+                                } else if expanded_hunk_row_start > display_row_range.end {
+                                    break;
+                                } else if &(expanded_hunk_row_start..expanded_hunk_row_end)
+                                    == display_row_range
+                                {
+                                    if matches!(expanded_hunk.status, DiffHunkStatus::Removed) {
+                                        if &expanded_hunk.diff_base_byte_range
+                                            != diff_base_byte_range
+                                        {
+                                            hunks_to_reexpand.push(new_hunk_to_expand);
+                                        } else {
+                                            new_hunk_to_expand = None;
+                                        }
+                                        current_expanded_hunk = expanded_hunks.next();
+                                    } else {
+                                        new_hunk_to_expand = None;
+                                        current_expanded_hunk = expanded_hunks.next();
+                                    }
+                                    break;
+                                } else {
+                                    let hunk_rows = display_row_range;
+                                    let expanded_hunk_rows = expanded_hunk
+                                        .hunk_range
+                                        .start
+                                        .to_display_point(display_snapshot)
+                                        .row()
+                                        ..expanded_hunk
+                                            .hunk_range
+                                            .end
+                                            .to_display_point(display_snapshot)
+                                            .row();
+                                    match expanded_hunk_rows.start.cmp(&hunk_rows.start) {
+                                        Ordering::Less => {
+                                            let removed_rows =
+                                                hunk_rows.start - expanded_hunk_rows.start;
+                                            let new_range_start = expanded_hunk_rows.start + 1;
+                                            let start_anchor =
+                                                display_snapshot.buffer_snapshot.anchor_at(
+                                                    DisplayPoint::new(new_range_start, 0)
+                                                        .to_point(display_snapshot),
+                                                    Bias::Right,
+                                                );
+                                            let end_anchor =
+                                                display_snapshot.buffer_snapshot.anchor_at(
+                                                    DisplayPoint::new(
+                                                        new_range_start + removed_rows,
+                                                        0,
+                                                    )
+                                                    .to_point(display_snapshot),
+                                                    Bias::Left,
+                                                );
+                                            removed_row_highlights.push(start_anchor..end_anchor);
+                                        }
+                                        Ordering::Greater => {
+                                            let added_rows =
+                                                expanded_hunk_rows.start - hunk_rows.start;
+                                            let new_range_start = hunk_rows.start + 1;
+                                            let start_anchor =
+                                                display_snapshot.buffer_snapshot.anchor_at(
+                                                    DisplayPoint::new(new_range_start, 0)
+                                                        .to_point(display_snapshot),
+                                                    Bias::Right,
+                                                );
+                                            let end_anchor =
+                                                display_snapshot.buffer_snapshot.anchor_at(
+                                                    DisplayPoint::new(
+                                                        new_range_start + added_rows,
+                                                        0,
+                                                    )
+                                                    .to_point(display_snapshot),
+                                                    Bias::Left,
+                                                );
+                                            added_row_highlights.push(start_anchor..end_anchor);
+                                        }
+                                        Ordering::Equal => {}
+                                    }
+                                    match expanded_hunk_rows.end.cmp(&hunk_rows.end) {
+                                        Ordering::Less => {
+                                            let added_rows =
+                                                hunk_rows.end - expanded_hunk_rows.end - 1;
+                                            let new_range_start = expanded_hunk_rows.end;
+                                            let start_anchor =
+                                                display_snapshot.buffer_snapshot.anchor_at(
+                                                    DisplayPoint::new(new_range_start, 0)
+                                                        .to_point(display_snapshot),
+                                                    Bias::Right,
+                                                );
+                                            let end_anchor =
+                                                display_snapshot.buffer_snapshot.anchor_at(
+                                                    DisplayPoint::new(
+                                                        new_range_start + added_rows,
+                                                        0,
+                                                    )
+                                                    .to_point(display_snapshot),
+                                                    Bias::Left,
+                                                );
+                                            added_row_highlights.push(start_anchor..end_anchor);
+                                        }
+                                        Ordering::Greater => {
+                                            let removed_rows =
+                                                expanded_hunk_rows.end - hunk_rows.end;
+                                            let new_range_start = hunk_rows.end + 1;
+                                            let start_anchor =
+                                                display_snapshot.buffer_snapshot.anchor_at(
+                                                    DisplayPoint::new(new_range_start, 0)
+                                                        .to_point(display_snapshot),
+                                                    Bias::Right,
+                                                );
+                                            let end_anchor =
+                                                display_snapshot.buffer_snapshot.anchor_at(
+                                                    DisplayPoint::new(
+                                                        new_range_start + removed_rows,
+                                                        0,
+                                                    )
+                                                    .to_point(display_snapshot),
+                                                    Bias::Left,
+                                                );
+                                            removed_row_highlights.push(start_anchor..end_anchor);
+                                        }
+                                        Ordering::Equal => {}
+                                    }
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+
+                        match status {
+                            DiffHunkStatus::Added => (
+                                new_hunk_to_expand,
+                                cx.theme().status().created,
+                                Corners::all(0.05 * line_height),
+                            ),
+                            DiffHunkStatus::Modified => (
+                                new_hunk_to_expand,
+                                cx.theme().status().modified,
+                                Corners::all(0.05 * line_height),
+                            ),
+                            DiffHunkStatus::Removed => (
+                                new_hunk_to_expand,
+                                cx.theme().status().deleted,
+                                Corners::all(1. * line_height),
+                            ),
+                        }
+                    }
                 };
 
                 let hunk_bounds = Self::diff_hunk_bounds(
@@ -2402,11 +2595,18 @@ impl EditorElement {
                     bounds,
                     &hunk,
                 );
-                if let Some((display_row_range, &status, &diff_base_version)) = clickable_hunk {
+                if let Some((
+                    display_row_range,
+                    diff_base_byte_range,
+                    &status,
+                    &diff_base_version,
+                )) = clickable_hunk
+                {
                     clickable_hunks.all.push(hunk_bounds);
                     if hunk_bounds.contains(mouse_position) {
                         clickable_hunks.hovered = Some(HoveredHunk {
                             display_row_range: display_row_range.clone(),
+                            diff_base_byte_range: diff_base_byte_range.clone(),
                             status,
                             bounds,
                             diff_base_version,
@@ -2424,6 +2624,22 @@ impl EditorElement {
             }
         });
 
+        // TODO kb process those
+        // hunks_to_remove
+        // hunks_to_reexpand
+        editor.update(cx, |editor, cx| {
+            for added_rows in added_row_highlights {
+                editor.highlight_rows::<GitRowHighlight>(
+                    added_rows,
+                    Some(added_hunk_color(cx)),
+                    cx,
+                );
+            }
+            for removed_rows in removed_row_highlights {
+                editor.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
+            }
+        });
+
         clickable_hunks
     }
 
@@ -2437,7 +2653,7 @@ impl EditorElement {
         let scroll_top = scroll_position.y * line_height;
 
         match hunk {
-            DisplayDiffHunk::Folded { display_row } => {
+            DisplayDiffHunk::Folded { display_row, .. } => {
                 let start_y = *display_row as f32 * line_height - scroll_top;
                 let end_y = start_y + line_height;
 
@@ -3367,9 +3583,6 @@ fn deploy_blame_entry_context_menu(
     });
 }
 
-// TODO kb update the expanded hunks on editor changes
-// TODO kb clear all related expanded hunks if buffer diff base had changed
-//  the problem here is that one editor may have multiple git diff bases, so we have to track some update_id of the diff base?
 // TODO kb add actions: toggle expand for one or all diff hunks at once
 // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
 // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
@@ -3402,35 +3615,49 @@ fn try_click_diff_hunk(
         Err(ix) => ix,
     };
 
-    let mut created_color = cx.theme().status().git().created;
-    created_color.fade_out(0.7);
-    let (block, rows_highlighted) = match hovered_hunk.status {
-        DiffHunkStatus::Removed => {
-            let block_id = insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx)?;
-            (Some(block_id), false)
-        }
+    let block = match hovered_hunk.status {
+        DiffHunkStatus::Removed => insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx),
         DiffHunkStatus::Added => {
-            editor.highlight_rows::<GitRowHighlight>(hunk_start..hunk_end, Some(created_color), cx);
-            (None, true)
+            editor.highlight_rows::<GitRowHighlight>(
+                hunk_start..hunk_end,
+                Some(added_hunk_color(cx)),
+                cx,
+            );
+            None
         }
         DiffHunkStatus::Modified => {
-            let block_id = insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx)?;
-            editor.highlight_rows::<GitRowHighlight>(hunk_start..hunk_end, Some(created_color), cx);
-            (Some(block_id), true)
+            editor.highlight_rows::<GitRowHighlight>(
+                hunk_start..hunk_end,
+                Some(added_hunk_color(cx)),
+                cx,
+            );
+            insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx)
         }
     };
     editor.expanded_hunks.insert(
         block_insert_index,
         ExpandedGitHunk {
             block,
-            rows_highlighted,
             hunk_range: hunk_start..hunk_end,
             diff_base_version: hovered_hunk.diff_base_version,
             status: hovered_hunk.status,
+            diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
         },
     );
 
     Some(())
+}
+
+fn added_hunk_color(cx: &AppContext) -> Hsla {
+    let mut created_color = cx.theme().status().git().created;
+    created_color.fade_out(0.7);
+    created_color
+}
+
+fn deleted_hunk_color(cx: &AppContext) -> Hsla {
+    let mut deleted_color = cx.theme().status().git().deleted;
+    deleted_color.fade_out(0.7);
+    deleted_color
 }
 
 fn insert_deleted_hunk_block(
@@ -3440,11 +3667,9 @@ fn insert_deleted_hunk_block(
     cx: &mut ViewContext<'_, Editor>,
 ) -> Option<BlockId> {
     let language = editor.language_at(position, cx);
-    let mut deleted_color = cx.theme().status().git().deleted;
-    deleted_color.fade_out(0.7);
-
+    let deleted_hunk_color = deleted_hunk_color(cx);
     let (editor_height, editor_with_deleted_text) =
-        editor_with_deleted_text(language, deleted_text, deleted_color, cx);
+        editor_with_deleted_text(language, deleted_text, deleted_hunk_color, cx);
     let parent_gutter_width = editor.gutter_width;
     let mut new_block_ids = editor.insert_blocks(
         Some(BlockProperties {
@@ -3453,7 +3678,7 @@ fn insert_deleted_hunk_block(
             style: BlockStyle::Flex,
             render: Box::new(move |_| {
                 div()
-                    .bg(deleted_color)
+                    .bg(deleted_hunk_color)
                     .size_full()
                     .pl(parent_gutter_width)
                     .child(editor_with_deleted_text.clone())
@@ -5393,6 +5618,7 @@ struct HoveredHunk {
     status: DiffHunkStatus,
     bounds: Bounds<Pixels>,
     diff_base_version: usize,
+    diff_base_byte_range: Range<usize>,
 }
 
 impl ClickableHunks {

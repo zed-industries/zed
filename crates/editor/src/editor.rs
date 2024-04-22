@@ -486,10 +486,11 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
 }
 
+#[derive(Debug, Clone)]
 struct ExpandedGitHunk {
     block: Option<BlockId>,
-    rows_highlighted: bool,
     hunk_range: Range<Anchor>,
+    diff_base_byte_range: Range<usize>,
     diff_base_version: usize,
     status: DiffHunkStatus,
 }
