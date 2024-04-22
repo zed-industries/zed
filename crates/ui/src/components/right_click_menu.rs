@@ -97,7 +97,7 @@ pub struct MenuHandleFrameState {
 
 impl<M: ManagedView> Element for RightClickMenu<M> {
     type BeforeLayout = MenuHandleFrameState;
-    type AfterLayout = Hitbox;
+    type BeforePaint = Hitbox;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::BeforeLayout) {
         self.with_element_state(cx, |this, element_state, cx| {
@@ -143,7 +143,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         })
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
@@ -153,11 +153,11 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
             let hitbox = cx.insert_hitbox(bounds, false);
 
             if let Some(child) = before_layout.child_element.as_mut() {
-                child.after_layout(cx);
+                child.before_paint(cx);
             }
 
             if let Some(menu) = before_layout.menu_element.as_mut() {
-                menu.after_layout(cx);
+                menu.before_paint(cx);
             }
 
             hitbox
@@ -168,7 +168,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         &mut self,
         _bounds: Bounds<gpui::Pixels>,
         before_layout: &mut Self::BeforeLayout,
-        hitbox: &mut Self::AfterLayout,
+        hitbox: &mut Self::BeforePaint,
         cx: &mut ElementContext,
     ) {
         self.with_element_state(cx, |this, element_state, cx| {

@@ -169,7 +169,7 @@ pub struct PopoverMenuFrameState {
 
 impl<M: ManagedView> Element for PopoverMenu<M> {
     type BeforeLayout = PopoverMenuFrameState;
-    type AfterLayout = Option<HitboxId>;
+    type BeforePaint = Option<HitboxId>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, Self::BeforeLayout) {
         self.with_element_state(cx, |this, element_state, cx| {
@@ -214,7 +214,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         })
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         _bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
@@ -222,11 +222,11 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     ) -> Option<HitboxId> {
         self.with_element_state(cx, |_this, element_state, cx| {
             if let Some(child) = before_layout.child_element.as_mut() {
-                child.after_layout(cx);
+                child.before_paint(cx);
             }
 
             if let Some(menu) = before_layout.menu_element.as_mut() {
-                menu.after_layout(cx);
+                menu.before_paint(cx);
             }
 
             before_layout.child_layout_id.map(|layout_id| {

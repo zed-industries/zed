@@ -105,7 +105,7 @@ impl Styled for UniformList {
 
 impl Element for UniformList {
     type BeforeLayout = UniformListFrameState;
-    type AfterLayout = Option<Hitbox>;
+    type BeforePaint = Option<Hitbox>;
 
     fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
         let max_items = self.item_count;
@@ -137,7 +137,7 @@ impl Element for UniformList {
         )
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         before_layout: &mut Self::BeforeLayout,
@@ -166,7 +166,7 @@ impl Element for UniformList {
             .as_mut()
             .and_then(|handle| handle.deferred_scroll_to_item.take());
 
-        self.interactivity.after_layout(
+        self.interactivity.before_paint(
             bounds,
             content_size,
             cx,

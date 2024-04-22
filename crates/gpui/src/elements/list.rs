@@ -97,7 +97,7 @@ struct LayoutItemsResponse {
 }
 
 /// Frame state used by the [List] element after layout.
-pub struct ListAfterLayoutState {
+pub struct ListBeforePaintState {
     hitbox: Hitbox,
     layout: LayoutItemsResponse,
 }
@@ -523,7 +523,7 @@ pub struct ListOffset {
 
 impl Element for List {
     type BeforeLayout = ();
-    type AfterLayout = ListAfterLayoutState;
+    type BeforePaint = ListBeforePaintState;
 
     fn before_layout(
         &mut self,
@@ -589,12 +589,12 @@ impl Element for List {
         (layout_id, ())
     }
 
-    fn after_layout(
+    fn before_paint(
         &mut self,
         bounds: Bounds<Pixels>,
         _: &mut Self::BeforeLayout,
         cx: &mut ElementContext,
-    ) -> ListAfterLayoutState {
+    ) -> ListBeforePaintState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
 
@@ -633,7 +633,7 @@ impl Element for List {
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
-        ListAfterLayoutState {
+        ListBeforePaintState {
             hitbox,
             layout: layout_response,
         }
@@ -643,19 +643,19 @@ impl Element for List {
         &mut self,
         bounds: Bounds<crate::Pixels>,
         _: &mut Self::BeforeLayout,
-        after_layout: &mut Self::AfterLayout,
+        before_paint: &mut Self::BeforePaint,
         cx: &mut crate::ElementContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            for item in &mut after_layout.layout.item_elements {
+            for item in &mut before_paint.layout.item_elements {
                 item.paint(cx);
             }
         });
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
-        let scroll_top = after_layout.layout.scroll_top;
-        let hitbox_id = after_layout.hitbox.id;
+        let scroll_top = before_paint.layout.scroll_top;
+        let hitbox_id = before_paint.hitbox.id;
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(cx) {
                 list_state.0.borrow_mut().scroll(

@@ -121,7 +121,7 @@ pub(crate) struct DeferredDraw {
     text_style_stack: Vec<TextStyleRefinement>,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
-    layout_range: Range<AfterLayoutIndex>,
+    before_paint_range: Range<BeforePaintIndex>,
     paint_range: Range<PaintIndex>,
 }
 
@@ -145,7 +145,7 @@ pub(crate) struct Frame {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct AfterLayoutIndex {
+pub(crate) struct BeforePaintIndex {
     hitboxes_index: usize,
     tooltips_index: usize,
     deferred_draws_index: usize,
@@ -478,7 +478,7 @@ impl<'a> ElementContext<'a> {
             }
         }
 
-        self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.after_layout(cx));
+        self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.before_paint(cx));
 
         self.window.tooltip_bounds = Some(TooltipBounds {
             id: tooltip_request.id,
@@ -500,16 +500,16 @@ impl<'a> ElementContext<'a> {
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
 
-            let layout_start = self.after_layout_index();
+            let layout_start = self.before_paint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
-                    element.after_layout(cx)
+                    element.before_paint(cx)
                 });
             } else {
-                self.reuse_after_layout(deferred_draw.layout_range.clone());
+                self.reuse_before_paint(deferred_draw.before_paint_range.clone());
             }
-            let layout_end = self.after_layout_index();
-            deferred_draw.layout_range = layout_start..layout_end;
+            let layout_end = self.before_paint_index();
+            deferred_draw.before_paint_range = layout_start..layout_end;
         }
         assert_eq!(
             self.window.next_frame.deferred_draws.len(),
@@ -546,8 +546,8 @@ impl<'a> ElementContext<'a> {
         self.window.element_id_stack.clear();
     }
 
-    pub(crate) fn after_layout_index(&self) -> AfterLayoutIndex {
-        AfterLayoutIndex {
+    pub(crate) fn before_paint_index(&self) -> BeforePaintIndex {
+        BeforePaintIndex {
             hitboxes_index: self.window.next_frame.hitboxes.len(),
             tooltips_index: self.window.next_frame.tooltip_requests.len(),
             deferred_draws_index: self.window.next_frame.deferred_draws.len(),
@@ -557,7 +557,7 @@ impl<'a> ElementContext<'a> {
         }
     }
 
-    pub(crate) fn reuse_after_layout(&mut self, range: Range<AfterLayoutIndex>) {
+    pub(crate) fn reuse_before_paint(&mut self, range: Range<BeforePaintIndex>) {
         let window = &mut self.window;
         window.next_frame.hitboxes.extend(
             window.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
@@ -595,7 +595,7 @@ impl<'a> ElementContext<'a> {
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
-                    layout_range: deferred_draw.layout_range.clone(),
+                    before_paint_range: deferred_draw.before_paint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
         );
@@ -974,7 +974,7 @@ impl<'a> ElementContext<'a> {
         assert_eq!(
             window.draw_phase,
             DrawPhase::Layout,
-            "defer_draw can only be called during before_layout or after_layout"
+            "defer_draw can only be called during before_layout or before_paint"
         );
         let parent_node = window.next_frame.dispatch_tree.active_node_id().unwrap();
         window.next_frame.deferred_draws.push(DeferredDraw {
@@ -984,7 +984,7 @@ impl<'a> ElementContext<'a> {
             priority,
             element: Some(element),
             absolute_offset,
-            layout_range: AfterLayoutIndex::default()..AfterLayoutIndex::default(),
+            before_paint_range: BeforePaintIndex::default()..BeforePaintIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
         });
     }
@@ -1397,7 +1397,7 @@ impl<'a> ElementContext<'a> {
         bounds
     }
 
-    /// This method should be called during `after_layout`. You can use
+    /// This method should be called during `before_paint`. You can use
     /// the returned [Hitbox] during `paint` or in an event handler
     /// to determine whether the inserted hitbox was the topmost.
     pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
