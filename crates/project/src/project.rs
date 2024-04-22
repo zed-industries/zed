@@ -7566,9 +7566,9 @@ impl Project {
 
             // Assign the new diff bases on all of the buffers.
             for (buffer, diff_base) in diff_bases_by_buffer {
-                let buffer_id = buffer.update(&mut cx, |buffer, cx| {
+                let (buffer_id, diff_base_version) = buffer.update(&mut cx, |buffer, cx| {
                     buffer.set_diff_base(diff_base.clone(), cx);
-                    buffer.remote_id().into()
+                    (buffer.remote_id().into(), buffer.diff_base_version() as u64)
                 })?;
                 if let Some(project_id) = remote_id {
                     client
@@ -7576,6 +7576,7 @@ impl Project {
                             project_id,
                             buffer_id,
                             diff_base,
+                            diff_base_version,
                         })
                         .log_err();
                 }
@@ -8821,6 +8822,7 @@ impl Project {
                             project_id,
                             buffer_id: buffer_id.into(),
                             diff_base: buffer.diff_base().map(Into::into),
+                            diff_base_version: buffer.diff_base_version() as u64,
                         })
                         .log_err();
 

@@ -768,6 +768,7 @@ impl LocalWorktree {
                 Buffer::build(
                     text_buffer,
                     diff_base,
+                    0,
                     Some(Arc::new(file)),
                     Capability::ReadWrite,
                 )
@@ -787,6 +788,7 @@ impl LocalWorktree {
             Buffer::build(
                 text_buffer,
                 None,
+                0,
                 Some(Arc::new(File {
                     worktree,
                     path,

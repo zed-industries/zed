@@ -49,6 +49,8 @@ pub struct DiffHunk<T> {
     pub buffer_range: Range<Anchor>,
     /// Original singleton buffer text before the change, that was instead of the `buffer_range`.
     pub diff_base_byte_range: Range<usize>,
+    /// Diff base version that this hunk is based on. Buffer diff_base updates cause the version to change.
+    pub diff_base_version: usize,
 }
 
 impl DiffHunk<u32> {
@@ -160,6 +162,7 @@ impl BufferDiff {
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: buffer.anchor_before(start_point)..buffer.anchor_after(end_point),
                 buffer_id: buffer.remote_id(),
+                diff_base_version: buffer.diff_base_version(),
             })
         })
     }
@@ -191,6 +194,7 @@ impl BufferDiff {
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 buffer_range: hunk.buffer_range.clone(),
                 buffer_id: hunk.buffer_id,
+                diff_base_version: buffer.diff_base_version(),
             })
         })
     }
@@ -290,6 +294,7 @@ impl BufferDiff {
             buffer_range,
             diff_base_byte_range,
             buffer_id: buffer.remote_id(),
+            diff_base_version: buffer.diff_base_version(),
         }
     }
 }

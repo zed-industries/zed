@@ -109,6 +109,7 @@ pub struct BufferSnapshot {
     fragments: SumTree<Fragment>,
     insertions: SumTree<InsertionFragment>,
     pub version: clock::Global,
+    diff_base_version: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -560,6 +561,7 @@ impl Buffer {
                 fragments,
                 insertions,
                 version,
+                diff_base_version: 0,
                 undo_map: Default::default(),
             },
             history,
@@ -2156,6 +2158,10 @@ impl BufferSnapshot {
             range: (start_fragment_id, range.start.offset)..(end_fragment_id, range.end.offset),
             buffer_id: self.remote_id,
         }
+    }
+
+    pub fn diff_base_version(&self) -> usize {
+        self.diff_base_version
     }
 }
 

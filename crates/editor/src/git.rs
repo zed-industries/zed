@@ -19,6 +19,7 @@ pub enum DisplayDiffHunk {
     Unfolded {
         display_row_range: Range<u32>,
         status: DiffHunkStatus,
+        diff_base_version: usize,
     },
 }
 
@@ -86,6 +87,7 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
         DisplayDiffHunk::Unfolded {
             display_row_range: start..end,
             status: hunk.status(),
+            diff_base_version: hunk.diff_base_version,
         }
     }
 }

@@ -490,6 +490,8 @@ struct ExpandedGitHunk {
     block: Option<BlockId>,
     rows_highlighted: bool,
     hunk_range: Range<Anchor>,
+    diff_base_version: usize,
+    status: DiffHunkStatus,
 }
 
 #[derive(Clone)]

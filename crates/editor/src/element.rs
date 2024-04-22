@@ -2376,19 +2376,20 @@ impl EditorElement {
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
+                        diff_base_version,
                     } => match status {
                         DiffHunkStatus::Added => (
-                            Some((display_row_range, status)),
+                            Some((display_row_range, status, diff_base_version)),
                             cx.theme().status().created,
                             Corners::all(0.05 * line_height),
                         ),
                         DiffHunkStatus::Modified => (
-                            Some((display_row_range, status)),
+                            Some((display_row_range, status, diff_base_version)),
                             cx.theme().status().modified,
                             Corners::all(0.05 * line_height),
                         ),
                         DiffHunkStatus::Removed => (
-                            Some((display_row_range, status)),
+                            Some((display_row_range, status, diff_base_version)),
                             cx.theme().status().deleted,
                             Corners::all(1. * line_height),
                         ),
@@ -2401,13 +2402,14 @@ impl EditorElement {
                     bounds,
                     &hunk,
                 );
-                if let Some((display_row_range, status)) = clickable_hunk {
+                if let Some((display_row_range, &status, &diff_base_version)) = clickable_hunk {
                     clickable_hunks.all.push(hunk_bounds);
                     if hunk_bounds.contains(mouse_position) {
                         clickable_hunks.hovered = Some(HoveredHunk {
                             display_row_range: display_row_range.clone(),
-                            status: *status,
+                            status,
                             bounds,
+                            diff_base_version,
                         });
                     }
                 }
@@ -2447,6 +2449,7 @@ impl EditorElement {
             DisplayDiffHunk::Unfolded {
                 display_row_range,
                 status,
+                ..
             } => match status {
                 DiffHunkStatus::Added | DiffHunkStatus::Modified => {
                     let start_row = display_row_range.start;
@@ -3364,9 +3367,13 @@ fn deploy_blame_entry_context_menu(
     });
 }
 
-// TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
 // TODO kb update the expanded hunks on editor changes
+// TODO kb clear all related expanded hunks if buffer diff base had changed
+//  the problem here is that one editor may have multiple git diff bases, so we have to track some update_id of the diff base?
+// TODO kb add actions: toggle expand for one or all diff hunks at once
+// TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
 // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
+// TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
 fn try_click_diff_hunk(
     editor: &mut Editor,
     hovered_hunk: &HoveredHunk,
@@ -3418,6 +3425,8 @@ fn try_click_diff_hunk(
             block,
             rows_highlighted,
             hunk_range: hunk_start..hunk_end,
+            diff_base_version: hovered_hunk.diff_base_version,
+            status: hovered_hunk.status,
         },
     );
 
@@ -5383,6 +5392,7 @@ struct HoveredHunk {
     display_row_range: Range<u32>,
     status: DiffHunkStatus,
     bounds: Bounds<Pixels>,
+    diff_base_version: usize,
 }
 
 impl ClickableHunks {
