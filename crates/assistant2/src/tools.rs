@@ -29,14 +29,9 @@ pub struct ProjectIndexTool {
     pub fs: Arc<dyn Fs>,
 }
 
-#[derive(Serialize, Clone)]
-pub struct Excerpts {
-    pub excerpts: Vec<CodebaseExcerpt>,
-}
-
 impl LanguageModelTool for ProjectIndexTool {
     type Input = CodebaseQuery;
-    type Output = Excerpts;
+    type Output = Vec<CodebaseExcerpt>;
 
     fn name(&self) -> String {
         "query_codebase".to_string()
@@ -87,14 +82,14 @@ impl LanguageModelTool for ProjectIndexTool {
                 .into_iter()
                 .filter_map(|result| result.log_err())
                 .collect();
-            anyhow::Ok(Excerpts { excerpts })
+            anyhow::Ok(excerpts)
         })
     }
 
     fn render(
         _tool_call_id: &str,
-        _input: &Self::Input,
-        output: &Self::Output,
+        input: &Self::Input,
+        excerpts: &Self::Output,
         cx: &mut WindowContext,
     ) -> AnyElement {
         // For if/when we have indeterminate loading
@@ -107,10 +102,13 @@ impl LanguageModelTool for ProjectIndexTool {
         //         .child("Searching codebase..."),
         // Some(excerpts) => {
 
+        let query = input.query.clone();
+
         div()
             .v_flex()
             .gap_2()
-            .children(output.excerpts.iter().map(|excerpt| {
+            .child(div().child(query.into_any_element()))
+            .children(excerpts.iter().map(|excerpt| {
                 // This render doesn't have state/model, so we can't use the listener
                 // let expanded = excerpt.expanded;
                 // let element_id = excerpt.element_id.clone();
@@ -140,10 +138,10 @@ impl LanguageModelTool for ProjectIndexTool {
             .into_any_element()
     }
 
-    fn format(_input: &Self::Input, output: &Self::Output) -> String {
+    fn format(_input: &Self::Input, excerpts: &Self::Output) -> String {
         let mut body = "Semantic search results:\n".to_string();
 
-        for excerpt in &output.excerpts {
+        for excerpt in excerpts {
             body.push_str("Excerpt from ");
             body.push_str(excerpt.path.as_ref());
             body.push_str(", score ");
