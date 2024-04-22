@@ -2047,6 +2047,7 @@ dependencies = [
  "core-services",
  "ipc-channel",
  "plist",
+ "release_channel",
  "serde",
  "util",
 ]
