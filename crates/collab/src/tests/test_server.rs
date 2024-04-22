@@ -274,7 +274,7 @@ impl TestServer {
         let os_keymap = if cfg!(target_os = "linux") {
             "keymaps/default-linux.json"
         } else {
-            "keymaps/default-macos.json" // Default case if none of the above
+            "keymaps/default-macos.json"
         };
 
         cx.update(|cx| {
