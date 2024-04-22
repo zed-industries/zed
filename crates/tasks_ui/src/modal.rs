@@ -421,21 +421,23 @@ impl PickerDelegate for TasksModalDelegate {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     use editor::Editor;
     use gpui::{TestAppContext, VisualTestContext};
-    use language::Point;
+    use language::{ContextProviderWithTasks, Language, LanguageConfig, LanguageMatcher, Point};
     use project::{FakeFs, Project};
     use serde_json::json;
+    use task::TaskTemplates;
+    use workspace::CloseInactiveTabsAndPanes;
 
-    use crate::modal::Spawn;
+    use crate::{modal::Spawn, tests::init_test};
 
     use super::*;
 
     #[gpui::test]
     async fn test_spawn_tasks_modal_query_reuse(cx: &mut TestAppContext) {
-        crate::tests::init_test(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/dir",
@@ -583,7 +585,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_basic_context_for_simple_files(cx: &mut TestAppContext) {
-        crate::tests::init_test(cx);
+        init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/dir",
@@ -673,6 +675,200 @@ mod tests {
         });
         drop(tasks_picker);
         cx.executor().run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_language_task_filtering(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a1.ts": "// a1",
+                "a2.ts": "// a2",
+                "b.rs": "// b",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            let language_registry = project.languages();
+            language_registry.add(Arc::new(
+                Language::new(
+                    LanguageConfig {
+                        name: "TypeScript".into(),
+                        matcher: LanguageMatcher {
+                            path_suffixes: vec!["ts".to_string()],
+                            ..LanguageMatcher::default()
+                        },
+                        ..LanguageConfig::default()
+                    },
+                    None,
+                )
+                .with_context_provider(Some(Arc::new(
+                    ContextProviderWithTasks::new(TaskTemplates(vec![
+                        TaskTemplate {
+                            label: "Task without variables".to_string(),
+                            command: "npm run clean".to_string(),
+                            ..TaskTemplate::default()
+                        },
+                        TaskTemplate {
+                            label: "TypeScript task from file $ZED_FILE".to_string(),
+                            command: "npm run build".to_string(),
+                            ..TaskTemplate::default()
+                        },
+                        TaskTemplate {
+                            label: "Another task from file $ZED_FILE".to_string(),
+                            command: "npm run lint".to_string(),
+                            ..TaskTemplate::default()
+                        },
+                    ])),
+                ))),
+            ));
+            language_registry.add(Arc::new(
+                Language::new(
+                    LanguageConfig {
+                        name: "Rust".into(),
+                        matcher: LanguageMatcher {
+                            path_suffixes: vec!["rs".to_string()],
+                            ..LanguageMatcher::default()
+                        },
+                        ..LanguageConfig::default()
+                    },
+                    None,
+                )
+                .with_context_provider(Some(Arc::new(
+                    ContextProviderWithTasks::new(TaskTemplates(vec![TaskTemplate {
+                        label: "Rust task".to_string(),
+                        command: "cargo check".into(),
+                        ..TaskTemplate::default()
+                    }])),
+                ))),
+            ));
+        });
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+        let _ts_file_1 = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/a1.ts"), true, cx)
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "Another task from file /dir/a1.ts",
+                "TypeScript task from file /dir/a1.ts",
+                "Task without variables",
+            ],
+            "Should open spawn TypeScript tasks for the opened file, tasks with most template variables above, all groups sorted alphanumerically"
+        );
+        emulate_task_schedule(
+            tasks_picker,
+            &project,
+            "TypeScript task from file /dir/a1.ts",
+            cx,
+        );
+
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
+            "After spawning the task and getting it into the history, it should be up in the sort as recently used"
+        );
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+
+        let _ts_file_2 = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, cx)
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "TypeScript task from file /dir/a1.ts",
+                "Another task from file /dir/a2.ts",
+                "TypeScript task from file /dir/a2.ts",
+                "Task without variables"
+            ],
+            "Even when both TS files are open, should only show the history (on the top), and tasks, resolved for the current file"
+        );
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked();
+
+        let _rs_file = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/b.rs"), true, cx)
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec!["Rust task"],
+            "Even when both TS files are open and one TS task spawned, opened file's language tasks should be displayed only"
+        );
+
+        cx.dispatch_action(CloseInactiveTabsAndPanes::default());
+        emulate_task_schedule(tasks_picker, &project, "Rust task", cx);
+        let _ts_file_2 = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, cx)
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            vec![
+                "TypeScript task from file /dir/a1.ts",
+                "Another task from file /dir/a2.ts",
+                "TypeScript task from file /dir/a2.ts",
+                "Task without variables"
+            ],
+            "After closing all but *.rs tabs, running a Rust task and switching back to TS tasks, \
+            same TS spawn history should be restored"
+        );
+    }
+
+    fn emulate_task_schedule(
+        tasks_picker: View<Picker<TasksModalDelegate>>,
+        project: &Model<Project>,
+        scheduled_task_label: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        let scheduled_task = tasks_picker.update(cx, |tasks_picker, _| {
+            tasks_picker
+                .delegate
+                .candidates
+                .iter()
+                .flatten()
+                .find(|(_, task)| task.resolved_label == scheduled_task_label)
+                .cloned()
+                .unwrap()
+        });
+        project.update(cx, |project, cx| {
+            project.task_inventory().update(cx, |inventory, _| {
+                let (kind, task) = scheduled_task;
+                inventory.task_scheduled(kind, task);
+            })
+        });
+        tasks_picker.update(cx, |_, cx| {
+            cx.emit(DismissEvent);
+        });
+        drop(tasks_picker);
+        cx.executor().run_until_parked()
     }
 
     fn open_spawn_tasks(
