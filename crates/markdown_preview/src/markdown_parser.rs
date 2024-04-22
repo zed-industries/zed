@@ -600,6 +600,16 @@ impl<'a> MarkdownParser<'a> {
                     // nested list items have been parsed
                     let block = self.parse_block().await;
                     if let Some(block) = block {
+                        if let Some(items_stack) = items_stack.last_mut() {
+                            // If we did not insert any nested items yet (in this case insertion index is set), we can append the block to the current list item
+                            if !insertion_indices.contains_key(&depth) {
+                                items_stack.extend(block);
+                                continue;
+                            }
+                        }
+
+                        // Othwerwise we need to insert the block after all the nested items
+                        // that have been parsed so far
                         items.extend(block);
                     }
                 }
