@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::{
     env,
     ffi::OsStr,
-    fs::{self},
+    fs,
     path::{Path, PathBuf},
 };
 use util::paths::PathLikeWithPosition;
@@ -53,6 +53,16 @@ struct InfoPlist {
 }
 
 fn main() -> Result<()> {
+    // Intercept version designators
+    #[cfg(target_os = "macos")]
+    if let Some(channel) = std::env::args().nth(1) {
+        // When the first argument is a name of a release channel, we're gonna spawn off a cli of that version, with trailing args passed along.
+        use std::str::FromStr as _;
+
+        if let Ok(channel) = release_channel::ReleaseChannel::from_str(&channel) {
+            return mac_os::spawn_channel_cli(channel, std::env::args().skip(2).collect());
+        }
+    }
     let args = Args::parse();
 
     let bundle = Bundle::detect(args.bundle_path.as_deref()).context("Bundle detection")?;
@@ -200,7 +210,7 @@ mod windows {
 
 #[cfg(target_os = "macos")]
 mod mac_os {
-    use anyhow::Context;
+    use anyhow::{Context, Result};
     use core_foundation::{
         array::{CFArray, CFIndex},
         string::kCFStringEncodingUTF8,
@@ -347,5 +357,34 @@ mod mac_os {
                 self.path().display(),
             )
         }
+    }
+    pub(super) fn spawn_channel_cli(
+        channel: release_channel::ReleaseChannel,
+        leftover_args: Vec<String>,
+    ) -> Result<()> {
+        use anyhow::bail;
+        use std::process::Command;
+
+        let app_id_prompt = format!("id of app \"{}\"", channel.display_name());
+        let app_id_output = Command::new("osascript")
+            .arg("-e")
+            .arg(&app_id_prompt)
+            .output()?;
+        if !app_id_output.status.success() {
+            bail!("Could not determine app id for {}", channel.display_name());
+        }
+        let app_name = String::from_utf8(app_id_output.stdout)?.trim().to_owned();
+        let app_path_prompt = format!("kMDItemCFBundleIdentifier == '{app_name}'");
+        let app_path_output = Command::new("mdfind").arg(app_path_prompt).output()?;
+        if !app_path_output.status.success() {
+            bail!(
+                "Could not determine app path for {}",
+                channel.display_name()
+            );
+        }
+        let app_path = String::from_utf8(app_path_output.stdout)?.trim().to_owned();
+        let cli_path = format!("{app_path}/Contents/MacOS/cli");
+        Command::new(cli_path).args(leftover_args).spawn()?;
+        Ok(())
     }
 }
