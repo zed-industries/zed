@@ -9850,6 +9850,7 @@ dependencies = [
  "shellexpand",
  "smol",
  "task",
+ "tasks_ui",
  "terminal",
  "theme",
  "ui",

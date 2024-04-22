@@ -6,8 +6,8 @@ use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, RenderOnce, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
@@ -72,6 +72,7 @@ impl TerminalPanel {
             pane.set_can_split(false, cx);
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(false);
+            let weak_workspace = workspace.weak_handle();
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let terminal_panel = terminal_panel.clone();
                 h_flex()
@@ -86,6 +87,7 @@ impl TerminalPanel {
                             })
                             .tooltip(|cx| Tooltip::text("New Terminal", cx)),
                     )
+                    .child(tasks_ui::TaskStatusIndicator::new(weak_workspace.clone()).render(cx))
                     .child({
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)

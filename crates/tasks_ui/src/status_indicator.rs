@@ -1,10 +1,10 @@
 use gpui::{IntoElement, Render, View, WeakView};
 use settings::Settings;
 use ui::{
-    div, ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, Tooltip,
+    div, ButtonCommon, Clickable, Color, FluentBuilder, IconButton, IconName, RenderOnce, Tooltip,
     VisualContext, WindowContext,
 };
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{item::ItemHandle, Workspace};
 
 use crate::{modal::Spawn, settings::TaskSettings};
 
@@ -25,8 +25,8 @@ pub struct TaskStatusIndicator {
 }
 
 impl TaskStatusIndicator {
-    pub fn new(workspace: WeakView<Workspace>, cx: &mut WindowContext) -> View<Self> {
-        cx.new_view(|_| Self { workspace })
+    pub fn new(workspace: WeakView<Workspace>) -> Self {
+        Self { workspace }
     }
     fn current_status(&self, cx: &mut WindowContext) -> Option<TaskStatus> {
         self.workspace
@@ -63,8 +63,8 @@ impl TaskStatusIndicator {
     }
 }
 
-impl Render for TaskStatusIndicator {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+impl RenderOnce for TaskStatusIndicator {
+    fn render(self, cx: &mut gpui::WindowContext<'_>) -> impl IntoElement {
         if !TaskSettings::get_global(cx).show_status_indicator {
             return div().into_any_element();
         }
@@ -74,25 +74,20 @@ impl Render for TaskStatusIndicator {
             TaskStatus::Running => Color::Warning,
             TaskStatus::Succeeded => Color::Success,
         });
+        let workspace = self.workspace.clone();
         IconButton::new("tasks-activity-indicator", IconName::Play)
             .when_some(color, |this, color| this.icon_color(color))
-            .on_click(cx.listener(|this, _, cx| {
-                this.workspace
+            .on_click(|_, _| {
+                dbg!("AAA");
+            })
+            .on_click(move |_, cx| {
+                workspace
                     .update(cx, |this, cx| {
                         crate::spawn_task_or_modal(this, &Spawn::modal(), cx)
                     })
                     .ok();
-            }))
+            })
             .tooltip(|cx| Tooltip::for_action("Spawn tasks", &Spawn { task_name: None }, cx))
             .into_any_element()
-    }
-}
-
-impl StatusItemView for TaskStatusIndicator {
-    fn set_active_pane_item(
-        &mut self,
-        _: Option<&dyn ItemHandle>,
-        _: &mut ui::prelude::ViewContext<Self>,
-    ) {
     }
 }
