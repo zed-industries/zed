@@ -3,9 +3,10 @@
 use std::any::{type_name, Any};
 use std::cell::{self, RefCell};
 use std::env;
+use std::fs::File;
 use std::io::Read;
 use std::ops::{Deref, DerefMut};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::panic::Location;
 use std::{
     path::{Path, PathBuf},
@@ -15,7 +16,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use ashpd::desktop::file_chooser::{OpenFileRequest, SaveFileRequest};
 use async_task::Runnable;
 use calloop::channel::Channel;
@@ -487,6 +488,19 @@ pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bo
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
 }
 
+pub(super) unsafe fn read_fd(mut fd: FileDescriptor) -> Result<String> {
+    let mut file = File::from_raw_fd(fd.as_raw_fd());
+
+    let mut buffer = String::new();
+    file.read_to_string(&mut buffer)?;
+
+    // Normalize the text to unix line endings, otherwise
+    // copying from eg: firefox inserts a lot of blank
+    // lines, and that is super annoying.
+    let result = buffer.replace("\r\n", "\n");
+    Ok(result)
+}
+
 impl Keystroke {
     pub(super) fn from_xkb(state: &State, modifiers: Modifiers, keycode: Keycode) -> Self {
         let mut modifiers = modifiers;
@@ -595,46 +609,6 @@ impl Modifiers {
             function: false,
         }
     }
-}
-
-// From https://github.com/wez/wezterm/blob/95581d8697f3749f84ccb1402ac94ea6582b227f/window/src/os/wayland/window.rs#L468
-pub(super) fn read_pipe_with_timeout(mut file: FileDescriptor) -> Result<String> {
-    let mut result = Vec::new();
-
-    file.set_non_blocking(true)?;
-
-    let mut pfd = libc::pollfd {
-        fd: file.as_raw_fd(),
-        events: libc::POLLIN,
-        revents: 0,
-    };
-
-    let mut buf = [0u8; 8192];
-
-    loop {
-        if unsafe { libc::poll(&mut pfd, 1, 1000) == 1 } {
-            match file.read(&mut buf) {
-                Ok(0) => {
-                    break;
-                }
-                Ok(size) => {
-                    result.extend_from_slice(&buf[..size]);
-                }
-                Err(e) => bail!("error reading from pipe: {}", e),
-            }
-        } else {
-            bail!("timed out reading from pipe");
-        }
-    }
-
-    let result = String::from_utf8(result)?;
-
-    // Normalize the text to unix line endings, otherwise
-    // copying from eg: firefox inserts a lot of blank
-    // lines, and that is super annoying.
-    let result = result.replace("\r\n", "\n");
-
-    Ok(result)
 }
 
 #[cfg(test)]

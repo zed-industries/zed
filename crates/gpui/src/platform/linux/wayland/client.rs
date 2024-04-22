@@ -3,11 +3,9 @@ use std::cell::{RefCell, RefMut};
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::bail;
 use async_task::Runnable;
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::{EventLoop, LoopHandle};
@@ -47,7 +45,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
-use super::super::{read_pipe_with_timeout, DOUBLE_CLICK_INTERVAL};
+use super::super::{read_fd, DOUBLE_CLICK_INTERVAL};
 use super::window::{WaylandWindowState, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
@@ -1231,38 +1229,52 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let fd = pipe.read;
                     drop(pipe.write);
 
-                    let file_list = match read_pipe_with_timeout(fd) {
-                        Ok(list) => list,
-                        Err(err) => {
-                            log::error!("error reading drag and drop pipe: {err:?}");
-                            return;
-                        }
-                    };
+                    let read_task = state
+                        .common
+                        .background_executor
+                        .spawn(async { unsafe { read_fd(fd) } });
 
-                    let paths: SmallVec<[_; 2]> = file_list
-                        .lines()
-                        .map(|file| PathBuf::from(file.replace("file://", "")))
-                        .collect();
-                    let position = Point::new(x.into(), y.into());
+                    let this = this.clone();
+                    state
+                        .common
+                        .foreground_executor
+                        .spawn(async move {
+                            let file_list = match read_task.await {
+                                Ok(list) => list,
+                                Err(err) => {
+                                    log::error!("error reading drag and drop pipe: {err:?}");
+                                    return;
+                                }
+                            };
 
-                    // Prevent dropping text from other programs.
-                    if paths.is_empty() {
-                        data_offer.finish();
-                        data_offer.destroy();
-                        return;
-                    }
+                            let paths: SmallVec<[_; 2]> = file_list
+                                .lines()
+                                .map(|path| PathBuf::from(path.replace("file://", "")))
+                                .collect();
+                            let position = Point::new(x.into(), y.into());
 
-                    let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                        position,
-                        paths: crate::ExternalPaths(paths),
-                    });
+                            // Prevent dropping text from other programs.
+                            if paths.is_empty() {
+                                data_offer.finish();
+                                data_offer.destroy();
+                                return;
+                            }
 
-                    state.drag.data_offer = Some(data_offer);
-                    state.drag.window = Some(drag_window.clone());
-                    state.drag.position = position;
+                            let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                                position,
+                                paths: crate::ExternalPaths(paths),
+                            });
 
-                    drop(state);
-                    drag_window.handle_input(input);
+                            let client = this.get_client();
+                            let mut state = client.borrow_mut();
+                            state.drag.data_offer = Some(data_offer);
+                            state.drag.window = Some(drag_window.clone());
+                            state.drag.position = position;
+
+                            drop(state);
+                            drag_window.handle_input(input);
+                        })
+                        .detach();
                 }
             }
             wl_data_device::Event::Motion { x, y, .. } => {
