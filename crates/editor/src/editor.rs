@@ -74,6 +74,7 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
+use language::CachedLspAdapter;
 use language::{
     char_kind,
     language_settings::{self, all_language_settings, InlayHintSettings},
@@ -83,7 +84,10 @@ use language::{
 };
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
-use lsp::{DiagnosticSeverity, LanguageServerId};
+use lsp::{
+    ApplyWorkspaceEdit, ApplyWorkspaceEditResponse, DiagnosticSeverity, LanguageServer,
+    LanguageServerId,
+};
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::ToOffsetUtf16;
@@ -1425,27 +1429,6 @@ impl Editor {
             &buffer.read(cx).snapshot(cx),
             cx,
         );
-        let completion_provider = project.clone().map(|project| Box::new(project) as _);
-        completion_provider
-            .as_ref()
-            .map(|provider: &Box<dyn CompletionProvider>| {
-                let mut sink = provider.pending_snippets(&buffer, cx);
-                cx.spawn(|this, mut cx| async move {
-                    while let Some(snippet) = sink.next().await {
-                        let Ok(_) = this.update(&mut cx, |this, cx| {
-                            if this.focus_handle.contains_focused(cx) {
-                                dbg!(snippet);
-                            }
-
-                            // todo po: push snippets.
-                        }) else {
-                            // Editor is no longer around, we shouldn't poll anymore.
-                            return;
-                        };
-                    }
-                })
-                .detach();
-            });
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, Self::handle_focus).detach();
         cx.on_blur(&focus_handle, Self::handle_blur).detach();
@@ -1467,7 +1450,7 @@ impl Editor {
             ime_transaction: Default::default(),
             active_diagnostics: None,
             soft_wrap_mode_override,
-            completion_provider,
+            completion_provider: project.clone().map(|project| Box::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
             blink_manager: blink_manager.clone(),
@@ -9965,7 +9948,44 @@ impl Editor {
 
     fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.emit(EditorEvent::Focused);
-
+        if let Some(project) = self.project.as_ref() {
+            let project = project.read(cx);
+            // todo: this is not right
+            let mut all_language_servers: HashMap<LanguageServerId, Arc<LanguageServer>> =
+                HashMap::new();
+            self.buffer().read(cx).for_each_buffer(|buffer| {
+                all_language_servers.extend(
+                    project
+                        .language_servers_for_buffer(buffer.read(cx), cx)
+                        .map(|(_, server)| (server.server_id(), server.clone())),
+                );
+            });
+            for server in all_language_servers.values() {
+                server.remove_request_handler::<ApplyWorkspaceEdit>();
+                server
+                    .on_request::<ApplyWorkspaceEdit, _, _>(|params, cx| async move {
+                        dbg!(params);
+                        Ok(ApplyWorkspaceEditResponse {
+                            applied: true,
+                            failed_change: None,
+                            failure_reason: None,
+                        })
+                    })
+                    .detach()
+            }
+            // for (language, language_server) in all_language_servers {
+            //     language_server
+            //         .on_request::<lsp::ApplyWorkspaceEdit, _, _>(|params, cx| async move {
+            //             dbg!(&params);
+            //             Ok(lsp::ApplyWorkspaceEditResponse {
+            //                 applied: true,
+            //                 failure_reason: None,
+            //                 failed_change: None,
+            //             })
+            //         })
+            //         .detach()
+            // }
+        }
         if let Some(rename) = self.pending_rename.as_ref() {
             let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
             cx.focus(&rename_editor_focus_handle);
@@ -10069,15 +10089,6 @@ pub trait CompletionProvider {
         push_to_history: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>>;
-
-    fn pending_snippets(
-        &self,
-        buffer: &Model<MultiBuffer>,
-        cx: &mut ViewContext<Editor>,
-    ) -> futures::channel::mpsc::Receiver<Snippet> {
-        // By default we return a channel that's closed straight away
-        futures::channel::mpsc::channel(0).1
-    }
 }
 
 impl CompletionProvider for Model<Project> {
@@ -10114,19 +10125,6 @@ impl CompletionProvider for Model<Project> {
             project.apply_additional_edits_for_completion(buffer, completion, push_to_history, cx)
         })
     }
-    // fn pending_snippets(
-    //     &self,
-    //     buffer: &Model<MultiBuffer>,
-    //     cx: &mut ViewContext<Editor>,
-    // ) -> futures::channel::mpsc::Receiver<Snippet> {
-    //     let (tx, rx) = futures::channel::mpsc::channel(1024);
-    //     self.update(cx, |project, cx| {
-    //         buffer.read(cx).for_each_buffer(|buffer| {
-    //             project.
-    //         })
-    //     });
-    //     rx
-    // }
 }
 
 fn inlay_hint_settings(
