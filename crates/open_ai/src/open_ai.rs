@@ -208,18 +208,13 @@ pub async fn stream_completion(
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{api_url}/chat/completions");
-
-    let body = serde_json::to_string(&request)?;
-
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
-        .body(AsyncBody::from(body))?;
-
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
-
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
         Ok(reader
@@ -231,13 +226,9 @@ pub async fn stream_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            println!("LINE: {}", line);
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
-                                Err(error) => {
-                                    Some(Err(anyhow!(error)
-                                        .context("Failed to parse OpenAI Delta response")))
-                                }
+                                Err(error) => Some(Err(anyhow!(error))),
                             }
                         }
                     }

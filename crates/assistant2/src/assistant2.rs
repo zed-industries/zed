@@ -183,8 +183,6 @@ impl AssistantChat {
     fn submit_loop(&mut self, mode: SubmitMode, cx: &mut ViewContext<Self>) -> Task<()> {
         self.push_new_assistant_message(cx);
 
-        let mode = mode;
-
         let task = cx.spawn(move |this, mut cx| async move {
             let complete = async {
                 let completion = this.update(&mut cx, |this, cx| {
