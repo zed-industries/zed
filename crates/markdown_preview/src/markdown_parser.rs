@@ -3,7 +3,7 @@ use async_recursion::async_recursion;
 use gpui::FontWeight;
 use language::LanguageRegistry;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, ops::Range, path::PathBuf, sync::Arc};
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -136,11 +136,7 @@ impl<'a> MarkdownParser<'a> {
                     let order = *order;
                     self.cursor += 1;
                     let list = self.parse_list(order).await;
-                    Some(
-                        list.into_iter()
-                            .map(ParsedMarkdownElement::ListItem)
-                            .collect(),
-                    )
+                    Some(list)
                 }
                 Tag::BlockQuote => {
                     self.cursor += 1;
@@ -479,28 +475,25 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
-    async fn parse_list(&mut self, order: Option<u64>) -> Vec<ParsedMarkdownListItem> {
+    async fn parse_list(&mut self, order: Option<u64>) -> Vec<ParsedMarkdownElement> {
         let (_, list_source_range) = self.previous().unwrap();
 
         let mut items = Vec::new();
         let mut items_stack = vec![Vec::new()];
         let mut depth = 1;
         let mut task_item = None;
-        let mut inside_list_item = false;
         let mut order = order;
         let mut order_stack = Vec::new();
-        let mut insertion_index_stack = Vec::new();
-        let mut insertion_index = None;
         let mut list_item_source_range = list_source_range.clone();
         let mut list_item_source_range_stack = Vec::new();
+        let mut insertion_indices = HashMap::new();
 
         while !self.eof() {
             let (current, source_range) = self.current().unwrap();
             match current {
                 Event::Start(Tag::List(new_order)) => {
-                    // If we are inside a list item, we need to push the current list to the stack
-                    if items_stack.last().is_some() {
-                        insertion_index_stack.push(items.len());
+                    if items_stack.last().is_some() && !insertion_indices.contains_key(&depth) {
+                        insertion_indices.insert(depth, items.len());
                     }
 
                     // We will use the start of the nested list as the end for the current item's range,
@@ -514,11 +507,11 @@ impl<'a> MarkdownParser<'a> {
                     depth += 1;
                 }
                 Event::End(TagEnd::List(_)) => {
-                    self.cursor += 1;
-                    depth -= 1;
-                    insertion_index = insertion_index_stack.pop();
                     order = order_stack.pop().flatten();
                     list_item_source_range = list_item_source_range_stack.pop().unwrap_or_default();
+                    self.cursor += 1;
+                    depth -= 1;
+
                     if depth == 0 {
                         break;
                     }
@@ -527,7 +520,6 @@ impl<'a> MarkdownParser<'a> {
                     list_item_source_range = source_range.clone();
 
                     self.cursor += 1;
-                    inside_list_item = true;
                     items_stack.push(Vec::new());
 
                     // Check for task list marker (`- [ ]` or `- [x]`)
@@ -583,33 +575,32 @@ impl<'a> MarkdownParser<'a> {
                     }
 
                     if let Some(content) = items_stack.pop() {
-                        let item = ParsedMarkdownListItem {
+                        let item = ParsedMarkdownElement::ListItem(ParsedMarkdownListItem {
                             source_range: list_item_source_range.clone(),
                             content,
                             depth,
                             item_type,
-                        };
+                        });
 
-                        if let Some(index) = insertion_index.take() {
-                            items.insert(index, item);
+                        if let Some(index) = insertion_indices.get(&depth) {
+                            items.insert(*index, item);
+                            insertion_indices.remove(&depth);
                         } else {
                             items.push(item);
                         }
                     }
 
-                    inside_list_item = false;
                     task_item = None;
                 }
                 _ => {
-                    if !inside_list_item {
+                    if depth <= 0 {
                         break;
                     }
-
+                    // This can only happen if a list item contains a block after
+                    // nested list items have been parsed
                     let block = self.parse_block().await;
                     if let Some(block) = block {
-                        if let Some(content) = items_stack.last_mut() {
-                            content.extend(block);
-                        }
+                        items.extend(block);
                     }
                 }
             }
@@ -1040,6 +1031,32 @@ Some other content
                     p("This is the second paragraph in the list item.", 50..96)
                 ],
             ),],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_nested_list_with_paragraph_inside() {
+        let parsed = parse(
+            "\
+1. a
+    1. b
+        1. c
+
+    text
+
+    1. d",
+        )
+        .await;
+
+        assert_eq!(
+            parsed.children,
+            vec![
+                list_item(0..10, 1, Ordered(1), vec![p("a", 3..4)],),
+                list_item(10..23, 2, Ordered(1), vec![p("b", 12..13),],),
+                list_item(23..33, 3, Ordered(1), vec![p("c", 20..21),],),
+                p("text", 33..43),
+                list_item(43..47, 2, Ordered(1), vec![p("d", 45..46),],),
+            ],
         );
     }
 
