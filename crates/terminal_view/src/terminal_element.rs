@@ -429,7 +429,7 @@ impl TerminalElement {
             move |e, cx| {
                 cx.focus(&focus);
                 terminal.update(cx, |terminal, cx| {
-                    terminal.mouse_down(&e, origin);
+                    terminal.mouse_down(&e, origin, cx);
                     cx.notify();
                 })
             }
@@ -479,6 +479,17 @@ impl TerminalElement {
                 },
             ),
         );
+        self.interactivity.on_mouse_down(
+            MouseButton::Middle,
+            TerminalElement::generic_button_handler(
+                terminal.clone(),
+                origin,
+                focus.clone(),
+                move |terminal, origin, e, cx| {
+                    terminal.mouse_down(&e, origin, cx);
+                },
+            ),
+        );
         self.interactivity.on_scroll_wheel({
             let terminal = terminal.clone();
             move |e, cx| {
@@ -498,19 +509,8 @@ impl TerminalElement {
                     terminal.clone(),
                     origin,
                     focus.clone(),
-                    move |terminal, origin, e, _cx| {
-                        terminal.mouse_down(&e, origin);
-                    },
-                ),
-            );
-            self.interactivity.on_mouse_down(
-                MouseButton::Middle,
-                TerminalElement::generic_button_handler(
-                    terminal.clone(),
-                    origin,
-                    focus.clone(),
-                    move |terminal, origin, e, _cx| {
-                        terminal.mouse_down(&e, origin);
+                    move |terminal, origin, e, cx| {
+                        terminal.mouse_down(&e, origin, cx);
                     },
                 ),
             );

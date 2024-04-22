@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 license = "AGPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/anthropic.rs"
 
@@ -17,6 +20,3 @@ util.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
-
-[lints]
-workspace = true

@@ -6,6 +6,9 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/semantic_index.rs"
 
@@ -43,6 +46,3 @@ project = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
-
-[lints]
-workspace = true

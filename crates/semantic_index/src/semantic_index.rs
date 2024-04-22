@@ -599,7 +599,6 @@ impl WorktreeIndex {
 
                 let mut embeddings = Vec::new();
                 for embedding_batch in chunks.chunks(embedding_provider.batch_size()) {
-                    // todo!("add a retry facility")
                     embeddings.extend(embedding_provider.embed(embedding_batch).await?);
                 }
 
@@ -889,7 +888,6 @@ mod tests {
             .await
             .unwrap();
 
-        // todo!(): use a fixture
         let project_path = Path::new("./fixture");
 
         let project = cx

@@ -10,8 +10,8 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
-fs.workspace = true
 fuzzy.workspace = true
+git.workspace = true
 gpui.workspace = true
 picker.workspace = true
 ui.workspace = true

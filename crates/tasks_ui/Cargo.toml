@@ -25,7 +25,6 @@ util.workspace = true
 terminal.workspace = true
 workspace.workspace = true
 language.workspace = true
-itertools.workspace = true
 
 
 [dev-dependencies]
