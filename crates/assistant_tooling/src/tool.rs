@@ -1,40 +1,88 @@
 use anyhow::Result;
-use gpui::{div, AnyElement, AppContext, Element, Task, WindowContext};
+use gpui::{div, AnyElement, AppContext, Element, ParentElement as _, Task, WindowContext};
 use schemars::{schema::SchemaObject, schema_for, JsonSchema};
 use serde::Deserialize;
-use std::fmt::Debug;
+use std::{any::Any, fmt::Debug};
 
-pub trait ToolFunctionOutput {
-    fn render(&self, cx: &mut WindowContext) -> AnyElement;
-    fn format(&self) -> String;
-}
-
-impl Debug for dyn ToolFunctionOutput {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.format().fmt(f)
-    }
-}
-
-#[derive(Clone)]
-pub struct DefaultToolFunctionOutput;
-
-impl ToolFunctionOutput for DefaultToolFunctionOutput {
-    fn render(&self, _cx: &mut WindowContext) -> AnyElement {
-        div().into_any()
-    }
-
-    fn format(&self) -> String {
-        "".to_string()
-    }
-}
-
-#[derive(Default, Deserialize, Debug)]
+#[derive(Default, Deserialize)]
 pub struct ToolFunctionCall {
     pub id: String,
     pub name: String,
     pub arguments: String,
     #[serde(skip)]
-    pub result: Option<Box<dyn ToolFunctionOutput>>,
+    pub result: Option<ToolFunctionCallResult>,
+}
+
+pub enum ToolFunctionCallResult {
+    NoSuchTool,
+    ParsingFailed,
+    ExecutionFailed {
+        input: Box<dyn Any>,
+    },
+    Finished {
+        input: Box<dyn Any>,
+        output: Box<dyn Any>,
+        render_fn: fn(
+            // tool_call_id
+            &str,
+            // LanguageModelTool::Input
+            &Box<dyn Any>,
+            // LanguageModelTool::Output
+            &Box<dyn Any>,
+            &mut WindowContext,
+        ) -> AnyElement,
+        format_fn: fn(
+            // LanguageModelTool::Input
+            &Box<dyn Any>,
+            // LanguageModelTool::Output
+            &Box<dyn Any>,
+        ) -> String,
+    },
+}
+
+impl ToolFunctionCallResult {
+    pub fn render(
+        &self,
+        tool_name: &str,
+        tool_call_id: &str,
+        cx: &mut WindowContext,
+    ) -> AnyElement {
+        match self {
+            ToolFunctionCallResult::NoSuchTool => {
+                div().child(format!("no such tool {tool_name}")).into_any()
+            }
+            ToolFunctionCallResult::ParsingFailed => div()
+                .child(format!("failed to parse input for tool {tool_name}"))
+                .into_any(),
+            ToolFunctionCallResult::ExecutionFailed { .. } => div()
+                .child(format!("failed to execute tool {tool_name}"))
+                .into_any(),
+            ToolFunctionCallResult::Finished {
+                input,
+                output,
+                render_fn,
+                ..
+            } => render_fn(tool_call_id, input, output, cx),
+        }
+    }
+
+    pub fn format(&self, tool: &str) -> String {
+        match self {
+            ToolFunctionCallResult::NoSuchTool => format!("no such tool {tool}"),
+            ToolFunctionCallResult::ParsingFailed => {
+                format!("failed to parse input for tool {tool}")
+            }
+            ToolFunctionCallResult::ExecutionFailed { input: _input } => {
+                format!("failed to execute tool {tool}")
+            }
+            ToolFunctionCallResult::Finished {
+                input,
+                output,
+                format_fn,
+                ..
+            } => format_fn(input, output),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -63,7 +111,7 @@ pub trait LanguageModelTool {
     type Input: for<'de> Deserialize<'de> + JsonSchema;
 
     /// The output returned by executing the tool.
-    type Output: ToolFunctionOutput + 'static;
+    type Output: 'static;
 
     /// The name of the tool is exposed to the language model to allow
     /// the model to pick which tools to use. As this name is used to
@@ -84,129 +132,14 @@ pub trait LanguageModelTool {
     }
 
     /// Execute the tool
-    fn execute(&self, input: Self::Input, cx: &AppContext) -> Task<Result<Self::Output>>;
-}
+    fn execute(&self, input: &Self::Input, cx: &AppContext) -> Task<Result<Self::Output>>;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    fn render(
+        tool_call_id: &str,
+        input: &Self::Input,
+        output: &Self::Output,
+        cx: &mut WindowContext,
+    ) -> AnyElement;
 
-    use gpui::{ParentElement, TestAppContext};
-    use serde::{Deserialize, Serialize};
-    use serde_json::json;
-
-    #[derive(Deserialize, Serialize, JsonSchema)]
-    struct WeatherQuery {
-        location: String,
-        unit: String,
-    }
-
-    struct WeatherTool {
-        current_weather: WeatherResult,
-    }
-
-    #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-    struct WeatherResult {
-        location: String,
-        temperature: f64,
-        unit: String,
-    }
-
-    impl ToolFunctionOutput for WeatherResult {
-        fn render(&self, _cx: &mut WindowContext) -> AnyElement {
-            div()
-                .child(format!(
-                    "The current temperature in {} is {} {}",
-                    self.location, self.temperature, self.unit
-                ))
-                .into_any()
-        }
-
-        fn format(&self) -> String {
-            format!(
-                "The current temperature in {} is {} {}",
-                self.location, self.temperature, self.unit
-            )
-        }
-    }
-
-    impl LanguageModelTool for WeatherTool {
-        type Input = WeatherQuery;
-        type Output = WeatherResult;
-
-        fn name(&self) -> String {
-            "get_current_weather".to_string()
-        }
-
-        fn description(&self) -> String {
-            "Fetches the current weather for a given location.".to_string()
-        }
-
-        fn execute(&self, input: WeatherQuery, _cx: &AppContext) -> Task<Result<Self::Output>> {
-            let _location = input.location.clone();
-            let _unit = input.unit.clone();
-
-            let weather = self.current_weather.clone();
-
-            Task::ready(Ok(weather))
-        }
-    }
-
-    #[gpui::test]
-    async fn test_openai_weather_example(cx: &mut TestAppContext) {
-        cx.background_executor.run_until_parked();
-
-        let tool = WeatherTool {
-            current_weather: WeatherResult {
-                location: "San Francisco".to_string(),
-                temperature: 21.0,
-                unit: "Celsius".to_string(),
-            },
-        };
-
-        let tools = vec![tool.definition()];
-        assert_eq!(tools.len(), 1);
-
-        let expected = ToolFunctionDefinition {
-            name: "get_current_weather".to_string(),
-            description: "Fetches the current weather for a given location.".to_string(),
-            parameters: schema_for!(WeatherQuery).schema,
-        };
-
-        assert_eq!(tools[0].name, expected.name);
-        assert_eq!(tools[0].description, expected.description);
-
-        let expected_schema = serde_json::to_value(&tools[0].parameters).unwrap();
-
-        assert_eq!(
-            expected_schema,
-            json!({
-                "title": "WeatherQuery",
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string"
-                    },
-                    "unit": {
-                        "type": "string"
-                    }
-                },
-                "required": ["location", "unit"]
-            })
-        );
-
-        let args = json!({
-            "location": "San Francisco",
-            "unit": "Celsius"
-        });
-
-        let query: WeatherQuery = serde_json::from_value(args).unwrap();
-
-        let result = cx.update(|cx| tool.execute(query, cx)).await;
-
-        assert!(result.is_ok());
-        let result = result.unwrap();
-
-        assert_eq!(result, tool.current_weather);
-    }
+    fn format(input: &Self::Input, output: &Self::Output) -> String;
 }

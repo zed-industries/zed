@@ -2,7 +2,7 @@ mod completion_provider;
 mod tools;
 
 use anyhow::{Context, Result};
-use assistant_tooling::{ToolFunctionCall, ToolFunctionDefinition, ToolRegistry};
+use assistant_tooling::{ToolFunctionCall, ToolRegistry};
 use client::{proto, Client};
 use completion_provider::*;
 use editor::{Editor, EditorEvent};
@@ -12,7 +12,7 @@ use gpui::{
     ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
-use open_ai::{FunctionContent, ToolCall, ToolCallContent, ToolDefinition};
+use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use project::Fs;
 use rich_text::RichText;
 use semantic_index::ProjectIndex;
@@ -473,8 +473,8 @@ impl AssistantChat {
                         match result {
                             Some(result) => div()
                                 .p_2()
-                                .child(Label::new(name).color(Color::Modified))
-                                .child(result.render(cx))
+                                .child(Label::new(name.clone()).color(Color::Modified))
+                                .child(result.render(&name, &tool_call.id, cx))
                                 .into_any(),
                             None => div()
                                 .p_2()
@@ -536,7 +536,7 @@ impl AssistantChat {
                         // For now I'm going to have to assume we send an empty string because otherwise
                         // the Chat API will break -- there is a required message for every tool call by ID
                         let content = match &tool_call.result {
-                            Some(result) => result.format(),
+                            Some(result) => result.format(&tool_call.name),
                             None => "".to_string(),
                         };
 
