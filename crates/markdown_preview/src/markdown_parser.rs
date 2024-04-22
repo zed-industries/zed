@@ -608,7 +608,7 @@ impl<'a> MarkdownParser<'a> {
                             }
                         }
 
-                        // Othwerwise we need to insert the block after all the nested items
+                        // Otherwise we need to insert the block after all the nested items
                         // that have been parsed so far
                         items.extend(block);
                     }
