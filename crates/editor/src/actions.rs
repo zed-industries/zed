@@ -254,7 +254,7 @@ gpui::actions!(
         ToggleGitBlame,
         ToggleGitBlameInline,
         ToggleGitHunkDiff,
-        ToggleAllGitHunkDiffs,
+        ExpandAllGitHunkDiffs,
         ToggleInlayHints,
         ToggleLineNumbers,
         ToggleSoftWrap,

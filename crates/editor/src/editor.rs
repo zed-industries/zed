@@ -129,7 +129,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, IconButton, IconName, IconSize, ListItem, Popover,
     Tooltip,
 };
-use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{debug_panic, defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
@@ -9097,37 +9097,235 @@ impl Editor {
     }
 
     pub fn toggle_git_hunk_diff(&mut self, _: &ToggleGitHunkDiff, cx: &mut ViewContext<Self>) {
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let snapshot = self.snapshot(cx);
         let selections = self.selections.disjoint_anchors();
+        let rows_with_expanded_hunks = self
+            .expanded_hunks
+            .iter()
+            .map(|hunk| &hunk.hunk_range)
+            .map(|anchor_range| {
+                (
+                    anchor_range
+                        .start
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row(),
+                    anchor_range
+                        .end
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
         self.toggle_hunks_expanded(
-            hunks_for_selections(&multi_buffer_snapshot, &selections),
+            rows_with_expanded_hunks,
+            hunks_for_selections(&snapshot.display_snapshot.buffer_snapshot, &selections),
             cx,
         );
     }
 
-    pub fn toggle_all_git_hunk_diffs(
+    pub fn expand_all_git_hunk_diffs(
         &mut self,
-        _: &ToggleAllGitHunkDiffs,
+        _: &ExpandAllGitHunkDiffs,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.expanded_hunks.is_empty() {
-            let snapshot = self.snapshot(cx);
-            self.toggle_hunks_expanded(
-                snapshot
-                    .buffer_snapshot
-                    .git_diff_hunks_in_range(0..snapshot.max_point().row())
-                    .collect(),
-                cx,
-            );
-        } else {
-            self.clear_expanded_diff_hunks(cx);
+        let snapshot = self.snapshot(cx);
+        let rows_with_expanded_hunks = self
+            .expanded_hunks
+            .iter()
+            .map(|hunk| &hunk.hunk_range)
+            .map(|anchor_range| {
+                (
+                    anchor_range
+                        .start
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row(),
+                    anchor_range
+                        .end
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let hunks = snapshot
+            .display_snapshot
+            .buffer_snapshot
+            .git_diff_hunks_in_range(0..snapshot.display_snapshot.max_point().row())
+            .filter(|hunk| {
+                let row_range_end = rows_with_expanded_hunks.get(&hunk.associated_range.start);
+                row_range_end.is_none() || row_range_end != Some(&hunk.associated_range.end)
+            })
+            .collect();
+        self.toggle_hunks_expanded(rows_with_expanded_hunks, hunks, cx);
+    }
+
+    fn toggle_hunks_expanded(
+        &mut self,
+        rows_with_expanded_hunks: HashMap<u32, u32>,
+        hunks_to_toggle: Vec<DiffHunk<u32>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        for hunk_to_toggle in hunks_to_toggle {
+            match rows_with_expanded_hunks.get(&hunk_to_toggle.associated_range.start) {
+                Some(&row_end) if row_end == hunk_to_toggle.associated_range.end => {
+                    self.remove_git_diff_hunk(&hunk_to_toggle, cx);
+                }
+                _ => {
+                    self.show_git_diff_hunk(
+                        &HunkToShow {
+                            status: hunk_to_toggle.status(),
+                            display_row_range: hunk_to_toggle.associated_range,
+                            diff_base_version: hunk_to_toggle.diff_base_version,
+                            diff_base_byte_range: hunk_to_toggle.diff_base_byte_range,
+                        },
+                        cx,
+                    );
+                }
+            }
         }
     }
 
-    fn toggle_hunks_expanded(&mut self, hunks: Vec<DiffHunk<u32>>, cx: &mut ViewContext<Self>) {
+    // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
+    // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
+    // TODO kb is possible to simplify the code and unite hitboxes with the HunkToShow?
+    // TODO kb panics or does not expand all on toggle all hunks
+    // !!!! TODO kb `DiffHunk.associated_range` is a MULTIBUFFER range, NOT a DISPLAY range. Check all related code.
+    fn show_git_diff_hunk(
+        &mut self,
+        hunk: &HunkToShow,
+        cx: &mut ViewContext<'_, Editor>,
+    ) -> Option<()> {
+        let editor_snapshot = self.snapshot(cx);
+        let buffer_range = buffer_range(&hunk.display_row_range, &editor_snapshot.display_snapshot);
+        let (multi_buffer_snapshot, deleted_text) = self.buffer().update(cx, |buffer, cx| {
+            let buffer_snapshot = buffer.snapshot(cx);
+            let original_text = original_text(buffer, buffer_range.clone(), cx);
+            (buffer_snapshot, original_text)
+        });
+        let hunk_start = multi_buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
+        let hunk_end = multi_buffer_snapshot.anchor_at(buffer_range.end, Bias::Left);
+
+        let block_insert_index = match self.expanded_hunks.binary_search_by(|probe| {
+            probe
+                .hunk_range
+                .start
+                .cmp(&hunk_start, &multi_buffer_snapshot)
+        }) {
+            Ok(_already_present) => return None,
+            Err(ix) => ix,
+        };
+
+        let block = match hunk.status {
+            DiffHunkStatus::Removed => {
+                if let Some(deleted_text) = deleted_text {
+                    self.insert_deleted_hunk_block(hunk_start, deleted_text, cx)
+                } else {
+                    debug_panic!("Found no deleted text for removed hunk {hunk:?}");
+                    None
+                }
+            }
+            DiffHunkStatus::Added => {
+                self.highlight_rows::<GitRowHighlight>(
+                    hunk_start..hunk_end,
+                    Some(added_hunk_color(cx)),
+                    cx,
+                );
+                None
+            }
+            DiffHunkStatus::Modified => {
+                self.highlight_rows::<GitRowHighlight>(
+                    hunk_start..hunk_end,
+                    Some(added_hunk_color(cx)),
+                    cx,
+                );
+                if let Some(deleted_text) = deleted_text {
+                    self.insert_deleted_hunk_block(hunk_start, deleted_text, cx)
+                } else {
+                    debug_panic!("Found no deleted text for modified hunk {hunk:?}");
+                    None
+                }
+            }
+        };
+        self.expanded_hunks.insert(
+            block_insert_index,
+            ExpandedGitHunk {
+                block,
+                hunk_range: hunk_start..hunk_end,
+                diff_base_version: hunk.diff_base_version,
+                status: hunk.status,
+                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+            },
+        );
+
+        Some(())
+    }
+
+    fn remove_git_diff_hunk(&mut self, hunk: &DiffHunk<u32>, cx: &mut ViewContext<'_, Self>) {
+        let (has_row_highlights, has_block) = match hunk.status() {
+            DiffHunkStatus::Modified => (true, true),
+            DiffHunkStatus::Added => (true, false),
+            DiffHunkStatus::Removed => (false, true),
+        };
         let snapshot = self.snapshot(cx);
-        let expanded_hunks = &self.expanded_hunks;
-        todo!("TODO kb")
+        let buffer_range = buffer_range(&hunk.associated_range, &snapshot.display_snapshot);
+        let multi_buffer_range = snapshot
+            .buffer_snapshot
+            .anchor_at(buffer_range.start, Bias::Right)
+            ..snapshot
+                .buffer_snapshot
+                .anchor_at(buffer_range.end, Bias::Left);
+
+        if has_row_highlights {
+            self.highlight_rows::<GitRowHighlight>(multi_buffer_range.clone(), None, cx);
+        }
+        if has_block {
+            if let Ok(ix) = self.expanded_hunks.binary_search_by(|probe| {
+                probe
+                    .hunk_range
+                    .start
+                    .cmp(&multi_buffer_range.start, &snapshot.buffer_snapshot)
+            }) {
+                self.expanded_hunks.remove(ix);
+            };
+        }
+    }
+
+    fn insert_deleted_hunk_block(
+        &mut self,
+        position: Anchor,
+        deleted_text: String,
+        cx: &mut ViewContext<'_, Self>,
+    ) -> Option<BlockId> {
+        let language = self.language_at(position, cx);
+        let deleted_hunk_color = deleted_hunk_color(cx);
+        let (editor_height, editor_with_deleted_text) =
+            editor_with_deleted_text(language, deleted_text, deleted_hunk_color, cx);
+        let parent_gutter_width = self.gutter_width;
+        let mut new_block_ids = self.insert_blocks(
+            Some(BlockProperties {
+                position,
+                height: editor_height,
+                style: BlockStyle::Flex,
+                render: Box::new(move |_| {
+                    div()
+                        .bg(deleted_hunk_color)
+                        .size_full()
+                        .pl(parent_gutter_width)
+                        .child(editor_with_deleted_text.clone())
+                        .into_any_element()
+                }),
+                disposition: BlockDisposition::Above,
+            }),
+            None,
+            cx,
+        );
+        if new_block_ids.len() == 1 {
+            new_block_ids.pop()
+        } else {
+            debug_panic!(
+                "Inserted one editor block but did not receive exactly one block id: {new_block_ids:?}"
+            );
+            None
+        }
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
@@ -11114,4 +11312,119 @@ impl<T: ToOffset> RangeToAnchorExt for Range<T> {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor> {
         snapshot.anchor_after(self.start)..snapshot.anchor_before(self.end)
     }
+}
+
+fn buffer_range(
+    display_row_range: &Range<u32>,
+    display_snapshot: &DisplaySnapshot,
+) -> Range<Point> {
+    DisplayPoint::new(display_row_range.start, 0).to_point(display_snapshot)
+        ..DisplayPoint::new(display_row_range.end, 0).to_point(display_snapshot)
+}
+
+fn original_text(
+    buffer: &MultiBuffer,
+    buffer_range: Range<Point>,
+    cx: &mut AppContext,
+) -> Option<String> {
+    let snapshot = buffer.snapshot(cx);
+    let diff_base = buffer_diff_base(buffer, buffer_range.clone(), cx)?;
+    let hunk = buffer_diff_hunk(&snapshot, buffer_range)?;
+    diff_base
+        .get(hunk.diff_base_byte_range)
+        .map(ToString::to_string)
+}
+
+fn buffer_diff_base(
+    buffer: &MultiBuffer,
+    row_range: Range<Point>,
+    cx: &mut AppContext,
+) -> Option<String> {
+    let mut ranges = buffer.range_to_buffer_ranges(row_range, cx);
+    if ranges.len() == 1 {
+        let (buffer, _, _) = ranges.pop()?;
+        buffer.read(cx).diff_base().map(ToString::to_string)
+    } else {
+        None
+    }
+}
+
+fn added_hunk_color(cx: &AppContext) -> Hsla {
+    let mut created_color = cx.theme().status().git().created;
+    created_color.fade_out(0.7);
+    created_color
+}
+
+fn deleted_hunk_color(cx: &AppContext) -> Hsla {
+    let mut deleted_color = cx.theme().status().git().deleted;
+    deleted_color.fade_out(0.7);
+    deleted_color
+}
+
+fn editor_with_deleted_text(
+    language: Option<Arc<Language>>,
+    deleted_text: String,
+    deleted_color: Hsla,
+    cx: &mut ViewContext<'_, Editor>,
+) -> (u8, View<Editor>) {
+    let deleted_text_line_count = deleted_text.lines().count() as u8;
+    let editor = cx.new_view(|cx| {
+        let mut editor = Editor::multi_line(cx);
+        editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
+        editor.show_wrap_guides = Some(false);
+        editor.show_gutter = false;
+        editor.scroll_manager.set_forbid_vertical_scroll(true);
+        editor.set_text(deleted_text, cx);
+        editor.set_read_only(true);
+
+        let editor_snapshot = editor.snapshot(cx);
+        let start = editor_snapshot.buffer_snapshot.anchor_before(0);
+        let end = editor_snapshot
+            .buffer_snapshot
+            .anchor_after(editor.buffer.read(cx).len(cx));
+
+        editor.highlight_rows::<GitRowHighlight>(start..end, Some(deleted_color), cx);
+        editor
+    });
+
+    let editor_height = editor.update(cx, |editor, cx| {
+        if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
+            let editor_snapshot = editor.snapshot(cx);
+            let display_rows = buffer.update(cx, |buffer, cx| {
+                buffer.set_language(language, cx);
+
+                let buffer_snapshot = buffer.snapshot();
+                let last_point = buffer_snapshot.offset_to_point(buffer.len());
+                last_point
+                    .to_display_point(&editor_snapshot.display_snapshot)
+                    .row() as u8
+            });
+            display_rows.max(deleted_text_line_count)
+        } else {
+            deleted_text_line_count
+        }
+    });
+
+    (editor_height, editor)
+}
+
+fn buffer_diff_hunk(
+    buffer_snapshot: &MultiBufferSnapshot,
+    row_range: Range<Point>,
+) -> Option<DiffHunk<u32>> {
+    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(row_range.start.row..row_range.end.row);
+    let hunk = hunks.next()?;
+    let second_hunk = hunks.next();
+    if second_hunk.is_none() {
+        return Some(hunk);
+    }
+    None
+}
+
+#[derive(Debug, Clone)]
+struct HunkToShow {
+    display_row_range: Range<u32>,
+    status: DiffHunkStatus,
+    diff_base_version: usize,
+    diff_base_byte_range: Range<usize>,
 }

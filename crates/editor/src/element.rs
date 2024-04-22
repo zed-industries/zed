@@ -1,4 +1,5 @@
 use crate::{
+    added_hunk_color,
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     display_map::{
         BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
@@ -12,25 +13,20 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockDisposition, BlockId, BlockProperties, CursorShape, DisplayPoint, DocumentHighlightRead,
-    DocumentHighlightWrite, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    ExpandExcerpts, ExpandedGitHunk, GitRowHighlight, GutterDimensions, HalfPageDown, HalfPageUp,
-    HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, SelectPhase, Selection,
-    SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GitRowHighlight, GutterDimensions,
+    HalfPageDown, HalfPageUp, HoveredCursor, HunkToShow, LineDown, LineUp, OpenExcerpts, PageDown,
+    PageUp, Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
-use git::{
-    blame::BlameEntry,
-    diff::{DiffHunk, DiffHunkStatus},
-    Oid,
-};
+use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
-    transparent_black, Action, AnchorCorner, AnyElement, AppContext, AvailableSpace, Bounds,
-    ClipboardItem, ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
-     ElementInputHandler, Entity,
+    transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
+    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
+    ElementInputHandler, Entity,
     GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
     ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
@@ -38,9 +34,9 @@ use gpui::{
     ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use language::{language_settings::ShowWhitespaceSetting, Language};
+use language::language_settings::ShowWhitespaceSetting;
 use lsp::DiagnosticSeverity;
-use multi_buffer::{Anchor, MultiBuffer, MultiBufferSnapshot};
+use multi_buffer::Anchor;
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -60,7 +56,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
-use util::{debug_panic, ResultExt};
+use util::ResultExt;
 use workspace::{item::Item, Workspace};
 
 struct SelectionLayout {
@@ -319,7 +315,7 @@ impl EditorElement {
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
         register_action(view, cx, Editor::toggle_git_hunk_diff);
-        register_action(view, cx, Editor::toggle_all_git_hunk_diffs);
+        register_action(view, cx, Editor::expand_all_git_hunk_diffs);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -419,7 +415,7 @@ impl EditorElement {
     fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
-        hovered_hunk: Option<&HoveredHunk>,
+        hovered_hunk: Option<&HunkToShow>,
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
@@ -435,7 +431,7 @@ impl EditorElement {
         if gutter_hitbox.is_hovered(cx) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if let Some(hovered_hunk) = hovered_hunk {
-            try_click_diff_hunk(editor, hovered_hunk, cx);
+            editor.show_git_diff_hunk(hovered_hunk, cx);
         } else if !text_hitbox.is_hovered(cx) {
             return;
         }
@@ -2338,6 +2334,7 @@ impl EditorElement {
     }
 
     // TODO kb split into functions
+    // TODO kb need to move gutter hunks below by all expanded hunks height
     fn paint_diff_hunks(
         editor: &View<Editor>,
         bounds: Bounds<Pixels>,
@@ -2607,13 +2604,15 @@ impl EditorElement {
                 {
                     clickable_hunks.all.push(hunk_bounds);
                     if hunk_bounds.contains(mouse_position) {
-                        clickable_hunks.hovered = Some(HoveredHunk {
-                            display_row_range: display_row_range.clone(),
-                            diff_base_byte_range: diff_base_byte_range.clone(),
-                            status,
+                        clickable_hunks.hovered = Some((
                             bounds,
-                            diff_base_version,
-                        });
+                            HunkToShow {
+                                display_row_range: display_row_range.clone(),
+                                diff_base_byte_range: diff_base_byte_range.clone(),
+                                status,
+                                diff_base_version,
+                            },
+                        ));
                     }
                 }
 
@@ -3584,221 +3583,6 @@ fn deploy_blame_entry_context_menu(
         editor.mouse_context_menu = Some(MouseContextMenu::new(position, context_menu, cx));
         cx.notify();
     });
-}
-
-// TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
-// TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
-// TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
-fn try_click_diff_hunk(
-    editor: &mut Editor,
-    hovered_hunk: &HoveredHunk,
-    cx: &mut ViewContext<'_, Editor>,
-) -> Option<()> {
-    let editor_snapshot = editor.snapshot(cx);
-    let buffer_range = buffer_range(
-        &hovered_hunk.display_row_range,
-        &editor_snapshot.display_snapshot,
-    );
-    let (multi_buffer_snapshot, deleted_text) = editor.buffer().update(cx, |buffer, cx| {
-        let buffer_snapshot = buffer.snapshot(cx);
-        let original_text = original_text(buffer, buffer_range.clone(), cx)?;
-        Some((buffer_snapshot, original_text))
-    })?;
-    let hunk_start = multi_buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-    let hunk_end = multi_buffer_snapshot.anchor_at(buffer_range.end, Bias::Left);
-
-    let block_insert_index = match editor.expanded_hunks.binary_search_by(|probe| {
-        probe
-            .hunk_range
-            .start
-            .cmp(&hunk_start, &multi_buffer_snapshot)
-    }) {
-        Ok(_already_present) => return None,
-        Err(ix) => ix,
-    };
-
-    let block = match hovered_hunk.status {
-        DiffHunkStatus::Removed => insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx),
-        DiffHunkStatus::Added => {
-            editor.highlight_rows::<GitRowHighlight>(
-                hunk_start..hunk_end,
-                Some(added_hunk_color(cx)),
-                cx,
-            );
-            None
-        }
-        DiffHunkStatus::Modified => {
-            editor.highlight_rows::<GitRowHighlight>(
-                hunk_start..hunk_end,
-                Some(added_hunk_color(cx)),
-                cx,
-            );
-            insert_deleted_hunk_block(editor, hunk_start, deleted_text, cx)
-        }
-    };
-    editor.expanded_hunks.insert(
-        block_insert_index,
-        ExpandedGitHunk {
-            block,
-            hunk_range: hunk_start..hunk_end,
-            diff_base_version: hovered_hunk.diff_base_version,
-            status: hovered_hunk.status,
-            diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
-        },
-    );
-
-    Some(())
-}
-
-fn added_hunk_color(cx: &AppContext) -> Hsla {
-    let mut created_color = cx.theme().status().git().created;
-    created_color.fade_out(0.7);
-    created_color
-}
-
-fn deleted_hunk_color(cx: &AppContext) -> Hsla {
-    let mut deleted_color = cx.theme().status().git().deleted;
-    deleted_color.fade_out(0.7);
-    deleted_color
-}
-
-fn insert_deleted_hunk_block(
-    editor: &mut Editor,
-    position: Anchor,
-    deleted_text: String,
-    cx: &mut ViewContext<'_, Editor>,
-) -> Option<BlockId> {
-    let language = editor.language_at(position, cx);
-    let deleted_hunk_color = deleted_hunk_color(cx);
-    let (editor_height, editor_with_deleted_text) =
-        editor_with_deleted_text(language, deleted_text, deleted_hunk_color, cx);
-    let parent_gutter_width = editor.gutter_width;
-    let mut new_block_ids = editor.insert_blocks(
-        Some(BlockProperties {
-            position,
-            height: editor_height,
-            style: BlockStyle::Flex,
-            render: Box::new(move |_| {
-                div()
-                    .bg(deleted_hunk_color)
-                    .size_full()
-                    .pl(parent_gutter_width)
-                    .child(editor_with_deleted_text.clone())
-                    .into_any_element()
-            }),
-            disposition: BlockDisposition::Above,
-        }),
-        None,
-        cx,
-    );
-    if new_block_ids.len() == 1 {
-        new_block_ids.pop()
-    } else {
-        debug_panic!(
-            "Inserted one editor block but did not receive exactly one block id: {new_block_ids:?}"
-        );
-        None
-    }
-}
-
-fn editor_with_deleted_text(
-    language: Option<Arc<Language>>,
-    deleted_text: String,
-    deleted_color: Hsla,
-    cx: &mut ViewContext<'_, Editor>,
-) -> (u8, View<Editor>) {
-    let deleted_text_line_count = deleted_text.lines().count() as u8;
-    let editor = cx.new_view(|cx| {
-        let mut editor = Editor::multi_line(cx);
-        editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
-        editor.show_wrap_guides = Some(false);
-        editor.show_gutter = false;
-        editor.scroll_manager.set_forbid_vertical_scroll(true);
-        editor.set_text(deleted_text, cx);
-        editor.set_read_only(true);
-
-        let editor_snapshot = editor.snapshot(cx);
-        let start = editor_snapshot.buffer_snapshot.anchor_before(0);
-        let end = editor_snapshot
-            .buffer_snapshot
-            .anchor_after(editor.buffer.read(cx).len(cx));
-
-        editor.highlight_rows::<GitRowHighlight>(start..end, Some(deleted_color), cx);
-        editor
-    });
-
-    let editor_height = editor.update(cx, |editor, cx| {
-        if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
-            let editor_snapshot = editor.snapshot(cx);
-            let display_rows = buffer.update(cx, |buffer, cx| {
-                buffer.set_language(language, cx);
-
-                let buffer_snapshot = buffer.snapshot();
-                let last_point = buffer_snapshot.offset_to_point(buffer.len());
-                last_point
-                    .to_display_point(&editor_snapshot.display_snapshot)
-                    .row() as u8
-            });
-            display_rows.max(deleted_text_line_count)
-        } else {
-            deleted_text_line_count
-        }
-    });
-
-    (editor_height, editor)
-}
-
-fn original_text(
-    buffer: &MultiBuffer,
-    buffer_range: Range<Point>,
-    cx: &mut AppContext,
-) -> Option<String> {
-    let snapshot = buffer.snapshot(cx);
-    let diff_base = clicked_buffer_diff_base(buffer, buffer_range.clone(), cx)?;
-    let hunk = buffer_diff_hunk(&snapshot, buffer_range)?;
-    diff_base
-        .get(hunk.diff_base_byte_range)
-        .map(ToString::to_string)
-}
-
-fn clicked_buffer_diff_base(
-    buffer: &MultiBuffer,
-    row_range: Range<Point>,
-    cx: &mut AppContext,
-) -> Option<String> {
-    let mut clicked_ranges = buffer.range_to_buffer_ranges(row_range, cx);
-    if clicked_ranges.len() == 1 {
-        let (clicked_buffer, _, _) = clicked_ranges.pop()?;
-        clicked_buffer.read(cx).diff_base().map(ToString::to_string)
-    } else {
-        None
-    }
-}
-
-fn buffer_diff_hunk(
-    buffer_snapshot: &MultiBufferSnapshot,
-    row_range: Range<Point>,
-) -> Option<DiffHunk<u32>> {
-    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(row_range.start.row..row_range.end.row);
-    let hunk = hunks.next()?;
-    let second_hunk = hunks.next();
-    if second_hunk.is_none() {
-        return Some(hunk);
-    }
-    None
-}
-
-fn buffer_range(
-    display_row_range: &Range<u32>,
-    display_snapshot: &DisplaySnapshot,
-) -> Range<Point> {
-    let end = if display_row_range.is_empty() {
-        display_row_range.end
-    } else {
-        display_row_range.end.saturating_sub(1)
-    };
-    DisplayPoint::new(display_row_range.start, 0).to_point(display_snapshot)
-        ..DisplayPoint::new(end, 0).to_point(display_snapshot)
 }
 
 #[derive(Debug)]
@@ -5610,27 +5394,18 @@ fn compute_auto_height_layout(
 
 #[derive(Default, Debug, Clone)]
 struct ClickableHunks {
-    hovered: Option<HoveredHunk>,
+    hovered: Option<(Bounds<Pixels>, HunkToShow)>,
     all: Vec<Bounds<Pixels>>,
 }
 
-#[derive(Debug, Clone)]
-struct HoveredHunk {
-    display_row_range: Range<u32>,
-    status: DiffHunkStatus,
-    bounds: Bounds<Pixels>,
-    diff_base_version: usize,
-    diff_base_byte_range: Range<usize>,
-}
-
 impl ClickableHunks {
-    fn hovered_hunk(&self) -> Option<&HoveredHunk> {
-        self.hovered.as_ref()
+    fn hovered_hunk(&self) -> Option<&HunkToShow> {
+        self.hovered.as_ref().map(|(_, hunk)| hunk)
     }
 
     fn hover_changed(&self, hovered_at: &gpui::Point<Pixels>) -> bool {
         match &self.hovered {
-            Some(hovered) => !hovered.bounds.contains(hovered_at),
+            Some((bounds, _)) => !bounds.contains(hovered_at),
             None => self.all.iter().any(|bounds| bounds.contains(hovered_at)),
         }
     }

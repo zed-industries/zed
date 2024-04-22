@@ -9327,6 +9327,147 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
         .unwrap();
 }
 
+#[gpui::test]
+async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod;
+
+        const A: u32 = 42;
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        use some::modified;
+
+        ˇ
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = snapshot
+            .display_snapshot
+            .buffer_snapshot
+            .git_diff_hunks_in_range(0..snapshot.display_snapshot.max_point().row())
+            .map(|hunk| {
+                let display_range = Point::new(hunk.associated_range.start, 0)
+                    .to_display_point(&snapshot.display_snapshot)
+                    .row()
+                    ..Point::new(hunk.associated_range.end, 0)
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row();
+                (hunk.status(), display_range)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            all_hunks,
+            vec![
+                (DiffHunkStatus::Modified, 0..1),
+                (DiffHunkStatus::Removed, 2..2),
+                (DiffHunkStatus::Modified, 4..5),
+                (DiffHunkStatus::Added, 6..7),
+            ]
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        for _ in 0..4 {
+            editor.go_to_hunk(&GoToHunk, cx);
+            editor.toggle_git_hunk_diff(&ToggleGitHunkDiff, cx);
+        }
+    });
+    cx.assert_editor_state(
+        &r#"
+        use some::modified;
+
+        ˇ
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = snapshot
+            .display_snapshot
+            .buffer_snapshot
+            .git_diff_hunks_in_range(0..snapshot.display_snapshot.max_point().row())
+            .map(|hunk| {
+                assert_eq!(hunk.diff_base_version, 0, "Diff base was never updated");
+                let display_range = Point::new(hunk.associated_range.start, 0)
+                    .to_display_point(&snapshot.display_snapshot)
+                    .row()
+                    ..Point::new(hunk.associated_range.end, 0)
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row();
+                (hunk.status(), display_range)
+            })
+            .collect::<Vec<_>>();
+        let all_expanded_hunks = editor
+            .expanded_hunks
+            .iter()
+            .map(|expanded_hunk| {
+                let hunk_display_range = expanded_hunk
+                    .hunk_range
+                    .start
+                    .to_display_point(&snapshot.display_snapshot)
+                    ..expanded_hunk
+                        .hunk_range
+                        .end
+                        .to_display_point(&snapshot.display_snapshot);
+                assert_eq!(
+                    expanded_hunk.diff_base_version, 0,
+                    "Diff base was never updated"
+                );
+                (
+                    expanded_hunk.status,
+                    hunk_display_range.start.row()..hunk_display_range.end.row(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            all_hunks,
+            vec![
+                (DiffHunkStatus::Modified, 1..3),
+                (DiffHunkStatus::Removed, 4..4),
+                (DiffHunkStatus::Modified, 7..8),
+                (DiffHunkStatus::Added, 9..10),
+            ],
+            "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
+            (from modified and removed hunks)"
+        );
+        assert_eq!(
+            all_hunks, all_expanded_hunks,
+            "Editor hunks should not change"
+        );
+    });
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
