@@ -71,7 +71,7 @@ impl TerminalPanel {
             );
             pane.set_can_split(false, cx);
             pane.set_can_navigate(false, cx);
-            pane.display_nav_history_buttons(false);
+            pane.display_nav_history_buttons(None);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 let terminal_panel = terminal_panel.clone();
                 h_flex()
