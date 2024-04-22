@@ -97,7 +97,17 @@ impl LanguageModelTool for ProjectIndexTool {
         div()
             .v_flex()
             .gap_2()
-            .child(div().child(query.into_any_element()))
+            .child(
+                div()
+                    .p_2()
+                    .rounded_md()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        h_flex()
+                            .child(Label::new("Query: ").color(Color::Modified))
+                            .child(Label::new(query).color(Color::Muted)),
+                    ),
+            )
             .children(excerpts.iter().map(|excerpt| {
                 // This render doesn't have state/model, so we can't use the listener
                 // let expanded = excerpt.expanded;

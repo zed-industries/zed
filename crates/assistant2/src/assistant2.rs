@@ -473,7 +473,6 @@ impl AssistantChat {
                         match result {
                             Some(result) => div()
                                 .p_2()
-                                .child(Label::new(name.clone()).color(Color::Modified))
                                 .child(result.render(&name, &tool_call.id, cx))
                                 .into_any(),
                             None => div()
