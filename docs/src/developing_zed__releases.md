@@ -36,7 +36,7 @@ You will need write access to the Zed repository to do this:
 - Leave a comment on the PR `/cherry-pick v0.XXX.x`. Once your PR is merged, the GitHub bot will send a PR to the branch.
   - In case of a merge conflict, you will have to cherry-pick manually and push the change to the `v0.XXX.x` branch.
 - After the commits are cherry-picked onto the branch, run `./script/trigger-release {preview|stable}`. This will bump the version numbers, create a new release tag, and kick off a release build.
-  - This can also be run from the [GitHub Actions UI](https://github.com/zed-industries/zed/actions/workflows/bump_patch_version.yml)
+  - This can also be run from the [GitHub Actions UI](https://github.com/zed-industries/zed/actions/workflows/bump_patch_version.yml):
     ![](https://github.com/zed-industries/zed/assets/1486634/9e31ae95-09e1-4c7f-9591-944f4f5b63ea)
 - Wait for the builds to appear at https://github.com/zed-industries/zed/releases (typically takes around 30 minutes)
 - Proof-read and edit the release notes as needed.
