@@ -205,6 +205,7 @@ jobs:
             echo "invalid release tag ${GITHUB_REF_NAME}. expected ${expected_tag_name}"
             exit 1
           fi
+          mkdir -p target/
           script/draft-release-notes "$version" "$channel" > target/release-notes.md
 
       - name: Generate license file
