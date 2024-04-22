@@ -5,8 +5,9 @@ use async_trait::async_trait;
 use call::ActiveCall;
 use collections::{BTreeMap, HashMap};
 use editor::Bias;
-use fs::{repository::GitFileStatus, FakeFs, Fs as _};
+use fs::{FakeFs, Fs as _};
 use futures::StreamExt;
+use git::repository::GitFileStatus;
 use gpui::{BackgroundExecutor, Model, TestAppContext};
 use language::{
     range_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16,

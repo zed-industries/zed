@@ -4002,15 +4002,12 @@ dependencies = [
  "gpui",
  "lazy_static",
  "libc",
- "log",
  "notify",
  "parking_lot",
  "rope",
  "serde",
- "serde_derive",
  "serde_json",
  "smol",
- "sum_tree",
  "tempfile",
  "text",
  "time",
@@ -4318,7 +4315,10 @@ dependencies = [
  "git2",
  "lazy_static",
  "log",
+ "parking_lot",
  "pretty_assertions",
+ "regex",
+ "rope",
  "serde",
  "serde_json",
  "smol",
@@ -4327,6 +4327,8 @@ dependencies = [
  "time",
  "unindent",
  "url",
+ "util",
+ "windows 0.53.0",
 ]
 
 [[package]]
@@ -6049,14 +6051,18 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
+ "ctor",
+ "env_logger",
  "futures 0.3.28",
  "git",
  "gpui",
+ "itertools 0.11.0",
  "language",
  "log",
  "parking_lot",
  "rand 0.8.5",
  "settings",
+ "smallvec",
  "sum_tree",
  "text",
  "theme",
@@ -7374,6 +7380,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "git",
  "gpui",
  "language",
  "menu",
@@ -9411,6 +9418,7 @@ dependencies = [
  "log",
  "menu",
  "picker",
+ "project",
  "rust-embed",
  "settings",
  "simplelog",
@@ -9736,7 +9744,6 @@ dependencies = [
  "file_icons",
  "fuzzy",
  "gpui",
- "itertools 0.11.0",
  "language",
  "picker",
  "project",
@@ -9841,7 +9848,6 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand",
- "shlex",
  "smol",
  "task",
  "terminal",
@@ -10988,8 +10994,8 @@ name = "vcs_menu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fs",
  "fuzzy",
+ "git",
  "gpui",
  "picker",
  "ui",
@@ -12522,7 +12528,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.132.0"
+version = "0.133.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -12700,6 +12706,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_glsl"
+version = "0.1.0"
+dependencies = [
+ "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "zed_haskell"
 version = "0.1.0"
 dependencies = [
@@ -12736,7 +12749,7 @@ dependencies = [
 
 [[package]]
 name = "zed_prisma"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "zed_extension_api 0.0.4",
 ]

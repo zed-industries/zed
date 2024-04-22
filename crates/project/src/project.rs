@@ -21,7 +21,6 @@ use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
 use copilot::Copilot;
 use debounced_delay::DebouncedDelay;
-use fs::repository::GitRepository;
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver},
@@ -32,7 +31,7 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
-use git::blame::Blame;
+use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BackgroundExecutor, BorrowAppContext, Context, Entity,
@@ -10727,6 +10726,7 @@ fn serialize_blame_buffer_response(blame: git::blame::Blame) -> proto::BlameBuff
         entries,
         messages,
         permalinks,
+        remote_url: blame.remote_url,
     }
 }
 
@@ -10775,6 +10775,7 @@ fn deserialize_blame_buffer_response(response: proto::BlameBufferResponse) -> gi
         entries,
         permalinks,
         messages,
+        remote_url: response.remote_url,
     }
 }
 

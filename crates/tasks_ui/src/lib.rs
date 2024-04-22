@@ -168,8 +168,8 @@ fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskContex
         let language_context_provider = buffer
             .read(cx)
             .language()
-            .and_then(|language| language.context_provider())?;
-
+            .and_then(|language| language.context_provider())
+            .unwrap_or_else(|| Arc::new(BasicContextProvider));
         let selection_range = selection.range();
         let start = editor_snapshot
             .display_snapshot
@@ -470,6 +470,7 @@ mod tests {
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
+            file_icons::init((), cx);
             language::init(cx);
             crate::init(cx);
             editor::init(cx);

@@ -180,7 +180,9 @@ impl Render for QuickActionBar {
                         quick_action_bar.toggle_settings_menu = Some(menu);
                     })
                 })
-                .tooltip(|cx| Tooltip::text("Editor Controls", cx));
+                .when(self.toggle_settings_menu.is_none(), |this| {
+                    this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
+                });
 
         h_flex()
             .id("quick action bar")

@@ -46,6 +46,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("kotlin", &["kt"]),
     ("latex", &["tex"]),
     ("lua", &["lua"]),
+    ("log", &["log"]),
     ("make", &["Makefile"]),
     ("nix", &["nix"]),
     ("nu", &["nu"]),

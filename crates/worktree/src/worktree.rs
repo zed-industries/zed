@@ -8,11 +8,8 @@ use anyhow::{anyhow, Context as _, Result};
 use client::{proto, Client};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
+use fs::Fs;
 use fs::{copy_recursive, RemoveOptions};
-use fs::{
-    repository::{GitFileStatus, GitRepository, RepoPath},
-    Fs,
-};
 use futures::{
     channel::{
         mpsc::{self, UnboundedSender},
@@ -23,7 +20,10 @@ use futures::{
     FutureExt as _, Stream, StreamExt,
 };
 use fuzzy::CharBag;
-use git::{DOT_GIT, GITIGNORE};
+use git::{
+    repository::{GitFileStatus, GitRepository, RepoPath},
+    DOT_GIT, GITIGNORE,
+};
 use gpui::{
     AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter, Model, ModelContext,
     Task,
