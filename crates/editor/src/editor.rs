@@ -2392,13 +2392,7 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        let to_remove = self
-            .expanded_hunks
-            .drain(..)
-            .filter_map(|expanded_hunk| expanded_hunk.block)
-            .collect();
-        self.clear_row_highlights::<GitRowHighlight>();
-        self.remove_blocks(to_remove, None, cx);
+        self.clear_expanded_diff_hunks(cx);
         if self.dismiss_menus_and_popups(cx) {
             return;
         }
@@ -2410,6 +2404,16 @@ impl Editor {
         }
 
         cx.propagate();
+    }
+
+    fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) {
+        let to_remove = self
+            .expanded_hunks
+            .drain(..)
+            .filter_map(|expanded_hunk| expanded_hunk.block)
+            .collect();
+        self.clear_row_highlights::<GitRowHighlight>();
+        self.remove_blocks(to_remove, None, cx);
     }
 
     pub fn dismiss_menus_and_popups(&mut self, cx: &mut ViewContext<Self>) -> bool {
@@ -5020,48 +5024,8 @@ impl Editor {
         let mut revert_changes = HashMap::default();
         self.buffer.update(cx, |multi_buffer, cx| {
             let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-            let selected_multi_buffer_rows = selections.iter().map(|selection| {
-                let head = selection.head();
-                let tail = selection.tail();
-                let start = tail.to_point(&multi_buffer_snapshot).row;
-                let end = head.to_point(&multi_buffer_snapshot).row;
-                if start > end {
-                    end..start
-                } else {
-                    start..end
-                }
-            });
-
-            let mut processed_buffer_rows =
-                HashMap::<BufferId, HashSet<Range<text::Anchor>>>::default();
-            for selected_multi_buffer_rows in selected_multi_buffer_rows {
-                let query_rows =
-                    selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
-                for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
-                    // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
-                    // when the caret is just above or just below the deleted hunk.
-                    let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
-                    let related_to_selection = if allow_adjacent {
-                        hunk.associated_range.overlaps(&query_rows)
-                            || hunk.associated_range.start == query_rows.end
-                            || hunk.associated_range.end == query_rows.start
-                    } else {
-                        // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
-                        // `hunk.associated_range` is exclusive (e.g. [2..3] means 2nd row is selected)
-                        hunk.associated_range.overlaps(&selected_multi_buffer_rows)
-                            || selected_multi_buffer_rows.end == hunk.associated_range.start
-                    };
-                    if related_to_selection {
-                        if !processed_buffer_rows
-                            .entry(hunk.buffer_id)
-                            .or_default()
-                            .insert(hunk.buffer_range.start..hunk.buffer_range.end)
-                        {
-                            continue;
-                        }
-                        Self::prepare_revert_change(&mut revert_changes, &multi_buffer, &hunk, cx);
-                    }
-                }
+            for hunk in hunks_for_selections(&multi_buffer_snapshot, selections) {
+                Self::prepare_revert_change(&mut revert_changes, &multi_buffer, &hunk, cx);
             }
         });
         revert_changes
@@ -9132,6 +9096,40 @@ impl Editor {
             .map_or(false, |blame| blame.read(cx).has_generated_entries())
     }
 
+    pub fn toggle_git_hunk_diff(&mut self, _: &ToggleGitHunkDiff, cx: &mut ViewContext<Self>) {
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let selections = self.selections.disjoint_anchors();
+        self.toggle_hunks_expanded(
+            hunks_for_selections(&multi_buffer_snapshot, &selections),
+            cx,
+        );
+    }
+
+    pub fn toggle_all_git_hunk_diffs(
+        &mut self,
+        _: &ToggleAllGitHunkDiffs,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.expanded_hunks.is_empty() {
+            let snapshot = self.snapshot(cx);
+            self.toggle_hunks_expanded(
+                snapshot
+                    .buffer_snapshot
+                    .git_diff_hunks_in_range(0..snapshot.max_point().row())
+                    .collect(),
+                cx,
+            );
+        } else {
+            self.clear_expanded_diff_hunks(cx);
+        }
+    }
+
+    fn toggle_hunks_expanded(&mut self, hunks: Vec<DiffHunk<u32>>, cx: &mut ViewContext<Self>) {
+        let snapshot = self.snapshot(cx);
+        let expanded_hunks = &self.expanded_hunks;
+        todo!("TODO kb")
+    }
+
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
         let (path, repo) = maybe!({
             let project_handle = self.project.as_ref()?.clone();
@@ -10129,6 +10127,57 @@ impl Editor {
         }));
         self
     }
+}
+
+fn hunks_for_selections(
+    multi_buffer_snapshot: &MultiBufferSnapshot,
+    selections: &[Selection<Anchor>],
+) -> Vec<DiffHunk<u32>> {
+    let mut hunks = Vec::with_capacity(selections.len());
+    let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
+        HashMap::default();
+    let display_rows_for_selections = selections.iter().map(|selection| {
+        let head = selection.head();
+        let tail = selection.tail();
+        let start = tail.to_point(&multi_buffer_snapshot).row;
+        let end = head.to_point(&multi_buffer_snapshot).row;
+        if start > end {
+            end..start
+        } else {
+            start..end
+        }
+    });
+
+    for selected_multi_buffer_rows in display_rows_for_selections {
+        let query_rows = selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
+        for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
+            // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
+            // when the caret is just above or just below the deleted hunk.
+            let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
+            let related_to_selection = if allow_adjacent {
+                hunk.associated_range.overlaps(&query_rows)
+                    || hunk.associated_range.start == query_rows.end
+                    || hunk.associated_range.end == query_rows.start
+            } else {
+                // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
+                // `hunk.associated_range` is exclusive (e.g. [2..3] means 2nd row is selected)
+                hunk.associated_range.overlaps(&selected_multi_buffer_rows)
+                    || selected_multi_buffer_rows.end == hunk.associated_range.start
+            };
+            if related_to_selection {
+                if !processed_buffer_rows
+                    .entry(hunk.buffer_id)
+                    .or_default()
+                    .insert(hunk.buffer_range.start..hunk.buffer_range.end)
+                {
+                    continue;
+                }
+                hunks.push(hunk);
+            }
+        }
+    }
+
+    hunks
 }
 
 pub trait CollaborationHub {

@@ -318,6 +318,8 @@ impl EditorElement {
         register_action(view, cx, Editor::open_permalink_to_line);
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
+        register_action(view, cx, Editor::toggle_git_hunk_diff);
+        register_action(view, cx, Editor::toggle_all_git_hunk_diffs);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -2419,6 +2421,7 @@ impl EditorElement {
                     }
                     // TODO kb revert (cmd-z) is not always properly updated
                     // TODO kb does not properly handle added -> deleted hunk transformation yet
+                    // TODO kb nearby hunks badly react on changes and expands?
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
@@ -3583,7 +3586,6 @@ fn deploy_blame_entry_context_menu(
     });
 }
 
-// TODO kb add actions: toggle expand for one or all diff hunks at once
 // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
 // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
 // TODO kb is possible to simplify the code and unite hitboxes with the HoveredHunk?
