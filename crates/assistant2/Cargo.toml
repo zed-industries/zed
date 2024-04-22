@@ -36,12 +36,6 @@ util.workspace = true
 workspace.workspace = true
 nanoid = "0.4"
 
-# Future work will require workspace in the assistant2 crate
-# To make sure branches merging into assistant2 pass, we'll override some settings
-# TODO: Remove before assistant2 is merged to `main`
-[package.metadata.cargo-machete]
-ignored = ["workspace", "assistant_tooling"]
-
 [dev-dependencies]
 assets.workspace = true
 editor = { workspace = true, features = ["test-support"] }
