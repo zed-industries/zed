@@ -30,6 +30,10 @@ impl ParsedMarkdownElement {
             Self::HorizontalRule(range) => range.clone(),
         }
     }
+
+    pub fn is_list_item(&self) -> bool {
+        matches!(self, Self::ListItem(_))
+    }
 }
 
 #[derive(Debug)]
