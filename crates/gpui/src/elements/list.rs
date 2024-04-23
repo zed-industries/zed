@@ -8,8 +8,8 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, ElementContext, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
-    StyleRefinement, Styled, WindowContext,
+    Element, ElementContext, FocusHandle, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent,
+    Size, Style, StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -102,15 +102,48 @@ struct ItemLayout {
 }
 
 /// Frame state used by the [List] element after layout.
-pub struct ListPrepaintStateState {
+pub struct ListPrepaintState {
     hitbox: Hitbox,
     layout: LayoutItemsResponse,
 }
 
 #[derive(Clone)]
 enum ListItem {
-    Unrendered,
-    Rendered { size: Size<Pixels> },
+    Unmeasured {
+        focus_handle: Option<FocusHandle>,
+    },
+    Measured {
+        size: Size<Pixels>,
+        focus_handle: Option<FocusHandle>,
+    },
+}
+
+impl ListItem {
+    fn size(&self) -> Option<Size<Pixels>> {
+        if let ListItem::Measured { size, .. } = self {
+            Some(*size)
+        } else {
+            None
+        }
+    }
+
+    fn focus_handle(&self) -> Option<FocusHandle> {
+        match self {
+            ListItem::Unmeasured { focus_handle } | ListItem::Measured { focus_handle, .. } => {
+                focus_handle.clone()
+            }
+        }
+    }
+
+    fn contains_focused(&self, cx: &WindowContext) -> bool {
+        match self {
+            ListItem::Unmeasured { focus_handle } | ListItem::Measured { focus_handle, .. } => {
+                focus_handle
+                    .as_ref()
+                    .is_some_and(|handle| handle.contains_focused(cx))
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -119,6 +152,7 @@ struct ListItemSummary {
     rendered_count: usize,
     unrendered_count: usize,
     height: Pixels,
+    has_focus_handles: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -136,45 +170,45 @@ struct Height(Pixels);
 impl ListState {
     /// Construct a new list state, for storage on a view.
     ///
-    /// the overdraw parameter controls how much extra space is rendered
-    /// above and below the visible area. This can help ensure that the list
-    /// doesn't flicker or pop in when scrolling.
-    pub fn new<F>(
-        element_count: usize,
-        orientation: ListAlignment,
+    /// The overdraw parameter controls how much extra space is rendered
+    /// above and below the visible area. Elements within this area will
+    /// be measured even though they are not visible. This can help ensure
+    /// that the list doesn't flicker or pop in when scrolling.
+    pub fn new<R>(
+        item_count: usize,
+        alignment: ListAlignment,
         overdraw: Pixels,
-        render_item: F,
+        render_item: R,
     ) -> Self
     where
-        F: 'static + FnMut(usize, &mut WindowContext) -> AnyElement,
+        R: 'static + FnMut(usize, &mut WindowContext) -> AnyElement,
     {
-        let mut items = SumTree::new();
-        items.extend((0..element_count).map(|_| ListItem::Unrendered), &());
-        Self(Rc::new(RefCell::new(StateInner {
+        let this = Self(Rc::new(RefCell::new(StateInner {
             last_layout_bounds: None,
             last_padding: None,
             render_item: Box::new(render_item),
-            items,
+            items: SumTree::new(),
             logical_scroll_top: None,
-            alignment: orientation,
+            alignment,
             overdraw,
             scroll_handler: None,
             reset: false,
-        })))
+        })));
+        this.splice(0..0, item_count);
+        this
     }
 
     /// Reset this instantiation of the list state.
     ///
     /// Note that this will cause scroll events to be dropped until the next paint.
     pub fn reset(&self, element_count: usize) {
-        let state = &mut *self.0.borrow_mut();
-        state.reset = true;
+        {
+            let state = &mut *self.0.borrow_mut();
+            state.reset = true;
+            state.logical_scroll_top = None;
+        }
 
-        state.logical_scroll_top = None;
-        state.items = SumTree::new();
-        state
-            .items
-            .extend((0..element_count).map(|_| ListItem::Unrendered), &());
+        self.splice(0..element_count, element_count);
     }
 
     /// The number of items in this list.
@@ -182,10 +216,38 @@ impl ListState {
         self.0.borrow().items.summary().count
     }
 
-    /// Register with the list state that the items in `old_range` have been replaced
+    /// Inform the list state that the items in `old_range` have been replaced
     /// by `count` new items that must be recalculated.
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
+        self.splice_focusable(old_range, (0..count).map(|_| None))
+    }
+
+    /// Register with the list state that the items in `old_range` have been replaced
+    /// by new items. As opposed to [`splice`], this method allows an iterator of optional focus handles
+    /// to be supplied to properly integrate with items in the list that can be focused. If a focused item
+    /// is scrolled out of view, the list will continue to render it to allow keyboard interaction.
+    pub fn splice_focusable(
+        &self,
+        old_range: Range<usize>,
+        focus_handles: impl IntoIterator<Item = Option<FocusHandle>>,
+    ) {
         let state = &mut *self.0.borrow_mut();
+
+        let mut old_items = state.items.cursor::<Count>();
+        let mut new_items = old_items.slice(&Count(old_range.start), Bias::Right, &());
+        old_items.seek_forward(&Count(old_range.end), Bias::Right, &());
+
+        let mut spliced_count = 0;
+        new_items.extend(
+            focus_handles.into_iter().map(|focus_handle| {
+                spliced_count += 1;
+                ListItem::Unmeasured { focus_handle }
+            }),
+            &(),
+        );
+        new_items.append(old_items.suffix(&()), &());
+        drop(old_items);
+        state.items = new_items;
 
         if let Some(ListOffset {
             item_ix,
@@ -196,18 +258,9 @@ impl ListState {
                 *item_ix = old_range.start;
                 *offset_in_item = px(0.);
             } else if old_range.end <= *item_ix {
-                *item_ix = *item_ix - (old_range.end - old_range.start) + count;
+                *item_ix = *item_ix - (old_range.end - old_range.start) + spliced_count;
             }
         }
-
-        let mut old_heights = state.items.cursor::<Count>();
-        let mut new_heights = old_heights.slice(&Count(old_range.start), Bias::Right, &());
-        old_heights.seek_forward(&Count(old_range.end), Bias::Right, &());
-
-        new_heights.extend((0..count).map(|_| ListItem::Unrendered), &());
-        new_heights.append(old_heights.suffix(&()), &());
-        drop(old_heights);
-        state.items = new_heights;
     }
 
     /// Set a handler that will be called when the list is scrolled.
@@ -284,7 +337,7 @@ impl ListState {
         let scroll_top = cursor.start().1 .0 + scroll_top.offset_in_item;
 
         cursor.seek_forward(&Count(ix), Bias::Right, &());
-        if let Some(&ListItem::Rendered { size }) = cursor.item() {
+        if let Some(&ListItem::Measured { size, .. }) = cursor.item() {
             let &(Count(count), Height(top)) = cursor.start();
             if count == ix {
                 let top = bounds.top() + top - scroll_top;
@@ -388,6 +441,7 @@ impl StateInner {
         let mut rendered_height = padding.top;
         let mut max_item_width = px(0.);
         let mut scroll_top = self.logical_scroll_top();
+        let mut rendered_focused_item = false;
 
         let available_item_space = size(
             available_width.map_or(AvailableSpace::MinContent, |width| {
@@ -406,12 +460,8 @@ impl StateInner {
                 break;
             }
 
-            // Use the previously cached height if available
-            let mut size = if let ListItem::Rendered { size } = item {
-                Some(*size)
-            } else {
-                None
-            };
+            // Use the previously cached height and focus handle if available
+            let mut size = item.size();
 
             // If we're within the visible area or the height wasn't cached, render and measure the item's element
             if visible_height < available_height || size.is_none() {
@@ -425,13 +475,19 @@ impl StateInner {
                         element,
                         size: element_size,
                     });
+                    if item.contains_focused(cx) {
+                        rendered_focused_item = true;
+                    }
                 }
             }
 
             let size = size.unwrap();
             rendered_height += size.height;
             max_item_width = max_item_width.max(size.width);
-            measured_items.push_back(ListItem::Rendered { size });
+            measured_items.push_back(ListItem::Measured {
+                size,
+                focus_handle: item.focus_handle(),
+            });
         }
         rendered_height += padding.bottom;
 
@@ -443,18 +499,24 @@ impl StateInner {
         if rendered_height - scroll_top.offset_in_item < available_height {
             while rendered_height < available_height {
                 cursor.prev(&());
-                if cursor.item().is_some() {
+                if let Some(item) = cursor.item() {
                     let item_index = cursor.start().0;
                     let mut element = (self.render_item)(item_index, cx);
                     let element_size = element.layout_as_root(available_item_space, cx);
-
+                    let focus_handle = item.focus_handle();
                     rendered_height += element_size.height;
-                    measured_items.push_front(ListItem::Rendered { size: element_size });
+                    measured_items.push_front(ListItem::Measured {
+                        size: element_size,
+                        focus_handle,
+                    });
                     item_layouts.push_front(ItemLayout {
                         index: item_index,
                         element,
                         size: element_size,
                     });
+                    if item.contains_focused(cx) {
+                        rendered_focused_item = true;
+                    }
                 } else {
                     break;
                 }
@@ -485,7 +547,7 @@ impl StateInner {
         while leading_overdraw < self.overdraw {
             cursor.prev(&());
             if let Some(item) = cursor.item() {
-                let size = if let ListItem::Rendered { size } = item {
+                let size = if let ListItem::Measured { size, .. } = item {
                     *size
                 } else {
                     let mut element = (self.render_item)(cursor.start().0, cx);
@@ -493,7 +555,10 @@ impl StateInner {
                 };
 
                 leading_overdraw += size.height;
-                measured_items.push_front(ListItem::Rendered { size });
+                measured_items.push_front(ListItem::Measured {
+                    size,
+                    focus_handle: item.focus_handle(),
+                });
             } else {
                 break;
             }
@@ -505,8 +570,31 @@ impl StateInner {
         new_items.extend(measured_items, &());
         cursor.seek(&Count(measured_range.end), Bias::Right, &());
         new_items.append(cursor.suffix(&()), &());
-
         self.items = new_items;
+
+        // If none of the visible items are focused, check if an off-screen item is focused
+        // and include it to be rendered after the visible items so keyboard interaction continues
+        // to work for it.
+        if !rendered_focused_item {
+            let mut cursor = self
+                .items
+                .filter::<_, Count>(|summary| summary.has_focus_handles);
+            cursor.next(&());
+            while let Some(item) = cursor.item() {
+                if item.contains_focused(cx) {
+                    let item_index = cursor.start().0;
+                    let mut element = (self.render_item)(cursor.start().0, cx);
+                    let size = element.layout_as_root(available_item_space, cx);
+                    item_layouts.push_back(ItemLayout {
+                        index: item_index,
+                        element,
+                        size,
+                    });
+                    break;
+                }
+                cursor.next(&());
+            }
+        }
 
         LayoutItemsResponse {
             max_item_width,
@@ -527,13 +615,13 @@ impl StateInner {
 
             // Only paint the visible items, if there is actually any space for them (taking padding into account)
             if bounds.size.height > padding.top + padding.bottom {
-                // Paint the visible items
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
                 for item in &mut layout_response.item_layouts {
                     cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                         item.element.prepaint_at(item_origin, cx);
                     });
+
                     if let Some(autoscroll_bounds) = cx.take_autoscroll() {
                         if bounds.intersect(&autoscroll_bounds) != autoscroll_bounds {
                             return Err(ListOffset {
@@ -542,8 +630,11 @@ impl StateInner {
                             });
                         }
                     }
+
                     item_origin.y += item.size.height;
                 }
+            } else {
+                layout_response.item_layouts.clear();
             }
 
             Ok(layout_response)
@@ -554,8 +645,8 @@ impl StateInner {
 impl std::fmt::Debug for ListItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unrendered => write!(f, "Unrendered"),
-            Self::Rendered { size, .. } => f.debug_struct("Rendered").field("size", size).finish(),
+            Self::Unmeasured { .. } => write!(f, "Unrendered"),
+            Self::Measured { size, .. } => f.debug_struct("Rendered").field("size", size).finish(),
         }
     }
 }
@@ -572,7 +663,7 @@ pub struct ListOffset {
 
 impl Element for List {
     type RequestLayoutState = ();
-    type PrepaintState = ListPrepaintStateState;
+    type PrepaintState = ListPrepaintState;
 
     fn request_layout(
         &mut self,
@@ -643,7 +734,7 @@ impl Element for List {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
-    ) -> ListPrepaintStateState {
+    ) -> ListPrepaintState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
 
@@ -656,15 +747,19 @@ impl Element for List {
         if state.last_layout_bounds.map_or(true, |last_bounds| {
             last_bounds.size.width != bounds.size.width
         }) {
-            state.items = SumTree::from_iter(
-                (0..state.items.summary().count).map(|_| ListItem::Unrendered),
+            let new_items = SumTree::from_iter(
+                state.items.iter().map(|item| ListItem::Unmeasured {
+                    focus_handle: item.focus_handle(),
+                }),
                 &(),
-            )
+            );
+
+            state.items = new_items;
         }
 
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-        let layout_response = match state.prepaint_items(bounds, padding, cx) {
-            Ok(layout_response) => layout_response,
+        let layout = match state.prepaint_items(bounds, padding, cx) {
+            Ok(layout) => layout,
             Err(autoscroll_request) => {
                 state.logical_scroll_top = Some(autoscroll_request);
                 state.prepaint_items(bounds, padding, cx).unwrap()
@@ -673,10 +768,7 @@ impl Element for List {
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
-        ListPrepaintStateState {
-            hitbox,
-            layout: layout_response,
-        }
+        ListPrepaintState { hitbox, layout }
     }
 
     fn paint(
@@ -728,17 +820,21 @@ impl sum_tree::Item for ListItem {
 
     fn summary(&self) -> Self::Summary {
         match self {
-            ListItem::Unrendered => ListItemSummary {
+            ListItem::Unmeasured { focus_handle } => ListItemSummary {
                 count: 1,
                 rendered_count: 0,
                 unrendered_count: 1,
                 height: px(0.),
+                has_focus_handles: focus_handle.is_some(),
             },
-            ListItem::Rendered { size } => ListItemSummary {
+            ListItem::Measured {
+                size, focus_handle, ..
+            } => ListItemSummary {
                 count: 1,
                 rendered_count: 1,
                 unrendered_count: 0,
                 height: size.height,
+                has_focus_handles: focus_handle.is_some(),
             },
         }
     }
@@ -752,6 +848,7 @@ impl sum_tree::Summary for ListItemSummary {
         self.rendered_count += summary.rendered_count;
         self.unrendered_count += summary.unrendered_count;
         self.height += summary.height;
+        self.has_focus_handles |= summary.has_focus_handles;
     }
 }
 
