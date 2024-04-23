@@ -20,9 +20,20 @@ OPTIONS
 const { spawn, execFileSync } = require("child_process");
 const assert = require("assert");
 
-const users = require(
-  process.env.SEED_PATH || "../crates/collab/seed.default.json",
-).admins;
+let users;
+if (process.env.SEED_PATH) {
+  users = require(process.env.SEED_PATH).admins;
+} else {
+  users = require("../crates/collab/seed.default.json").admins;
+  try {
+    const defaultUsers = users;
+    const customUsers = require("../crates/collab/seed.json").admins;
+    assert(customUsers.length > 0);
+    users = customUsers.concat(
+      defaultUsers.filter((user) => !customUsers.includes(user)),
+    );
+  } catch (_) {}
+}
 
 const RESOLUTION_REGEX = /(\d+) x (\d+)/;
 const DIGIT_FLAG_REGEX = /^--?(\d+)$/;
