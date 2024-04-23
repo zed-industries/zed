@@ -219,6 +219,13 @@ impl Inventory {
             .iter()
             .rev()
             .filter(|(_, task)| !task.original_task().ignore_previously_resolved)
+            .filter(|(task_kind, _)| {
+                if matches!(task_kind, TaskSourceKind::Language { .. }) {
+                    Some(task_kind) == task_source_kind.as_ref()
+                } else {
+                    true
+                }
+            })
             .fold(
                 HashMap::default(),
                 |mut tasks, (task_source_kind, resolved_task)| {

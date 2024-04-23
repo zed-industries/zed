@@ -1550,7 +1550,7 @@ impl Editor {
     }
 
     fn key_context(&self, cx: &AppContext) -> KeyContext {
-        let mut key_context = KeyContext::default();
+        let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",

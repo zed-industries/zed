@@ -1698,7 +1698,7 @@ impl ProjectPanel {
     }
 
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::default();
+        let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
         dispatch_context.add("menu");
 
