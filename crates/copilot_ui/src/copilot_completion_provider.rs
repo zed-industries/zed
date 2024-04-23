@@ -3,7 +3,11 @@ use client::telemetry::Telemetry;
 use copilot::Copilot;
 use editor::{Direction, InlineCompletionProvider};
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
-use language::{language_settings::all_language_settings, Buffer, OffsetRangeExt, ToOffset};
+use language::{
+    language_settings::{all_language_settings, AllLanguageSettings},
+    Buffer, OffsetRangeExt, ToOffset,
+};
+use settings::Settings;
 use std::{path::Path, sync::Arc, time::Duration};
 
 pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
@@ -194,7 +198,10 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
     fn discard(&mut self, cx: &mut ModelContext<Self>) {
         let settings = AllLanguageSettings::get_global(cx);
-        if !settings.copilot.feature_enabled {
+
+        let copilot_enabled = settings.inline_completions_enabled(None, None);
+
+        if !copilot_enabled {
             return;
         }
 

@@ -326,7 +326,7 @@ pub struct LanguageSettingsContent {
 }
 
 /// The contents of the inline completion settings.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct InlineCompletionSettingsContent {
     /// A list of globs representing files that inline completions should be disabled for.
     #[serde(default)]

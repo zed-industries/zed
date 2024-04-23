@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result};
 use collections::BTreeMap;
 use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
 use gpui::{
-    AppContext, AsyncAppContext, Bounds, EntityId, Global, GlobalPixels, InteractiveText, Model,
+    AppContext, AsyncAppContext, Bounds, DevicePixels, EntityId, Global, InteractiveText, Model,
     Render, StyledText, Task, ViewContext,
 };
 use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
@@ -17,14 +17,6 @@ use smol::{
     io::AsyncWriteExt,
     process::{Child, ChildStdin, ChildStdout, Command},
 };
-use std::{
-    cmp::Reverse,
-    future::Future,
-    iter,
-    path::{Path, PathBuf},
-    process::Stdio,
-};
-use std::{future::Future, ops::Range, path::PathBuf, process::Stdio};
 use std::{ops::Range, path::PathBuf, process::Stdio};
 pub use supermaven_completion_provider::*;
 use ui::prelude::*;
@@ -238,8 +230,8 @@ impl Supermaven {
                 cx.open_window(
                     gpui::WindowOptions {
                         bounds: Some(Bounds::new(
-                            gpui::point(GlobalPixels::from(0.), GlobalPixels::from(0.)),
-                            gpui::size(GlobalPixels::from(800.), GlobalPixels::from(600.)),
+                            gpui::point(DevicePixels::from(0), DevicePixels::from(0)),
+                            gpui::size(DevicePixels::from(800), DevicePixels::from(600)),
                         )),
                         titlebar: None,
                         focus: false,
