@@ -395,30 +395,29 @@ impl<'a> ElementContext<'a> {
 
         // Layout all root elements.
         let mut root_element = self.window.root_view.as_ref().unwrap().clone().into_any();
-        root_element.layout_as_root(self.window.viewport_size.into(), self);
+        root_element.prepaint_as_root(Point::default(), self.window.viewport_size.into(), self);
 
         let mut sorted_deferred_draws =
             (0..self.window.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
         sorted_deferred_draws.sort_by_key(|ix| self.window.next_frame.deferred_draws[*ix].priority);
-        self.layout_deferred_draws(&sorted_deferred_draws);
+        self.prepaint_deferred_draws(&sorted_deferred_draws);
 
         let mut prompt_element = None;
         let mut active_drag_element = None;
         let mut tooltip_element = None;
         if let Some(prompt) = self.window.prompt.take() {
             let mut element = prompt.view.any_view().into_any();
-            element.layout_as_root(self.window.viewport_size.into(), self);
+            element.prepaint_as_root(Point::default(), self.window.viewport_size.into(), self);
             prompt_element = Some(element);
             self.window.prompt = Some(prompt);
         } else if let Some(active_drag) = self.app.active_drag.take() {
             let mut element = active_drag.view.clone().into_any();
             let offset = self.mouse_position() - active_drag.cursor_offset;
-            element.layout_as_root(AvailableSpace::min_size(), self);
-            element.prepaint_at(offset, self);
+            element.prepaint_as_root(offset, AvailableSpace::min_size(), self);
             active_drag_element = Some(element);
             self.app.active_drag = Some(active_drag);
         } else {
-            tooltip_element = self.layout_tooltip();
+            tooltip_element = self.prepaint_tooltip();
         }
 
         self.window.mouse_hit_test = self.window.next_frame.hit_test(self.window.mouse_position);
@@ -438,7 +437,7 @@ impl<'a> ElementContext<'a> {
         }
     }
 
-    fn layout_tooltip(&mut self) -> Option<AnyElement> {
+    fn prepaint_tooltip(&mut self) -> Option<AnyElement> {
         let tooltip_request = self.window.next_frame.tooltip_requests.last().cloned()?;
         let tooltip_request = tooltip_request.unwrap();
         let mut element = tooltip_request.tooltip.view.clone().into_any();
@@ -484,7 +483,7 @@ impl<'a> ElementContext<'a> {
         Some(element)
     }
 
-    fn layout_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
+    fn prepaint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {
         assert_eq!(self.window.element_id_stack.len(), 0);
 
         let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
@@ -497,7 +496,7 @@ impl<'a> ElementContext<'a> {
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
 
-            let layout_start = self.prepaint_index();
+            let prepaint_start = self.prepaint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
                     element.prepaint(cx)
@@ -505,8 +504,8 @@ impl<'a> ElementContext<'a> {
             } else {
                 self.reuse_prepaint(deferred_draw.prepaint_range.clone());
             }
-            let layout_end = self.prepaint_index();
-            deferred_draw.prepaint_range = layout_start..layout_end;
+            let prepaint_end = self.prepaint_index();
+            deferred_draw.prepaint_range = prepaint_start..prepaint_end;
         }
         assert_eq!(
             self.window.next_frame.deferred_draws.len(),
