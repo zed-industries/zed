@@ -14,15 +14,13 @@ use gpui::{
     FocusableView, Global, ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
-use open_ai::{FunctionContent, OpenAiEmbeddingModel, ToolCall, ToolCallContent};
+use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use project::Fs;
 use rich_text::RichText;
-use semantic_index::{
-    CloudEmbeddingProvider, OpenAiEmbeddingProvider, ProjectIndex, SemanticIndex,
-};
+use semantic_index::{CloudEmbeddingProvider, ProjectIndex, SemanticIndex};
 use serde::Deserialize;
 use settings::Settings;
-use std::{cmp, path::PathBuf, sync::Arc};
+use std::{cmp, sync::Arc};
 use theme::ThemeSettings;
 use tools::ProjectIndexTool;
 use ui::{popover_menu, prelude::*, ButtonLike, CollapsibleContainer, Color, ContextMenu, Tooltip};
@@ -61,15 +59,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     cx.spawn(|mut cx| {
         let client = client.clone();
         async move {
-            let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-            let embedding_provider = OpenAiEmbeddingProvider::new(
-                client.http_client(),
-                OpenAiEmbeddingModel::TextEmbedding3Small,
-                open_ai::OPEN_AI_API_URL.to_string(),
-                api_key,
-            );
-
-            // let embedding_provider = CloudEmbeddingProvider::new(client.clone());
+            let embedding_provider = CloudEmbeddingProvider::new(client.clone());
             let semantic_index = SemanticIndex::new(
                 EMBEDDINGS_DIR.join("semantic-index-db.0.mdb"),
                 Arc::new(embedding_provider),
