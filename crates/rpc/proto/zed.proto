@@ -236,6 +236,7 @@ message Envelope {
 
         RemoteProjectsUpdate remote_projects_update = 193;
         ValidateRemoteProjectRequest validate_remote_project_request = 194; // Current max
+        DeleteDevServer delete_dev_server = 195;
     }
 
     reserved 158 to 161;
@@ -489,6 +490,10 @@ message CreateDevServerResponse {
 }
 
 message ShutdownDevServer {
+}
+
+message DeleteDevServer {
+    uint64 dev_server_id = 1;
 }
 
 message ReconnectDevServer {

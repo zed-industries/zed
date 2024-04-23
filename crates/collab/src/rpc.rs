@@ -412,6 +412,7 @@ impl Server {
             .add_request_handler(user_handler(rejoin_remote_projects))
             .add_request_handler(user_handler(create_remote_project))
             .add_request_handler(user_handler(create_dev_server))
+            .add_request_handler(user_handler(delete_dev_server))
             .add_request_handler(dev_server_handler(share_remote_project))
             .add_request_handler(dev_server_handler(shutdown_dev_server))
             .add_request_handler(dev_server_handler(reconnect_dev_server))
@@ -1969,14 +1970,25 @@ async fn share_project(
 /// Unshare a project from the room.
 async fn unshare_project(message: proto::UnshareProject, session: Session) -> Result<()> {
     let project_id = ProjectId::from_proto(message.project_id);
-    unshare_project_internal(project_id, &session).await
+    unshare_project_internal(
+        project_id,
+        session.connection_id,
+        session.user_id(),
+        &session,
+    )
+    .await
 }
 
-async fn unshare_project_internal(project_id: ProjectId, session: &Session) -> Result<()> {
+async fn unshare_project_internal(
+    project_id: ProjectId,
+    connection_id: ConnectionId,
+    user_id: Option<UserId>,
+    session: &Session,
+) -> Result<()> {
     let (room, guest_connection_ids) = &*session
         .db()
         .await
-        .unshare_project(project_id, session.connection_id, session.user_id())
+        .unshare_project(project_id, connection_id, user_id)
         .await?;
 
     let message = proto::UnshareProject {
@@ -1984,7 +1996,7 @@ async fn unshare_project_internal(project_id: ProjectId, session: &Session) -> R
     };
 
     broadcast(
-        Some(session.connection_id),
+        Some(connection_id),
         guest_connection_ids.iter().copied(),
         |conn_id| session.peer.send(conn_id, message.clone()),
     );
@@ -2302,6 +2314,40 @@ async fn create_dev_server(
     Ok(())
 }
 
+async fn delete_dev_server(
+    request: proto::DeleteDevServer,
+    response: Response<proto::DeleteDevServer>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let dev_server = session.db().await.get_dev_server(dev_server_id).await?;
+    if dev_server.user_id != session.user_id() {
+        return Err(anyhow!(ErrorCode::Forbidden))?;
+    }
+
+    let connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
+    if let Some(connection_id) = connection_id {
+        shutdown_dev_server_internal(dev_server_id, connection_id, &session).await?;
+        session
+            .peer
+            .send(connection_id, proto::ShutdownDevServer {})?;
+    }
+
+    let status = session
+        .db()
+        .await
+        .delete_dev_server(dev_server_id, session.user_id())
+        .await?;
+
+    send_remote_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
 async fn rejoin_remote_projects(
     request: proto::RejoinRemoteProjects,
     response: Response<proto::RejoinRemoteProjects>,
@@ -2398,8 +2444,15 @@ async fn shutdown_dev_server(
     session: DevServerSession,
 ) -> Result<()> {
     response.send(proto::Ack {})?;
+    shutdown_dev_server_internal(session.dev_server_id(), session.connection_id, &session).await
+}
+
+async fn shutdown_dev_server_internal(
+    dev_server_id: DevServerId,
+    connection_id: ConnectionId,
+    session: &Session,
+) -> Result<()> {
     let (remote_projects, dev_server) = {
-        let dev_server_id = session.dev_server_id();
         let db = session.db().await;
         let remote_projects = db.get_remote_projects_for_dev_server(dev_server_id).await?;
         let dev_server = db.get_dev_server(dev_server_id).await?;
@@ -2407,13 +2460,19 @@ async fn shutdown_dev_server(
     };
 
     for project_id in remote_projects.iter().filter_map(|p| p.project_id) {
-        unshare_project_internal(ProjectId::from_proto(project_id), &session.0).await?;
+        unshare_project_internal(
+            ProjectId::from_proto(project_id),
+            connection_id,
+            None,
+            session,
+        )
+        .await?;
     }
 
     session
         .connection_pool()
         .await
-        .set_dev_server_offline(session.dev_server_id());
+        .set_dev_server_offline(dev_server_id);
 
     let status = session
         .db()
@@ -4823,7 +4882,7 @@ async fn lost_dev_server_connection(session: &DevServerSession) -> Result<()> {
 
     for project_id in project_ids {
         // not unshare re-checks the connection ids match, so we get away with no transaction
-        unshare_project_internal(project_id, &session).await?;
+        unshare_project_internal(project_id, session.connection_id, None, &session).await?;
     }
 
     let user_id = session.dev_server().user_id;

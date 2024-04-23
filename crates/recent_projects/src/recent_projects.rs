@@ -383,10 +383,13 @@ impl PickerDelegate for RecentProjectsDelegate {
         let dev_server_status =
             if let SerializedWorkspaceLocation::Remote(remote_project) = location {
                 let store = ::remote_projects::Store::global(cx).read(cx);
-                store
-                    .remote_project(remote_project.id)
-                    .and_then(|p| store.dev_server(p.dev_server_id))
-                    .map(|s| s.status)
+                Some(
+                    store
+                        .remote_project(remote_project.id)
+                        .and_then(|p| store.dev_server(p.dev_server_id))
+                        .map(|s| s.status)
+                        .unwrap_or_default(),
+                )
             } else {
                 None
             };

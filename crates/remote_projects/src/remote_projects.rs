@@ -167,4 +167,20 @@ impl Store {
             Ok(result)
         })
     }
+
+    pub fn delete_dev_server(
+        &mut self,
+        id: DevServerId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.background_executor().spawn(async move {
+            client
+                .request(proto::DeleteDevServer {
+                    dev_server_id: id.0,
+                })
+                .await?;
+            Ok(())
+        })
+    }
 }

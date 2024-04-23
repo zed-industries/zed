@@ -3,11 +3,14 @@ use std::time::Duration;
 use feature_flags::FeatureFlagViewExt;
 use gpui::{
     percentage, Action, Animation, AnimationExt, AppContext, ClipboardItem, DismissEvent,
-    EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Task, Transformation, View,
+    EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Transformation, View,
     ViewContext,
 };
 use remote_projects::{DevServer, DevServerId, RemoteProject, RemoteProjectId};
-use rpc::proto::{self, CreateDevServerResponse, DevServerStatus};
+use rpc::{
+    proto::{self, CreateDevServerResponse, DevServerStatus},
+    ErrorCode, ErrorExt,
+};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
@@ -24,18 +27,18 @@ pub struct RemoteProjects {
     remote_project_store: Model<remote_projects::Store>,
     remote_project_path_input: View<TextField>,
     dev_server_name_input: View<TextField>,
-    _subscriptions: [gpui::Subscription; 2],
+    _subscription: gpui::Subscription,
 }
 
 #[derive(Default)]
 struct CreateDevServer {
-    creating: Option<Task<()>>,
+    creating: bool,
     dev_server: Option<CreateDevServerResponse>,
 }
 
 struct CreateRemoteProject {
     dev_server_id: DevServerId,
-    creating: Option<Task<()>>,
+    creating: bool,
     remote_project: Option<proto::RemoteProject>,
 }
 
@@ -65,16 +68,9 @@ impl RemoteProjects {
         let focus_handle = cx.focus_handle();
         let remote_project_store = remote_projects::Store::global(cx);
 
-        let subscriptions = [
-            cx.observe(&remote_project_store, |_, _, cx| {
-                cx.notify();
-            }),
-            cx.on_focus_out(&focus_handle, |this, cx| {
-                if matches!(this.mode, Mode::Default) {
-                    cx.emit(DismissEvent);
-                }
-            }),
-        ];
+        let subscription = cx.observe(&remote_project_store, |_, _, cx| {
+            cx.notify();
+        });
 
         Self {
             mode: Mode::Default,
@@ -83,7 +79,7 @@ impl RemoteProjects {
             remote_project_store,
             remote_project_path_input,
             dev_server_name_input,
-            _subscriptions: subscriptions,
+            _subscription: subscription,
         }
     }
 
@@ -128,30 +124,37 @@ impl RemoteProjects {
             return;
         }
 
-        let create = self.remote_project_store.update(cx, |store, cx| {
-            store.create_remote_project(dev_server_id, path, cx)
-        });
+        let create = {
+            let path = path.clone();
+            self.remote_project_store.update(cx, |store, cx| {
+                store.create_remote_project(dev_server_id, path, cx)
+            })
+        };
 
-        let task = cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let result = create.await;
-            if let Err(e) = &result {
-                cx.prompt(
-                    gpui::PromptLevel::Critical,
-                    "Failed to create project",
-                    Some(&format!("{:?}. Please try again.", e)),
-                    &["Ok"],
-                )
-                .await
-                .log_err();
-            }
+            let remote_project = result.as_ref().ok().and_then(|r| r.remote_project.clone());
             this.update(&mut cx, |this, _| {
                 this.mode = Mode::CreateRemoteProject(CreateRemoteProject {
                     dev_server_id,
-                    creating: None,
-                    remote_project: result.ok().and_then(|r| r.remote_project),
+                    creating: false,
+                    remote_project,
                 });
             })
             .log_err();
+            result
+        })
+        .detach_and_prompt_err("Failed to create project", cx, move |e, _| {
+            match e.error_code() {
+                ErrorCode::DevServerOffline => Some(
+                    "The dev server is offline. Please log in and check it is connected."
+                        .to_string(),
+                ),
+                ErrorCode::RemoteProjectPathDoesNotExist => {
+                    Some(format!("The path `{}` does not exist on the server.", path))
+                }
+                _ => None,
+            }
         });
 
         self.remote_project_path_input.update(cx, |input, cx| {
@@ -162,7 +165,7 @@ impl RemoteProjects {
 
         self.mode = Mode::CreateRemoteProject(CreateRemoteProject {
             dev_server_id,
-            creating: Some(task),
+            creating: true,
             remote_project: None,
         });
     }
@@ -185,39 +188,54 @@ impl RemoteProjects {
             .remote_project_store
             .update(cx, |store, cx| store.create_dev_server(name.clone(), cx));
 
-        let task = cx.spawn(|this, mut cx| async move {
-            match dev_server.await {
+        cx.spawn(|this, mut cx| async move {
+            let result = dev_server.await;
+
+            this.update(&mut cx, |this, _| match &result {
                 Ok(dev_server) => {
-                    this.update(&mut cx, |this, _| {
-                        this.mode = Mode::CreateDevServer(CreateDevServer {
-                            creating: None,
-                            dev_server: Some(dev_server),
-                        });
-                    })
-                    .log_err();
+                    this.mode = Mode::CreateDevServer(CreateDevServer {
+                        creating: false,
+                        dev_server: Some(dev_server.clone()),
+                    });
                 }
-                Err(e) => {
-                    cx.prompt(
-                        gpui::PromptLevel::Critical,
-                        "Failed to create server",
-                        Some(&format!("{:?}. Please try again.", e)),
-                        &["Ok"],
-                    )
-                    .await
-                    .log_err();
-                    this.update(&mut cx, |this, _| {
-                        this.mode = Mode::CreateDevServer(Default::default());
-                    })
-                    .log_err();
+                Err(_) => {
+                    this.mode = Mode::CreateDevServer(Default::default());
                 }
-            }
-        });
+            })
+            .log_err();
+            result
+        })
+        .detach_and_prompt_err("Failed to create server", cx, |_, _| None);
 
         self.mode = Mode::CreateDevServer(CreateDevServer {
-            creating: Some(task),
+            creating: true,
             dev_server: None,
         });
         cx.notify()
+    }
+
+    fn delete_dev_server(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
+        let answer = cx.prompt(
+            gpui::PromptLevel::Info,
+            "Are you sure?",
+            Some("This will delete the dev server and all of its remote projects."),
+            &["Delete", "Cancel"],
+        );
+
+        cx.spawn(|this, mut cx| async move {
+            let answer = answer.await?;
+
+            if answer != 0 {
+                return Ok(());
+            }
+
+            this.update(&mut cx, |this, cx| {
+                this.remote_project_store
+                    .update(cx, |store, cx| store.delete_dev_server(id, cx))
+            })?
+            .await
+        })
+        .detach_and_prompt_err("Failed to delete dev server", cx, |_, _| None);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
@@ -295,13 +313,14 @@ impl RemoteProjects {
                                                 Tooltip::text("Coming Soon - Edit dev server", cx)
                                             }),
                                     )
-                                    .child(
+                                    .child({
+                                        let dev_server_id = dev_server.id;
                                         IconButton::new("remove-dev-server", IconName::Trash)
-                                            .disabled(true) //TODO implement this on the collab side
-                                            .tooltip(|cx| {
-                                                Tooltip::text("Coming Soon - Remove dev server", cx)
-                                            }),
-                                    ),
+                                            .on_click(cx.listener(move |this, _, cx| {
+                                                this.delete_dev_server(dev_server_id, cx)
+                                            }))
+                                            .tooltip(|cx| Tooltip::text("Remove dev server", cx))
+                                    }),
                             ),
                     )
                     .child(
@@ -315,7 +334,7 @@ impl RemoteProjects {
                                 move |this, _, cx| {
                                     this.mode = Mode::CreateRemoteProject(CreateRemoteProject {
                                         dev_server_id,
-                                        creating: None,
+                                        creating: false,
                                         remote_project: None,
                                     });
                                     this.remote_project_path_input
@@ -388,7 +407,7 @@ impl RemoteProjects {
         };
 
         self.dev_server_name_input.update(cx, |input, cx| {
-            input.set_disabled(creating.is_some() || dev_server.is_some(), cx);
+            input.set_disabled(*creating || dev_server.is_some(), cx);
         });
 
         v_flex()
@@ -426,14 +445,14 @@ impl RemoteProjects {
                                     div()
                                         .pl_1()
                                         .pb(px(3.))
-                                        .when(creating.is_none() && dev_server.is_none(), |div| {
+                                        .when(!*creating && dev_server.is_none(), |div| {
                                             div.child(Button::new("create-dev-server", "Create").on_click(
                                                 cx.listener(move |this, _, cx| {
                                                     this.create_dev_server(cx);
                                                 }),
                                             ))
                                         })
-                                        .when(creating.is_some() && dev_server.is_none(), |div| {
+                                        .when(*creating && dev_server.is_none(), |div| {
                                             div.child(
                                                 Button::new("create-dev-server", "Creating...")
                                                     .disabled(true),
@@ -648,7 +667,7 @@ impl RemoteProjects {
                     .ml_5()
                     .gap_2()
                     .child(self.remote_project_path_input.clone())
-                    .when(creating.is_none() && remote_project.is_none(), |div| {
+                    .when(!*creating && remote_project.is_none(), |div| {
                         div.child(Button::new("create-remote-server", "Create").on_click({
                             let dev_server_id = *dev_server_id;
                             cx.listener(move |this, _, cx| {
@@ -656,7 +675,7 @@ impl RemoteProjects {
                             })
                         }))
                     })
-                    .when(creating.is_some(), |div| {
+                    .when(*creating, |div| {
                         div.child(Button::new("create-dev-server", "Creating...").disabled(true))
                     }),
             )
@@ -710,6 +729,11 @@ impl Render for RemoteProjects {
             .key_context("DevServerModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
+            .on_mouse_down_out(cx.listener(|this, _, cx| {
+                if matches!(this.mode, Mode::Default) {
+                    cx.emit(DismissEvent)
+                }
+            }))
             .pb_4()
             .w(rems(34.))
             .min_h(rems(20.))

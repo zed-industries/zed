@@ -1,5 +1,7 @@
 use rpc::proto;
-use sea_orm::{ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, IntoActiveModel, QueryFilter,
+};
 
 use super::{dev_server, remote_project, Database, DevServerId, UserId};
 
@@ -87,6 +89,35 @@ impl Database {
             let remote_projects = self.remote_projects_update_internal(user_id, &tx).await?;
 
             Ok((dev_server, remote_projects))
+        })
+        .await
+    }
+
+    pub async fn delete_dev_server(
+        &self,
+        id: DevServerId,
+        user_id: UserId,
+    ) -> crate::Result<proto::RemoteProjectsUpdate> {
+        self.transaction(|tx| async move {
+            let Some(dev_server) = dev_server::Entity::find_by_id(id).one(&*tx).await? else {
+                return Err(anyhow::anyhow!("no dev server with id {}", id))?;
+            };
+            if dev_server.user_id != user_id {
+                return Err(anyhow::anyhow!(proto::ErrorCode::Forbidden))?;
+            }
+
+            remote_project::Entity::delete_many()
+                .filter(remote_project::Column::DevServerId.eq(id))
+                .exec(&*tx)
+                .await?;
+
+            dev_server::Entity::delete(dev_server.into_active_model())
+                .exec(&*tx)
+                .await?;
+
+            let remote_projects = self.remote_projects_update_internal(user_id, &tx).await?;
+
+            Ok(remote_projects)
         })
         .await
     }

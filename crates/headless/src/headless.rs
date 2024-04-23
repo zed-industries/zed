@@ -19,6 +19,7 @@ use util::{ResultExt, TryFutureExt};
 pub struct DevServer {
     client: Arc<Client>,
     app_state: AppState,
+    remote_shutdown: bool,
     projects: HashMap<RemoteProjectId, Model<Project>>,
     _subscriptions: Vec<client::Subscription>,
     _maintain_connection: Task<Option<()>>,
@@ -107,18 +108,26 @@ impl DevServer {
                     cx.weak_model(),
                     Self::handle_validate_remote_project_request,
                 ),
+                client.add_message_handler(cx.weak_model(), Self::handle_shutdown),
             ],
             _maintain_connection: maintain_connection,
             projects: Default::default(),
+            remote_shutdown: false,
             app_state,
             client,
         }
     }
 
     fn app_will_quit(&mut self, _: &mut ModelContext<Self>) -> impl Future<Output = ()> {
-        let request = self.client.request(proto::ShutdownDevServer {});
+        let request = if self.remote_shutdown {
+            None
+        } else {
+            Some(self.client.request(proto::ShutdownDevServer {}))
+        };
         async move {
-            request.await.log_err();
+            if let Some(request) = request {
+                request.await.log_err();
+            }
         }
     }
 
@@ -180,6 +189,18 @@ impl DevServer {
         }
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_shutdown(
+        this: Model<Self>,
+        _envelope: TypedEnvelope<proto::ShutdownDevServer>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            this.remote_shutdown = true;
+            cx.quit();
+        })
     }
 
     fn unshare_project(

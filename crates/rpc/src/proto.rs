@@ -319,6 +319,7 @@ messages!(
     (MultiLspQueryResponse, Background),
     (RemoteProjectsUpdate, Foreground),
     (ValidateRemoteProjectRequest, Background),
+    (DeleteDevServer, Foreground)
 );
 
 request_messages!(
@@ -421,6 +422,7 @@ request_messages!(
     (ReconnectDevServer, ReconnectDevServerResponse),
     (ValidateRemoteProjectRequest, Ack),
     (MultiLspQuery, MultiLspQueryResponse),
+    (DeleteDevServer, Ack),
 );
 
 entity_messages!(
