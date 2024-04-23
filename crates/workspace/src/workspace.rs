@@ -3945,7 +3945,7 @@ struct DraggedDock(DockPosition);
 
 impl Render for Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut context = KeyContext::default();
+        let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1

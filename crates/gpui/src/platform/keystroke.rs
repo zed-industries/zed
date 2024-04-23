@@ -74,12 +74,7 @@ impl Keystroke {
                 "alt" => alt = true,
                 "shift" => shift = true,
                 "fn" => function = true,
-                #[cfg(target_os = "macos")]
-                "cmd" => platform = true,
-                #[cfg(target_os = "linux")]
-                "super" => platform = true,
-                #[cfg(target_os = "windows")]
-                "win" => platform = true,
+                "cmd" | "super" | "win" => platform = true,
                 _ => {
                     if let Some(next) = components.peek() {
                         if next.is_empty() && source.ends_with('-') {
