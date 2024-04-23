@@ -10,7 +10,8 @@ use gpui::{
     div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowOptions,
 };
 use log::LevelFilter;
-use settings::{KeymapFile, Settings};
+use project::Project;
+use settings::{default_settings, KeymapFile, Settings, SettingsStore};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme::{ThemeRegistry, ThemeSettings};
@@ -75,6 +76,7 @@ fn main() {
 
         language::init(cx);
         editor::init(cx);
+        Project::init_settings(cx);
         init(cx);
         load_storybook_keymap(cx);
         cx.set_menus(app_menus());

@@ -336,8 +336,10 @@ mod tests {
         path.push("golden");
         path.push(format!("{}.json", golden_filename));
 
-        let have_json =
+        let mut have_json =
             serde_json::to_string_pretty(&entries).expect("could not serialize entries to JSON");
+        // We always want to save with a trailing newline.
+        have_json.push('\n');
 
         let update = std::env::var("UPDATE_GOLDEN")
             .map(|val| val.to_ascii_lowercase() == "true")

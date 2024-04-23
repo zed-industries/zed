@@ -46,7 +46,7 @@ pub use pane::*;
 pub use pane_group::*;
 use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
 pub use persistence::{
-    model::{ItemId, WorkspaceLocation},
+    model::{ItemId, LocalPaths, SerializedRemoteProject, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
@@ -82,7 +82,7 @@ use ui::{
     InteractiveElement as _, IntoElement, Label, ParentElement as _, Pixels, SharedString,
     Styled as _, ViewContext, VisualContext as _, WindowContext,
 };
-use util::ResultExt;
+use util::{maybe, ResultExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
@@ -3392,17 +3392,16 @@ impl Workspace {
         self.database_id
     }
 
-    fn location(&self, cx: &AppContext) -> Option<WorkspaceLocation> {
+    fn local_paths(&self, cx: &AppContext) -> Option<LocalPaths> {
         let project = self.project().read(cx);
 
         if project.is_local() {
-            Some(
+            Some(LocalPaths::new(
                 project
                     .visible_worktrees(cx)
                     .map(|worktree| worktree.read(cx).abs_path())
-                    .collect::<Vec<_>>()
-                    .into(),
-            )
+                    .collect::<Vec<_>>(),
+            ))
         } else {
             None
         }
@@ -3540,25 +3539,44 @@ impl Workspace {
             }
         }
 
-        if let Some(location) = self.location(cx) {
-            // Load bearing special case:
-            //  - with_local_workspace() relies on this to not have other stuff open
-            //    when you open your log
-            if !location.paths().is_empty() {
-                let center_group = build_serialized_pane_group(&self.center.root, cx);
-                let docks = build_serialized_docks(self, cx);
-                let serialized_workspace = SerializedWorkspace {
-                    id: self.database_id,
-                    location,
-                    center_group,
-                    bounds: Default::default(),
-                    display: Default::default(),
-                    docks,
-                    fullscreen: cx.is_fullscreen(),
-                    centered_layout: self.centered_layout,
-                };
-                return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
+        let location = if let Some(local_paths) = self.local_paths(cx) {
+            if !local_paths.paths().is_empty() {
+                Some(SerializedWorkspaceLocation::Local(local_paths))
+            } else {
+                None
             }
+        } else if let Some(remote_project_id) = self.project().read(cx).remote_project_id() {
+            let store = remote_projects::Store::global(cx).read(cx);
+            maybe!({
+                let project = store.remote_project(remote_project_id)?;
+                let dev_server = store.dev_server(project.dev_server_id)?;
+
+                let remote_project = SerializedRemoteProject {
+                    id: remote_project_id,
+                    dev_server_name: dev_server.name.to_string(),
+                    path: project.path.to_string(),
+                };
+                Some(SerializedWorkspaceLocation::Remote(remote_project))
+            })
+        } else {
+            None
+        };
+
+        // don't save workspace state for the empty workspace.
+        if let Some(location) = location {
+            let center_group = build_serialized_pane_group(&self.center.root, cx);
+            let docks = build_serialized_docks(self, cx);
+            let serialized_workspace = SerializedWorkspace {
+                id: self.database_id,
+                location,
+                center_group,
+                bounds: Default::default(),
+                display: Default::default(),
+                docks,
+                fullscreen: cx.is_fullscreen(),
+                centered_layout: self.centered_layout,
+            };
+            return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }
         Task::ready(())
     }
@@ -4303,7 +4321,7 @@ pub fn activate_workspace_for_project(
     None
 }
 
-pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
+pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
     DB.last_workspace().await.log_err().flatten()
 }
 
@@ -4410,7 +4428,6 @@ async fn join_channel_internal(
         if let Some((project, host)) = room.most_active_project(cx) {
             return Some(join_in_room_project(project, host, app_state.clone(), cx));
         }
-
         // if you are the first to join a channel, share your project
         if room.remote_participants().len() == 0 && !room.local_participant_is_guest() {
             if let Some(workspace) = requesting_window {
@@ -4419,7 +4436,7 @@ async fn join_channel_internal(
                         return None;
                     }
                     let project = workspace.project.read(cx);
-                    if project.is_local()
+                    if (project.is_local() || project.remote_project_id().is_some())
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()

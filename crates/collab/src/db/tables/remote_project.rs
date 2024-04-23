@@ -1,5 +1,5 @@
 use super::project;
-use crate::db::{ChannelId, DevServerId, RemoteProjectId};
+use crate::db::{DevServerId, RemoteProjectId};
 use rpc::proto;
 use sea_orm::entity::prelude::*;
 
@@ -8,9 +8,7 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: RemoteProjectId,
-    pub channel_id: ChannelId,
     pub dev_server_id: DevServerId,
-    pub name: String,
     pub path: String,
 }
 
@@ -20,6 +18,12 @@ impl ActiveModelBehavior for ActiveModel {}
 pub enum Relation {
     #[sea_orm(has_one = "super::project::Entity")]
     Project,
+    #[sea_orm(
+        belongs_to = "super::dev_server::Entity",
+        from = "Column::DevServerId",
+        to = "super::dev_server::Column::Id"
+    )]
+    DevServer,
 }
 
 impl Related<super::project::Entity> for Entity {
@@ -28,14 +32,18 @@ impl Related<super::project::Entity> for Entity {
     }
 }
 
+impl Related<super::dev_server::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::DevServer.def()
+    }
+}
+
 impl Model {
     pub fn to_proto(&self, project: Option<project::Model>) -> proto::RemoteProject {
         proto::RemoteProject {
             id: self.id.to_proto(),
             project_id: project.map(|p| p.id.to_proto()),
-            channel_id: self.channel_id.to_proto(),
             dev_server_id: self.dev_server_id.to_proto(),
-            name: self.name.clone(),
             path: self.path.clone(),
         }
     }

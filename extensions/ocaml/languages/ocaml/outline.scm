@@ -17,7 +17,7 @@
   "module" @context
   "type" @context
   name: (_) @name) @item
- 
+
 (type_definition
   "type" @context
   (type_binding name: (_) @name)) @item
@@ -25,7 +25,7 @@
 (value_specification
   "val" @context
   (value_name) @name) @item
-  
+
 (class_definition
   "class" @context
   (class_binding

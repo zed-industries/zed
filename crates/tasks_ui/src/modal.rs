@@ -330,6 +330,7 @@ impl PickerDelegate for TasksModalDelegate {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
             char_count: hit.string.chars().count(),
+            color: Color::Default,
         };
         let icon = match source_kind {
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
