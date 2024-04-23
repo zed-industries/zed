@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod api;
 pub mod auth;
+pub mod completion;
 pub mod db;
 pub mod env;
 pub mod executor;
