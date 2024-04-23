@@ -381,6 +381,7 @@ dependencies = [
  "client",
  "editor",
  "env_logger",
+ "feature_flags",
  "futures 0.3.28",
  "gpui",
  "language",
@@ -400,6 +401,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -12575,6 +12577,7 @@ dependencies = [
  "anyhow",
  "assets",
  "assistant",
+ "assistant2",
  "audio",
  "auto_update",
  "backtrace",

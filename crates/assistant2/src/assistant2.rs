@@ -1,3 +1,4 @@
+mod assistant_settings;
 mod completion_provider;
 mod tools;
 
@@ -6,23 +7,30 @@ use assistant_tooling::{ToolFunctionCall, ToolRegistry};
 use client::{proto, Client};
 use completion_provider::*;
 use editor::{Editor, EditorEvent};
+use feature_flags::FeatureFlagAppExt as _;
 use futures::{channel::oneshot, future::join_all, Future, FutureExt, StreamExt};
 use gpui::{
-    list, prelude::*, AnyElement, AppContext, AsyncWindowContext, FocusHandle, Global,
-    ListAlignment, ListState, Model, Render, Task, View, WeakView,
+    list, prelude::*, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
+    FocusableView, Global, ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use project::Fs;
 use rich_text::RichText;
-use semantic_index::ProjectIndex;
+use semantic_index::{CloudEmbeddingProvider, ProjectIndex, SemanticIndex};
 use serde::Deserialize;
 use settings::Settings;
 use std::{cmp, sync::Arc};
 use theme::ThemeSettings;
 use tools::ProjectIndexTool;
 use ui::{popover_menu, prelude::*, ButtonLike, CollapsibleContainer, Color, ContextMenu, Tooltip};
-use util::ResultExt;
+use util::{paths::EMBEDDINGS_DIR, ResultExt};
+use workspace::{
+    dock::{DockPosition, Panel, PanelEvent},
+    Workspace,
+};
+
+pub use assistant_settings::AssistantSettings;
 
 const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
 
@@ -42,12 +50,34 @@ pub enum SubmitMode {
     Codebase,
 }
 
+gpui::actions!(assistant, [ToggleFocus]);
 gpui::impl_actions!(assistant, [Submit]);
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+    AssistantSettings::register(cx);
+
+    cx.spawn(|mut cx| {
+        let client = client.clone();
+        async move {
+            let embedding_provider = CloudEmbeddingProvider::new(client.clone());
+            let semantic_index = SemanticIndex::new(
+                EMBEDDINGS_DIR.join("semantic-index-db.0.mdb"),
+                Arc::new(embedding_provider),
+                &mut cx,
+            )
+            .await?;
+            cx.update(|cx| cx.set_global(semantic_index))
+        }
+    })
+    .detach();
+
     cx.set_global(CompletionProvider::new(CloudCompletionProvider::new(
         client,
     )));
+}
+
+pub fn enabled(cx: &AppContext) -> bool {
+    AssistantSettings::get_global(cx).enabled && cx.is_staff()
 }
 
 pub struct AssistantPanel {
@@ -58,9 +88,35 @@ pub struct AssistantPanel {
     #[allow(dead_code)]
     fs: Arc<dyn Fs>,
     chat: View<AssistantChat>,
+    width: Option<Pixels>,
 }
 
 impl AssistantPanel {
+    pub fn load(
+        workspace: WeakView<Workspace>,
+        cx: AsyncWindowContext,
+    ) -> Task<Result<View<Self>>> {
+        cx.spawn(|mut cx| async move {
+            let (app_state, project) = workspace.update(&mut cx, |workspace, _| {
+                (workspace.app_state().clone(), workspace.project().clone())
+            })?;
+
+            cx.new_view(|cx| {
+                // todo!("this will panic if the semantic index failed to load or has not loaded yet")
+                let project_index = cx.update_global(|semantic_index: &mut SemanticIndex, cx| {
+                    semantic_index.project_index(project.clone(), cx)
+                });
+
+                Self::new(
+                    app_state.languages.clone(),
+                    project_index,
+                    app_state.fs.clone(),
+                    cx,
+                )
+            })
+        })
+    }
+
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
         project_index: Model<ProjectIndex>,
@@ -76,6 +132,7 @@ impl AssistantPanel {
             )
         });
         Self {
+            width: None,
             language_registry,
             project_index,
             fs,
@@ -92,6 +149,60 @@ impl Render for AssistantPanel {
             .p_2()
             .bg(cx.theme().colors().background)
             .child(self.chat.clone())
+    }
+}
+
+impl Panel for AssistantPanel {
+    fn persistent_name() -> &'static str {
+        "AssistantPanelv2"
+    }
+
+    fn position(&self, _cx: &WindowContext) -> workspace::dock::DockPosition {
+        // todo!("Add a setting / use assistant settings")
+        DockPosition::Right
+    }
+
+    fn position_is_valid(&self, position: workspace::dock::DockPosition) -> bool {
+        matches!(position, DockPosition::Right)
+    }
+
+    fn set_position(&mut self, _: workspace::dock::DockPosition, _: &mut ViewContext<Self>) {
+        // Do nothing until we have a setting for this
+    }
+
+    fn size(&self, _cx: &WindowContext) -> Pixels {
+        self.width.unwrap_or(px(200.))
+    }
+
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
+        self.width = size;
+        cx.notify();
+    }
+
+    fn icon(&self, _cx: &WindowContext) -> Option<ui::IconName> {
+        Some(IconName::Ai)
+    }
+
+    fn icon_tooltip(&self, _: &WindowContext) -> Option<&'static str> {
+        Some("Assistant Panel ✨")
+    }
+
+    fn toggle_action(&self) -> Box<dyn gpui::Action> {
+        Box::new(ToggleFocus)
+    }
+}
+
+impl EventEmitter<PanelEvent> for AssistantPanel {}
+
+impl FocusableView for AssistantPanel {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.chat
+            .read(cx)
+            .messages
+            .iter()
+            .rev()
+            .find_map(|msg| msg.focus_handle(cx))
+            .expect("no user message in chat")
     }
 }
 
@@ -635,7 +746,7 @@ enum ChatMessage {
 }
 
 impl ChatMessage {
-    fn focus_handle(&self, cx: &WindowContext) -> Option<FocusHandle> {
+    fn focus_handle(&self, cx: &AppContext) -> Option<FocusHandle> {
         match self {
             ChatMessage::User(UserMessage { body, .. }) => Some(body.focus_handle(cx)),
             ChatMessage::Assistant(_) => None,

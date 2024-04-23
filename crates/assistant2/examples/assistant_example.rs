@@ -69,16 +69,16 @@ fn main() {
             api_key,
         );
 
-        let semantic_index = SemanticIndex::new(
-            PathBuf::from("/tmp/semantic-index-db.mdb"),
-            Arc::new(embedding_provider),
-            cx,
-        );
-
         cx.spawn(|mut cx| async move {
+            let mut semantic_index = SemanticIndex::new(
+                PathBuf::from("/tmp/semantic-index-db.mdb"),
+                Arc::new(embedding_provider),
+                &mut cx,
+            )
+            .await?;
+
             let project_path = Path::new(&args[1]);
             let project = Project::example([project_path], &mut cx).await;
-            let mut semantic_index = semantic_index.await?;
 
             cx.update(|cx| {
                 let fs = project.read(cx).fs().clone();

@@ -138,6 +138,7 @@ ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
+assistant2 = { path = "crates/assistant2" }
 assistant_tooling = { path = "crates/assistant_tooling" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }

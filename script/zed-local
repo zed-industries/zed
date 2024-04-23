@@ -20,7 +20,7 @@ OPTIONS
 const { spawn, execFileSync } = require("child_process");
 const assert = require("assert");
 
-const users = require(
+let users = require(
   process.env.SEED_PATH || "../crates/collab/seed.default.json",
 ).admins;
 

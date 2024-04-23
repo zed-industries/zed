@@ -183,10 +183,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 })
             });
         }
+
+        let use_assistant2 = assistant2::enabled(cx);
+
         cx.spawn(|workspace_handle, mut cx| async move {
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-            let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
             let channels_panel =
                 collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
             let chat_panel =
@@ -195,26 +197,36 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace_handle.clone(),
                 cx.clone(),
             );
+
             let (
                 project_panel,
                 terminal_panel,
-                assistant_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
             ) = futures::try_join!(
                 project_panel,
                 terminal_panel,
-                assistant_panel,
                 channels_panel,
                 chat_panel,
                 notification_panel,
             )?;
 
+            if use_assistant2 {
+                let assistant_panel = assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?;
+                workspace_handle.update(&mut cx, |workspace, cx| {
+                    workspace.add_panel(assistant_panel, cx);
+                })?;
+            } else {
+                let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?;
+                workspace_handle.update(&mut cx, |workspace, cx| {
+                    workspace.add_panel(assistant_panel, cx);
+                })?;
+            }
+
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
-                workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
