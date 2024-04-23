@@ -92,8 +92,7 @@ pub enum ListSizingBehavior {
 struct LayoutItemsResponse {
     max_item_width: Pixels,
     scroll_top: ListOffset,
-    available_item_space: Size<AvailableSpace>,
-    item_elements: VecDeque<AnyElement>,
+    item_elements: VecDeque<(AnyElement, Size<Pixels>)>,
 }
 
 /// Frame state used by the [List] element after layout.
@@ -414,7 +413,7 @@ impl StateInner {
                 let element_size = element.layout_as_root(available_item_space, cx);
                 size = Some(element_size);
                 if visible_height < available_height {
-                    item_elements.push_back(element);
+                    item_elements.push_back((element, element_size));
                 }
             }
 
@@ -439,7 +438,7 @@ impl StateInner {
 
                     rendered_height += element_size.height;
                     measured_items.push_front(ListItem::Rendered { size: element_size });
-                    item_elements.push_front(element)
+                    item_elements.push_front((element, element_size))
                 } else {
                     break;
                 }
@@ -496,7 +495,6 @@ impl StateInner {
         LayoutItemsResponse {
             max_item_width,
             scroll_top,
-            available_item_space,
             item_elements,
         }
     }
@@ -623,9 +621,7 @@ impl Element for List {
             cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
-                for mut item_element in &mut layout_response.item_elements {
-                    let item_size =
-                        item_element.layout_as_root(layout_response.available_item_space, cx);
+                for (item_element, item_size) in &mut layout_response.item_elements {
                     item_element.prepaint_at(item_origin, cx);
                     item_origin.y += item_size.height;
                 }
@@ -648,7 +644,7 @@ impl Element for List {
         cx: &mut crate::ElementContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            for item in &mut prepaint.layout.item_elements {
+            for (item, _) in &mut prepaint.layout.item_elements {
                 item.paint(cx);
             }
         });
