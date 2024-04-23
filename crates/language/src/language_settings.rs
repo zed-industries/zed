@@ -1,10 +1,11 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language};
+use crate::{File, Language, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use globset::GlobMatcher;
 use gpui::AppContext;
+use itertools::{Either, Itertools};
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject},
     JsonSchema,
@@ -98,7 +99,7 @@ pub struct LanguageSettings {
     /// special tokens:
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
-    pub language_servers: Vec<String>,
+    pub language_servers: Vec<Arc<str>>,
     /// Controls whether Copilot provides suggestion immediately (true)
     /// or waits for a `copilot::Toggle` (false).
     pub show_copilot_suggestions: bool,
@@ -114,6 +115,53 @@ pub struct LanguageSettings {
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
     pub code_actions_on_format: HashMap<String, bool>,
+}
+
+impl LanguageSettings {
+    /// A token representing the rest of the available language servers.
+    const REST_OF_LANGUAGE_SERVERS: &'static str = "...";
+
+    /// Returns the customized list of language servers from the list of
+    /// available language servers.
+    pub fn customized_language_servers(
+        &self,
+        available_language_servers: &[LanguageServerName],
+    ) -> Vec<LanguageServerName> {
+        Self::resolve_language_servers(&self.language_servers, available_language_servers)
+    }
+
+    pub(crate) fn resolve_language_servers(
+        configured_language_servers: &[Arc<str>],
+        available_language_servers: &[LanguageServerName],
+    ) -> Vec<LanguageServerName> {
+        let (disabled_language_servers, enabled_language_servers): (Vec<Arc<str>>, Vec<Arc<str>>) =
+            configured_language_servers.iter().partition_map(
+                |language_server| match language_server.strip_prefix('!') {
+                    Some(disabled) => Either::Left(disabled.into()),
+                    None => Either::Right(language_server.clone()),
+                },
+            );
+
+        let rest = available_language_servers
+            .into_iter()
+            .cloned()
+            .filter(|available_language_server| {
+                !disabled_language_servers.contains(&&available_language_server.0)
+                    && !enabled_language_servers.contains(&&available_language_server.0)
+            })
+            .collect::<Vec<_>>();
+
+        enabled_language_servers
+            .into_iter()
+            .flat_map(|language_server| {
+                if language_server.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
+                    rest.clone()
+                } else {
+                    vec![LanguageServerName(language_server.clone())]
+                }
+            })
+            .collect::<Vec<_>>()
+    }
 }
 
 /// The settings for [GitHub Copilot](https://github.com/features/copilot).
@@ -227,7 +275,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: ["..."]
     #[serde(default)]
-    pub language_servers: Option<Vec<String>>,
+    pub language_servers: Option<Vec<Arc<str>>>,
     /// Controls whether Copilot provides suggestion immediately (true)
     /// or waits for a `copilot::Toggle` (false).
     ///
@@ -676,4 +724,70 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.extend_comment_on_newline,
     );
     merge(&mut settings.inlay_hints, src.inlay_hints);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    pub fn test_resolve_language_servers() {
+        fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
+            names
+                .into_iter()
+                .copied()
+                .map(|name| LanguageServerName(name.into()))
+                .collect::<Vec<_>>()
+        }
+
+        let available_language_servers = language_server_names(&[
+            "typescript-language-server",
+            "biome",
+            "deno",
+            "eslint",
+            "tailwind",
+        ]);
+
+        // A value of just `["..."]` is the same as taking all of the available language servers.
+        assert_eq!(
+            LanguageSettings::resolve_language_servers(
+                &vec![LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()],
+                &available_language_servers,
+            ),
+            available_language_servers
+        );
+
+        // Referencing one of the available language servers will change its order.
+        assert_eq!(
+            LanguageSettings::resolve_language_servers(
+                &vec![
+                    "biome".into(),
+                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into(),
+                    "deno".into(),
+                ],
+                &available_language_servers
+            ),
+            language_server_names(&[
+                "biome",
+                "typescript-language-server",
+                "eslint",
+                "tailwind",
+                "deno",
+            ])
+        );
+
+        // Negating an available language server removes it from the list.
+        assert_eq!(
+            LanguageSettings::resolve_language_servers(
+                &vec![
+                    "deno".into(),
+                    "!typescript-language-server".into(),
+                    "!biome".into(),
+                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()
+                ],
+                &available_language_servers
+            ),
+            language_server_names(&["deno", "eslint", "tailwind"])
+        );
+    }
 }
