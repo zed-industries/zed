@@ -256,7 +256,7 @@ impl Supermaven {
             }
             SupermavenMessage::Passthrough { passthrough } => self.handle_message(*passthrough, cx),
             _ => {
-                dbg!(&message);
+                log::warn!("unhandled message: {:?}", message);
             }
         }
     }

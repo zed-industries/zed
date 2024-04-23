@@ -19,6 +19,7 @@ editor.workspace = true
 gpui.workspace = true
 futures.workspace = true
 language.workspace = true
+log.workspace = true
 postage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
