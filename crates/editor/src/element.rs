@@ -2200,39 +2200,30 @@ impl EditorElement {
                         cx.paint_quad(fill(Bounds { origin, size }, color));
                     };
 
-                let mut last_row = None;
-                let mut highlight_row_start = 0u32;
-                let mut highlight_row_end = 0u32;
-                for (&row, &color) in &layout.highlighted_rows {
-                    let paint = last_row.map_or(false, |(last_row, last_color)| {
-                        last_color != color || last_row + 1 < row
-                    });
-
-                    if paint {
-                        let paint_range_is_unfinished = highlight_row_end == 0;
-                        if paint_range_is_unfinished {
-                            highlight_row_end = row;
-                            last_row = None;
+                let mut current_paint: Option<(Hsla, Range<u32>)> = None;
+                for (&new_row, &new_color) in &layout.highlighted_rows {
+                    match &mut current_paint {
+                        Some((current_color, current_range)) => {
+                            let current_color = *current_color;
+                            let new_range_started =
+                                current_color != new_color || current_range.end + 1 != new_row;
+                            if new_range_started {
+                                paint_highlight(
+                                    current_range.start,
+                                    current_range.end,
+                                    current_color,
+                                );
+                                current_paint = Some((new_color, new_row..new_row));
+                                continue;
+                            } else {
+                                current_range.end += 1;
+                            }
                         }
-                        paint_highlight(highlight_row_start, highlight_row_end, color);
-                        highlight_row_start = 0;
-                        highlight_row_end = 0;
-                        if !paint_range_is_unfinished {
-                            highlight_row_start = row;
-                            last_row = Some((row, color));
-                        }
-                    } else {
-                        if last_row.is_none() {
-                            highlight_row_start = row;
-                        } else {
-                            highlight_row_end = row;
-                        }
-                        last_row = Some((row, color));
-                    }
+                        None => current_paint = Some((new_color, new_row..new_row)),
+                    };
                 }
-                if let Some((row, hsla)) = last_row {
-                    highlight_row_end = row;
-                    paint_highlight(highlight_row_start, highlight_row_end, hsla);
+                if let Some((color, range)) = current_paint {
+                    paint_highlight(range.start, range.end, color);
                 }
 
                 let scroll_left =

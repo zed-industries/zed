@@ -9327,6 +9327,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
         .unwrap();
 }
 
+// TODO kb tests for both actions + different diff cases + diff base change + editing in the diff hunk and reverting
 #[gpui::test]
 async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
@@ -9450,7 +9451,14 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
                 )
             })
             .collect::<Vec<_>>();
-
+        let git_additions_background_highlights = editor.highlighted_rows::<GitRowHighlight>().into_iter().flatten()
+            .map(|(range, _)| range.start.to_display_point(&snapshot.display_snapshot).row()..range.end.to_display_point(&snapshot.display_snapshot).row())
+            .unique()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            git_additions_background_highlights,
+            vec![1..1, 7..7, 8..8, 9..9]
+        );
         assert_eq!(
             all_hunks,
             vec![
