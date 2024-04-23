@@ -3060,7 +3060,20 @@ impl Project {
             return;
         }
 
-        for adapter in self.languages.clone().lsp_adapters(&language) {
+        let available_lsp_adapters = self.languages.clone().lsp_adapters(&language);
+        let available_language_servers = available_lsp_adapters
+            .iter()
+            .map(|lsp_adapter| lsp_adapter.name.clone())
+            .collect::<Vec<_>>();
+
+        let enabled_language_servers =
+            settings.customized_language_servers(&available_language_servers);
+
+        for adapter in available_lsp_adapters {
+            if !enabled_language_servers.contains(&adapter.name) {
+                continue;
+            }
+
             self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
         }
     }
