@@ -339,7 +339,7 @@ impl DirectWriteState {
                         target_font.weight,
                         target_font.style,
                         &target_font.features,
-                        false,
+                        true,
                     )
                     .unwrap()
                 })
