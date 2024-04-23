@@ -5,9 +5,9 @@ use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, Action, AppContext, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use task::{RevealStrategy, SpawnInTerminal, TaskId};
 use terminal::terminal_settings::{Shell, TerminalDockPosition, TerminalSettings};
-use ui::{h_flex, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
+use ui::{
+    h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconSize, Selectable,
+    Tooltip,
+};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -59,7 +62,6 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let terminal_panel = cx.view().downgrade();
         let pane = cx.new_view(|cx| {
             let mut pane = Pane::new(
                 workspace.weak_handle(),
@@ -73,19 +75,43 @@ impl TerminalPanel {
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                let terminal_panel = terminal_panel.clone();
                 h_flex()
                     .gap_2()
                     .child(
                         IconButton::new("plus", IconName::Plus)
                             .icon_size(IconSize::Small)
-                            .on_click(move |_, cx| {
-                                terminal_panel
-                                    .update(cx, |panel, cx| panel.add_terminal(None, None, cx))
-                                    .log_err();
-                            })
-                            .tooltip(|cx| Tooltip::text("New Terminal", cx)),
+                            .on_click(cx.listener(|pane, _, cx| {
+                                let focus_handle = pane.focus_handle(cx);
+                                let menu = ContextMenu::build(cx, |menu, _| {
+                                    menu.action(
+                                        "New Terminal",
+                                        workspace::NewTerminal.boxed_clone(),
+                                    )
+                                    .entry(
+                                        "Spawn task",
+                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
+                                        move |cx| {
+                                            // We want the focus to go back to terminal panel once task modal is dismissed,
+                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                            // context menu will be gone the moment we spawn the modal.
+                                            cx.focus(&focus_handle);
+                                            cx.dispatch_action(
+                                                tasks_ui::Spawn::modal().boxed_clone(),
+                                            );
+                                        },
+                                    )
+                                });
+                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
+                                    pane.new_item_menu = None;
+                                })
+                                .detach();
+                                pane.new_item_menu = Some(menu);
+                            }))
+                            .tooltip(|cx| Tooltip::text("New...", cx)),
                     )
+                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
+                        el.child(Pane::render_menu_overlay(new_item_menu))
+                    })
                     .child({
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)

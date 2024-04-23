@@ -452,19 +452,11 @@ impl AssistantChat {
                             _ => None,
                         })
                         .expect("user message not found");
-                    message.body.update(cx, |body, cx| {
+                    message.body.update(cx, |body, _cx| {
                         let style = body.style();
 
-                        if let Some(editor_style) = style {
-                            let row = body.selections.newest_display(cx).head().row();
-                            let line_height =
-                                editor_style.text.line_height_in_pixels(cx.rem_size());
-                            let row_y = row as f32 * line_height;
-                            this.list_state.scroll_to_fit(
-                                message_ix,
-                                Pixels(row_y.into()),
-                                Pixels((row_y + 5. * line_height).into()),
-                            );
+                        if let Some(_editor_style) = style {
+                            this.list_state.scroll_to_reveal_item(message_ix);
                         }
                     });
                 }

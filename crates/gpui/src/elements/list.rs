@@ -13,7 +13,7 @@ use crate::{
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
-use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
 use taffy::style::Overflow;
 
@@ -92,13 +92,17 @@ pub enum ListSizingBehavior {
 struct LayoutItemsResponse {
     max_item_width: Pixels,
     scroll_top: ListOffset,
-    available_item_space: Size<AvailableSpace>,
-    item_elements: VecDeque<AnyElement>,
-    focused_offscreen_element: Option<AnyElement>,
+    item_layouts: VecDeque<ItemLayout>,
+}
+
+struct ItemLayout {
+    index: usize,
+    element: AnyElement,
+    size: Size<Pixels>,
 }
 
 /// Frame state used by the [List] element after layout.
-pub struct ListAfterLayoutState {
+pub struct ListPrepaintState {
     hitbox: Hitbox,
     layout: LayoutItemsResponse,
 }
@@ -284,53 +288,6 @@ impl ListState {
         state.logical_scroll_top = Some(scroll_top);
     }
 
-    /// Scroll the list to the given item index and top/bottom offset.
-    /// If the given position is already visible, this method won't scroll.
-    pub fn scroll_to_fit(
-        &self,
-        mut item_ix: usize,
-        mut top_offset_in_item: Pixels,
-        mut bottom_offset_in_item: Pixels,
-    ) {
-        let state = &mut *self.0.borrow_mut();
-        let Some(bounds) = state.last_layout_bounds else {
-            return;
-        };
-
-        let item_count = state.items.summary().count;
-        if item_ix >= item_count {
-            item_ix = item_count;
-            top_offset_in_item = Pixels::ZERO;
-            bottom_offset_in_item = Pixels::ZERO;
-        }
-
-        let logical_scroll_top = state.logical_scroll_top();
-
-        let mut cursor = state.items.cursor::<(Count, Height)>();
-        cursor.seek(&Count(logical_scroll_top.item_ix), Bias::Right, &());
-        let scroll_top = cursor.start().1 .0 + logical_scroll_top.offset_in_item;
-        let scroll_bottom = scroll_top + bounds.size.height;
-
-        cursor.seek(&Count(item_ix), Bias::Right, &());
-        let item_scroll_top = cursor.start().1 .0;
-        let desired_scroll_top = item_scroll_top + top_offset_in_item;
-        let desired_scroll_bottom = item_scroll_top + bottom_offset_in_item;
-        if desired_scroll_top < scroll_top {
-            state.logical_scroll_top = Some(ListOffset {
-                item_ix,
-                offset_in_item: desired_scroll_top - item_scroll_top,
-            });
-        } else if desired_scroll_bottom > scroll_bottom {
-            state.logical_scroll_top = Some(ListOffset {
-                item_ix,
-                offset_in_item: cmp::max(
-                    Pixels::ZERO,
-                    desired_scroll_bottom - item_scroll_top - bounds.size.height,
-                ),
-            });
-        }
-    }
-
     /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
         let state = &mut *self.0.borrow_mut();
@@ -480,7 +437,7 @@ impl StateInner {
     ) -> LayoutItemsResponse {
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
-        let mut item_elements = VecDeque::new();
+        let mut item_layouts = VecDeque::new();
         let mut rendered_height = padding.top;
         let mut max_item_width = px(0.);
         let mut scroll_top = self.logical_scroll_top();
@@ -508,11 +465,16 @@ impl StateInner {
 
             // If we're within the visible area or the height wasn't cached, render and measure the item's element
             if visible_height < available_height || size.is_none() {
-                let mut element = (self.render_item)(scroll_top.item_ix + ix, cx);
-                let element_size = element.measure(available_item_space, cx);
+                let item_index = scroll_top.item_ix + ix;
+                let mut element = (self.render_item)(item_index, cx);
+                let element_size = element.layout_as_root(available_item_space, cx);
                 size = Some(element_size);
                 if visible_height < available_height {
-                    item_elements.push_back(element);
+                    item_layouts.push_back(ItemLayout {
+                        index: item_index,
+                        element,
+                        size: element_size,
+                    });
                     if item.contains_focused(cx) {
                         rendered_focused_item = true;
                     }
@@ -538,15 +500,20 @@ impl StateInner {
             while rendered_height < available_height {
                 cursor.prev(&());
                 if let Some(item) = cursor.item() {
-                    let mut element = (self.render_item)(cursor.start().0, cx);
-                    let element_size = element.measure(available_item_space, cx);
+                    let item_index = cursor.start().0;
+                    let mut element = (self.render_item)(item_index, cx);
+                    let element_size = element.layout_as_root(available_item_space, cx);
                     let focus_handle = item.focus_handle();
                     rendered_height += element_size.height;
                     measured_items.push_front(ListItem::Measured {
                         size: element_size,
                         focus_handle,
                     });
-                    item_elements.push_front(element);
+                    item_layouts.push_front(ItemLayout {
+                        index: item_index,
+                        element,
+                        size: element_size,
+                    });
                     if item.contains_focused(cx) {
                         rendered_focused_item = true;
                     }
@@ -584,7 +551,7 @@ impl StateInner {
                     *size
                 } else {
                     let mut element = (self.render_item)(cursor.start().0, cx);
-                    element.measure(available_item_space, cx)
+                    element.layout_as_root(available_item_space, cx)
                 };
 
                 leading_overdraw += size.height;
@@ -605,10 +572,9 @@ impl StateInner {
         new_items.append(cursor.suffix(&()), &());
         self.items = new_items;
 
-        // If the none of the visible items are focused, check if an off-screen item is focused
+        // If none of the visible items are focused, check if an off-screen item is focused
         // and include it to be rendered after the visible items so keyboard interaction continues
         // to work for it.
-        let mut focused_offscreen_element = None;
         if !rendered_focused_item {
             let mut cursor = self
                 .items
@@ -616,7 +582,14 @@ impl StateInner {
             cursor.next(&());
             while let Some(item) = cursor.item() {
                 if item.contains_focused(cx) {
-                    focused_offscreen_element = Some((self.render_item)(cursor.start().0, cx));
+                    let item_index = cursor.start().0;
+                    let mut element = (self.render_item)(cursor.start().0, cx);
+                    let size = element.layout_as_root(available_item_space, cx);
+                    item_layouts.push_back(ItemLayout {
+                        index: item_index,
+                        element,
+                        size,
+                    });
                     break;
                 }
                 cursor.next(&());
@@ -626,10 +599,46 @@ impl StateInner {
         LayoutItemsResponse {
             max_item_width,
             scroll_top,
-            available_item_space,
-            item_elements,
-            focused_offscreen_element,
+            item_layouts,
         }
+    }
+
+    fn prepaint_items(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        padding: Edges<Pixels>,
+        cx: &mut ElementContext,
+    ) -> Result<LayoutItemsResponse, ListOffset> {
+        cx.transact(|cx| {
+            let mut layout_response =
+                self.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
+
+            // Only paint the visible items, if there is actually any space for them (taking padding into account)
+            if bounds.size.height > padding.top + padding.bottom {
+                let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
+                item_origin.y -= layout_response.scroll_top.offset_in_item;
+                for item in &mut layout_response.item_layouts {
+                    cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                        item.element.prepaint_at(item_origin, cx);
+                    });
+
+                    if let Some(autoscroll_bounds) = cx.take_autoscroll() {
+                        if bounds.intersect(&autoscroll_bounds) != autoscroll_bounds {
+                            return Err(ListOffset {
+                                item_ix: item.index,
+                                offset_in_item: autoscroll_bounds.origin.y - item_origin.y,
+                            });
+                        }
+                    }
+
+                    item_origin.y += item.size.height;
+                }
+            } else {
+                layout_response.item_layouts.clear();
+            }
+
+            Ok(layout_response)
+        })
     }
 }
 
@@ -653,13 +662,13 @@ pub struct ListOffset {
 }
 
 impl Element for List {
-    type BeforeLayout = ();
-    type AfterLayout = ListAfterLayoutState;
+    type RequestLayoutState = ();
+    type PrepaintState = ListPrepaintState;
 
-    fn before_layout(
+    fn request_layout(
         &mut self,
         cx: &mut crate::ElementContext,
-    ) -> (crate::LayoutId, Self::BeforeLayout) {
+    ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
                 let mut style = Style::default();
@@ -720,12 +729,12 @@ impl Element for List {
         (layout_id, ())
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::BeforeLayout,
+        _: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
-    ) -> ListAfterLayoutState {
+    ) -> ListPrepaintState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
 
@@ -749,54 +758,36 @@ impl Element for List {
         }
 
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-        let mut layout_response =
-            state.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
-
-        // Only paint the visible items, if there is actually any space for them (taking padding into account)
-        if bounds.size.height > padding.top + padding.bottom {
-            // Layout the visible items followed by the offscreen focused item if it is present
-            cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
-                item_origin.y -= layout_response.scroll_top.offset_in_item;
-                for mut item_element in &mut layout_response.item_elements {
-                    let item_size = item_element.measure(layout_response.available_item_space, cx);
-                    item_element.layout(item_origin, layout_response.available_item_space, cx);
-                    item_origin.y += item_size.height;
-                }
-                if let Some(focused_element) = layout_response.focused_offscreen_element.as_mut() {
-                    focused_element.layout(item_origin, layout_response.available_item_space, cx);
-                }
-            });
-        }
+        let layout = match state.prepaint_items(bounds, padding, cx) {
+            Ok(layout) => layout,
+            Err(autoscroll_request) => {
+                state.logical_scroll_top = Some(autoscroll_request);
+                state.prepaint_items(bounds, padding, cx).unwrap()
+            }
+        };
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
-        ListAfterLayoutState {
-            hitbox,
-            layout: layout_response,
-        }
+        ListPrepaintState { hitbox, layout }
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
-        _: &mut Self::BeforeLayout,
-        after_layout: &mut Self::AfterLayout,
+        _: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
         cx: &mut crate::ElementContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            for item in &mut after_layout.layout.item_elements {
-                item.paint(cx);
-            }
-            if let Some(focused_element) = after_layout.layout.focused_offscreen_element.as_mut() {
-                focused_element.paint(cx);
+            for item in &mut prepaint.layout.item_layouts {
+                item.element.paint(cx);
             }
         });
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
-        let scroll_top = after_layout.layout.scroll_top;
-        let hitbox_id = after_layout.hitbox.id;
+        let scroll_top = prepaint.layout.scroll_top;
+        let hitbox_id = prepaint.hitbox.id;
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(cx) {
                 list_state.0.borrow_mut().scroll(

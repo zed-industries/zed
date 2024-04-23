@@ -4971,10 +4971,10 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<DevicePixels>> {
 struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
-    type BeforeLayout = AnyElement;
-    type AfterLayout = ();
+    type RequestLayoutState = AnyElement;
+    type PrepaintState = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()
@@ -4992,24 +4992,24 @@ impl Element for DisconnectedOverlay {
                 "Your connection to the remote project has been lost.",
             ))
             .into_any();
-        (overlay.before_layout(cx), overlay)
+        (overlay.request_layout(cx), overlay)
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        overlay: &mut Self::BeforeLayout,
+        overlay: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
     ) {
         cx.insert_hitbox(bounds, true);
-        overlay.after_layout(cx);
+        overlay.prepaint(cx);
     }
 
     fn paint(
         &mut self,
         _: Bounds<Pixels>,
-        overlay: &mut Self::BeforeLayout,
-        _: &mut Self::AfterLayout,
+        overlay: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
         cx: &mut ElementContext,
     ) {
         overlay.paint(cx)
