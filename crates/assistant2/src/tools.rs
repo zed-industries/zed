@@ -12,6 +12,8 @@ use ui::{
 };
 use util::ResultExt as _;
 
+const DEFAULT_SEARCH_LIMIT: usize = 20;
+
 #[derive(Serialize, Clone)]
 pub struct CodebaseExcerpt {
     path: SharedString,
@@ -19,9 +21,15 @@ pub struct CodebaseExcerpt {
     score: f32,
 }
 
+// Note: Comments on a `LanguageModelTool::Input` become descriptions on the generated JSON schema as shown to the language model.
+// Any changes or deletions to the `CodebaseQuery` comments will change model behavior.
+
 #[derive(Deserialize, JsonSchema)]
 pub struct CodebaseQuery {
+    /// Semantic search query
     query: String,
+    /// Maximum number of results to return, defaults to 20
+    limit: Option<usize>,
 }
 
 pub struct ProjectIndexTool {
@@ -38,12 +46,16 @@ impl LanguageModelTool for ProjectIndexTool {
     }
 
     fn description(&self) -> String {
-        "Executes a query against the codebase, returning excerpts related to the query".to_string()
+        "Semantic search against the user's current codebase, returning excerpts related to the query by computing a dot product against embeddings of chunks and an embedding of the query".to_string()
     }
 
     fn execute(&self, query: &Self::Input, cx: &AppContext) -> Task<Result<Self::Output>> {
         let project_index = self.project_index.read(cx);
-        let results = project_index.search(query.query.as_str(), 10, cx);
+        let results = project_index.search(
+            query.query.as_str(),
+            query.limit.unwrap_or(DEFAULT_SEARCH_LIMIT),
+            cx,
+        );
         let fs = self.fs.clone();
 
         cx.spawn(|cx| async move {
