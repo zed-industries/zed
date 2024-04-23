@@ -358,6 +358,14 @@ impl PickerDelegate for RecentProjectsDelegate {
 
     fn dismissed(&mut self, _: &mut ViewContext<Picker<Self>>) {}
 
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+        if self.workspaces.is_empty() {
+            "Recently opened projects will show up here".into()
+        } else {
+            "No matches".into()
+        }
+    }
+
     fn render_match(
         &self,
         ix: usize,
@@ -495,6 +503,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             h_flex()
                 .border_t_1()
                 .py_2()
+                .pr_2()
                 .border_color(cx.theme().colors().border)
                 .justify_end()
                 .gap_4()
@@ -503,7 +512,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .when_some(KeyBinding::for_action(&OpenRemote, cx), |button, key| {
                             button.child(key)
                         })
-                        .child(Label::new("Connect remote folder…").color(Color::Muted))
+                        .child(Label::new("Connect remote…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(OpenRemote.boxed_clone())),
                 )
                 .child(
@@ -512,7 +521,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             KeyBinding::for_action(&workspace::Open, cx),
                             |button, key| button.child(key),
                         )
-                        .child(Label::new("Open local folder…").color(Color::Muted))
+                        .child(Label::new("Open folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(workspace::Open.boxed_clone())),
                 )
                 .into_any(),
