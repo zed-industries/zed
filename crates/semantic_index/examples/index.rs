@@ -41,7 +41,7 @@ fn main() {
         // let embedding_provider = semantic_index::FakeEmbeddingProvider;
 
         let api_key = std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-        
+
         let embedding_provider = Arc::new(OpenAiEmbeddingProvider::new(
             http.clone(),
             OpenAiEmbeddingModel::TextEmbedding3Small,
