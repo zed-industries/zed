@@ -2254,6 +2254,7 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "release_channel",
+ "remote_projects",
  "reqwest",
  "rpc",
  "rustc-demangle",
@@ -2299,7 +2300,6 @@ dependencies = [
  "editor",
  "emojis",
  "extensions_ui",
- "feature_flags",
  "futures 0.3.28",
  "fuzzy",
  "gpui",
@@ -7728,7 +7728,9 @@ dependencies = [
 name = "recent_projects"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "editor",
+ "feature_flags",
  "fuzzy",
  "gpui",
  "language",
@@ -7736,10 +7738,15 @@ dependencies = [
  "ordered-float 2.10.0",
  "picker",
  "project",
+ "remote_projects",
+ "rpc",
  "serde",
  "serde_json",
+ "settings",
  "smol",
+ "theme",
  "ui",
+ "ui_text_field",
  "util",
  "workspace",
 ]
@@ -7864,6 +7871,18 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "once_cell",
+]
+
+[[package]]
+name = "remote_projects"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "rpc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -12303,6 +12322,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "project",
+ "remote_projects",
  "schemars",
  "serde",
  "serde_json",
@@ -12601,6 +12621,7 @@ dependencies = [
  "quick_action_bar",
  "recent_projects",
  "release_channel",
+ "remote_projects",
  "rope",
  "search",
  "serde",

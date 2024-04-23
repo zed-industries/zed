@@ -30,6 +30,7 @@ impl Database {
         room_id: RoomId,
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
+        remote_project_id: Option<RemoteProjectId>,
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
@@ -56,6 +57,30 @@ impl Database {
                 .can_edit_projects()
             {
                 return Err(anyhow!("guests cannot share projects"))?;
+            }
+
+            if let Some(remote_project_id) = remote_project_id {
+                let project = project::Entity::find()
+                    .filter(project::Column::RemoteProjectId.eq(Some(remote_project_id)))
+                    .one(&*tx)
+                    .await?
+                    .ok_or_else(|| anyhow!("no remote project"))?;
+
+                if project.room_id.is_some() {
+                    return Err(anyhow!("project already shared"))?;
+                };
+
+                let project = project::Entity::update(project::ActiveModel {
+                    room_id: ActiveValue::Set(Some(room_id)),
+                    ..project.into_active_model()
+                })
+                .exec(&*tx)
+                .await?;
+
+                // todo! check user is a project-collaborator
+
+                let room = self.get_room(room_id, &tx).await?;
+                return Ok((project.id, room));
             }
 
             let project = project::ActiveModel {
@@ -111,6 +136,7 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection: ConnectionId,
+        user_id: Option<UserId>,
     ) -> Result<TransactionGuard<(Option<proto::Room>, Vec<ConnectionId>)>> {
         self.project_transaction(project_id, |tx| async move {
             let guest_connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
@@ -118,19 +144,37 @@ impl Database {
                 .one(&*tx)
                 .await?
                 .ok_or_else(|| anyhow!("project not found"))?;
+            let room = if let Some(room_id) = project.room_id {
+                Some(self.get_room(room_id, &tx).await?)
+            } else {
+                None
+            };
             if project.host_connection()? == connection {
-                let room = if let Some(room_id) = project.room_id {
-                    Some(self.get_room(room_id, &tx).await?)
-                } else {
-                    None
-                };
                 project::Entity::delete(project.into_active_model())
                     .exec(&*tx)
                     .await?;
-                Ok((room, guest_connection_ids))
-            } else {
-                Err(anyhow!("cannot unshare a project hosted by another user"))?
+                return Ok((room, guest_connection_ids));
             }
+            if let Some(remote_project_id) = project.remote_project_id {
+                if let Some(user_id) = user_id {
+                    if user_id
+                        != self
+                            .owner_for_remote_project(remote_project_id, &tx)
+                            .await?
+                    {
+                        Err(anyhow!("cannot unshare a project hosted by another user"))?
+                    }
+                    project::Entity::update(project::ActiveModel {
+                        room_id: ActiveValue::Set(None),
+                        ..project.into_active_model()
+                    })
+                    .exec(&*tx)
+                    .await?;
+                    return Ok((room, guest_connection_ids));
+                }
+            }
+
+            Err(anyhow!("cannot unshare a project hosted by another user"))?
         })
         .await
     }
@@ -753,6 +797,7 @@ impl Database {
                     name: language_server.name,
                 })
                 .collect(),
+            remote_project_id: project.remote_project_id,
         };
         Ok((project, replica_id as ReplicaId))
     }
@@ -794,8 +839,7 @@ impl Database {
             Ok(LeftProject {
                 id: project.id,
                 connection_ids,
-                host_user_id: None,
-                host_connection_id: None,
+                should_unshare: false,
             })
         })
         .await
@@ -832,7 +876,7 @@ impl Database {
                 .find_related(project_collaborator::Entity)
                 .all(&*tx)
                 .await?;
-            let connection_ids = collaborators
+            let connection_ids: Vec<ConnectionId> = collaborators
                 .into_iter()
                 .map(|collaborator| collaborator.connection())
                 .collect();
@@ -870,8 +914,7 @@ impl Database {
 
             let left_project = LeftProject {
                 id: project_id,
-                host_user_id: project.host_user_id,
-                host_connection_id: Some(project.host_connection()?),
+                should_unshare: connection == project.host_connection()?,
                 connection_ids,
             };
             Ok((room, left_project))
@@ -914,7 +957,7 @@ impl Database {
         capability: Capability,
         tx: &DatabaseTransaction,
     ) -> Result<(project::Model, ChannelRole)> {
-        let (project, remote_project) = project::Entity::find_by_id(project_id)
+        let (mut project, remote_project) = project::Entity::find_by_id(project_id)
             .find_also_related(remote_project::Entity)
             .one(tx)
             .await?
@@ -933,27 +976,44 @@ impl Database {
             PrincipalId::UserId(user_id) => user_id,
         };
 
-        let role = if let Some(remote_project) = remote_project {
-            let channel = channel::Entity::find_by_id(remote_project.channel_id)
-                .one(tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such channel"))?;
-
-            self.check_user_is_channel_participant(&channel, user_id, &tx)
-                .await?
-        } else if let Some(room_id) = project.room_id {
-            // what's the users role?
-            let current_participant = room_participant::Entity::find()
+        let role_from_room = if let Some(room_id) = project.room_id {
+            room_participant::Entity::find()
                 .filter(room_participant::Column::RoomId.eq(room_id))
                 .filter(room_participant::Column::AnsweringConnectionId.eq(connection_id.id))
                 .one(tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such room"))?;
-
-            current_participant.role.unwrap_or(ChannelRole::Guest)
+                .and_then(|participant| participant.role)
         } else {
-            return Err(anyhow!("not authorized to read projects"))?;
+            None
         };
+        let role_from_remote_project = if let Some(remote_project) = remote_project {
+            let dev_server = dev_server::Entity::find_by_id(remote_project.dev_server_id)
+                .one(tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such channel"))?;
+            if user_id == dev_server.user_id {
+                // If the user left the room "uncleanly" they may rejoin the
+                // remote project before leave_room runs. IN that case kick
+                // the project out of the room pre-emptively.
+                if role_from_room.is_none() {
+                    project = project::Entity::update(project::ActiveModel {
+                        room_id: ActiveValue::Set(None),
+                        ..project.into_active_model()
+                    })
+                    .exec(tx)
+                    .await?;
+                }
+                Some(ChannelRole::Admin)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let role = role_from_remote_project
+            .or(role_from_room)
+            .unwrap_or(ChannelRole::Banned);
 
         match capability {
             Capability::ReadWrite => {

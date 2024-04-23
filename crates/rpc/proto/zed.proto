@@ -233,6 +233,10 @@ message Envelope {
         JoinRemoteProject join_remote_project = 185;
         RejoinRemoteProjects rejoin_remote_projects = 186;
         RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
+
+        RemoteProjectsUpdate remote_projects_update = 193;
+        ValidateRemoteProjectRequest validate_remote_project_request = 194; // Current max
+        DeleteDevServer delete_dev_server = 195;
     }
 
     reserved 158 to 161;
@@ -269,6 +273,8 @@ enum ErrorCode {
     UnsharedItem = 12;
     NoSuchProject = 13;
     DevServerAlreadyOnline = 14;
+    DevServerOffline = 15;
+    RemoteProjectPathDoesNotExist = 16;
     reserved 6;
 }
 
@@ -433,6 +439,7 @@ message LiveKitConnectionInfo {
 message ShareProject {
     uint64 room_id = 1;
     repeated WorktreeMetadata worktrees = 2;
+    optional uint64 remote_project_id = 3;
 }
 
 message ShareProjectResponse {
@@ -457,8 +464,8 @@ message JoinHostedProject {
 }
 
 message CreateRemoteProject {
-    uint64 channel_id = 1;
-    string name = 2;
+    reserved 1;
+    reserved 2;
     uint64 dev_server_id = 3;
     string path = 4;
 }
@@ -466,19 +473,27 @@ message CreateRemoteProjectResponse {
     RemoteProject remote_project = 1;
 }
 
+message ValidateRemoteProjectRequest {
+    string path = 1;
+}
+
 message CreateDevServer {
-    uint64 channel_id = 1;
+    reserved 1;
     string name = 2;
 }
 
 message CreateDevServerResponse {
     uint64 dev_server_id = 1;
-    uint64 channel_id = 2;
+    reserved 2;
     string access_token = 3;
     string name = 4;
 }
 
 message ShutdownDevServer {
+}
+
+message DeleteDevServer {
+    uint64 dev_server_id = 1;
 }
 
 message ReconnectDevServer {
@@ -491,6 +506,11 @@ message ReconnectDevServerResponse {
 
 message DevServerInstructions {
     repeated RemoteProject projects = 1;
+}
+
+message RemoteProjectsUpdate {
+    repeated DevServer dev_servers = 1;
+    repeated RemoteProject remote_projects = 2;
 }
 
 message ShareRemoteProject {
@@ -509,6 +529,7 @@ message JoinProjectResponse {
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
     ChannelRole role = 6;
+    optional uint64 remote_project_id = 7;
 }
 
 message LeaveProject {
@@ -1131,11 +1152,10 @@ message UpdateChannels {
     repeated HostedProject hosted_projects = 10;
     repeated uint64 deleted_hosted_projects = 11;
 
-    repeated DevServer dev_servers = 12;
-    repeated uint64 deleted_dev_servers = 13;
-
-    repeated RemoteProject remote_projects = 14;
-    repeated uint64 deleted_remote_projects = 15;
+    reserved 12;
+    reserved 13;
+    reserved 14;
+    reserved 15;
 }
 
 message UpdateUserChannels {
@@ -1174,14 +1194,14 @@ message HostedProject {
 message RemoteProject {
     uint64 id = 1;
     optional uint64 project_id = 2;
-    uint64 channel_id = 3;
-    string name = 4;
+    reserved 3;
+    reserved 4;
     uint64 dev_server_id = 5;
     string path = 6;
 }
 
 message DevServer {
-    uint64 channel_id = 1;
+    reserved 1;
     uint64 dev_server_id = 2;
     string name = 3;
     DevServerStatus status = 4;

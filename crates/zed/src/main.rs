@@ -286,6 +286,7 @@ fn init_ui(args: Args) {
             ThemeRegistry::global(cx),
             cx,
         );
+        remote_projects::init(client.clone(), cx);
 
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);

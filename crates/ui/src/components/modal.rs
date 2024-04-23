@@ -1,12 +1,16 @@
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
 
-use crate::{h_flex, IconButton, IconButtonShape, IconName, Label, LabelCommon, LabelSize};
+use crate::{
+    h_flex, Clickable, IconButton, IconButtonShape, IconName, Label, LabelCommon, LabelSize,
+};
 
 #[derive(IntoElement)]
 pub struct ModalHeader {
     id: ElementId,
     children: SmallVec<[AnyElement; 2]>,
+    show_dismiss_button: bool,
+    show_back_button: bool,
 }
 
 impl ModalHeader {
@@ -14,7 +18,19 @@ impl ModalHeader {
         Self {
             id: id.into(),
             children: SmallVec::new(),
+            show_dismiss_button: false,
+            show_back_button: false,
         }
+    }
+
+    pub fn show_dismiss_button(mut self, show: bool) -> Self {
+        self.show_dismiss_button = show;
+        self
+    }
+
+    pub fn show_back_button(mut self, show: bool) -> Self {
+        self.show_back_button = show;
+        self
     }
 }
 
@@ -31,9 +47,28 @@ impl RenderOnce for ModalHeader {
             .w_full()
             .px_2()
             .py_1p5()
+            .when(self.show_back_button, |this| {
+                this.child(
+                    div().pr_1().child(
+                        IconButton::new("back", IconName::ArrowLeft)
+                            .shape(IconButtonShape::Square)
+                            .on_click(|_, cx| {
+                                cx.dispatch_action(menu::Cancel.boxed_clone());
+                            }),
+                    ),
+                )
+            })
             .child(div().flex_1().children(self.children))
             .justify_between()
-            .child(IconButton::new("dismiss", IconName::Close).shape(IconButtonShape::Square))
+            .when(self.show_dismiss_button, |this| {
+                this.child(
+                    IconButton::new("dismiss", IconName::Close)
+                        .shape(IconButtonShape::Square)
+                        .on_click(|_, cx| {
+                            cx.dispatch_action(menu::Cancel.boxed_clone());
+                        }),
+                )
+            })
     }
 }
 
