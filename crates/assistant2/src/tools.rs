@@ -58,15 +58,21 @@ impl LanguageModelTool for ProjectIndexTool {
 
     fn execute(&self, query: &Self::Input, cx: &AppContext) -> Task<Result<Self::Output>> {
         let project_index = self.project_index.read(cx);
+        dbg!(project_index.last_status);
+        dbg!("test");
+
         let results = project_index.search(
             query.query.as_str(),
             query.limit.unwrap_or(DEFAULT_SEARCH_LIMIT),
             cx,
         );
+
         let fs = self.fs.clone();
 
         cx.spawn(|cx| async move {
             let results = results.await;
+            dbg!(results.len());
+
             let excerpts = results.into_iter().map(|result| {
                 let abs_path = result
                     .worktree

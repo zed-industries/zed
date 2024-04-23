@@ -90,7 +90,7 @@ pub struct ProjectIndex {
     worktree_indices: HashMap<EntityId, WorktreeIndexHandle>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
-    last_status: Status,
+    pub last_status: Status,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     _subscription: Subscription,
 }
@@ -226,8 +226,11 @@ impl ProjectIndex {
         let mut worktree_searches = Vec::new();
         for worktree_index in self.worktree_indices.values() {
             if let WorktreeIndexHandle::Loaded { index, .. } = worktree_index {
+                dbg!("worktree index IS loaded");
                 worktree_searches
                     .push(index.read_with(cx, |index, cx| index.search(query, limit, cx)));
+            } else {
+                dbg!("worktree index IS NOT loaded");
             }
         }
 
@@ -295,6 +298,7 @@ impl WorktreeIndex {
                     async move {
                         let mut txn = db_connection.write_txn()?;
                         let db_name = worktree_abs_path.to_string_lossy();
+                        dbg!(&db_name);
                         let db = db_connection.create_database(&mut txn, Some(&db_name))?;
                         txn.commit()?;
                         anyhow::Ok(db)
@@ -396,12 +400,14 @@ impl WorktreeIndex {
     ) -> impl Future<Output = Result<()>> {
         let worktree = self.worktree.read(cx).as_local().unwrap().snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
-        let scan = self.scan_updated_entries(worktree, updated_entries, cx);
+        let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = self.embed_files(chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
+            // dbg!("started index_updated_entries", &updated_entries);
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
+            // dbg!("finished index_updated_entries", &updated_entries);
             Ok(())
         }
     }
@@ -497,7 +503,9 @@ impl WorktreeIndex {
                     | project::PathChange::Updated
                     | project::PathChange::AddedOrUpdated => {
                         if let Some(entry) = worktree.entry_for_id(*entry_id) {
-                            updated_entries_tx.send(entry.clone()).await?;
+                            if entry.is_file() {
+                                updated_entries_tx.send(entry.clone()).await?;
+                            }
                         }
                     }
                     project::PathChange::Removed => {
@@ -538,7 +546,14 @@ impl WorktreeIndex {
                         cx.spawn(async {
                             while let Ok(entry) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.path);
-                                let Some(text) = fs.load(&entry_abs_path).await.log_err() else {
+                                let Some(text) = fs
+                                    .load(&entry_abs_path)
+                                    .await
+                                    .with_context(|| {
+                                        format!("failed to read path {entry_abs_path:?}")
+                                    })
+                                    .log_err()
+                                else {
                                     continue;
                                 };
                                 let language = language_registry
@@ -673,6 +688,9 @@ impl WorktreeIndex {
     ) -> Task<Result<Vec<SearchResult>>> {
         let (chunks_tx, chunks_rx) = channel::bounded(1024);
 
+        dbg!("STATUS");
+        dbg!(self.status);
+
         let db_connection = self.db_connection.clone();
         let db = self.db;
         let scan_chunks = cx.background_executor().spawn({
@@ -682,7 +700,8 @@ impl WorktreeIndex {
                     .context("failed to create read transaction")?;
                 let db_entries = db.iter(&txn).context("failed to iterate database")?;
                 for db_entry in db_entries {
-                    let (_, db_embedded_file) = db_entry?;
+                    let (key, db_embedded_file) = db_entry?;
+                    dbg!(&key);
                     for chunk in db_embedded_file.chunks {
                         chunks_tx
                             .send((db_embedded_file.path.clone(), chunk))
@@ -699,6 +718,7 @@ impl WorktreeIndex {
         cx.spawn(|cx| async move {
             #[cfg(debug_assertions)]
             let embedding_query_start = std::time::Instant::now();
+            log::info!("Searching for {query}");
 
             let mut query_embeddings = embedding_provider
                 .embed(&[TextToEmbed::new(&query)])
