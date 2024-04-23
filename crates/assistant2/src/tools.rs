@@ -33,8 +33,15 @@ pub struct CodebaseQuery {
 }
 
 pub struct ProjectIndexTool {
-    pub project_index: Model<ProjectIndex>,
-    pub fs: Arc<dyn Fs>,
+    project_index: Model<ProjectIndex>,
+    fs: Arc<dyn Fs>,
+}
+
+impl ProjectIndexTool {
+    pub fn new(project_index: Model<ProjectIndex>, fs: Arc<dyn Fs>) -> Self {
+        // TODO: setup a better description based on the user's current codebase.
+        Self { project_index, fs }
+    }
 }
 
 impl LanguageModelTool for ProjectIndexTool {

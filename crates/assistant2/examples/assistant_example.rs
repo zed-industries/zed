@@ -1,10 +1,12 @@
+use anyhow::Context as _;
 use assets::Assets;
-use assistant2::AssistantPanel;
+use assistant2::{tools::ProjectIndexTool, AssistantPanel};
+use assistant_tooling::ToolRegistry;
 use client::Client;
-use gpui::{actions, App, AppContext, KeyBinding, Model, Task, View, WindowOptions};
+use gpui::{actions, App, AppContext, KeyBinding, Task, View, WindowOptions};
 use language::LanguageRegistry;
-use project::{Fs, Project};
-use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, ProjectIndex, SemanticIndex};
+use project::Project;
+use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticIndex};
 use settings::{KeymapFile, DEFAULT_KEYMAP_PATH};
 use std::{
     path::{Path, PathBuf},
@@ -12,7 +14,7 @@ use std::{
 };
 use theme::LoadThemes;
 use ui::{div, prelude::*, Render};
-use util::http::HttpClientWithUrl;
+use util::{http::HttpClientWithUrl, ResultExt as _};
 
 actions!(example, [Quit]);
 
@@ -84,8 +86,17 @@ fn main() {
                 let fs = project.read(cx).fs().clone();
 
                 let project_index = semantic_index.project_index(project.clone(), cx);
+
+                let mut tool_registry = ToolRegistry::new();
+                tool_registry
+                    .register(ProjectIndexTool::new(project_index.clone(), fs.clone()))
+                    .context("failed to register ProjectIndexTool")
+                    .log_err();
+
+                let tool_registry = Arc::new(tool_registry);
+
                 cx.open_window(WindowOptions::default(), |cx| {
-                    cx.new_view(|cx| Example::new(language_registry, project_index, fs, cx))
+                    cx.new_view(|cx| Example::new(language_registry, tool_registry, cx))
                 });
                 cx.activate(true);
             })
@@ -101,13 +112,12 @@ struct Example {
 impl Example {
     fn new(
         language_registry: Arc<LanguageRegistry>,
-        project_index: Model<ProjectIndex>,
-        fs: Arc<dyn Fs>,
+        tool_registry: Arc<ToolRegistry>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
             assistant_panel: cx
-                .new_view(|cx| AssistantPanel::new(language_registry, project_index, fs, cx)),
+                .new_view(|cx| AssistantPanel::new(language_registry, tool_registry, cx)),
         }
     }
 }

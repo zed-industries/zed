@@ -1,6 +1,6 @@
 mod assistant_settings;
 mod completion_provider;
-mod tools;
+pub mod tools;
 
 use anyhow::{Context, Result};
 use assistant_tooling::{ToolFunctionCall, ToolRegistry};
@@ -81,12 +81,6 @@ pub fn enabled(cx: &AppContext) -> bool {
 }
 
 pub struct AssistantPanel {
-    #[allow(dead_code)]
-    language_registry: Arc<LanguageRegistry>,
-    #[allow(dead_code)]
-    project_index: Model<ProjectIndex>,
-    #[allow(dead_code)]
-    fs: Arc<dyn Fs>,
     chat: View<AssistantChat>,
     width: Option<Pixels>,
 }
@@ -107,37 +101,32 @@ impl AssistantPanel {
                     semantic_index.project_index(project.clone(), cx)
                 });
 
-                Self::new(
-                    app_state.languages.clone(),
-                    project_index,
-                    app_state.fs.clone(),
-                    cx,
-                )
+                let mut tool_registry = ToolRegistry::new();
+                tool_registry
+                    .register(ProjectIndexTool::new(
+                        project_index.clone(),
+                        app_state.fs.clone(),
+                    ))
+                    .context("failed to register ProjectIndexTool")
+                    .log_err();
+
+                let tool_registry = Arc::new(tool_registry);
+
+                Self::new(app_state.languages.clone(), tool_registry, cx)
             })
         })
     }
 
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
-        project_index: Model<ProjectIndex>,
-        fs: Arc<dyn Fs>,
+        tool_registry: Arc<ToolRegistry>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let chat = cx.new_view(|cx| {
-            AssistantChat::new(
-                language_registry.clone(),
-                project_index.clone(),
-                fs.clone(),
-                cx,
-            )
+            AssistantChat::new(language_registry.clone(), tool_registry.clone(), cx)
         });
-        Self {
-            width: None,
-            language_registry,
-            project_index,
-            fs,
-            chat,
-        }
+
+        Self { width: None, chat }
     }
 }
 
@@ -213,14 +202,13 @@ struct AssistantChat {
     language_registry: Arc<LanguageRegistry>,
     next_message_id: MessageId,
     pending_completion: Option<Task<()>>,
-    tool_registry: ToolRegistry,
+    tool_registry: Arc<ToolRegistry>,
 }
 
 impl AssistantChat {
     fn new(
         language_registry: Arc<LanguageRegistry>,
-        project_index: Model<ProjectIndex>,
-        fs: Arc<dyn Fs>,
+        tool_registry: Arc<ToolRegistry>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let model = CompletionProvider::get(cx).default_model();
@@ -234,15 +222,6 @@ impl AssistantChat {
                     .unwrap()
             },
         );
-
-        let mut tool_registry = ToolRegistry::new();
-        tool_registry
-            .register(ProjectIndexTool {
-                project_index: project_index.clone(),
-                fs: fs.clone(),
-            })
-            .context("failed to register ProjectIndexTool")
-            .log_err();
 
         let mut this = Self {
             model,
