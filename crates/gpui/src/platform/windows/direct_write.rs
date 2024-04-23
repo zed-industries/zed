@@ -320,7 +320,7 @@ impl DirectWriteState {
             if target_font.family == ".SystemUIFont" {
                 let family = self.system_ui_font_name.clone();
                 self.find_font_id(
-                    &family,
+                    family.as_ref(),
                     target_font.weight,
                     target_font.style,
                     &target_font.features,
