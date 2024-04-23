@@ -179,6 +179,8 @@ pub enum InlineCompletionProvider {
 /// or [Supermaven](https://supermaven.com).
 #[derive(Clone, Debug, Default)]
 pub struct InlineCompletionSettings {
+    /// Deprecated - use the root level show_inline_completions instead.
+    feature_enabled: bool,
     /// The provider that supplies inline completions.
     pub provider: InlineCompletionProvider,
     /// A list of globs representing files that inline completions should be disabled for.
