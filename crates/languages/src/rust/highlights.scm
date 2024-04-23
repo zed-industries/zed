@@ -61,7 +61,12 @@
 [
   ";"
   ","
+  "::"
 ] @punctuation.delimiter
+
+[
+  "#"
+] @punctuation.special
 
 [
   "as"
@@ -165,8 +170,6 @@
   "|="
   "||"
   "?"
-  "::"
-  "#"
 ] @operator
 
 (lifetime) @lifetime
