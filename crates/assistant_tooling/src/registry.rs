@@ -48,7 +48,7 @@ impl ToolRegistry {
             )
         }
 
-        self.definitions.push(dbg!(tool.definition()));
+        self.definitions.push(tool.definition());
         let name = tool.name();
         let previous = self.tools.insert(
             name.clone(),

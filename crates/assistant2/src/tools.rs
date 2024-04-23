@@ -58,8 +58,6 @@ impl LanguageModelTool for ProjectIndexTool {
 
     fn execute(&self, query: &Self::Input, cx: &AppContext) -> Task<Result<Self::Output>> {
         let project_index = self.project_index.read(cx);
-        dbg!(project_index.last_status);
-        dbg!("test");
 
         let results = project_index.search(
             query.query.as_str(),
@@ -71,7 +69,6 @@ impl LanguageModelTool for ProjectIndexTool {
 
         cx.spawn(|cx| async move {
             let results = results.await;
-            dbg!(results.len());
 
             let excerpts = results.into_iter().map(|result| {
                 let abs_path = result
@@ -91,8 +88,6 @@ impl LanguageModelTool for ProjectIndexTool {
                     while !text.is_char_boundary(end) {
                         end -= 1;
                     }
-
-                    // todo!("Handle out of date ranges");
 
                     anyhow::Ok(CodebaseExcerpt {
                         path: path.to_string_lossy().to_string().into(),

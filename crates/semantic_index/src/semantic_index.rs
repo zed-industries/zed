@@ -691,7 +691,7 @@ impl WorktreeIndex {
                     .context("failed to create read transaction")?;
                 let db_entries = db.iter(&txn).context("failed to iterate database")?;
                 for db_entry in db_entries {
-                    let (key, db_embedded_file) = db_entry?;
+                    let (_key, db_embedded_file) = db_entry?;
                     for chunk in db_embedded_file.chunks {
                         chunks_tx
                             .send((db_embedded_file.path.clone(), chunk))
