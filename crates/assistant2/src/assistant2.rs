@@ -441,7 +441,7 @@ impl AssistantChat {
         let _subscription = cx.subscribe(&body, move |this, editor, event, cx| match event {
             EditorEvent::SelectionsChanged { .. } => {
                 if editor.read(cx).is_focused(cx) {
-                    let (message_ix, message) = this
+                    let (message_ix, _message) = this
                         .messages
                         .iter()
                         .enumerate()
@@ -452,13 +452,8 @@ impl AssistantChat {
                             _ => None,
                         })
                         .expect("user message not found");
-                    message.body.update(cx, |body, _cx| {
-                        let style = body.style();
 
-                        if let Some(_editor_style) = style {
-                            this.list_state.scroll_to_reveal_item(message_ix);
-                        }
-                    });
+                    this.list_state.scroll_to_reveal_item(message_ix);
                 }
             }
             _ => {}
