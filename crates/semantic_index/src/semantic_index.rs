@@ -226,11 +226,8 @@ impl ProjectIndex {
         let mut worktree_searches = Vec::new();
         for worktree_index in self.worktree_indices.values() {
             if let WorktreeIndexHandle::Loaded { index, .. } = worktree_index {
-                dbg!("worktree index IS loaded");
                 worktree_searches
                     .push(index.read_with(cx, |index, cx| index.search(query, limit, cx)));
-            } else {
-                dbg!("worktree index IS NOT loaded");
             }
         }
 
@@ -298,7 +295,6 @@ impl WorktreeIndex {
                     async move {
                         let mut txn = db_connection.write_txn()?;
                         let db_name = worktree_abs_path.to_string_lossy();
-                        dbg!(&db_name);
                         let db = db_connection.create_database(&mut txn, Some(&db_name))?;
                         txn.commit()?;
                         anyhow::Ok(db)
@@ -405,9 +401,7 @@ impl WorktreeIndex {
         let embed = self.embed_files(chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
-            // dbg!("started index_updated_entries", &updated_entries);
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
-            // dbg!("finished index_updated_entries", &updated_entries);
             Ok(())
         }
     }
@@ -688,9 +682,6 @@ impl WorktreeIndex {
     ) -> Task<Result<Vec<SearchResult>>> {
         let (chunks_tx, chunks_rx) = channel::bounded(1024);
 
-        dbg!("STATUS");
-        dbg!(self.status);
-
         let db_connection = self.db_connection.clone();
         let db = self.db;
         let scan_chunks = cx.background_executor().spawn({
@@ -701,7 +692,6 @@ impl WorktreeIndex {
                 let db_entries = db.iter(&txn).context("failed to iterate database")?;
                 for db_entry in db_entries {
                     let (key, db_embedded_file) = db_entry?;
-                    dbg!(&key);
                     for chunk in db_embedded_file.chunks {
                         chunks_tx
                             .send((db_embedded_file.path.clone(), chunk))

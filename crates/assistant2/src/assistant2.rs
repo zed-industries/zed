@@ -179,7 +179,7 @@ impl Panel for AssistantPanel {
     }
 
     fn size(&self, _cx: &WindowContext) -> Pixels {
-        self.width.unwrap_or(px(200.))
+        self.width.unwrap_or(px(400.))
     }
 
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
