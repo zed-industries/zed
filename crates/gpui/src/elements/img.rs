@@ -229,11 +229,11 @@ impl Img {
 }
 
 impl Element for Img {
-    type BeforeLayout = ();
-    type AfterLayout = Option<Hitbox>;
+    type RequestLayoutState = ();
+    type PrepaintState = Option<Hitbox>;
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
-        let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
+        let layout_id = self.interactivity.request_layout(cx, |mut style, cx| {
             if let Some(data) = self.source.data(cx) {
                 let image_size = data.size();
                 match (style.size.width, style.size.height) {
@@ -256,21 +256,21 @@ impl Element for Img {
         (layout_id, ())
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _before_layout: &mut Self::BeforeLayout,
+        _request_layout: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
     ) -> Option<Hitbox> {
         self.interactivity
-            .after_layout(bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
+            .prepaint(bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::BeforeLayout,
-        hitbox: &mut Self::AfterLayout,
+        _: &mut Self::RequestLayoutState,
+        hitbox: &mut Self::PrepaintState,
         cx: &mut ElementContext,
     ) {
         let source = self.source.clone();

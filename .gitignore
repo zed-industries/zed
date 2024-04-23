@@ -8,7 +8,7 @@
 /script/flatpak/.flatpak-builder
 /script/flatpak/generated-sources.json
 /crates/theme/schemas/theme.json
-/crates/collab/.admins.json
+/crates/collab/seed.json
 /assets/*licenses.md
 **/venv
 .build
