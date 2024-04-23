@@ -92,6 +92,14 @@ pub struct LanguageSettings {
     pub prettier: HashMap<String, serde_json::Value>,
     /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
+    /// The list of language servers to use (or disable) for this language.
+    ///
+    /// This array should consist of language server IDs, as well as the following
+    /// special tokens:
+    /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
+    /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
+    #[serde(default)]
+    pub language_servers: Option<Vec<String>>,
     /// Controls whether Copilot provides suggestion immediately (true)
     /// or waits for a `copilot::Toggle` (false).
     pub show_copilot_suggestions: bool,
@@ -211,6 +219,16 @@ pub struct LanguageSettingsContent {
     /// Default: true
     #[serde(default)]
     pub enable_language_server: Option<bool>,
+    /// The list of language servers to use (or disable) for this language.
+    ///
+    /// This array should consist of language server IDs, as well as the following
+    /// special tokens:
+    /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
+    /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
+    ///
+    /// Default: ["..."]
+    #[serde(default)]
+    pub language_servers: Option<Vec<String>>,
     /// Controls whether Copilot provides suggestion immediately (true)
     /// or waits for a `copilot::Toggle` (false).
     ///
