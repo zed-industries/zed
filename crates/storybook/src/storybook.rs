@@ -11,7 +11,7 @@ use gpui::{
 };
 use log::LevelFilter;
 use project::Project;
-use settings::{default_settings, KeymapFile, Settings, SettingsStore};
+use settings::{KeymapFile, Settings};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme::{ThemeRegistry, ThemeSettings};
