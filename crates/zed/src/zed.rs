@@ -221,7 +221,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
 
             if use_assistant2 {
                 workspace_handle.update(&mut cx, |workspace, cx| {
-                    workspace.add_panel(assistant_panel, cx);
+                    workspace.add_panel(assistant_panel_v2, cx);
                 })?;
             } else {
                 workspace_handle.update(&mut cx, |workspace, cx| {

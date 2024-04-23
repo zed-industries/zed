@@ -1877,6 +1877,7 @@ message ChatCompletionTool {
     }
 }
 
+// A message to the language model
 message LanguageModelRequestMessage {
     LanguageModelRole role = 1;
     string content = 2;
