@@ -3,7 +3,9 @@ use std::cell::{RefCell, RefMut};
 use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use async_task::Runnable;
@@ -25,6 +27,9 @@ use wayland_client::protocol::wl_data_device_manager::DndAction;
 use wayland_client::protocol::wl_pointer::{AxisRelativeDirection, AxisSource};
 use wayland_client::protocol::{
     wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output,
+};
+use wayland_protocols::wp::pointer_gestures::zv1::client::{
+    zwp_pointer_gesture_pinch_v1, zwp_pointer_gesture_swipe_v1, zwp_pointer_gesture_hold_v1, zwp_pointer_gestures_v1
 };
 use wayland_client::{
     delegate_noop,
@@ -74,6 +79,7 @@ pub struct Globals {
     pub viewporter: Option<wp_viewporter::WpViewporter>,
     pub fractional_scale_manager:
         Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
+    pub zwp_pointer_gestures: Option<zwp_pointer_gestures_v1::ZwpPointerGesturesV1>,
     pub decoration_manager: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub executor: ForegroundExecutor,
 }
@@ -104,6 +110,7 @@ impl Globals {
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
             fractional_scale_manager: globals.bind(&qh, 1..=1, ()).ok(),
+            zwp_pointer_gestures: globals.bind(&qh, 1..=1, ()).ok(),
             decoration_manager: globals.bind(&qh, 1..=1, ()).ok(),
             executor,
             qh,
@@ -127,6 +134,8 @@ pub(crate) struct WaylandClientState {
     modifiers: Modifiers,
     axis_source: AxisSource,
     mouse_location: Option<Point<Pixels>>,
+    emit_kinetic_scroll: AtomicBool,
+    continuous_scroll_velocity: Point<Pixels>,
     continuous_scroll_delta: Option<Point<Pixels>>,
     discrete_scroll_delta: Option<Point<f32>>,
     vertical_modifier: f32,
@@ -203,6 +212,52 @@ impl WaylandClientStatePtr {
             state.common.signal.stop();
         }
     }
+
+    pub fn kinetic_scroller(&self) {
+        let client = self.get_client();
+
+        let mut state = client.borrow_mut();
+        if !state.emit_kinetic_scroll.load(Ordering::Relaxed) {
+            return;
+        }
+
+        let delta = state.continuous_scroll_velocity;
+
+        // let interval = Duration::from_millis(1000 / 150);
+        // let mut next_time = Instant::now() + interval;
+
+        let ndelta = delta * 0.95;
+        state.continuous_scroll_velocity = ndelta;
+
+        if delta.magnitude() < 0.1 {
+            state.emit_kinetic_scroll.store(false, Ordering::Relaxed);
+            return;
+        }
+
+        if !state.mouse_location.is_some() {
+            // ??
+            state.emit_kinetic_scroll.store(false, Ordering::Relaxed);
+            return;
+        }
+
+        println!("Kinetic scroll: {:?}", delta);
+
+        if let Some(window) = state.mouse_focused_window.clone() {
+            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                position: state.mouse_location.unwrap(),
+                delta: ScrollDelta::Pixels(delta),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+            });
+            drop(state);
+            window.handle_input(input);
+        }
+
+
+        // std::thread::sleep(interval);
+        // std::thread::sleep(next_time - Instant::now());
+        // next_time += interval;
+    }
 }
 
 #[derive(Clone)]
@@ -241,12 +296,14 @@ impl WaylandClient {
                 match &global.interface[..] {
                     "wl_seat" => {
                         // TODO: multi-seat support
-                        seat = Some(globals.registry().bind::<wl_seat::WlSeat, _, _>(
+                        let _seat = globals.registry().bind::<wl_seat::WlSeat, _, _>(
                             global.name,
                             wl_seat_version(global.version),
                             &qh,
                             (),
-                        ));
+                        );
+
+                        seat = Some(_seat);
                     }
                     "wl_output" => {
                         let output = globals.registry().bind::<wl_output::WlOutput, _, _>(
@@ -269,9 +326,18 @@ impl WaylandClient {
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
-        handle.insert_source(main_receiver, |event, _, _: &mut WaylandClientStatePtr| {
+        handle.insert_source(main_receiver, |event, _, ptr: &mut WaylandClientStatePtr| {
             if let calloop::channel::Event::Msg(runnable) = event {
                 runnable.run();
+            }
+
+            static mut COUNTER: u32 = 0;
+
+            unsafe {
+                if COUNTER % 10 == 0 {
+                    ptr.kinetic_scroller();
+                }
+                COUNTER += 1;
             }
         });
 
@@ -322,6 +388,8 @@ impl WaylandClient {
             scroll_event_received: false,
             axis_source: AxisSource::Wheel,
             mouse_location: None,
+            emit_kinetic_scroll: AtomicBool::new(false),
+            continuous_scroll_velocity: Point::default(),
             continuous_scroll_delta: None,
             discrete_scroll_delta: None,
             vertical_modifier: -1.0,
@@ -521,6 +589,7 @@ delegate_noop!(WaylandClientStatePtr: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientStatePtr: ignore wl_buffer::WlBuffer);
 delegate_noop!(WaylandClientStatePtr: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
+delegate_noop!(WaylandClientStatePtr: ignore zwp_pointer_gestures_v1::ZwpPointerGesturesV1);
 delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewport::WpViewport);
@@ -684,9 +753,61 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 let client = state.get_client();
                 let mut state = client.borrow_mut();
-                state.wl_pointer = Some(seat.get_pointer(qh, ()));
+
+                let had_pointer = state.wl_pointer.is_some();
+
+                let pointer = seat.get_pointer(qh, ());
+                state.wl_pointer = Some(pointer);
+                let pointer = state.wl_pointer.as_ref().unwrap();
+
+                if !had_pointer {
+                    if let Some(pointer_gestures) = state.globals.zwp_pointer_gestures.as_ref() {
+                        pointer_gestures.get_swipe_gesture(pointer, qh, ());
+                        // pointer_gestures.get_pinch_gesture(pointer, qh, ());
+                        // pointer_gestures.get_hold_gesture(pointer, qh, ());
+                    }
+                }
             }
         }
+    }
+}
+
+impl Dispatch<zwp_pointer_gesture_swipe_v1::ZwpPointerGestureSwipeV1, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &zwp_pointer_gesture_swipe_v1::ZwpPointerGestureSwipeV1,
+        event: zwp_pointer_gesture_swipe_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // println!("Swipe event: {:?}", event);
+    }
+}
+
+impl Dispatch<zwp_pointer_gesture_hold_v1::ZwpPointerGestureHoldV1, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &zwp_pointer_gesture_hold_v1::ZwpPointerGestureHoldV1,
+        event: zwp_pointer_gesture_hold_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // println!("Hold event: {:?}", event);
+    }
+}
+
+impl Dispatch<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1,
+        event: zwp_pointer_gesture_pinch_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // println!("Pinch event: {:?}", event);
     }
 }
 
@@ -889,6 +1010,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
         let cursor_icon_name = state.cursor_icon_name.clone();
 
+        println!("Pointer event: {:?}", event);
+
         match event {
             wl_pointer::Event::Enter {
                 serial,
@@ -1016,7 +1139,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 axis_source: WEnum::Value(axis_source),
             } => {
                 state.axis_source = axis_source;
-            }
+            },
             wl_pointer::Event::Axis {
                 time,
                 axis: WEnum::Value(axis),
@@ -1035,8 +1158,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let scroll_delta = state
                     .continuous_scroll_delta
                     .get_or_insert(point(px(0.0), px(0.0)));
-                // TODO: Make nice feeling kinetic scrolling that integrates with the platform's scroll settings
+
                 let modifier = 3.0;
+                let old_scroll_delta = *scroll_delta;
+
+                // TODO: Make nice feeling kinetic scrolling that integrates with the platform's scroll settings
+                // modifier comes from platform kinetic scrolling settings
+
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
                         scroll_delta.y += px(value as f32 * modifier * axis_modifier);
@@ -1046,7 +1174,21 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     }
                     _ => unreachable!(),
                 }
-            }
+
+                let new_scroll_delta = *scroll_delta;
+                let velocity = (new_scroll_delta - old_scroll_delta);
+                state.continuous_scroll_velocity = velocity;
+            },
+            wl_pointer::Event::AxisStop {
+                time,
+                axis: WEnum::Value(axis),
+                ..
+            } => {
+                if axis == wl_pointer::Axis::VerticalScroll {
+                    state.emit_kinetic_scroll.store(true, Ordering::Relaxed);
+                    // spawn a thread to handle the kinetic scrolling
+                }
+            },
             wl_pointer::Event::AxisDiscrete {
                 axis: WEnum::Value(axis),
                 discrete,
@@ -1112,7 +1254,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     }
                     _ => unreachable!(),
                 }
-            }
+            },
             wl_pointer::Event::Frame => {
                 if state.scroll_event_received {
                     state.scroll_event_received = false;
@@ -1147,6 +1289,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
         }
     }
 }
+
 
 impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ObjectId> for WaylandClientStatePtr {
     fn event(
