@@ -3350,10 +3350,10 @@ enum Invisible {
 }
 
 impl Element for EditorElement {
-    type BeforeLayout = ();
-    type BeforePaint = EditorLayout;
+    type RequestLayoutState = ();
+    type PrepaintState = EditorLayout;
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, ()) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (gpui::LayoutId, ()) {
         self.editor.update(cx, |editor, cx| {
             editor.set_style(self.style.clone(), cx);
 
@@ -3400,12 +3400,12 @@ impl Element for EditorElement {
         })
     }
 
-    fn before_paint(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::BeforeLayout,
+        _: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
-    ) -> Self::BeforePaint {
+    ) -> Self::PrepaintState {
         let text_style = TextStyleRefinement {
             font_size: Some(self.style.text.font_size),
             line_height: Some(self.style.text.line_height),
@@ -3831,8 +3831,8 @@ impl Element for EditorElement {
     fn paint(
         &mut self,
         bounds: Bounds<gpui::Pixels>,
-        _: &mut Self::BeforeLayout,
-        layout: &mut Self::BeforePaint,
+        _: &mut Self::RequestLayoutState,
+        layout: &mut Self::PrepaintState,
         cx: &mut ElementContext,
     ) {
         let focus_handle = self.editor.focus_handle(cx);
@@ -4492,7 +4492,7 @@ mod tests {
         let state = cx
             .update_window(window.into(), |_view, cx| {
                 cx.with_element_context(|cx| {
-                    element.before_paint(
+                    element.prepaint(
                         Bounds {
                             origin: point(px(500.), px(500.)),
                             size: size(px(500.), px(500.)),
@@ -4587,7 +4587,7 @@ mod tests {
         let state = cx
             .update_window(window.into(), |_view, cx| {
                 cx.with_element_context(|cx| {
-                    element.before_paint(
+                    element.prepaint(
                         Bounds {
                             origin: point(px(500.), px(500.)),
                             size: size(px(500.), px(500.)),
@@ -4652,7 +4652,7 @@ mod tests {
         let state = cx
             .update_window(window.into(), |_view, cx| {
                 cx.with_element_context(|cx| {
-                    element.before_paint(
+                    element.prepaint(
                         Bounds {
                             origin: point(px(500.), px(500.)),
                             size: size(px(500.), px(500.)),
@@ -4848,7 +4848,7 @@ mod tests {
         let layout_state = cx
             .update_window(window.into(), |_, cx| {
                 cx.with_element_context(|cx| {
-                    element.before_paint(
+                    element.prepaint(
                         Bounds {
                             origin: point(px(500.), px(500.)),
                             size: size(px(500.), px(500.)),

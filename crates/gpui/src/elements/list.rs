@@ -97,7 +97,7 @@ struct LayoutItemsResponse {
 }
 
 /// Frame state used by the [List] element after layout.
-pub struct ListBeforePaintState {
+pub struct ListPrepaintStateState {
     hitbox: Hitbox,
     layout: LayoutItemsResponse,
 }
@@ -522,13 +522,13 @@ pub struct ListOffset {
 }
 
 impl Element for List {
-    type BeforeLayout = ();
-    type BeforePaint = ListBeforePaintState;
+    type RequestLayoutState = ();
+    type PrepaintState = ListPrepaintStateState;
 
-    fn before_layout(
+    fn request_layout(
         &mut self,
         cx: &mut crate::ElementContext,
-    ) -> (crate::LayoutId, Self::BeforeLayout) {
+    ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
                 let mut style = Style::default();
@@ -589,12 +589,12 @@ impl Element for List {
         (layout_id, ())
     }
 
-    fn before_paint(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::BeforeLayout,
+        _: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
-    ) -> ListBeforePaintState {
+    ) -> ListPrepaintStateState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
 
@@ -633,7 +633,7 @@ impl Element for List {
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
-        ListBeforePaintState {
+        ListPrepaintStateState {
             hitbox,
             layout: layout_response,
         }
@@ -642,20 +642,20 @@ impl Element for List {
     fn paint(
         &mut self,
         bounds: Bounds<crate::Pixels>,
-        _: &mut Self::BeforeLayout,
-        before_paint: &mut Self::BeforePaint,
+        _: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
         cx: &mut crate::ElementContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            for item in &mut before_paint.layout.item_elements {
+            for item in &mut prepaint.layout.item_elements {
                 item.paint(cx);
             }
         });
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
-        let scroll_top = before_paint.layout.scroll_top;
-        let hitbox_id = before_paint.hitbox.id;
+        let scroll_top = prepaint.layout.scroll_top;
+        let hitbox_id = prepaint.hitbox.id;
         cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(cx) {
                 list_state.0.borrow_mut().scroll(

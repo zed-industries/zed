@@ -792,13 +792,13 @@ mod element {
     }
 
     impl Element for PaneAxisElement {
-        type BeforeLayout = ();
-        type BeforePaint = PaneAxisLayout;
+        type RequestLayoutState = ();
+        type PrepaintState = PaneAxisLayout;
 
-        fn before_layout(
+        fn request_layout(
             &mut self,
             cx: &mut ui::prelude::ElementContext,
-        ) -> (gpui::LayoutId, Self::BeforeLayout) {
+        ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let mut style = Style::default();
             style.flex_grow = 1.;
             style.flex_shrink = 1.;
@@ -808,10 +808,10 @@ mod element {
             (cx.request_layout(&style, None), ())
         }
 
-        fn before_paint(
+        fn prepaint(
             &mut self,
             bounds: Bounds<Pixels>,
-            _state: &mut Self::BeforeLayout,
+            _state: &mut Self::RequestLayoutState,
             cx: &mut ElementContext,
         ) -> PaneAxisLayout {
             let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
@@ -897,8 +897,8 @@ mod element {
         fn paint(
             &mut self,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
-            _: &mut Self::BeforeLayout,
-            layout: &mut Self::BeforePaint,
+            _: &mut Self::RequestLayoutState,
+            layout: &mut Self::PrepaintState,
             cx: &mut ui::prelude::ElementContext,
         ) {
             for child in &mut layout.children {

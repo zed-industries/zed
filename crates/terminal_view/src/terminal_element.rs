@@ -541,12 +541,12 @@ impl TerminalElement {
 }
 
 impl Element for TerminalElement {
-    type BeforeLayout = ();
-    type BeforePaint = LayoutState;
+    type RequestLayoutState = ();
+    type PrepaintState = LayoutState;
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
         self.interactivity.occlude_mouse();
-        let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
+        let layout_id = self.interactivity.request_layout(cx, |mut style, cx| {
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
             let layout_id = cx.request_layout(&style, None);
@@ -556,14 +556,14 @@ impl Element for TerminalElement {
         (layout_id, ())
     }
 
-    fn before_paint(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::BeforeLayout,
+        _: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
-    ) -> Self::BeforePaint {
+    ) -> Self::PrepaintState {
         self.interactivity
-            .before_paint(bounds, bounds.size, cx, |_, _, hitbox, cx| {
+            .prepaint(bounds, bounds.size, cx, |_, _, hitbox, cx| {
                 let hitbox = hitbox.unwrap();
                 let settings = ThemeSettings::get_global(cx).clone();
 
@@ -775,8 +775,8 @@ impl Element for TerminalElement {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::BeforeLayout,
-        layout: &mut Self::BeforePaint,
+        _: &mut Self::RequestLayoutState,
+        layout: &mut Self::PrepaintState,
         cx: &mut ElementContext<'_>,
     ) {
         cx.paint_quad(fill(bounds, layout.background_color));

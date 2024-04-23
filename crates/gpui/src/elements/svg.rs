@@ -37,30 +37,30 @@ impl Svg {
 }
 
 impl Element for Svg {
-    type BeforeLayout = ();
-    type BeforePaint = Option<Hitbox>;
+    type RequestLayoutState = ();
+    type PrepaintState = Option<Hitbox>;
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id = self
             .interactivity
-            .before_layout(cx, |style, cx| cx.request_layout(&style, None));
+            .request_layout(cx, |style, cx| cx.request_layout(&style, None));
         (layout_id, ())
     }
 
-    fn before_paint(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _before_layout: &mut Self::BeforeLayout,
+        _request_layout: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
     ) -> Option<Hitbox> {
         self.interactivity
-            .before_paint(bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
+            .prepaint(bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _before_layout: &mut Self::BeforeLayout,
+        _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
         cx: &mut ElementContext,
     ) where

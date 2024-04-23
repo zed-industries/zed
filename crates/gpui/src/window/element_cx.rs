@@ -121,7 +121,7 @@ pub(crate) struct DeferredDraw {
     text_style_stack: Vec<TextStyleRefinement>,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
-    before_paint_range: Range<BeforePaintIndex>,
+    prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
 }
 
@@ -143,7 +143,7 @@ pub(crate) struct Frame {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct BeforePaintIndex {
+pub(crate) struct PrepaintStateIndex {
     hitboxes_index: usize,
     tooltips_index: usize,
     deferred_draws_index: usize,
@@ -474,7 +474,7 @@ impl<'a> ElementContext<'a> {
             }
         }
 
-        self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.before_paint(cx));
+        self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
 
         self.window.tooltip_bounds = Some(TooltipBounds {
             id: tooltip_request.id,
@@ -496,16 +496,16 @@ impl<'a> ElementContext<'a> {
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
 
-            let layout_start = self.before_paint_index();
+            let layout_start = self.prepaint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_absolute_element_offset(deferred_draw.absolute_offset, |cx| {
-                    element.before_paint(cx)
+                    element.prepaint(cx)
                 });
             } else {
-                self.reuse_before_paint(deferred_draw.before_paint_range.clone());
+                self.reuse_prepaint(deferred_draw.prepaint_range.clone());
             }
-            let layout_end = self.before_paint_index();
-            deferred_draw.before_paint_range = layout_start..layout_end;
+            let layout_end = self.prepaint_index();
+            deferred_draw.prepaint_range = layout_start..layout_end;
         }
         assert_eq!(
             self.window.next_frame.deferred_draws.len(),
@@ -542,8 +542,8 @@ impl<'a> ElementContext<'a> {
         self.window.element_id_stack.clear();
     }
 
-    pub(crate) fn before_paint_index(&self) -> BeforePaintIndex {
-        BeforePaintIndex {
+    pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
+        PrepaintStateIndex {
             hitboxes_index: self.window.next_frame.hitboxes.len(),
             tooltips_index: self.window.next_frame.tooltip_requests.len(),
             deferred_draws_index: self.window.next_frame.deferred_draws.len(),
@@ -553,7 +553,7 @@ impl<'a> ElementContext<'a> {
         }
     }
 
-    pub(crate) fn reuse_before_paint(&mut self, range: Range<BeforePaintIndex>) {
+    pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
         let window = &mut self.window;
         window.next_frame.hitboxes.extend(
             window.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
@@ -591,7 +591,7 @@ impl<'a> ElementContext<'a> {
                     priority: deferred_draw.priority,
                     element: None,
                     absolute_offset: deferred_draw.absolute_offset,
-                    before_paint_range: deferred_draw.before_paint_range.clone(),
+                    prepaint_range: deferred_draw.prepaint_range.clone(),
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
         );
@@ -753,7 +753,7 @@ impl<'a> ElementContext<'a> {
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
     /// element offset and prepaint again. See [`List`] for an example.
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
-        let index = self.before_paint_index();
+        let index = self.prepaint_index();
         let result = f(self);
         if result.is_err() {
             self.window
@@ -783,9 +783,9 @@ impl<'a> ElementContext<'a> {
         result
     }
 
-    /// When you call this method during [`before_paint`], containing elements will attempt to
+    /// When you call this method during [`prepaint`], containing elements will attempt to
     /// scroll to cause the specified bounds to become visible. When they decide to autoscroll, they will call
-    /// [`before_paint`] again with a new set of bounds. See [`List`] for an example of an element
+    /// [`prepaint`] again with a new set of bounds. See [`List`] for an example of an element
     /// that supports this method being called on the elements it contains.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
         self.window.requested_autoscroll = Some(bounds);
@@ -1014,7 +1014,7 @@ impl<'a> ElementContext<'a> {
         assert_eq!(
             window.draw_phase,
             DrawPhase::Layout,
-            "defer_draw can only be called during before_layout or before_paint"
+            "defer_draw can only be called during request_layout or prepaint"
         );
         let parent_node = window.next_frame.dispatch_tree.active_node_id().unwrap();
         window.next_frame.deferred_draws.push(DeferredDraw {
@@ -1024,7 +1024,7 @@ impl<'a> ElementContext<'a> {
             priority,
             element: Some(element),
             absolute_offset,
-            before_paint_range: BeforePaintIndex::default()..BeforePaintIndex::default(),
+            prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
             paint_range: PaintIndex::default()..PaintIndex::default(),
         });
     }
@@ -1389,7 +1389,7 @@ impl<'a> ElementContext<'a> {
             .layout_engine
             .as_mut()
             .unwrap()
-            .before_layout(style, rem_size, &self.cx.app.layout_id_buffer)
+            .request_layout(style, rem_size, &self.cx.app.layout_id_buffer)
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -1437,7 +1437,7 @@ impl<'a> ElementContext<'a> {
         bounds
     }
 
-    /// This method should be called during `before_paint`. You can use
+    /// This method should be called during `prepaint`. You can use
     /// the returned [Hitbox] during `paint` or in an event handler
     /// to determine whether the inserted hitbox was the topmost.
     pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
