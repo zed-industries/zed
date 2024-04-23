@@ -219,10 +219,11 @@ impl WaylandClientStatePtr {
         let mut state = client.borrow_mut();
         let delta = state.continuous_scroll_velocity;
 
-        let ndelta = Point::new(
-            delta.x - Pixels(0.5) * delta.x.0.signum(),
-            delta.y - Pixels(0.5) * delta.y.0.signum(),
-        );
+        // let ndelta = Point::new(
+        //     delta.x - Pixels(0.5) * delta.x.0.signum(),
+        //     delta.y - Pixels(0.5) * delta.y.0.signum(),
+        // );
+        let ndelta = delta * 0.975;
         state.continuous_scroll_velocity = ndelta;
 
         if !state.emit_kinetic_scroll {
@@ -327,7 +328,7 @@ impl WaylandClient {
             }
         });
 
-        let interval = Duration::from_millis(5);
+        let interval = Duration::from_millis(7); // 7 was observed interval of Wayland events
         let kinetic_source = Timer::from_duration(interval);
         handle.insert_source(kinetic_source, move |_, _, ptr: &mut WaylandClientStatePtr| {
             ptr.kinetic_scroller();
@@ -1139,8 +1140,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 value,
                 ..
             } => {
-                state.emit_kinetic_scroll = false;
-
                 let axis_source = state.axis_source;
                 let axis_modifier = match axis {
                     wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
@@ -1150,12 +1149,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let supports_relative_direction =
                     wl_pointer.version() >= wl_pointer::EVT_AXIS_RELATIVE_DIRECTION_SINCE;
                 state.scroll_event_received = true;
-                let scroll_delta = state
+                let mut scroll_delta = *state
                     .continuous_scroll_delta
                     .get_or_insert(point(px(0.0), px(0.0)));
 
                 let modifier = 3.0;
-                // let old_scroll_delta = *scroll_delta;
+                let old_scroll_delta = scroll_delta;
 
                 // TODO: Make nice feeling kinetic scrolling that integrates with the platform's scroll settings
                 // modifier comes from platform kinetic scrolling settings
@@ -1170,11 +1169,21 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => unreachable!(),
                 }
 
-                // let new_scroll_delta = *scroll_delta;
-                // let velocity = (new_scroll_delta - old_scroll_delta);
-                // state.continuous_scroll_velocity = velocity;
+                let old_dir = state.continuous_scroll_velocity.y.0;
+                let new_dir = value as f32;
 
-                state.continuous_scroll_velocity = *scroll_delta;
+                if ((old_dir > 0.0 && new_dir > 0.0) || (old_dir < 0.0 && new_dir < 0.0) || new_dir == 0.0) {
+                    state.emit_kinetic_scroll = true;
+                } else {
+                    state.emit_kinetic_scroll = false;
+                }
+
+                let new_scroll_delta = scroll_delta;
+                let velocity = (new_scroll_delta - old_scroll_delta);
+                state.continuous_scroll_velocity = velocity;
+
+                state.continuous_scroll_delta = Some(scroll_delta);
+                // state.continuous_scroll_velocity = scroll_delta;
             },
             wl_pointer::Event::AxisDiscrete {
                 axis: WEnum::Value(axis),
