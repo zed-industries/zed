@@ -1343,7 +1343,7 @@ impl LocalWorktree {
 
         let delete = cx.background_executor().spawn(async move {
             if entry.is_file() {
-                fs.remove_file(&abs_path?, Default::default()).await?;
+                fs.trash_file(&abs_path?, Default::default()).await?;
             } else {
                 fs.remove_dir(
                     &abs_path?,

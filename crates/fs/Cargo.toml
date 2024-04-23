@@ -36,6 +36,9 @@ gpui = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 fsevent.workspace = true
+objc = "0.2"
+cocoa = "0.25"
+
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify = "6.1.1"
