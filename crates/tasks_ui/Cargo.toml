@@ -22,7 +22,6 @@ serde.workspace = true
 settings.workspace = true
 ui.workspace = true
 util.workspace = true
-terminal.workspace = true
 workspace.workspace = true
 language.workspace = true
 

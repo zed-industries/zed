@@ -8,7 +8,7 @@ use anyhow::Context;
 use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
 use language::{BasicContextProvider, ContextProvider, Language};
-use modal::{Spawn, TasksModal};
+use modal::TasksModal;
 use project::{Location, TaskSourceKind, WorktreeId};
 use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables};
 use util::ResultExt;
@@ -16,9 +16,8 @@ use workspace::Workspace;
 
 mod modal;
 mod settings;
-mod status_indicator;
 
-pub use status_indicator::TaskStatusIndicator;
+pub use modal::Spawn;
 
 pub fn init(cx: &mut AppContext) {
     settings::TaskSettings::register(cx);
