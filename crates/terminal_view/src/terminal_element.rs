@@ -669,7 +669,7 @@ impl Element for TerminalElement {
                         .id("terminal-element")
                         .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
                         .into_any_element();
-                    element.layout(offset, bounds.size.into(), cx);
+                    element.prepaint_as_root(offset, bounds.size.into(), cx);
                     element
                 });
 

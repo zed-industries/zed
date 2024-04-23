@@ -872,7 +872,8 @@ mod element {
                     size: child_size,
                 };
                 bounding_boxes.push(Some(child_bounds));
-                child.layout(origin, child_size.into(), cx);
+                child.layout_as_root(child_size.into(), cx);
+                child.prepaint_at(origin, cx);
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
                 layout.children.push(PaneAxisChildLayout {

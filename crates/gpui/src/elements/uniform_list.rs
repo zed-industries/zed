@@ -140,7 +140,7 @@ impl Element for UniformList {
     fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
+        frame_state: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
     ) -> Option<Hitbox> {
         let style = self.interactivity.compute_style(None, cx);
@@ -155,9 +155,7 @@ impl Element for UniformList {
 
         let content_size = Size {
             width: padded_bounds.size.width,
-            height: request_layout.item_size.height * self.item_count
-                + padding.top
-                + padding.bottom,
+            height: frame_state.item_size.height * self.item_count + padding.top + padding.bottom,
         };
 
         let shared_scroll_offset = self.interactivity.scroll_offset.clone().unwrap();
@@ -224,8 +222,9 @@ impl Element for UniformList {
                                 AvailableSpace::Definite(padded_bounds.size.width),
                                 AvailableSpace::Definite(item_height),
                             );
-                            item.layout(item_origin, available_space, cx);
-                            request_layout.items.push(item);
+                            item.layout_as_root(available_space, cx);
+                            item.prepaint_at(item_origin, cx);
+                            frame_state.items.push(item);
                         }
                     });
                 }
@@ -280,7 +279,7 @@ impl UniformList {
             }),
             AvailableSpace::MinContent,
         );
-        item_to_measure.measure(available_space, cx)
+        item_to_measure.layout_as_root(available_space, cx)
     }
 
     /// Track and render scroll state of this list with reference to the given scroll handle.

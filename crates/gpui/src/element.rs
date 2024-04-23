@@ -211,7 +211,7 @@ trait ElementObject {
 
     fn paint(&mut self, cx: &mut ElementContext);
 
-    fn measure(
+    fn layout_as_root(
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
@@ -315,7 +315,7 @@ impl<E: Element> Drawable<E> {
         }
     }
 
-    fn measure(
+    fn layout_as_root(
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
@@ -380,12 +380,12 @@ where
         Drawable::paint(self, cx);
     }
 
-    fn measure(
+    fn layout_as_root(
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) -> Size<Pixels> {
-        Drawable::measure(self, available_space, cx)
+        Drawable::layout_as_root(self, available_space, cx)
     }
 }
 
@@ -415,9 +415,26 @@ impl AnyElement {
         self.0.request_layout(cx)
     }
 
-    /// Commits the element bounds of this [AnyElement] for hitbox purposes.
+    /// Prepares the element to be painted by storing its bounds, giving it a chance to draw hitboxes and
+    /// request autoscroll before the final paint pass is confirmed.
     pub fn prepaint(&mut self, cx: &mut ElementContext) {
         self.0.prepaint(cx)
+    }
+
+    /// Prepaints this element at the given absolute origin.
+    pub fn prepaint_at(&mut self, origin: Point<Pixels>, cx: &mut ElementContext) {
+        cx.with_absolute_element_offset(origin, |cx| self.0.prepaint(cx));
+    }
+
+    /// Performs layout on this element in the available space, then prepaints it at the given absolute origin.
+    pub fn prepaint_as_root(
+        &mut self,
+        origin: Point<Pixels>,
+        available_space: Size<AvailableSpace>,
+        cx: &mut ElementContext,
+    ) {
+        self.layout_as_root(available_space, cx);
+        cx.with_absolute_element_offset(origin, |cx| self.0.prepaint(cx));
     }
 
     /// Paints the element stored in this `AnyElement`.
@@ -425,26 +442,26 @@ impl AnyElement {
         self.0.paint(cx)
     }
 
-    /// Initializes this element and performs layout within the given available space to determine its size.
-    pub fn measure(
+    /// Performs layout for this element within the given available space and returns its size.
+    pub fn layout_as_root(
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut ElementContext,
     ) -> Size<Pixels> {
-        self.0.measure(available_space, cx)
+        self.0.layout_as_root(available_space, cx)
     }
 
-    /// Initializes this element, performs layout if needed and commits its bounds for hitbox purposes.
-    pub fn layout(
-        &mut self,
-        absolute_offset: Point<Pixels>,
-        available_space: Size<AvailableSpace>,
-        cx: &mut ElementContext,
-    ) -> Size<Pixels> {
-        let size = self.measure(available_space, cx);
-        cx.with_absolute_element_offset(absolute_offset, |cx| self.prepaint(cx));
-        size
-    }
+    // /// Initializes this element, performs layout if needed and commits its bounds for hitbox purposes.
+    // pub fn layout(
+    //     &mut self,
+    //     absolute_offset: Point<Pixels>,
+    //     available_space: Size<AvailableSpace>,
+    //     cx: &mut ElementContext,
+    // ) -> Size<Pixels> {
+    //     let size = self.layout_as_root(available_space, cx);
+    //     cx.with_absolute_element_offset(absolute_offset, |cx| self.prepaint(cx));
+    //     size
+    // }
 }
 
 impl Element for AnyElement {

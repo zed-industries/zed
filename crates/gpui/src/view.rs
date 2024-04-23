@@ -327,7 +327,8 @@ impl Element for AnyView {
 
                     let prepaint_start = cx.prepaint_index();
                     let mut element = (self.render)(self, cx);
-                    element.layout(bounds.origin, bounds.size.into(), cx);
+                    element.layout_as_root(bounds.size.into(), cx);
+                    element.prepaint_at(bounds.origin, cx);
                     let prepaint_end = cx.prepaint_index();
 
                     (

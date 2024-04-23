@@ -411,7 +411,7 @@ impl StateInner {
             // If we're within the visible area or the height wasn't cached, render and measure the item's element
             if visible_height < available_height || size.is_none() {
                 let mut element = (self.render_item)(scroll_top.item_ix + ix, cx);
-                let element_size = element.measure(available_item_space, cx);
+                let element_size = element.layout_as_root(available_item_space, cx);
                 size = Some(element_size);
                 if visible_height < available_height {
                     item_elements.push_back(element);
@@ -435,7 +435,7 @@ impl StateInner {
                 cursor.prev(&());
                 if cursor.item().is_some() {
                     let mut element = (self.render_item)(cursor.start().0, cx);
-                    let element_size = element.measure(available_item_space, cx);
+                    let element_size = element.layout_as_root(available_item_space, cx);
 
                     rendered_height += element_size.height;
                     measured_items.push_front(ListItem::Rendered { size: element_size });
@@ -474,7 +474,7 @@ impl StateInner {
                     *size
                 } else {
                     let mut element = (self.render_item)(cursor.start().0, cx);
-                    element.measure(available_item_space, cx)
+                    element.layout_as_root(available_item_space, cx)
                 };
 
                 leading_overdraw += size.height;
@@ -624,8 +624,9 @@ impl Element for List {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
                 for mut item_element in &mut layout_response.item_elements {
-                    let item_size = item_element.measure(layout_response.available_item_space, cx);
-                    item_element.layout(item_origin, layout_response.available_item_space, cx);
+                    let item_size =
+                        item_element.layout_as_root(layout_response.available_item_space, cx);
+                    item_element.prepaint_at(item_origin, cx);
                     item_origin.y += item_size.height;
                 }
             });
