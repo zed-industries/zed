@@ -162,7 +162,17 @@ macro_rules! create_definitions {
                                 };
                             }
                         }
-                        Ok(FontFeatures { enabled, disabled, other_enabled: other_enabled.into(), other_disabled: other_disabled.into() })
+                        let other_enabled = if other_enabled.is_empty() {
+                            "".into()
+                        } else {
+                            other_enabled.into()
+                        };
+                        let other_disabled = if other_disabled.is_empty() {
+                            "".into()
+                        } else {
+                            other_disabled.into()
+                        };
+                        Ok(FontFeatures { enabled, disabled, other_enabled, other_disabled })
                     }
                 }
 
