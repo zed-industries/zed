@@ -1343,7 +1343,7 @@ impl Client {
         self.peer.respond(receipt, response)
     }
 
-    pub fn respond_with_error<T: RequestMessage>(
+    fn respond_with_error<T: RequestMessage>(
         &self,
         receipt: Receipt<T>,
         error: proto::Error,

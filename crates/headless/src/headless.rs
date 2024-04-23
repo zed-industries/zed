@@ -11,7 +11,7 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use postage::stream::Stream;
 use project::{Project, WorktreeSettings};
-use rpc::{proto, ErrorCode, ErrorCodeExt, ErrorExt, TypedEnvelope};
+use rpc::{proto, ErrorCode, TypedEnvelope};
 use settings::{Settings, SettingsStore};
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
@@ -103,7 +103,7 @@ impl DevServer {
         DevServer {
             _subscriptions: vec![
                 client.add_message_handler(cx.weak_model(), Self::handle_dev_server_instructions),
-                client.add_message_handler(
+                client.add_request_handler(
                     cx.weak_model(),
                     Self::handle_validate_remote_project_request,
                 ),
@@ -168,29 +168,18 @@ impl DevServer {
     async fn handle_validate_remote_project_request(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::ValidateRemoteProjectRequest>,
-        client: Arc<Client>,
+        _: Arc<Client>,
         cx: AsyncAppContext,
-    ) -> Result<()> {
+    ) -> Result<proto::Ack> {
         let path = std::path::Path::new(&envelope.payload.path);
         let fs = cx.read_model(&this, |this, _| this.app_state.fs.clone())?;
 
         let path_exists = fs.is_dir(path).await;
-        if path_exists {
-            //TODO actually send the Ack
-            client.respond_with_error(
-                envelope.receipt(),
-                ErrorCode::Internal
-                    .message("Path exists".to_string())
-                    .to_proto(),
-            )
-        } else {
-            client.respond_with_error(
-                envelope.receipt(),
-                ErrorCode::RemoteProjectPathDoesNotExist
-                    .message("Path does not exist".to_string())
-                    .to_proto(),
-            )
+        if !path_exists {
+            return Err(anyhow::anyhow!(ErrorCode::RemoteProjectPathDoesNotExist))?;
         }
+
+        Ok(proto::Ack {})
     }
 
     fn unshare_project(

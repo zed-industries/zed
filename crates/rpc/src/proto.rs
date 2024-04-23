@@ -303,7 +303,7 @@ messages!(
     (SetRoomParticipantRole, Foreground),
     (BlameBuffer, Foreground),
     (BlameBufferResponse, Foreground),
-    (CreateRemoteProject, Foreground),
+    (CreateRemoteProject, Background),
     (CreateRemoteProjectResponse, Foreground),
     (CreateDevServer, Foreground),
     (CreateDevServerResponse, Foreground),
@@ -318,7 +318,7 @@ messages!(
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
     (RemoteProjectsUpdate, Foreground),
-    (ValidateRemoteProjectRequest, Foreground),
+    (ValidateRemoteProjectRequest, Background),
 );
 
 request_messages!(

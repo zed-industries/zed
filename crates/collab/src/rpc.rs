@@ -2242,26 +2242,14 @@ async fn create_remote_project(
 
     let path = request.path.clone();
     //Check that the path exists on the dev server
-    let check_project_path_response = session
+    session
         .peer
-        .request(
+        .forward_request(
+            session.connection_id,
             dev_server_connection_id,
             proto::ValidateRemoteProjectRequest { path: path.clone() },
         )
-        .await;
-    if let Err(err) = check_project_path_response {
-        match err.error_code() {
-            ErrorCode::RemoteProjectPathDoesNotExist => {
-                Err(ErrorCode::RemoteProjectPathDoesNotExist
-                    .message(format!(
-                        "The path '{}' does not exist on the dev server",
-                        path
-                    ))
-                    .anyhow())?;
-            }
-            _ => (),
-        };
-    }
+        .await?;
 
     let (remote_project, update) = session
         .db()
