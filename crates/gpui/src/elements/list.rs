@@ -92,7 +92,13 @@ pub enum ListSizingBehavior {
 struct LayoutItemsResponse {
     max_item_width: Pixels,
     scroll_top: ListOffset,
-    item_elements: VecDeque<(AnyElement, Size<Pixels>)>,
+    item_layouts: VecDeque<ItemLayout>,
+}
+
+struct ItemLayout {
+    index: usize,
+    element: AnyElement,
+    size: Size<Pixels>,
 }
 
 /// Frame state used by the [List] element after layout.
@@ -378,7 +384,7 @@ impl StateInner {
     ) -> LayoutItemsResponse {
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
-        let mut item_elements = VecDeque::new();
+        let mut item_layouts = VecDeque::new();
         let mut rendered_height = padding.top;
         let mut max_item_width = px(0.);
         let mut scroll_top = self.logical_scroll_top();
@@ -409,11 +415,16 @@ impl StateInner {
 
             // If we're within the visible area or the height wasn't cached, render and measure the item's element
             if visible_height < available_height || size.is_none() {
-                let mut element = (self.render_item)(scroll_top.item_ix + ix, cx);
+                let item_index = scroll_top.item_ix + ix;
+                let mut element = (self.render_item)(item_index, cx);
                 let element_size = element.layout_as_root(available_item_space, cx);
                 size = Some(element_size);
                 if visible_height < available_height {
-                    item_elements.push_back((element, element_size));
+                    item_layouts.push_back(ItemLayout {
+                        index: item_index,
+                        element,
+                        size: element_size,
+                    });
                 }
             }
 
@@ -433,12 +444,17 @@ impl StateInner {
             while rendered_height < available_height {
                 cursor.prev(&());
                 if cursor.item().is_some() {
-                    let mut element = (self.render_item)(cursor.start().0, cx);
+                    let item_index = cursor.start().0;
+                    let mut element = (self.render_item)(item_index, cx);
                     let element_size = element.layout_as_root(available_item_space, cx);
 
                     rendered_height += element_size.height;
                     measured_items.push_front(ListItem::Rendered { size: element_size });
-                    item_elements.push_front((element, element_size))
+                    item_layouts.push_front(ItemLayout {
+                        index: item_index,
+                        element,
+                        size: element_size,
+                    });
                 } else {
                     break;
                 }
@@ -495,8 +511,43 @@ impl StateInner {
         LayoutItemsResponse {
             max_item_width,
             scroll_top,
-            item_elements,
+            item_layouts,
         }
+    }
+
+    fn prepaint_items(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        padding: Edges<Pixels>,
+        cx: &mut ElementContext,
+    ) -> Result<LayoutItemsResponse, ListOffset> {
+        cx.transact(|cx| {
+            let mut layout_response =
+                self.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
+
+            // Only paint the visible items, if there is actually any space for them (taking padding into account)
+            if bounds.size.height > padding.top + padding.bottom {
+                // Paint the visible items
+                let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
+                item_origin.y -= layout_response.scroll_top.offset_in_item;
+                for item in &mut layout_response.item_layouts {
+                    cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+                        item.element.prepaint_at(item_origin, cx);
+                    });
+                    if let Some(autoscroll_bounds) = cx.take_autoscroll() {
+                        if bounds.intersect(&autoscroll_bounds) != autoscroll_bounds {
+                            return Err(ListOffset {
+                                item_ix: item.index,
+                                offset_in_item: autoscroll_bounds.origin.y - item_origin.y,
+                            });
+                        }
+                    }
+                    item_origin.y += item.size.height;
+                }
+            }
+
+            Ok(layout_response)
+        })
     }
 }
 
@@ -612,21 +663,13 @@ impl Element for List {
         }
 
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-        let mut layout_response =
-            state.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
-
-        // Only paint the visible items, if there is actually any space for them (taking padding into account)
-        if bounds.size.height > padding.top + padding.bottom {
-            // Paint the visible items
-            cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
-                item_origin.y -= layout_response.scroll_top.offset_in_item;
-                for (item_element, item_size) in &mut layout_response.item_elements {
-                    item_element.prepaint_at(item_origin, cx);
-                    item_origin.y += item_size.height;
-                }
-            });
-        }
+        let layout_response = match state.prepaint_items(bounds, padding, cx) {
+            Ok(layout_response) => layout_response,
+            Err(autoscroll_request) => {
+                state.logical_scroll_top = Some(autoscroll_request);
+                state.prepaint_items(bounds, padding, cx).unwrap()
+            }
+        };
 
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
@@ -644,8 +687,8 @@ impl Element for List {
         cx: &mut crate::ElementContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-            for (item, _) in &mut prepaint.layout.item_elements {
-                item.paint(cx);
+            for item in &mut prepaint.layout.item_layouts {
+                item.element.paint(cx);
             }
         });
 
