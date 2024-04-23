@@ -1,4 +1,5 @@
 use gpui::{prelude::*, Render, View};
+use project::Project;
 use story::Story;
 use strum::IntoEnumIterator;
 use ui::prelude::*;
@@ -9,6 +10,7 @@ pub struct KitchenSinkStory;
 
 impl KitchenSinkStory {
     pub fn view(cx: &mut WindowContext) -> View<Self> {
+        Project::init_settings(cx);
         cx.new_view(|_cx| Self)
     }
 }
