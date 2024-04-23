@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use async_task::Runnable;
 use calloop::timer::{TimeoutAction, Timer};
-use calloop::{EventLoop, LoopHandle};
+use calloop::{EventLoop, EventSource, LoopHandle};
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
@@ -134,7 +134,7 @@ pub(crate) struct WaylandClientState {
     modifiers: Modifiers,
     axis_source: AxisSource,
     mouse_location: Option<Point<Pixels>>,
-    emit_kinetic_scroll: AtomicBool,
+    emit_kinetic_scroll: bool,
     continuous_scroll_velocity: Point<Pixels>,
     continuous_scroll_delta: Option<Point<Pixels>>,
     discrete_scroll_delta: Option<Point<f32>>,
@@ -217,30 +217,30 @@ impl WaylandClientStatePtr {
         let client = self.get_client();
 
         let mut state = client.borrow_mut();
-        if !state.emit_kinetic_scroll.load(Ordering::Relaxed) {
+        let delta = state.continuous_scroll_velocity;
+
+        let ndelta = Point::new(
+            delta.x - Pixels(0.5) * delta.x.0.signum(),
+            delta.y - Pixels(0.5) * delta.y.0.signum(),
+        );
+        state.continuous_scroll_velocity = ndelta;
+
+        if !state.emit_kinetic_scroll {
+            state.continuous_scroll_velocity = Point::default();
             return;
         }
 
-        let delta = state.continuous_scroll_velocity;
-
-        // let interval = Duration::from_millis(1000 / 150);
-        // let mut next_time = Instant::now() + interval;
-
-        let ndelta = delta * 0.95;
-        state.continuous_scroll_velocity = ndelta;
-
-        if delta.magnitude() < 0.1 {
-            state.emit_kinetic_scroll.store(false, Ordering::Relaxed);
+        if delta.magnitude() < 1.0 {
+            state.emit_kinetic_scroll = false;
             return;
         }
 
         if !state.mouse_location.is_some() {
             // ??
-            state.emit_kinetic_scroll.store(false, Ordering::Relaxed);
             return;
         }
 
-        println!("Kinetic scroll: {:?}", delta);
+        // println!("Kinetic scroll: {:?}", delta);
 
         if let Some(window) = state.mouse_focused_window.clone() {
             let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
@@ -252,11 +252,6 @@ impl WaylandClientStatePtr {
             drop(state);
             window.handle_input(input);
         }
-
-
-        // std::thread::sleep(interval);
-        // std::thread::sleep(next_time - Instant::now());
-        // next_time += interval;
     }
 }
 
@@ -330,15 +325,13 @@ impl WaylandClient {
             if let calloop::channel::Event::Msg(runnable) = event {
                 runnable.run();
             }
+        });
 
-            static mut COUNTER: u32 = 0;
-
-            unsafe {
-                if COUNTER % 10 == 0 {
-                    ptr.kinetic_scroller();
-                }
-                COUNTER += 1;
-            }
+        let interval = Duration::from_millis(5);
+        let kinetic_source = Timer::from_duration(interval);
+        handle.insert_source(kinetic_source, move |_, _, ptr: &mut WaylandClientStatePtr| {
+            ptr.kinetic_scroller();
+            TimeoutAction::ToDuration(interval)
         });
 
         let seat = seat.unwrap();
@@ -388,7 +381,7 @@ impl WaylandClient {
             scroll_event_received: false,
             axis_source: AxisSource::Wheel,
             mouse_location: None,
-            emit_kinetic_scroll: AtomicBool::new(false),
+            emit_kinetic_scroll: false,
             continuous_scroll_velocity: Point::default(),
             continuous_scroll_delta: None,
             discrete_scroll_delta: None,
@@ -1010,7 +1003,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
         let cursor_icon_name = state.cursor_icon_name.clone();
 
-        println!("Pointer event: {:?}", event);
+        // println!("Pointer event: {:?}", event);
 
         match event {
             wl_pointer::Event::Enter {
@@ -1146,6 +1139,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 value,
                 ..
             } => {
+                state.emit_kinetic_scroll = false;
+
                 let axis_source = state.axis_source;
                 let axis_modifier = match axis {
                     wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
@@ -1160,7 +1155,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     .get_or_insert(point(px(0.0), px(0.0)));
 
                 let modifier = 3.0;
-                let old_scroll_delta = *scroll_delta;
+                // let old_scroll_delta = *scroll_delta;
 
                 // TODO: Make nice feeling kinetic scrolling that integrates with the platform's scroll settings
                 // modifier comes from platform kinetic scrolling settings
@@ -1175,19 +1170,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => unreachable!(),
                 }
 
-                let new_scroll_delta = *scroll_delta;
-                let velocity = (new_scroll_delta - old_scroll_delta);
-                state.continuous_scroll_velocity = velocity;
-            },
-            wl_pointer::Event::AxisStop {
-                time,
-                axis: WEnum::Value(axis),
-                ..
-            } => {
-                if axis == wl_pointer::Axis::VerticalScroll {
-                    state.emit_kinetic_scroll.store(true, Ordering::Relaxed);
-                    // spawn a thread to handle the kinetic scrolling
-                }
+                // let new_scroll_delta = *scroll_delta;
+                // let velocity = (new_scroll_delta - old_scroll_delta);
+                // state.continuous_scroll_velocity = velocity;
+
+                state.continuous_scroll_velocity = *scroll_delta;
             },
             wl_pointer::Event::AxisDiscrete {
                 axis: WEnum::Value(axis),
@@ -1213,6 +1200,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     }
                     _ => unreachable!(),
                 }
+            }
+            wl_pointer::Event::AxisStop { .. } => {
+                state.emit_kinetic_scroll = true;
             }
             wl_pointer::Event::AxisRelativeDirection {
                 axis: WEnum::Value(axis),
@@ -1286,7 +1276,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
             }
             _ => {}
-        }
+        };
     }
 }
 
