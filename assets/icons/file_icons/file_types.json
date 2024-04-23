@@ -161,6 +161,8 @@
     "webp": "image",
     "wma": "audio",
     "wmv": "video",
+    "woff": "font",
+    "woff2": "font",
     "wv": "audio",
     "xls": "document",
     "xlsx": "document",

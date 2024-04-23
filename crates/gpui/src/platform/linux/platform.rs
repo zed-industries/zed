@@ -3,7 +3,10 @@
 use std::any::{type_name, Any};
 use std::cell::{self, RefCell};
 use std::env;
+use std::fs::File;
+use std::io::Read;
 use std::ops::{Deref, DerefMut};
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::panic::Location;
 use std::{
     path::{Path, PathBuf},
@@ -19,6 +22,7 @@ use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
 use copypasta::ClipboardProvider;
+use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
@@ -482,6 +486,19 @@ impl<P: LinuxClient + 'static> Platform for P {
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
     let diff = a - b;
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
+}
+
+pub(super) unsafe fn read_fd(mut fd: FileDescriptor) -> Result<String> {
+    let mut file = File::from_raw_fd(fd.as_raw_fd());
+
+    let mut buffer = String::new();
+    file.read_to_string(&mut buffer)?;
+
+    // Normalize the text to unix line endings, otherwise
+    // copying from eg: firefox inserts a lot of blank
+    // lines, and that is super annoying.
+    let result = buffer.replace("\r\n", "\n");
+    Ok(result)
 }
 
 impl Keystroke {

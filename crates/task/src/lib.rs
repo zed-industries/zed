@@ -31,8 +31,11 @@ pub struct SpawnInTerminal {
     pub label: String,
     /// Executable command to spawn.
     pub command: String,
-    /// Arguments to the command.
+    /// Arguments to the command, potentially unsubstituted,
+    /// to let the shell that spawns the command to do the substitution, if needed.
     pub args: Vec<String>,
+    /// A human-readable label, containing command and all of its arguments, joined and substituted.
+    pub command_label: String,
     /// Current working directory to spawn the command into.
     pub cwd: Option<PathBuf>,
     /// Env overrides for the command, will be appended to the terminal's environment from the settings.
@@ -74,18 +77,6 @@ impl ResolvedTask {
     /// Variables that were substituted during the task template resolution.
     pub fn substituted_variables(&self) -> &HashSet<VariableName> {
         &self.substituted_variables
-    }
-
-    /// If the resolution produced a task with the command, returns a string, combined from its command and arguments.
-    pub fn resolved_command(&self) -> Option<String> {
-        self.resolved.as_ref().map(|resolved| {
-            let mut command = resolved.command.clone();
-            for arg in &resolved.args {
-                command.push(' ');
-                command.push_str(arg);
-            }
-            command
-        })
     }
 
     /// A human-readable label to display in the UI.

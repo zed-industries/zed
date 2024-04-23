@@ -1,5 +1,9 @@
+use core::hash;
 use std::cell::{RefCell, RefMut};
+use std::os::fd::{AsRawFd, BorrowedFd};
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_task::Runnable;
@@ -9,13 +13,19 @@ use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use copypasta::wayland_clipboard::{create_clipboards_from_external, Clipboard, Primary};
 use copypasta::ClipboardProvider;
+use filedescriptor::Pipe;
+use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
+use wayland_client::event_created_child;
 use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
-use wayland_client::protocol::wl_output;
+use wayland_client::protocol::wl_data_device_manager::DndAction;
 use wayland_client::protocol::wl_pointer::{AxisRelativeDirection, AxisSource};
+use wayland_client::protocol::{
+    wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output,
+};
 use wayland_client::{
     delegate_noop,
     protocol::{
@@ -35,14 +45,14 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
-use super::super::DOUBLE_CLICK_INTERVAL;
+use super::super::{read_fd, DOUBLE_CLICK_INTERVAL};
 use super::window::{WaylandWindowState, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
-use crate::{point, px, ForegroundExecutor, MouseExitEvent};
+use crate::{point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent};
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -58,6 +68,7 @@ const MIN_KEYCODE: u32 = 8;
 pub struct Globals {
     pub qh: QueueHandle<WaylandClientStatePtr>,
     pub compositor: wl_compositor::WlCompositor,
+    pub data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     pub wm_base: xdg_wm_base::XdgWmBase,
     pub shm: wl_shm::WlShm,
     pub viewporter: Option<wp_viewporter::WpViewporter>,
@@ -82,6 +93,13 @@ impl Globals {
                     (),
                 )
                 .unwrap(),
+            data_device_manager: globals
+                .bind(
+                    &qh,
+                    WL_DATA_DEVICE_MANAGER_VERSION..=WL_DATA_DEVICE_MANAGER_VERSION,
+                    (),
+                )
+                .ok(),
             shm: globals.bind(&qh, 1..=1, ()).unwrap(),
             wm_base: globals.bind(&qh, 1..=1, ()).unwrap(),
             viewporter: globals.bind(&qh, 1..=1, ()).ok(),
@@ -94,13 +112,16 @@ impl Globals {
 }
 
 pub(crate) struct WaylandClientState {
+    serial: u32,
     globals: Globals,
     wl_pointer: Option<wl_pointer::WlPointer>,
+    data_device: Option<wl_data_device::WlDataDevice>,
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
     // Output to scale mapping
     output_scales: HashMap<ObjectId, i32>,
     keymap_state: Option<xkb::State>,
+    drag: DragState,
     click: ClickState,
     repeat: KeyRepeat,
     modifiers: Modifiers,
@@ -122,6 +143,12 @@ pub(crate) struct WaylandClientState {
     primary: Option<Primary>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
+}
+
+pub struct DragState {
+    data_offer: Option<wl_data_offer::WlDataOffer>,
+    window: Option<WaylandWindowStatePtr>,
+    position: Point<Pixels>,
 }
 
 pub struct ClickState {
@@ -167,6 +194,12 @@ impl WaylandClientStatePtr {
             // Drop the clipboard to prevent a seg fault after we've closed all Wayland connections.
             state.clipboard = None;
             state.primary = None;
+            if let Some(wl_pointer) = &state.wl_pointer {
+                wl_pointer.release();
+            }
+            if let Some(data_device) = &state.data_device {
+                data_device.release();
+            }
             state.common.signal.stop();
         }
     }
@@ -175,6 +208,7 @@ impl WaylandClientStatePtr {
 #[derive(Clone)]
 pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
 
+const WL_DATA_DEVICE_MANAGER_VERSION: u32 = 3;
 const WL_OUTPUT_VERSION: u32 = 2;
 
 fn wl_seat_version(version: u32) -> u32 {
@@ -199,18 +233,20 @@ impl WaylandClient {
         let (globals, mut event_queue) =
             registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
-        let mut outputs = HashMap::default();
 
+        let mut seat: Option<wl_seat::WlSeat> = None;
+        let mut outputs = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
                     "wl_seat" => {
-                        globals.registry().bind::<wl_seat::WlSeat, _, _>(
+                        // TODO: multi-seat support
+                        seat = Some(globals.registry().bind::<wl_seat::WlSeat, _, _>(
                             global.name,
                             wl_seat_version(global.version),
                             &qh,
                             (),
-                        );
+                        ));
                     }
                     "wl_output" => {
                         let output = globals.registry().bind::<wl_output::WlOutput, _, _>(
@@ -227,34 +263,47 @@ impl WaylandClient {
         });
 
         let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
-        let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
         let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
         let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
-
         handle.insert_source(main_receiver, |event, _, _: &mut WaylandClientStatePtr| {
             if let calloop::channel::Event::Msg(runnable) = event {
                 runnable.run();
             }
         });
 
-        let globals = Globals::new(globals, common.foreground_executor.clone(), qh);
+        let seat = seat.unwrap();
+        let globals = Globals::new(globals, common.foreground_executor.clone(), qh.clone());
+
+        let data_device = globals
+            .data_device_manager
+            .as_ref()
+            .map(|data_device_manager| data_device_manager.get_data_device(&seat, &qh, ()));
+
+        let (primary, clipboard) = unsafe { create_clipboards_from_external(display) };
 
         let cursor = Cursor::new(&conn, &globals, 24);
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
+            serial: 0,
             globals,
             wl_pointer: None,
+            data_device,
             output_scales: outputs,
             windows: HashMap::default(),
             common,
             keymap_state: None,
+            drag: DragState {
+                data_offer: None,
+                window: None,
+                position: Point::default(),
+            },
             click: ClickState {
                 last_click: Instant::now(),
-                last_location: Point::new(px(0.0), px(0.0)),
+                last_location: Point::default(),
                 current_count: 0,
             },
             repeat: KeyRepeat {
@@ -467,6 +516,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
 }
 
 delegate_noop!(WaylandClientStatePtr: ignore wl_compositor::WlCompositor);
+delegate_noop!(WaylandClientStatePtr: ignore wl_data_device_manager::WlDataDeviceManager);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientStatePtr: ignore wl_buffer::WlBuffer);
@@ -599,7 +649,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClientStatePtr {
     fn event(
-        _: &mut Self,
+        this: &mut Self,
         wm_base: &xdg_wm_base::XdgWmBase,
         event: <xdg_wm_base::XdgWmBase as Proxy>::Event,
         _: &(),
@@ -607,6 +657,9 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClientStatePtr {
         _: &QueueHandle<Self>,
     ) {
         if let xdg_wm_base::Event::Ping { serial } = event {
+            let client = this.get_client();
+            let mut state = client.borrow_mut();
+            state.serial = serial;
             wm_base.pong(serial);
         }
     }
@@ -678,7 +731,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 state.keymap_state = Some(xkb::State::new(&keymap));
             }
-            wl_keyboard::Event::Enter { surface, .. } => {
+            wl_keyboard::Event::Enter {
+                serial, surface, ..
+            } => {
+                state.serial = serial;
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
 
                 if let Some(window) = state.keyboard_focused_window.clone() {
@@ -686,7 +742,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     window.set_focused(true);
                 }
             }
-            wl_keyboard::Event::Leave { surface, .. } => {
+            wl_keyboard::Event::Leave {
+                serial, surface, ..
+            } => {
+                state.serial = serial;
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
 
@@ -696,12 +755,14 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 }
             }
             wl_keyboard::Event::Modifiers {
+                serial,
                 mods_depressed,
                 mods_latched,
                 mods_locked,
                 group,
                 ..
             } => {
+                state.serial = serial;
                 let focused_window = state.keyboard_focused_window.clone();
                 let Some(focused_window) = focused_window else {
                     return;
@@ -721,8 +782,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             wl_keyboard::Event::Key {
                 key,
                 state: WEnum::Value(key_state),
+                serial,
                 ..
             } => {
+                state.serial = serial;
+
                 let focused_window = state.keyboard_focused_window.clone();
                 let Some(focused_window) = focused_window else {
                     return;
@@ -833,6 +897,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 surface_y,
                 ..
             } => {
+                state.serial = serial;
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
@@ -885,10 +950,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 }
             }
             wl_pointer::Event::Button {
+                serial,
                 button,
                 state: WEnum::Value(button_state),
                 ..
             } => {
+                state.serial = serial;
                 let button = linux_button_to_gpui(button);
                 let Some(button) = button else { return };
                 if state.mouse_focused_window.is_none() {
@@ -1121,5 +1188,165 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ObjectId>
 
         drop(state);
         window.handle_toplevel_decoration_event(event);
+    }
+}
+
+const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
+
+impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        _: &wl_data_device::WlDataDevice,
+        event: wl_data_device::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        match event {
+            wl_data_device::Event::Enter {
+                serial,
+                surface,
+                x,
+                y,
+                id: data_offer,
+            } => {
+                state.serial = serial;
+                if let Some(data_offer) = data_offer {
+                    let Some(drag_window) = get_window(&mut state, &surface.id()) else {
+                        return;
+                    };
+
+                    const ACTIONS: DndAction = DndAction::Copy;
+                    data_offer.set_actions(ACTIONS, ACTIONS);
+
+                    let pipe = Pipe::new().unwrap();
+                    data_offer.receive(FILE_LIST_MIME_TYPE.to_string(), unsafe {
+                        BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
+                    });
+                    let fd = pipe.read;
+                    drop(pipe.write);
+
+                    let read_task = state
+                        .common
+                        .background_executor
+                        .spawn(async { unsafe { read_fd(fd) } });
+
+                    let this = this.clone();
+                    state
+                        .common
+                        .foreground_executor
+                        .spawn(async move {
+                            let file_list = match read_task.await {
+                                Ok(list) => list,
+                                Err(err) => {
+                                    log::error!("error reading drag and drop pipe: {err:?}");
+                                    return;
+                                }
+                            };
+
+                            let paths: SmallVec<[_; 2]> = file_list
+                                .lines()
+                                .map(|path| PathBuf::from(path.replace("file://", "")))
+                                .collect();
+                            let position = Point::new(x.into(), y.into());
+
+                            // Prevent dropping text from other programs.
+                            if paths.is_empty() {
+                                data_offer.finish();
+                                data_offer.destroy();
+                                return;
+                            }
+
+                            let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                                position,
+                                paths: crate::ExternalPaths(paths),
+                            });
+
+                            let client = this.get_client();
+                            let mut state = client.borrow_mut();
+                            state.drag.data_offer = Some(data_offer);
+                            state.drag.window = Some(drag_window.clone());
+                            state.drag.position = position;
+
+                            drop(state);
+                            drag_window.handle_input(input);
+                        })
+                        .detach();
+                }
+            }
+            wl_data_device::Event::Motion { x, y, .. } => {
+                let Some(drag_window) = state.drag.window.clone() else {
+                    return;
+                };
+                let position = Point::new(x.into(), y.into());
+                state.drag.position = position;
+
+                let input = PlatformInput::FileDrop(FileDropEvent::Pending { position });
+                drop(state);
+                drag_window.handle_input(input);
+            }
+            wl_data_device::Event::Leave => {
+                let Some(drag_window) = state.drag.window.clone() else {
+                    return;
+                };
+                let data_offer = state.drag.data_offer.clone().unwrap();
+                data_offer.destroy();
+
+                state.drag.data_offer = None;
+                state.drag.window = None;
+
+                let input = PlatformInput::FileDrop(FileDropEvent::Exited {});
+                drop(state);
+                drag_window.handle_input(input);
+            }
+            wl_data_device::Event::Drop => {
+                let Some(drag_window) = state.drag.window.clone() else {
+                    return;
+                };
+                let data_offer = state.drag.data_offer.clone().unwrap();
+                data_offer.finish();
+                data_offer.destroy();
+
+                state.drag.data_offer = None;
+                state.drag.window = None;
+
+                let input = PlatformInput::FileDrop(FileDropEvent::Submit {
+                    position: state.drag.position,
+                });
+                drop(state);
+                drag_window.handle_input(input);
+            }
+            _ => {}
+        }
+    }
+
+    event_created_child!(WaylandClientStatePtr, wl_data_device::WlDataDevice, [
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ()),
+    ]);
+}
+
+impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        data_offer: &wl_data_offer::WlDataOffer,
+        event: wl_data_offer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+
+        match event {
+            wl_data_offer::Event::Offer { mime_type } => {
+                if mime_type == FILE_LIST_MIME_TYPE {
+                    data_offer.accept(state.serial, Some(mime_type));
+                }
+            }
+            _ => {}
+        }
     }
 }

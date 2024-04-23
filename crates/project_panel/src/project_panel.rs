@@ -8,6 +8,7 @@ use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
+use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
     AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
@@ -16,10 +17,7 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use project::{
-    repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
-    Worktree, WorktreeId,
-};
+use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1700,7 +1698,7 @@ impl ProjectPanel {
     }
 
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::default();
+        let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
         dispatch_context.add("menu");
 

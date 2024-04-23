@@ -4,9 +4,10 @@ use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
 use settings::Settings;
 use smol::channel::bounded;
 use std::path::{Path, PathBuf};
+use task::SpawnInTerminal;
 use terminal::{
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
-    SpawnTask, TaskState, TaskStatus, Terminal, TerminalBuilder,
+    TaskState, TaskStatus, Terminal, TerminalBuilder,
 };
 use util::ResultExt;
 
@@ -21,7 +22,7 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        spawn_task: Option<SpawnTask>,
+        spawn_task: Option<SpawnInTerminal>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
@@ -55,14 +56,7 @@ impl Project {
                     id: spawn_task.id,
                     full_label: spawn_task.full_label,
                     label: spawn_task.label,
-                    command_label: spawn_task.args.iter().fold(
-                        spawn_task.command.clone(),
-                        |mut command_label, new_arg| {
-                            command_label.push(' ');
-                            command_label.push_str(new_arg);
-                            command_label
-                        },
-                    ),
+                    command_label: spawn_task.command_label,
                     status: TaskStatus::Running,
                     completion_rx,
                 }),

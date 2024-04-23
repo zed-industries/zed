@@ -4,7 +4,9 @@ use anyhow::Result;
 use collections::HashMap;
 use git::{
     blame::{Blame, BlameEntry},
+    hosting_provider::HostingProvider,
     permalink::{build_commit_permalink, parse_git_remote_url},
+    pull_request::{extract_pull_request, PullRequest},
     Oid,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
@@ -13,6 +15,7 @@ use project::{Item, Project};
 use smallvec::SmallVec;
 use sum_tree::SumTree;
 use url::Url;
+use util::http::HttpClient;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -48,10 +51,33 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
 }
 
 #[derive(Clone, Debug)]
+pub struct GitRemote {
+    pub host: HostingProvider,
+    pub owner: String,
+    pub repo: String,
+}
+
+impl GitRemote {
+    pub fn host_supports_avatars(&self) -> bool {
+        self.host.supports_avatars()
+    }
+
+    pub async fn avatar_url(&self, commit: Oid, client: Arc<dyn HttpClient>) -> Option<Url> {
+        self.host
+            .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
+            .await
+            .ok()
+            .flatten()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct CommitDetails {
     pub message: String,
     pub parsed_message: ParsedMarkdown,
     pub permalink: Option<Url>,
+    pub pull_request: Option<PullRequest>,
+    pub remote: Option<GitRemote>,
 }
 
 pub struct GitBlame {
@@ -337,7 +363,7 @@ impl GitBlame {
             this.update(&mut cx, |this, cx| {
                 this.generate(cx);
             })
-        });
+        })
     }
 }
 
@@ -408,12 +434,24 @@ async fn parse_commit_messages(
             deprecated_permalinks.get(&oid).cloned()
         };
 
+        let remote = parsed_remote_url.as_ref().map(|remote| GitRemote {
+            host: remote.provider.clone(),
+            owner: remote.owner.to_string(),
+            repo: remote.repo.to_string(),
+        });
+
+        let pull_request = parsed_remote_url
+            .as_ref()
+            .and_then(|remote| extract_pull_request(remote, &message));
+
         commit_details.insert(
             oid,
             CommitDetails {
                 message,
                 parsed_message,
                 permalink,
+                remote,
+                pull_request,
             },
         );
     }
