@@ -885,9 +885,11 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         em_width: Pixels,
+        autoscroll_containing_element: bool,
         cx: &mut ElementContext,
     ) -> Vec<CursorLayout> {
-        self.editor.update(cx, |editor, cx| {
+        let mut autoscroll_bounds = None;
+        let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
             for (player_color, selections) in selections {
                 for selection in selections {
@@ -953,7 +955,22 @@ impl EditorElement {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
                             text_hitbox.origin.y + y + line_height / 2.,
-                        ))
+                        ));
+
+                        if autoscroll_containing_element {
+                            let top = text_hitbox.origin.y
+                                + (cursor_position.row() as f32 - 3.).max(0.) * line_height;
+                            let left = text_hitbox.origin.x
+                                + (cursor_position.row() as f32 - 3.).max(0.) * em_width;
+
+                            let bottom = text_hitbox.origin.y
+                                + (cursor_position.row() as f32 + 4.) * line_height;
+                            let right = text_hitbox.origin.x
+                                + (cursor_position.row() as f32 + 4.) * em_width;
+
+                            autoscroll_bounds =
+                                Some(Bounds::from_corners(point(top, left), point(bottom, right)))
+                        }
                     }
 
                     let mut cursor = CursorLayout {
@@ -975,7 +992,13 @@ impl EditorElement {
                 }
             }
             cursors
-        })
+        });
+
+        if let Some(bounds) = autoscroll_bounds {
+            cx.request_autoscroll(bounds);
+        }
+
+        cursor_layouts
     }
 
     fn layout_scrollbar(
@@ -3466,11 +3489,12 @@ impl Element for EditorElement {
                 let content_origin =
                     text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
 
-                let autoscroll_horizontally = self.editor.update(cx, |editor, cx| {
-                    let autoscroll_horizontally =
-                        editor.autoscroll_vertically(bounds, line_height, cx);
+                let mut autoscroll_requested = false;
+                let mut autoscroll_horizontally = false;
+                self.editor.update(cx, |editor, cx| {
+                    autoscroll_requested = editor.autoscroll_requested();
+                    autoscroll_horizontally = editor.autoscroll_vertically(bounds, line_height, cx);
                     snapshot = editor.snapshot(cx);
-                    autoscroll_horizontally
                 });
 
                 let mut scroll_position = snapshot.scroll_position();
@@ -3646,6 +3670,7 @@ impl Element for EditorElement {
                     scroll_pixel_position,
                     line_height,
                     em_width,
+                    autoscroll_requested,
                     cx,
                 );
 
