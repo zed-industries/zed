@@ -20,6 +20,7 @@ if [[ -n $apt ]]; then
     libssl-dev
     libzstd-dev
     libvulkan1
+    libgit2-dev
   )
   $maysudo "$apt" install -y "${deps[@]}"
   exit 0

@@ -2047,6 +2047,7 @@ dependencies = [
  "core-services",
  "ipc-channel",
  "plist",
+ "release_channel",
  "serde",
  "util",
 ]
@@ -3799,6 +3800,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "filedescriptor"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7199d965852c3bac31f779ef99cbb4537f80e952e2d6aa0ffeb30cce00f4f46e"
+dependencies = [
+ "libc",
+ "thiserror",
+ "winapi",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4002,15 +4014,12 @@ dependencies = [
  "gpui",
  "lazy_static",
  "libc",
- "log",
  "notify",
  "parking_lot",
  "rope",
  "serde",
- "serde_derive",
  "serde_json",
  "smol",
- "sum_tree",
  "tempfile",
  "text",
  "time",
@@ -4318,7 +4327,10 @@ dependencies = [
  "git2",
  "lazy_static",
  "log",
+ "parking_lot",
  "pretty_assertions",
+ "regex",
+ "rope",
  "serde",
  "serde_json",
  "smol",
@@ -4327,6 +4339,8 @@ dependencies = [
  "time",
  "unindent",
  "url",
+ "util",
+ "windows 0.53.0",
 ]
 
 [[package]]
@@ -4479,6 +4493,7 @@ dependencies = [
  "derive_more",
  "env_logger",
  "etagere",
+ "filedescriptor",
  "flume",
  "font-kit",
  "foreign-types 0.5.0",
@@ -6049,14 +6064,18 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
+ "ctor",
+ "env_logger",
  "futures 0.3.28",
  "git",
  "gpui",
+ "itertools 0.11.0",
  "language",
  "log",
  "parking_lot",
  "rand 0.8.5",
  "settings",
+ "smallvec",
  "sum_tree",
  "text",
  "theme",
@@ -7374,6 +7393,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "git",
  "gpui",
  "language",
  "menu",
@@ -9430,6 +9450,7 @@ dependencies = [
  "log",
  "menu",
  "picker",
+ "project",
  "rust-embed",
  "settings",
  "simplelog",
@@ -9755,7 +9776,6 @@ dependencies = [
  "file_icons",
  "fuzzy",
  "gpui",
- "itertools 0.11.0",
  "language",
  "picker",
  "project",
@@ -9764,7 +9784,6 @@ dependencies = [
  "serde_json",
  "settings",
  "task",
- "terminal",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
@@ -9860,9 +9879,9 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand",
- "shlex",
  "smol",
  "task",
+ "tasks_ui",
  "terminal",
  "theme",
  "ui",
@@ -11007,8 +11026,8 @@ name = "vcs_menu"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fs",
  "fuzzy",
+ "git",
  "gpui",
  "picker",
  "ui",
@@ -12716,6 +12735,13 @@ dependencies = [
 [[package]]
 name = "zed_gleam"
 version = "0.1.1"
+dependencies = [
+ "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_glsl"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

@@ -39,7 +39,7 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::{RevealStrategy, TaskId};
+use task::TaskId;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::truncate_and_trailoff;
@@ -284,17 +284,6 @@ impl Display for TerminalError {
             dir_string, shell, self.source
         )
     }
-}
-
-#[derive(Debug)]
-pub struct SpawnTask {
-    pub id: TaskId,
-    pub full_label: String,
-    pub label: String,
-    pub command: String,
-    pub args: Vec<String>,
-    pub env: HashMap<String, String>,
-    pub reveal: RevealStrategy,
 }
 
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
@@ -750,6 +739,11 @@ impl Terminal {
             InternalEvent::SetSelection(selection) => {
                 term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
 
+                #[cfg(target_os = "linux")]
+                if let Some(selection_text) = term.selection_to_string() {
+                    cx.write_to_primary(ClipboardItem::new(selection_text));
+                }
+
                 if let Some((_, head)) = selection {
                     self.selection_head = Some(*head);
                 }
@@ -765,6 +759,11 @@ impl Terminal {
 
                     selection.update(point, side);
                     term.selection = Some(selection);
+
+                    #[cfg(target_os = "linux")]
+                    if let Some(selection_text) = term.selection_to_string() {
+                        cx.write_to_primary(ClipboardItem::new(selection_text));
+                    }
 
                     self.selection_head = Some(point);
                     cx.emit(Event::SelectionsChanged)
@@ -1192,7 +1191,12 @@ impl Terminal {
         Some(scroll_delta)
     }
 
-    pub fn mouse_down(&mut self, e: &MouseDownEvent, origin: Point<Pixels>) {
+    pub fn mouse_down(
+        &mut self,
+        e: &MouseDownEvent,
+        origin: Point<Pixels>,
+        cx: &mut ModelContext<Self>,
+    ) {
         let position = e.position - origin;
         let point = grid_point(
             position,
@@ -1228,6 +1232,11 @@ impl Terminal {
             if let Some(sel) = selection {
                 self.events
                     .push_back(InternalEvent::SetSelection(Some((sel, point))));
+            }
+        } else if e.button == MouseButton::Middle {
+            if let Some(item) = cx.read_from_primary() {
+                let text = item.text().to_string();
+                self.input(text);
             }
         }
     }

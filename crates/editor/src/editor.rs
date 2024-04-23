@@ -13,6 +13,7 @@
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behaviour.
 pub mod actions;
+mod blame_entry_tooltip;
 mod blink_manager;
 pub mod display_map;
 mod editor_settings;
@@ -131,10 +132,10 @@ use ui::{
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::ItemHandle;
 use workspace::notifications::NotificationId;
-use workspace::Toast;
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
+use workspace::{OpenInTerminal, OpenTerminal, Toast};
 
 use crate::hover_links::find_url;
 
@@ -1549,7 +1550,7 @@ impl Editor {
     }
 
     fn key_context(&self, cx: &AppContext) -> KeyContext {
-        let mut key_context = KeyContext::default();
+        let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
@@ -1828,6 +1829,29 @@ impl Editor {
         old_cursor_position: &Anchor,
         cx: &mut ViewContext<Self>,
     ) {
+        // Copy selections to primary selection buffer
+        #[cfg(target_os = "linux")]
+        if local {
+            let selections = self.selections.all::<usize>(cx);
+            let buffer_handle = self.buffer.read(cx).read(cx);
+
+            let mut text = String::new();
+            for (index, selection) in selections.iter().enumerate() {
+                let text_for_selection = buffer_handle
+                    .text_for_range(selection.start..selection.end)
+                    .collect::<String>();
+
+                text.push_str(&text_for_selection);
+                if index != selections.len() - 1 {
+                    text.push('\n');
+                }
+            }
+
+            if !text.is_empty() {
+                cx.write_to_primary(ClipboardItem::new(text));
+            }
+        }
+
         if self.focus_handle.is_focused(cx) && self.leader_peer_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
@@ -4920,6 +4944,25 @@ impl Editor {
         }
     }
 
+    pub fn open_active_item_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
+        if let Some(working_directory) = self.active_excerpt(cx).and_then(|(_, buffer, _)| {
+            let project_path = buffer.read(cx).project_path(cx)?;
+            let project = self.project.as_ref()?.read(cx);
+            let entry = project.entry_for_path(&project_path, cx)?;
+            let abs_path = project.absolute_path(&project_path, cx)?;
+            let parent = if entry.is_symlink {
+                abs_path.canonicalize().ok()?
+            } else {
+                abs_path
+            }
+            .parent()?
+            .to_path_buf();
+            Some(parent)
+        }) {
+            cx.dispatch_action(OpenTerminal { working_directory }.boxed_clone());
+        }
+    }
+
     fn gather_revert_changes(
         &mut self,
         selections: &[Selection<Anchor>],
@@ -7419,6 +7462,28 @@ impl Editor {
         self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
+    pub fn expand_excerpts(&mut self, action: &ExpandExcerpts, cx: &mut ViewContext<Self>) {
+        let selections = self.selections.disjoint_anchors();
+
+        let lines = if action.lines == 0 { 3 } else { action.lines };
+
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.expand_excerpts(
+                selections
+                    .into_iter()
+                    .map(|selection| selection.head().excerpt_id)
+                    .dedup(),
+                lines,
+                cx,
+            )
+        })
+    }
+
+    pub fn expand_excerpt(&mut self, excerpt: ExcerptId, cx: &mut ViewContext<Self>) {
+        self.buffer
+            .update(cx, |buffer, cx| buffer.expand_excerpts([excerpt], 3, cx))
+    }
+
     fn go_to_diagnostic(&mut self, _: &GoToDiagnostic, cx: &mut ViewContext<Self>) {
         self.go_to_diagnostic_impl(Direction::Next, cx)
     }
@@ -8052,7 +8117,7 @@ impl Editor {
             .buffer
             .read(cx)
             .text_anchor_for_position(selection.head(), cx)?;
-        let (tail_buffer, _) = self
+        let (tail_buffer, cursor_buffer_position_end) = self
             .buffer
             .read(cx)
             .text_anchor_for_position(selection.tail(), cx)?;
@@ -8062,6 +8127,7 @@ impl Editor {
 
         let snapshot = cursor_buffer.read(cx).snapshot();
         let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
+        let cursor_buffer_offset_end = cursor_buffer_position_end.to_offset(&snapshot);
         let prepare_rename = project.update(cx, |project, cx| {
             project.prepare_rename(cursor_buffer.clone(), cursor_buffer_offset, cx)
         });
@@ -8090,6 +8156,8 @@ impl Editor {
                     let rename_buffer_range = rename_range.to_offset(&snapshot);
                     let cursor_offset_in_rename_range =
                         cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+                    let cursor_offset_in_rename_range_end =
+                        cursor_buffer_offset_end.saturating_sub(rename_buffer_range.start);
 
                     this.take_rename(false, cx);
                     let buffer = this.buffer.read(cx).read(cx);
@@ -8118,7 +8186,23 @@ impl Editor {
                         editor.buffer.update(cx, |buffer, cx| {
                             buffer.edit([(0..0, old_name.clone())], None, cx)
                         });
-                        editor.select_all(&SelectAll, cx);
+                        let rename_selection_range = match cursor_offset_in_rename_range
+                            .cmp(&cursor_offset_in_rename_range_end)
+                        {
+                            Ordering::Equal => {
+                                editor.select_all(&SelectAll, cx);
+                                return editor;
+                            }
+                            Ordering::Less => {
+                                cursor_offset_in_rename_range..cursor_offset_in_rename_range_end
+                            }
+                            Ordering::Greater => {
+                                cursor_offset_in_rename_range_end..cursor_offset_in_rename_range
+                            }
+                        };
+                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            s.select_ranges([rename_selection_range]);
+                        });
                         editor
                     });
 
@@ -10717,7 +10801,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
 
         let icon_size = buttons(&diagnostic, cx.block_id)
             .into_any_element()
-            .measure(AvailableSpace::min_size(), cx);
+            .layout_as_root(AvailableSpace::min_size(), cx);
 
         h_flex()
             .id(cx.block_id)

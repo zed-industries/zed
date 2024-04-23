@@ -347,6 +347,14 @@ impl LineLayoutCache {
         }
     }
 
+    pub fn truncate_layouts(&self, index: LineLayoutIndex) {
+        let mut current_frame = &mut *self.current_frame.write();
+        current_frame.used_lines.truncate(index.lines_index);
+        current_frame
+            .used_wrapped_lines
+            .truncate(index.wrapped_lines_index);
+    }
+
     pub fn finish_frame(&self) {
         let mut prev_frame = self.previous_frame.lock();
         let mut curr_frame = self.current_frame.write();

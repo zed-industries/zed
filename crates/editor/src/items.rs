@@ -6,6 +6,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
 use futures::future::try_join_all;
+use git::repository::GitFileStatus;
 use gpui::{
     point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
     IntoElement, Model, ParentElement, Pixels, SharedString, Styled, Task, View, ViewContext,
@@ -15,7 +16,6 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, OffsetRangeExt,
     Point, SelectionGoal,
 };
-use project::repository::GitFileStatus;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;

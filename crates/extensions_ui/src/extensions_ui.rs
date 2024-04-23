@@ -700,7 +700,7 @@ impl ExtensionsPage {
     }
 
     fn render_search(&self, cx: &mut ViewContext<Self>) -> Div {
-        let mut key_context = KeyContext::default();
+        let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
 
         let editor_border = if self.query_contains_error {
@@ -948,7 +948,7 @@ impl Render for ExtensionsPage {
                             .pb_4()
                             .track_scroll(scroll_handle)
                             .into_any_element();
-                            list.layout(bounds.origin, bounds.size.into(), cx);
+                            list.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
                             list
                         },
                         |_bounds, mut list, cx| list.paint(cx),
