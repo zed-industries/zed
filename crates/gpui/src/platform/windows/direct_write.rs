@@ -20,9 +20,7 @@ use windows::{
             Imaging::{D2D::IWICImagingFactory2, *},
         },
         System::{Com::*, SystemServices::LOCALE_NAME_MAX_LENGTH},
-        UI::WindowsAndMessaging::{
-            SystemParametersInfoW, SPI_GETICONTITLELOGFONT, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-        },
+        UI::WindowsAndMessaging::*,
     },
 };
 
