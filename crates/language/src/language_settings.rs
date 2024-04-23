@@ -98,8 +98,7 @@ pub struct LanguageSettings {
     /// special tokens:
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
-    #[serde(default)]
-    pub language_servers: Option<Vec<String>>,
+    pub language_servers: Vec<String>,
     /// Controls whether Copilot provides suggestion immediately (true)
     /// or waits for a `copilot::Toggle` (false).
     pub show_copilot_suggestions: bool,
@@ -127,7 +126,7 @@ pub struct CopilotSettings {
 }
 
 /// The settings for all languages.
-#[derive(Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
@@ -148,7 +147,7 @@ pub struct AllLanguageSettingsContent {
 }
 
 /// The settings for a particular language.
-#[derive(Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
@@ -275,7 +274,7 @@ pub struct CopilotSettingsContent {
 }
 
 /// The settings for enabling/disabling features.
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
     /// Whether the GitHub Copilot feature is enabled.
@@ -626,6 +625,12 @@ impl settings::Settings for AllLanguageSettings {
 }
 
 fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent) {
+    fn merge<T>(target: &mut T, value: Option<T>) {
+        if let Some(value) = value {
+            *target = value;
+        }
+    }
+
     merge(&mut settings.tab_size, src.tab_size);
     merge(&mut settings.hard_tabs, src.hard_tabs);
     merge(&mut settings.soft_wrap, src.soft_wrap);
@@ -660,6 +665,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         &mut settings.enable_language_server,
         src.enable_language_server,
     );
+    merge(&mut settings.language_servers, src.language_servers.clone());
     merge(
         &mut settings.show_copilot_suggestions,
         src.show_copilot_suggestions,
@@ -670,9 +676,4 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.extend_comment_on_newline,
     );
     merge(&mut settings.inlay_hints, src.inlay_hints);
-    fn merge<T>(target: &mut T, value: Option<T>) {
-        if let Some(value) = value {
-            *target = value;
-        }
-    }
 }
