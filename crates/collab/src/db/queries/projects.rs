@@ -839,8 +839,7 @@ impl Database {
             Ok(LeftProject {
                 id: project.id,
                 connection_ids,
-                host_user_id: None,
-                host_connection_id: None,
+                should_unshare: false,
             })
         })
         .await
@@ -915,8 +914,7 @@ impl Database {
 
             let left_project = LeftProject {
                 id: project_id,
-                host_user_id: project.host_user_id,
-                host_connection_id: Some(project.host_connection()?),
+                should_unshare: connection == project.host_connection()?,
                 connection_ids,
             };
             Ok((room, left_project))

@@ -2193,8 +2193,6 @@ async fn leave_project(request: proto::LeaveProject, session: UserSession) -> Re
     let (room, project) = &*db.leave_project(project_id, sender_id).await?;
     tracing::info!(
         %project_id,
-        host_user_id = ?project.host_user_id,
-        host_connection_id = ?project.host_connection_id,
         "leave project"
     );
 
@@ -4934,7 +4932,7 @@ async fn leave_channel_buffers_for_session(session: &Session) -> Result<()> {
 
 fn project_left(project: &db::LeftProject, session: &UserSession) {
     for connection_id in &project.connection_ids {
-        if project.host_user_id == Some(session.user_id()) {
+        if project.should_unshare {
             session
                 .peer
                 .send(

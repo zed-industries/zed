@@ -785,8 +785,7 @@ impl ProjectCollaborator {
 #[derive(Debug)]
 pub struct LeftProject {
     pub id: ProjectId,
-    pub host_user_id: Option<UserId>,
-    pub host_connection_id: Option<ConnectionId>,
+    pub should_unshare: bool,
     pub connection_ids: Vec<ConnectionId>,
 }
 
