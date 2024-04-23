@@ -144,11 +144,11 @@ impl LanguageSettings {
 
         let rest = available_language_servers
             .into_iter()
-            .cloned()
-            .filter(|available_language_server| {
+            .filter(|&available_language_server| {
                 !disabled_language_servers.contains(&&available_language_server.0)
                     && !enabled_language_servers.contains(&&available_language_server.0)
             })
+            .cloned()
             .collect::<Vec<_>>();
 
         enabled_language_servers
@@ -751,7 +751,7 @@ mod tests {
         // A value of just `["..."]` is the same as taking all of the available language servers.
         assert_eq!(
             LanguageSettings::resolve_language_servers(
-                &vec![LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()],
+                &[LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()],
                 &available_language_servers,
             ),
             available_language_servers
@@ -760,10 +760,10 @@ mod tests {
         // Referencing one of the available language servers will change its order.
         assert_eq!(
             LanguageSettings::resolve_language_servers(
-                &vec![
+                &[
                     "biome".into(),
                     LanguageSettings::REST_OF_LANGUAGE_SERVERS.into(),
-                    "deno".into(),
+                    "deno".into()
                 ],
                 &available_language_servers
             ),
@@ -779,7 +779,7 @@ mod tests {
         // Negating an available language server removes it from the list.
         assert_eq!(
             LanguageSettings::resolve_language_servers(
-                &vec![
+                &[
                     "deno".into(),
                     "!typescript-language-server".into(),
                     "!biome".into(),
