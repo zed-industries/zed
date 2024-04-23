@@ -18,6 +18,7 @@ collections.workspace = true
 git2.workspace = true
 lazy_static.workspace = true
 log.workspace = true
+process.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true

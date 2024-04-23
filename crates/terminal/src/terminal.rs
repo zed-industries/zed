@@ -330,57 +330,35 @@ impl TerminalBuilder {
         std::env::set_var("TERM", "xterm-256color"); // override terminfo because flatpak cannot install the required alacritty terminfo file to the host
 
         let pty_options = {
-            // Create shell command
-            let mut shell_command = Vec::new();
-
-            #[cfg(feature = "flatpak")]
-            {
-                shell_command.push("/app/bin/host-spawn".to_string()); // host-spawn is used over flatpak-spawn due to problems with pty (https://github.com/flatpak/flatpak/issues/3285)
-                shell_command.push("-pty".to_string());
-                let env_passthrough_keys = std::env::vars()
-                    .map(|(key, _)| key)
-                    .chain(env.keys().map(|key| key.clone()))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                if !env_passthrough_keys.is_empty() {
-                    shell_command.push("-env".to_string());
-                    shell_command.push(env_passthrough_keys);
-                }
-            }
-
-            let alacritty_picks_shell = match shell.clone() {
-                Shell::System => {
-                    #[cfg(feature = "flatpak")]
-                    {
-                        shell_command
-                            .push(flatpak_get_user_shell().unwrap_or("/bin/bash".to_string()));
-                        false
-                    }
-                    #[cfg(not(feature = "flatpak"))]
-                    true
-                }
-                Shell::Program(program) => {
-                    shell_command.push(program);
-                    false
-                }
-                Shell::WithArguments { program, mut args } => {
-                    shell_command.push(program);
-                    shell_command.append(&mut args);
-                    false
-                }
+            let (shell_command, additional_args) = match shell.clone() {
+                #[cfg(feature = "flatpak")]
+                Shell::System => (
+                    Some(flatpak_get_user_shell().unwrap_or("/bin/bash".to_string())),
+                    Vec::new(),
+                ),
+                #[cfg(not(feature = "flatpak"))]
+                Shell::System => (None, Vec::new()),
+                Shell::Program(program) => (Some(program), Vec::new()),
+                Shell::WithArguments { program, args } => (Some(program), args),
             };
 
-            let alac_shell = if alacritty_picks_shell {
-                None
-            } else {
-                Some(alacritty_terminal::tty::Shell::new(
-                    shell_command[0].clone(),
-                    shell_command[1..].to_vec(),
-                ))
-            };
+            let mut process =
+                process::Process::new(shell_command.clone().unwrap_or("".to_string()));
+            process.flatpak_use_pty().envs(&env).args(additional_args);
 
             alacritty_terminal::tty::Options {
-                shell: alac_shell,
+                shell: if shell_command.is_none() {
+                    None
+                } else {
+                    Some(alacritty_terminal::tty::Shell::new(
+                        process.get_actual_program().to_str().unwrap().to_string(),
+                        process
+                            .get_actual_args()
+                            .iter()
+                            .map(|arg| arg.to_str().unwrap().to_string())
+                            .collect(),
+                    ))
+                },
                 working_directory: working_directory.clone(),
                 hold: false,
                 env: env.into_iter().collect(),
@@ -1436,6 +1414,13 @@ impl Terminal {
 
                     let argv = fpi.argv.clone();
 
+                    #[cfg(feature = "flatpak")]
+                    let process_name = if argv[2] == "-env" {
+                        argv[4..].join(" ")
+                    } else {
+                        argv[2..].join(" ")
+                    };
+
                     #[cfg(not(feature = "flatpak"))]
                     let process_name = format!(
                         "{}{}",
@@ -1446,13 +1431,6 @@ impl Terminal {
                             "".to_string()
                         }
                     );
-
-                    #[cfg(feature = "flatpak")]
-                    let process_name = if argv[2] == "-env" {
-                        argv[4..].join(" ")
-                    } else {
-                        argv[2..].join(" ")
-                    };
 
                     let (process_file, process_name) = if truncate {
                         (
@@ -1590,15 +1568,10 @@ impl EventEmitter<Event> for Terminal {}
 
 #[cfg(feature = "flatpak")]
 fn flatpak_get_user_shell() -> Option<String> {
-    let mut command = std::process::Command::new("/app/bin/host-spawn");
-    command.args([
-        "-no-pty",
-        "getent",
-        "passwd",
-        &std::env::var("USER").unwrap(),
-    ]);
+    let mut process = process::Process::new("getent");
+    process.arg("passwd").arg(std::env::var("USER").unwrap());
 
-    match command.output() {
+    match process.output() {
         Ok(output) => match String::from_utf8(output.stdout) {
             Ok(output) => output.trim().split(':').last().map(|str| str.to_string()),
             Err(_) => None,

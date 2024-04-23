@@ -12,9 +12,6 @@ workspace = true
 path = "src/terminal_view.rs"
 doctest = false
 
-[features]
-flatpak = ["terminal/flatpak"]
-
 [dependencies]
 anyhow.workspace = true
 db.workspace = true

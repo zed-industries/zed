@@ -59,6 +59,7 @@ members = [
     "crates/outline",
     "crates/picker",
     "crates/prettier",
+    "crates/process",
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
@@ -193,6 +194,7 @@ picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
+process = { path = "crates/process" }
 project = { path = "crates/project" }
 worktree = { path = "crates/worktree" }
 project_panel = { path = "crates/project_panel" }

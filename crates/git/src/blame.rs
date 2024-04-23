@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::{ops::Range, path::Path};
 use text::Rope;
 use time;
@@ -79,10 +79,10 @@ fn run_git_blame(
     path: &Path,
     contents: &Rope,
 ) -> Result<String> {
-    let mut child = Command::new(git_binary);
-
+    let mut child = process::Process::new(git_binary);
     child
-        .current_dir(working_directory)
+        .arg("-C")
+        .arg(working_directory)
         .arg("blame")
         .arg("--incremental")
         .arg("--contents")

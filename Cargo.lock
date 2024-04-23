@@ -4319,6 +4319,7 @@ dependencies = [
  "lazy_static",
  "log",
  "pretty_assertions",
+ "process",
  "serde",
  "serde_json",
  "smol",
@@ -7299,6 +7300,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "process"
+version = "0.1.0"
+
+[[package]]
 name = "profiling"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9805,6 +9810,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "libc",
+ "process",
  "rand 0.8.5",
  "schemars",
  "serde",
@@ -12575,6 +12581,7 @@ dependencies = [
  "notifications",
  "outline",
  "parking_lot",
+ "process",
  "profiling",
  "project",
  "project_panel",
@@ -12592,6 +12599,7 @@ dependencies = [
  "tab_switcher",
  "task",
  "tasks_ui",
+ "terminal",
  "terminal_view",
  "theme",
  "theme_selector",

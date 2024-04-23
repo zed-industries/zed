@@ -15,7 +15,7 @@ name = "Zed"
 path = "src/main.rs"
 
 [features]
-flatpak = ["terminal_view/flatpak"]
+flatpak = ["process/flatpak", "terminal/flatpak"]
 
 [dependencies]
 activity_indicator.workspace = true
@@ -68,6 +68,7 @@ node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
 parking_lot.workspace = true
+process.workspace = true
 profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
@@ -85,6 +86,7 @@ smol.workspace = true
 tab_switcher.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
+terminal.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 theme_selector.workspace = true

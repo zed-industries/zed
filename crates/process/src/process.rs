@@ -1,0 +1,150 @@
+use std::ffi::{OsStr, OsString};
+use std::io::Result;
+use std::process::{Child, Command, CommandEnvs, ExitStatus, Output, Stdio};
+
+pub struct Process {
+    process: std::process::Command,
+
+    program: OsString,
+    args: Vec<OsString>,
+    use_pty: bool,
+}
+
+impl Process {
+    pub fn new<S: AsRef<OsStr>>(program: S) -> Self {
+        Self {
+            #[cfg(feature = "flatpak")]
+            process: Command::new("/app/bin/host-spawn"),
+            #[cfg(not(feature = "flatpak"))]
+            process: Command::new(&program),
+
+            program: program.as_ref().into(),
+            args: Vec::new(),
+            use_pty: false,
+        }
+    }
+
+    pub fn flatpak_use_pty(&mut self) -> &mut Self {
+        self.use_pty = true;
+        self
+    }
+
+    pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
+        self.args.push(arg.as_ref().into());
+        self
+    }
+
+    pub fn args<I: IntoIterator<Item = S>, S: AsRef<OsStr>>(&mut self, args: I) -> &mut Self {
+        for arg in args {
+            self.arg(arg);
+        }
+        self
+    }
+
+    pub fn env<K: AsRef<OsStr>, V: AsRef<OsStr>>(&mut self, key: K, val: V) -> &mut Self {
+        self.process.env(key, val);
+        self
+    }
+
+    pub fn envs<I: IntoIterator<Item = (K, V)>, K: AsRef<OsStr>, V: AsRef<OsStr>>(
+        &mut self,
+        vars: I,
+    ) -> &mut Self {
+        self.process.envs(vars);
+        self
+    }
+
+    pub fn env_remove<K: AsRef<OsStr>>(&mut self, key: K) -> &mut Self {
+        self.process.env_remove(key);
+        self
+    }
+
+    pub fn env_clear(&mut self) -> &mut Self {
+        self.process.env_clear();
+        self
+    }
+
+    pub fn stdin<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
+        self.process.stdin(cfg);
+        self
+    }
+
+    pub fn stdout<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
+        self.process.stdout(cfg);
+        self
+    }
+
+    pub fn stderr<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
+        self.process.stderr(cfg);
+        self
+    }
+
+    pub fn spawn(&mut self) -> Result<Child> {
+        self.process.args(self.get_actual_args());
+        self.process.spawn()
+    }
+
+    pub fn output(&mut self) -> Result<Output> {
+        self.process.args(self.get_actual_args());
+        self.process.output()
+    }
+
+    pub fn status(&mut self) -> Result<ExitStatus> {
+        self.process.args(self.get_actual_args());
+        self.process.status()
+    }
+
+    pub fn get_program(&self) -> &OsStr {
+        &self.program
+    }
+
+    pub fn get_args(&self) -> &[OsString] {
+        &self.args
+    }
+
+    pub fn get_envs(&self) -> CommandEnvs<'_> {
+        self.process.get_envs()
+    }
+
+    pub fn get_actual_program(&self) -> &OsStr {
+        self.process.get_program()
+    }
+
+    pub fn get_actual_args(&self) -> Vec<OsString> {
+        #[cfg(feature = "flatpak")]
+        let mut args = self.flatpak_args();
+
+        #[cfg(not(feature = "flatpak"))]
+        let mut args = Vec::new();
+
+        for arg in &self.args {
+            args.push(arg.clone());
+        }
+        args
+    }
+
+    #[cfg(feature = "flatpak")]
+    fn flatpak_args(&self) -> Vec<OsString> {
+        let env_keys = self
+            .process
+            .get_envs()
+            .map(|(k, _)| k.to_str().unwrap().to_string())
+            .chain(std::env::vars().map(|(k, _)| k))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let mut flatpak_args = Vec::new();
+
+        flatpak_args.push(if self.use_pty {
+            "-pty".into()
+        } else {
+            "-no-pty".into()
+        });
+        if !env_keys.is_empty() {
+            flatpak_args.push("-env".into());
+            flatpak_args.push(env_keys.into());
+        }
+        flatpak_args.push(self.program.clone());
+        flatpak_args
+    }
+}
