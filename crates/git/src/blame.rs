@@ -15,7 +15,7 @@ use time::UtcOffset;
 use url::Url;
 
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
+use process::WindowsCommandExt;
 
 pub use git2 as libgit;
 

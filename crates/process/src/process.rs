@@ -2,6 +2,15 @@ use std::ffi::{OsStr, OsString};
 use std::io::Result;
 use std::process::{Child, Command, CommandEnvs, ExitStatus, Output, Stdio};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+pub trait WindowsCommandExt {
+    fn creation_flags(&mut self, flags: u32) -> &mut Process;
+    fn raw_arg<S: AsRef<OsStr>>(&mut self, text_to_append_as_is: S) -> &mut Process;
+}
+
 pub struct Process {
     process: std::process::Command,
 
@@ -146,5 +155,18 @@ impl Process {
         }
         flatpak_args.push(self.program.clone());
         flatpak_args
+    }
+}
+
+#[cfg(windows)]
+impl WindowsCommandExt for Process {
+    fn creation_flags(&mut self, flags: u32) -> &mut Self {
+        self.process.creation_flags(flags);
+        self
+    }
+
+    fn raw_arg<S: AsRef<OsStr>>(&mut self, raw_text: S) -> &mut Self {
+        self.process.raw_arg(raw_text);
+        self
     }
 }

@@ -4,7 +4,7 @@ use collections::HashMap;
 use std::path::Path;
 
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
+use process::WindowsCommandExt;
 
 pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oid, String>> {
     const MARKER: &'static str = "<MARKER>";
