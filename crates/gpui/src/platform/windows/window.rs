@@ -1514,6 +1514,8 @@ impl PlatformWindow for WindowsWindow {
             .ok();
     }
 
+    fn set_app_id(&mut self, _app_id: &str) {}
+
     fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
         // todo(windows)
     }

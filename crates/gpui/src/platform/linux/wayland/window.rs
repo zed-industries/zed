@@ -609,6 +609,10 @@ impl PlatformWindow for WaylandWindow {
         self.borrow_mut().toplevel.set_title(title.to_string());
     }
 
+    fn set_app_id(&mut self, app_id: &str) {
+        self.borrow_mut().toplevel.set_app_id(app_id.to_owned());
+    }
+
     fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
         // todo(linux)
     }

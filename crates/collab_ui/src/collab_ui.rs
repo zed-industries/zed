@@ -122,5 +122,6 @@ fn notification_window_options(
         display_id: Some(screen.id()),
         fullscreen: false,
         window_background: WindowBackgroundAppearance::default(),
+        app_id: Some("zed".to_owned()),
     }
 }

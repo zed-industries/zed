@@ -599,10 +599,11 @@ impl Window {
             display_id,
             fullscreen,
             window_background,
+            app_id,
         } = options;
 
         let bounds = bounds.unwrap_or_else(|| default_bounds(display_id, cx));
-        let platform_window = cx.platform.open_window(
+        let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
                 bounds,
@@ -733,6 +734,10 @@ impl Window {
                     .unwrap_or(DispatchEventResult::default())
             })
         });
+
+        if let Some(app_id) = app_id {
+            platform_window.set_app_id(&app_id);
+        }
 
         Window {
             handle,
@@ -1122,6 +1127,11 @@ impl<'a> WindowContext<'a> {
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
         self.window.platform_window.set_title(title);
+    }
+
+    /// Sets the application identifier.
+    pub fn set_app_id(&mut self, app_id: &str) {
+        self.window.platform_window.set_app_id(app_id);
     }
 
     /// Sets the window background appearance.
