@@ -31,10 +31,11 @@ pub struct Spawn {
 }
 
 impl Spawn {
-    pub(crate) fn modal() -> Self {
+    pub fn modal() -> Self {
         Self { task_name: None }
     }
 }
+
 /// Rerun last task
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct Rerun {
