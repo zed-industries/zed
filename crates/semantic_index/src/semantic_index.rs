@@ -875,14 +875,13 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let mut semantic_index = cx
-            .update(|cx| {
-                let semantic_index =
-                    SemanticIndex::new(temp_dir.path().into(), Arc::new(TestEmbeddingProvider), cx);
-                semantic_index
-            })
-            .await
-            .unwrap();
+        let mut semantic_index = SemanticIndex::new(
+            temp_dir.path().into(),
+            Arc::new(TestEmbeddingProvider),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
 
         let project_path = Path::new("./fixture");
 
