@@ -9396,6 +9396,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
             editor.toggle_git_hunk_diff(&ToggleGitHunkDiff, cx);
         }
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::modified;
@@ -9434,18 +9435,18 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
                 let hunk_display_range = expanded_hunk
                     .hunk_range
                     .start
-                    .to_display_point(&snapshot.display_snapshot)
+                    .to_display_point(&snapshot.display_snapshot).row()
                     ..expanded_hunk
                         .hunk_range
                         .end
-                        .to_display_point(&snapshot.display_snapshot);
+                        .to_display_point(&snapshot.display_snapshot).row();
                 assert_eq!(
                     expanded_hunk.diff_base_version, 0,
                     "Diff base was never updated"
                 );
                 (
                     expanded_hunk.status,
-                    hunk_display_range.start.row()..hunk_display_range.end.row(),
+                    hunk_display_range,
                 )
             })
             .collect::<Vec<_>>();

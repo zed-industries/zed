@@ -9202,7 +9202,11 @@ impl Editor {
             (buffer_snapshot, original_text)
         });
         let hunk_start = multi_buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-        let hunk_end = multi_buffer_snapshot.anchor_at(buffer_range.end, Bias::Left);
+        let hunk_end_exclusive = multi_buffer_snapshot.anchor_at(buffer_range.end, Bias::Right);
+        let hunk_end_inclusive = multi_buffer_snapshot.anchor_at(
+            Point::new(buffer_range.end.row.saturating_sub(1), 0),
+            Bias::Right,
+        );
 
         let block_insert_index = match self.expanded_hunks.binary_search_by(|probe| {
             probe
@@ -9225,7 +9229,7 @@ impl Editor {
             }
             DiffHunkStatus::Added => {
                 self.highlight_rows::<GitRowHighlight>(
-                    hunk_start..hunk_end,
+                    hunk_start..hunk_end_inclusive,
                     Some(added_hunk_color(cx)),
                     cx,
                 );
@@ -9233,7 +9237,7 @@ impl Editor {
             }
             DiffHunkStatus::Modified => {
                 self.highlight_rows::<GitRowHighlight>(
-                    hunk_start..hunk_end,
+                    hunk_start..hunk_end_inclusive,
                     Some(added_hunk_color(cx)),
                     cx,
                 );
@@ -9249,7 +9253,8 @@ impl Editor {
             block_insert_index,
             ExpandedGitHunk {
                 block,
-                hunk_range: hunk_start..hunk_end,
+                // TODO kb why do I have to use inclusive/exclusive differently around?
+                hunk_range: hunk_start..hunk_end_exclusive,
                 diff_base_version: hunk.diff_base_version,
                 status: hunk.status,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
