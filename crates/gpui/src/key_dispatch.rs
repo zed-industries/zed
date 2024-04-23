@@ -283,6 +283,19 @@ impl DispatchTree {
         }
     }
 
+    pub fn truncate(&mut self, index: usize) {
+        for node in &self.nodes[index..] {
+            if let Some(focus_id) = node.focus_id {
+                self.focusable_node_ids.remove(&focus_id);
+            }
+
+            if let Some(view_id) = node.view_id {
+                self.view_node_ids.remove(&view_id);
+            }
+        }
+        self.nodes.truncate(index);
+    }
+
     pub fn clear_pending_keystrokes(&mut self) {
         self.keystroke_matchers.clear();
     }

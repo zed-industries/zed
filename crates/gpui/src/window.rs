@@ -284,6 +284,9 @@ pub struct Window {
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: GlobalElementId,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+    pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+    pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
+    pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     pub(crate) next_hitbox_id: HitboxId,
@@ -549,6 +552,9 @@ impl Window {
             root_view: None,
             element_id_stack: GlobalElementId::default(),
             text_style_stack: Vec::new(),
+            element_offset_stack: Vec::new(),
+            content_mask_stack: Vec::new(),
+            requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
@@ -1023,6 +1029,7 @@ impl<'a> WindowContext<'a> {
     #[profiling::function]
     pub fn draw(&mut self) {
         self.window.dirty.set(false);
+        self.window.requested_autoscroll = None;
 
         // Restore the previously-used input handler.
         if let Some(input_handler) = self.window.platform_window.take_input_handler() {

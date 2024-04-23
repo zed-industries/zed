@@ -10801,7 +10801,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
 
         let icon_size = buttons(&diagnostic, cx.block_id)
             .into_any_element()
-            .measure(AvailableSpace::min_size(), cx);
+            .layout_as_root(AvailableSpace::min_size(), cx);
 
         h_flex()
             .id(cx.block_id)
