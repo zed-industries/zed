@@ -254,10 +254,6 @@ impl ContextMenu {
             cx.propagate()
         }
     }
-
-    pub fn selected_index(&self) -> Option<usize> {
-        self.selected_index
-    }
 }
 
 impl ContextMenuItem {
