@@ -147,7 +147,7 @@ setTimeout(() => {
       env: {
         ZED_IMPERSONATE: users[i],
         ZED_WINDOW_POSITION: position,
-        ZED_STATELESS: "1",
+        // ZED_STATELESS: "1",
         ZED_ALWAYS_ACTIVE: "1",
         ZED_SERVER_URL: "http://localhost:3000",
         ZED_RPC_URL: "http://localhost:8080/rpc",

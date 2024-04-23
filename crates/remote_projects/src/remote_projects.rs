@@ -90,7 +90,7 @@ impl Store {
 
     pub fn dev_servers(&self) -> Vec<DevServer> {
         let mut dev_servers: Vec<DevServer> = self.dev_servers.values().cloned().collect();
-        dev_servers.sort_by_key(|d| (d.name.clone(), d.id));
+        dev_servers.sort_by_key(|d| (d.status == DevServerStatus::Offline, d.name.clone(), d.id));
         dev_servers
     }
 
