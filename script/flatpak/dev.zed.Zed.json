@@ -47,10 +47,10 @@
                 "install -Dm755 ./target/release/Zed -t /app/bin",
                 "mkdir -p /app/share/metainfo",
                 "mkdir -p /app/share/applications",
-                "mkdir -p /app/share/icons/hicolor/scalable/apps",
+                "mkdir -p /app/share/icons/hicolor/512x512/apps",
                 "cp ./assets/packaging/dev.zed.Zed.metainfo.xml /app/share/metainfo",
                 "cp ./assets/packaging/dev.zed.Zed.desktop /app/share/applications",
-                "cp ./assets/packaging/dev.zed.Zed.svg /app/share/icons/hicolor/scalable/apps"
+                "cp ./crates/zed/resources/app-icon.png /app/share/icons/hicolor/512x512/apps/dev.zed.Zed.png"
             ],
             "sources": [
                 {
