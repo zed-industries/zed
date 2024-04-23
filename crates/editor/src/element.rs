@@ -882,6 +882,7 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         text_hitbox: &Hitbox,
         content_origin: gpui::Point<Pixels>,
+        scroll_position: gpui::Point<f32>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         em_width: Pixels,
@@ -934,7 +935,7 @@ impl EditorElement {
                                         cursor_row_layout.font_size,
                                         &[TextRun {
                                             len,
-                                            font: font,
+                                            font,
                                             color: self.style.background,
                                             background_color: None,
                                             strikethrough: None,
@@ -959,17 +960,22 @@ impl EditorElement {
 
                         if autoscroll_containing_element {
                             let top = text_hitbox.origin.y
-                                + (cursor_position.row() as f32 - 3.).max(0.) * line_height;
+                                + (cursor_position.row() as f32 - scroll_position.y - 3.).max(0.)
+                                    * line_height;
                             let left = text_hitbox.origin.x
-                                + (cursor_position.row() as f32 - 3.).max(0.) * em_width;
+                                + (cursor_position.column() as f32 - scroll_position.x - 3.)
+                                    .max(0.)
+                                    * em_width;
 
                             let bottom = text_hitbox.origin.y
-                                + (cursor_position.row() as f32 + 4.) * line_height;
+                                + (cursor_position.row() as f32 - scroll_position.y + 4.)
+                                    * line_height;
                             let right = text_hitbox.origin.x
-                                + (cursor_position.row() as f32 + 4.) * em_width;
+                                + (cursor_position.column() as f32 - scroll_position.x + 4.)
+                                    * em_width;
 
                             autoscroll_bounds =
-                                Some(Bounds::from_corners(point(top, left), point(bottom, right)))
+                                Some(Bounds::from_corners(point(left, top), point(right, bottom)))
                         }
                     }
 
@@ -3673,6 +3679,7 @@ impl Element for EditorElement {
                     &line_layouts,
                     &text_hitbox,
                     content_origin,
+                    scroll_position,
                     scroll_pixel_position,
                     line_height,
                     em_width,
