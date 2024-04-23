@@ -12,6 +12,11 @@ workspace = true
 [lib]
 path = "src/semantic_index.rs"
 
+[[example]]
+name = "index"
+path = "examples/index.rs"
+crate-type = ["bin"]
+
 [dependencies]
 anyhow.workspace = true
 client.workspace = true

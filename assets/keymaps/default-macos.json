@@ -209,7 +209,14 @@
     }
   },
   {
-    "context": "AssistantPanel",
+    "context": "AssistantChat > Editor", // Used in the assistant2 crate
+    "bindings": {
+      "enter": ["assistant2::Submit", "Simple"],
+      "cmd-enter": ["assistant2::Submit", "Codebase"]
+    }
+  },
+  {
+    "context": "AssistantPanel", // Used in the assistant crate, which we're replacing
     "bindings": {
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch"

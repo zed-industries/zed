@@ -231,27 +231,18 @@ fn init_ui(args: Args) {
 
         load_embedded_fonts(cx);
 
-        let mut store = SettingsStore::default();
-        store
-            .set_default_settings(default_settings().as_ref(), cx)
-            .unwrap();
-        cx.set_global(store);
+        settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
+
         client::init_settings(cx);
-
-        let clock = Arc::new(clock::RealSystemClock);
-        let http = Arc::new(HttpClientWithUrl::new(
-            &client::ClientSettings::get_global(cx).server_url,
-        ));
-
-        let client = client::Client::new(clock, http.clone(), cx);
+        let client = Client::production(cx);
         let mut languages =
             LanguageRegistry::new(login_shell_env_loaded, cx.background_executor().clone());
         let copilot_language_server_id = languages.next_language_server_id();
         languages.set_language_server_download_dir(paths::LANGUAGES_DIR.clone());
         let languages = Arc::new(languages);
-        let node_runtime = RealNodeRuntime::new(http.clone());
+        let node_runtime = RealNodeRuntime::new(client.http_client());
 
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
@@ -271,11 +262,14 @@ fn init_ui(args: Args) {
         diagnostics::init(cx);
         copilot::init(
             copilot_language_server_id,
-            http.clone(),
+            client.http_client(),
             node_runtime.clone(),
             cx,
         );
+
         assistant::init(client.clone(), cx);
+        assistant2::init(client.clone(), cx);
+
         init_inline_completion_provider(client.telemetry().clone(), cx);
 
         extension::init(
@@ -297,7 +291,7 @@ fn init_ui(args: Args) {
 
         cx.observe_global::<SettingsStore>({
             let languages = languages.clone();
-            let http = http.clone();
+            let http = client.http_client();
             let client = client.clone();
 
             move |cx| {
@@ -345,7 +339,7 @@ fn init_ui(args: Args) {
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         audio::init(Assets, cx);
-        auto_update::init(http.clone(), cx);
+        auto_update::init(client.http_client(), cx);
 
         workspace::init(app_state.clone(), cx);
         recent_projects::init(cx);
@@ -378,7 +372,7 @@ fn init_ui(args: Args) {
         initialize_workspace(app_state.clone(), cx);
 
         // todo(linux): unblock this
-        upload_panics_and_crashes(http.clone(), cx);
+        upload_panics_and_crashes(client.http_client(), cx);
 
         cx.activate(true);
 

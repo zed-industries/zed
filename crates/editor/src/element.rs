@@ -3056,7 +3056,7 @@ fn render_inline_blame_entry(
     h_flex()
         .id("inline-blame")
         .w_full()
-        .font(style.text.font().family)
+        .font_family(style.text.font().family)
         .text_color(cx.theme().status().hint)
         .line_height(style.text.line_height)
         .child(Icon::new(IconName::FileGit).color(Color::Hint))
@@ -3108,7 +3108,7 @@ fn render_blame_entry(
 
     h_flex()
         .w_full()
-        .font(style.text.font().family)
+        .font_family(style.text.font().family)
         .line_height(style.text.line_height)
         .id(("blame", ix))
         .children([

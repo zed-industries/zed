@@ -457,6 +457,14 @@ impl Client {
         })
     }
 
+    pub fn production(cx: &mut AppContext) -> Arc<Self> {
+        let clock = Arc::new(clock::RealSystemClock);
+        let http = Arc::new(HttpClientWithUrl::new(
+            &ClientSettings::get_global(cx).server_url,
+        ));
+        Self::new(clock, http.clone(), cx)
+    }
+
     pub fn id(&self) -> u64 {
         self.id.load(Ordering::SeqCst)
     }
@@ -1119,6 +1127,8 @@ impl Client {
                     if let Some((login, token)) =
                         IMPERSONATE_LOGIN.as_ref().zip(ADMIN_API_TOKEN.as_ref())
                     {
+                        eprintln!("authenticate as admin {login}, {token}");
+
                         return Self::authenticate_as_admin(http, login.clone(), token.clone())
                             .await;
                     }

@@ -4004,7 +4004,7 @@ impl Render for Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .font(ui_font)
+            .font_family(ui_font)
             .gap_0()
             .justify_start()
             .items_start()

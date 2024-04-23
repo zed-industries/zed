@@ -2928,6 +2928,6 @@ impl Render for DraggedTab {
             .selected(self.is_active)
             .child(label)
             .render(cx)
-            .font(ui_font)
+            .font_family(ui_font)
     }
 }

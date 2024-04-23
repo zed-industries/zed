@@ -1,0 +1,56 @@
+[package]
+name = "assistant2"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/assistant2.rs"
+
+[[example]]
+name = "assistant_example"
+path = "examples/assistant_example.rs"
+crate-type = ["bin"]
+
+[dependencies]
+anyhow.workspace = true
+assistant_tooling.workspace = true
+client.workspace = true
+editor.workspace = true
+feature_flags.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
+log.workspace = true
+open_ai.workspace = true
+project.workspace = true
+rich_text.workspace = true
+semantic_index.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+nanoid = "0.4"
+
+[dev-dependencies]
+assets.workspace = true
+editor = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+languages.workspace = true
+node_runtime.workspace = true
+project = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

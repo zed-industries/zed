@@ -507,7 +507,7 @@ impl RemoteProjects {
                                         .my_1()
                                         .py_0p5()
                                         .px_3()
-                                        .font(ThemeSettings::get_global(cx).buffer_font.family.clone())
+                                        .font_family(ThemeSettings::get_global(cx).buffer_font.family.clone())
                                         .child(Label::new(instructions))
                                     )
                                     .when(status == DevServerStatus::Offline, |this| {
