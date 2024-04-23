@@ -12,3 +12,6 @@ brackets = [
     { start = "/*", end = " */", close = true, newline = false, not_in = ["string", "comment"] },
 ]
 collapsed_placeholder = " /* ... */ "
+test_templates = [
+    {capture_name = "cargo-test", label = "cargo test", template = "cargo test -p ZED_PACKAGE ZED_TEST_CAPTURES[0]"}
+]

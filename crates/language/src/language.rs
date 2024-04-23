@@ -601,6 +601,16 @@ pub struct LanguageConfig {
     /// How to soft-wrap long lines of text.
     #[serde(default)]
     pub soft_wrap: Option<SoftWrap>,
+
+    #[serde(default)]
+    pub test_templates: Option<Vec<TestTemplates>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
+pub struct TestTemplates {
+    capture_name: String,
+    template: String,
+    label: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -688,6 +698,7 @@ impl Default for LanguageConfig {
             hard_tabs: Default::default(),
             tab_size: Default::default(),
             soft_wrap: Default::default(),
+            test_templates: Default::default(),
         }
     }
 }
@@ -826,6 +837,7 @@ pub struct Grammar {
     pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Query,
     pub(crate) highlights_query: Option<Query>,
+    pub(crate) tests_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
@@ -915,6 +927,7 @@ impl Language {
                     injection_config: None,
                     override_config: None,
                     redactions_config: None,
+                    tests_query: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -970,6 +983,11 @@ impl Language {
                 .with_redaction_query(query.as_ref())
                 .context("Error loading redaction query")?;
         }
+        if let Some(query) = queries.tests {
+            self = self
+                .with_tests_query(query.as_ref())
+                .context("Error loading tests query")?;
+        }
         Ok(self)
     }
 
@@ -978,6 +996,14 @@ impl Language {
             .grammar_mut()
             .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
+        Ok(self)
+    }
+
+    pub fn with_tests_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        grammar.tests_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 
@@ -1289,6 +1315,10 @@ impl Language {
 
     pub fn path_suffixes(&self) -> &[String] {
         &self.config.matcher.path_suffixes
+    }
+
+    pub fn test_templates(&self) -> Option<&[TestTemplates]> {
+        self.config.test_templates.as_deref()
     }
 
     pub fn should_autoclose_before(&self, c: char) -> bool {
