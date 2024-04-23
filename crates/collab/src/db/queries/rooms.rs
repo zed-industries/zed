@@ -891,7 +891,7 @@ impl Database {
                         left_project.connection_ids.push(collaborator_connection_id);
                     }
 
-                    if collaborator.is_host
+                    if (collaborator.is_host && collaborator.connection() == connection)
                         || remote_projects_to_unshare.contains(&collaborator.project_id)
                     {
                         left_project.should_unshare = true;
@@ -936,14 +936,16 @@ impl Database {
                     .exec(&*tx)
                     .await?;
 
-                project::Entity::update_many()
-                    .filter(project::Column::Id.is_in(remote_projects_to_unshare))
-                    .set(project::ActiveModel {
-                        room_id: ActiveValue::Set(None),
-                        ..Default::default()
-                    })
-                    .exec(&*tx)
-                    .await?;
+                if !remote_projects_to_unshare.is_empty() {
+                    project::Entity::update_many()
+                        .filter(project::Column::Id.is_in(remote_projects_to_unshare))
+                        .set(project::ActiveModel {
+                            room_id: ActiveValue::Set(None),
+                            ..Default::default()
+                        })
+                        .exec(&*tx)
+                        .await?;
+                }
 
                 let (channel, room) = self.get_channel_room(room_id, &tx).await?;
                 let deleted = if room.participants.is_empty() {
