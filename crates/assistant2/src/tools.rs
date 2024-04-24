@@ -1,6 +1,6 @@
 use anyhow::Result;
 use assistant_tooling::{tool::ToolView, LanguageModelTool};
-use gpui::{prelude::*, AnyElement, AppContext, Model, Task};
+use gpui::{prelude::*, AppContext, Model, Task};
 use project::Fs;
 use schemars::JsonSchema;
 use semantic_index::ProjectIndex;
@@ -44,15 +44,38 @@ impl ProjectIndexTool {
     }
 }
 
-struct ProjectIndexView {
+pub struct ProjectIndexView {
+    tool_call_id: String,
     input: CodebaseQuery,
-    output: Vec<CodebaseExcerpt>,
+    output: Result<Vec<CodebaseExcerpt>>,
+}
+
+impl ProjectIndexView {
+    fn toggle_expanded(&mut self, element_id: ElementId, cx: &mut ViewContext<Self>) {
+        if let Ok(excerpts) = &self.output {
+            // if let Some(excerpt) = excerpts
+            //     .iter_mut()
+            //     .find(|excerpt| excerpt.element_id == element_id)
+            // {
+            //     excerpt.expanded = !excerpt.expanded;
+            //     cx.notify();
+            // }
+        }
+    }
 }
 
 impl Render for ProjectIndexView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let query = self.input.query.clone();
-        let excerpts = self.output.clone();
+
+        let result = &self.output;
+
+        let excerpts = match result {
+            Err(err) => {
+                return div().child(Label::new(format!("Error: {}", err)).color(Color::Error));
+            }
+            Ok(excerpts) => excerpts,
+        };
 
         div()
             .v_flex()
@@ -72,6 +95,7 @@ impl Render for ProjectIndexView {
                 // This render doesn't have state/model, so we can't use the listener
                 // let expanded = excerpt.expanded;
                 // let element_id = excerpt.element_id.clone();
+                // let element_id = ElementId::Name(self.tool_call_id + );
                 let element_id = ElementId::Name(nanoid::nanoid!().into());
                 let expanded = false;
 
@@ -82,9 +106,9 @@ impl Render for ProjectIndexView {
                             .child(Icon::new(IconName::File).color(Color::Muted))
                             .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
                     )
-                    // .on_click(cx.listener(move |this, _, cx| {
-                    //     this.toggle_expanded(element_id.clone(), cx);
-                    // }))
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.toggle_expanded(element_id.clone(), cx);
+                    }))
                     .child(
                         div()
                             .p_2()
@@ -99,20 +123,29 @@ impl Render for ProjectIndexView {
 }
 
 impl ToolView for ProjectIndexView {
-    fn format(_input: &Self::Input, excerpts: &Self::Output) -> String {
-        let mut body = "Semantic search results:\n".to_string();
+    fn format(&mut self, _cx: &mut ViewContext<Self>) -> String {
+        match &self.output {
+            Ok(excerpts) => {
+                if excerpts.len() == 0 {
+                    return "No results found".to_string();
+                }
 
-        for excerpt in excerpts {
-            body.push_str("Excerpt from ");
-            body.push_str(excerpt.path.as_ref());
-            body.push_str(", score ");
-            body.push_str(&excerpt.score.to_string());
-            body.push_str(":\n");
-            body.push_str("~~~\n");
-            body.push_str(excerpt.text.as_ref());
-            body.push_str("~~~\n");
+                let mut body = "Semantic search results:\n".to_string();
+
+                for excerpt in excerpts {
+                    body.push_str("Excerpt from ");
+                    body.push_str(excerpt.path.as_ref());
+                    body.push_str(", score ");
+                    body.push_str(&excerpt.score.to_string());
+                    body.push_str(":\n");
+                    body.push_str("~~~\n");
+                    body.push_str(excerpt.text.as_ref());
+                    body.push_str("~~~\n");
+                }
+                body
+            }
+            Err(err) => format!("Error: {}", err),
         }
-        body
     }
 }
 
@@ -185,7 +218,11 @@ impl LanguageModelTool for ProjectIndexTool {
         output: Result<Self::Output>,
         cx: &mut WindowContext,
     ) -> gpui::View<Self::View> {
-        ProjectIndexView { input, output }
+        cx.new_view(|cx| ProjectIndexView {
+            tool_call_id,
+            input,
+            output,
+        })
     }
 }
 

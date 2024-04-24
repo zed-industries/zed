@@ -308,9 +308,11 @@ impl AssistantChat {
                     };
                     call_count += 1;
 
+                    let messages = this.completion_messages(cx);
+
                     CompletionProvider::get(cx).complete(
                         this.model.clone(),
-                        this.completion_messages(cx),
+                        messages,
                         Vec::new(),
                         1.0,
                         definitions,
@@ -393,6 +395,10 @@ impl AssistantChat {
             }
 
             let tools = join_all(tool_tasks.into_iter()).await;
+            // If the WindowContext wwent away for any tool we just don't include it here
+            // That would bomb down in the update below anyhow
+            let tools = tools.into_iter().filter_map(|tool| tool.ok()).collect();
+
             this.update(cx, |this, cx| {
                 if let Some(ChatMessage::Assistant(AssistantMessage { tool_calls, .. })) =
                     this.messages.last_mut()
@@ -538,7 +544,19 @@ impl AssistantChat {
                         match result {
                             Some(result) => div()
                                 .p_2()
-                                .child(result.render(&name, &tool_call.id, cx))
+                                //.child(result.render(&name, &tool_call.id, cx))
+                                .child({
+                                    let element = match result {
+                                        assistant_tooling::tool::ToolFunctionCallResult::NoSuchTool => format!("Language Model attempted to call {name}").into_any_element(),
+                                        assistant_tooling::tool::ToolFunctionCallResult::ParsingFailed => format!("Language Model called {name} with bad arguments").into_any_element(),
+                                        assistant_tooling::tool::ToolFunctionCallResult::Finished(view) => {
+                                            let view = view.to_view();
+                                            view.into_any_element()
+                                        },
+                                    };
+
+                                    element
+                                })
                                 .into_any(),
                             None => div()
                                 .p_2()
@@ -552,7 +570,7 @@ impl AssistantChat {
         }
     }
 
-    fn completion_messages(&self, cx: &WindowContext) -> Vec<CompletionMessage> {
+    fn completion_messages(&self, cx: &mut WindowContext) -> Vec<CompletionMessage> {
         let mut completion_messages = Vec::new();
 
         for message in &self.messages {
@@ -600,7 +618,7 @@ impl AssistantChat {
                         // For now I'm going to have to assume we send an empty string because otherwise
                         // the Chat API will break -- there is a required message for every tool call by ID
                         let content = match &tool_call.result {
-                            Some(result) => result.format(&tool_call.name),
+                            Some(result) => result.format(&tool_call.name, cx),
                             None => "".to_string(),
                         };
 

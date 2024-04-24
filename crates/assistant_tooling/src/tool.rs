@@ -19,6 +19,18 @@ pub enum ToolFunctionCallResult {
     Finished(Box<dyn AnyToolView>),
 }
 
+impl ToolFunctionCallResult {
+    pub fn format(&self, name: &String, cx: &mut WindowContext) -> String {
+        match self {
+            ToolFunctionCallResult::NoSuchTool => format!("No tool for {name}"),
+            ToolFunctionCallResult::ParsingFailed => {
+                format!("Unable to parse arguments for {name}")
+            }
+            ToolFunctionCallResult::Finished(view) => view.format(cx),
+        }
+    }
+}
+
 pub trait ToolView: Render {
     fn format(&mut self, cx: &mut ViewContext<Self>) -> String;
 }
