@@ -88,7 +88,7 @@ pub(crate) struct X11WindowState {
 }
 
 #[derive(Clone)]
-pub(crate) struct X11Window {
+pub(crate) struct X11WindowStatePtr {
     pub(crate) state: Rc<RefCell<X11WindowState>>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb_connection: Rc<XCBConnection>,
@@ -244,6 +244,15 @@ impl X11WindowState {
     }
 }
 
+pub(crate) struct X11Window(pub X11WindowStatePtr);
+
+impl Drop for X11Window {
+    fn drop(&mut self) {
+        // TODO
+        println!("X11Window: drop");
+    }
+}
+
 impl X11Window {
     pub fn new(
         params: WindowParams,
@@ -252,7 +261,7 @@ impl X11Window {
         x_window: xproto::Window,
         atoms: &XcbAtoms,
     ) -> Self {
-        X11Window {
+        Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
                 params,
                 xcb_connection,
@@ -263,9 +272,11 @@ impl X11Window {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
             x_window,
-        }
+        })
     }
+}
 
+impl X11WindowStatePtr {
     pub fn destroy(&self) {
         let mut state = self.state.borrow_mut();
         state.renderer.destroy();
@@ -345,7 +356,7 @@ impl X11Window {
 
 impl PlatformWindow for X11Window {
     fn bounds(&self) -> Bounds<DevicePixels> {
-        self.state.borrow_mut().bounds.map(|v| v.into())
+        self.0.state.borrow_mut().bounds.map(|v| v.into())
     }
 
     // todo(linux)
@@ -359,11 +370,11 @@ impl PlatformWindow for X11Window {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.state.borrow_mut().content_size()
+        self.0.state.borrow_mut().content_size()
     }
 
     fn scale_factor(&self) -> f32 {
-        self.state.borrow_mut().scale_factor
+        self.0.state.borrow_mut().scale_factor
     }
 
     // todo(linux)
@@ -372,13 +383,14 @@ impl PlatformWindow for X11Window {
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
-        self.state.borrow().display.clone()
+        self.0.state.borrow().display.clone()
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
         let reply = self
+            .0
             .xcb_connection
-            .query_pointer(self.x_window)
+            .query_pointer(self.0.x_window)
             .unwrap()
             .reply()
             .unwrap();
@@ -395,11 +407,11 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.state.borrow_mut().input_handler = Some(input_handler);
+        self.0.state.borrow_mut().input_handler = Some(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.state.borrow_mut().input_handler.take()
+        self.0.state.borrow_mut().input_handler.take()
     }
 
     fn prompt(
@@ -414,8 +426,9 @@ impl PlatformWindow for X11Window {
 
     fn activate(&self) {
         let win_aux = xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE);
-        self.xcb_connection
-            .configure_window(self.x_window, &win_aux)
+        self.0
+            .xcb_connection
+            .configure_window(self.0.x_window, &win_aux)
             .log_err();
     }
 
@@ -425,22 +438,24 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_title(&mut self, title: &str) {
-        self.xcb_connection
+        self.0
+            .xcb_connection
             .change_property8(
                 xproto::PropMode::REPLACE,
-                self.x_window,
+                self.0.x_window,
                 xproto::AtomEnum::WM_NAME,
                 xproto::AtomEnum::STRING,
                 title.as_bytes(),
             )
             .unwrap();
 
-        self.xcb_connection
+        self.0
+            .xcb_connection
             .change_property8(
                 xproto::PropMode::REPLACE,
-                self.x_window,
-                self.state.borrow().atoms._NET_WM_NAME,
-                self.state.borrow().atoms.UTF8_STRING,
+                self.0.x_window,
+                self.0.state.borrow().atoms._NET_WM_NAME,
+                self.0.state.borrow().atoms.UTF8_STRING,
                 title.as_bytes(),
             )
             .unwrap();
@@ -484,39 +499,39 @@ impl PlatformWindow for X11Window {
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
-        self.callbacks.borrow_mut().request_frame = Some(callback);
+        self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>) {
-        self.callbacks.borrow_mut().input = Some(callback);
+        self.0.callbacks.borrow_mut().input = Some(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.callbacks.borrow_mut().active_status_change = Some(callback);
+        self.0.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.callbacks.borrow_mut().resize = Some(callback);
+        self.0.callbacks.borrow_mut().resize = Some(callback);
     }
 
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.callbacks.borrow_mut().fullscreen = Some(callback);
+        self.0.callbacks.borrow_mut().fullscreen = Some(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.callbacks.borrow_mut().moved = Some(callback);
+        self.0.callbacks.borrow_mut().moved = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.callbacks.borrow_mut().should_close = Some(callback);
+        self.0.callbacks.borrow_mut().should_close = Some(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
-        self.callbacks.borrow_mut().close = Some(callback);
+        self.0.callbacks.borrow_mut().close = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        self.callbacks.borrow_mut().appearance_changed = Some(callback);
+        self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
     // todo(linux)
@@ -525,12 +540,12 @@ impl PlatformWindow for X11Window {
     }
 
     fn draw(&self, scene: &Scene) {
-        let mut inner = self.state.borrow_mut();
+        let mut inner = self.0.state.borrow_mut();
         inner.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn PlatformAtlas> {
-        let inner = self.state.borrow();
+        let inner = self.0.state.borrow();
         inner.renderer.sprite_atlas().clone()
     }
 }

@@ -23,10 +23,10 @@ use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers, ModifiersChangedEvent, Pixels,
-    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams,
+    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
-use super::{super::SCROLL_LINES, X11Display, X11Window, XcbAtoms};
+use super::{super::SCROLL_LINES, X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{button_of_key, modifiers_from_state};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
@@ -36,12 +36,12 @@ use calloop::{
 };
 
 pub(crate) struct WindowRef {
-    window: X11Window,
+    window: X11WindowStatePtr,
     refresh_event_token: RegistrationToken,
 }
 
 impl Deref for WindowRef {
-    type Target = X11Window;
+    type Target = X11WindowStatePtr;
 
     fn deref(&self) -> &Self::Target {
         &self.window
@@ -171,7 +171,7 @@ impl X11Client {
         })))
     }
 
-    fn get_window(&self, win: xproto::Window) -> Option<X11Window> {
+    fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
         let state = self.0.borrow();
         state
             .windows
@@ -492,7 +492,7 @@ impl LinuxClient for X11Client {
             .expect("Failed to initialize refresh timer");
 
         let window_ref = WindowRef {
-            window: window.clone(),
+            window: window.0.clone(),
             refresh_event_token,
         };
 
