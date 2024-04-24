@@ -4724,6 +4724,7 @@ dependencies = [
  "project",
  "rpc",
  "settings",
+ "shellexpand",
  "util",
 ]
 
