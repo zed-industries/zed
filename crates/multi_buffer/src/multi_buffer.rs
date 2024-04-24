@@ -162,18 +162,29 @@ pub struct MultiBufferSnapshot {
     show_headers: bool,
 }
 
+pub struct ExcerptInfo {
+    pub id: ExcerptId,
+    pub buffer: BufferSnapshot,
+    pub buffer_id: BufferId,
+    pub range: ExcerptRange<text::Anchor>,
+}
+
 /// A boundary between [`Excerpt`]s in a [`MultiBuffer`]
 pub struct ExcerptBoundary {
-    pub id: ExcerptId,
+    pub prev: Option<ExcerptInfo>,
+    pub next: Option<ExcerptInfo>,
     /// The row in the `MultiBuffer` where the boundary is located
     pub row: u32,
-    pub buffer: BufferSnapshot,
-    pub range: ExcerptRange<text::Anchor>,
-    /// It's possible to have multiple excerpts in the same buffer,
-    /// and they are rendered together without a new File header.
-    ///
-    /// This flag indicates that the excerpt is the first one in the buffer.
-    pub starts_new_buffer: bool,
+}
+
+impl ExcerptBoundary {
+    pub fn starts_new_buffer(&self) -> bool {
+        match (self.prev.as_ref(), self.next.as_ref()) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(prev), Some(next)) => prev.buffer_id != next.buffer_id,
+        }
+    }
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -3014,24 +3025,37 @@ impl MultiBufferSnapshot {
             cursor.next(&());
         }
 
-        let mut prev_buffer_id = cursor.prev_item().map(|excerpt| excerpt.buffer_id);
+        let mut visited_end = false;
         std::iter::from_fn(move || {
             if self.singleton {
                 None
             } else if bounds.contains(&cursor.start().0) {
-                let excerpt = cursor.item()?;
-                let starts_new_buffer = Some(excerpt.buffer_id) != prev_buffer_id;
-                let boundary = ExcerptBoundary {
+                let next = cursor.item().map(|excerpt| ExcerptInfo {
                     id: excerpt.id,
-                    row: cursor.start().1.row,
                     buffer: excerpt.buffer.clone(),
+                    buffer_id: excerpt.buffer_id,
                     range: excerpt.range.clone(),
-                    starts_new_buffer,
-                };
+                });
 
-                prev_buffer_id = Some(excerpt.buffer_id);
+                if next.is_none() {
+                    if visited_end {
+                        return None;
+                    } else {
+                        visited_end = true;
+                    }
+                }
+
+                let prev = cursor.prev_item().map(|prev_excerpt| ExcerptInfo {
+                    id: prev_excerpt.id,
+                    buffer: prev_excerpt.buffer.clone(),
+                    buffer_id: prev_excerpt.buffer_id,
+                    range: prev_excerpt.range.clone(),
+                });
+                let row = cursor.start().1.row;
+
                 cursor.next(&());
-                Some(boundary)
+
+                Some(ExcerptBoundary { row, prev, next })
             } else {
                 None
             }
@@ -4799,15 +4823,17 @@ mod tests {
         ) -> Vec<(u32, String, bool)> {
             snapshot
                 .excerpt_boundaries_in_range(range)
-                .map(|boundary| {
-                    (
-                        boundary.row,
-                        boundary
-                            .buffer
-                            .text_for_range(boundary.range.context)
-                            .collect::<String>(),
-                        boundary.starts_new_buffer,
-                    )
+                .filter_map(|boundary| {
+                    let starts_new_buffer = boundary.starts_new_buffer();
+                    boundary.next.map(|next| {
+                        (
+                            boundary.row,
+                            next.buffer
+                                .text_for_range(next.range.context)
+                                .collect::<String>(),
+                            starts_new_buffer,
+                        )
+                    })
                 })
                 .collect::<Vec<_>>()
         }

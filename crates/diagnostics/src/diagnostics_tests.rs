@@ -993,11 +993,14 @@ fn editor_blocks(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<(u32,
                                 starts_new_buffer, ..
                             } => {
                                 if *starts_new_buffer {
+                                    // TODO change wording
                                     "path header block".into()
                                 } else {
+                                    // TODO change wording
                                     "collapsed context".into()
                                 }
                             }
+                            TransformBlock::ExcerptFooter { .. } => "excerpt footer".into(),
                         };
 
                         Some((row, name))

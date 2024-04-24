@@ -98,6 +98,7 @@ impl DisplayMap {
         wrap_width: Option<Pixels>,
         buffer_header_height: u8,
         excerpt_header_height: u8,
+        excerpt_footer_height: u8,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -107,7 +108,12 @@ impl DisplayMap {
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
-        let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
+        let block_map = BlockMap::new(
+            snapshot,
+            buffer_header_height,
+            excerpt_header_height,
+            excerpt_footer_height,
+        );
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,
@@ -1033,6 +1039,7 @@ pub mod tests {
                 wrap_width,
                 buffer_start_excerpt_header_height,
                 excerpt_header_height,
+                0,
                 cx,
             )
         });
@@ -1273,6 +1280,7 @@ pub mod tests {
                     wrap_width,
                     1,
                     1,
+                    0,
                     cx,
                 )
             });
@@ -1373,7 +1381,16 @@ pub mod tests {
 
         let font_size = px(14.0);
         let map = cx.new_model(|cx| {
-            DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                0,
+                cx,
+            )
         });
 
         buffer.update(cx, |buffer, cx| {
@@ -1450,8 +1467,9 @@ pub mod tests {
 
         let font_size = px(14.0);
 
-        let map = cx
-            .new_model(|cx| DisplayMap::new(buffer, font("Helvetica"), font_size, None, 1, 1, cx));
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(buffer, font("Helvetica"), font_size, None, 1, 1, 0, cx)
+        });
         assert_eq!(
             cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
             vec![
@@ -1536,7 +1554,16 @@ pub mod tests {
         let font_size = px(16.0);
 
         let map = cx.new_model(|cx| {
-            DisplayMap::new(buffer, font("Courier"), font_size, Some(px(40.0)), 1, 1, cx)
+            DisplayMap::new(
+                buffer,
+                font("Courier"),
+                font_size,
+                Some(px(40.0)),
+                1,
+                1,
+                0,
+                cx,
+            )
         });
         assert_eq!(
             cx.update(|cx| syntax_chunks(0..5, &map, &theme, cx)),
@@ -1602,8 +1629,8 @@ pub mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
         let font_size = px(16.0);
-        let map =
-            cx.new_model(|cx| DisplayMap::new(buffer, font("Courier"), font_size, None, 1, 1, cx));
+        let map = cx
+            .new_model(|cx| DisplayMap::new(buffer, font("Courier"), font_size, None, 1, 1, 0, cx));
 
         enum MyType {}
 
@@ -1718,7 +1745,16 @@ pub mod tests {
         let font_size = px(14.0);
 
         let map = cx.new_model(|cx| {
-            DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                0,
+                cx,
+            )
         });
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
@@ -1772,7 +1808,16 @@ pub mod tests {
         let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let font_size = px(14.0);
         let map = cx.new_model(|cx| {
-            DisplayMap::new(buffer.clone(), font("Helvetica"), font_size, None, 1, 1, cx)
+            DisplayMap::new(
+                buffer.clone(),
+                font("Helvetica"),
+                font_size,
+                None,
+                1,
+                1,
+                0,
+                cx,
+            )
         });
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx)).max_point(),

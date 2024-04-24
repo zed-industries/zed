@@ -689,7 +689,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let display_map =
-            cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, cx));
+            cx.new_model(|cx| DisplayMap::new(buffer, font, font_size, None, 1, 1, 0, cx));
 
         // add all kinds of inlays between two word boundaries: we should be able to cross them all, when looking for another boundary
         let mut id = 0;
@@ -895,7 +895,7 @@ mod tests {
                 multibuffer
             });
             let display_map =
-                cx.new_model(|cx| DisplayMap::new(multibuffer, font, px(14.0), None, 2, 2, cx));
+                cx.new_model(|cx| DisplayMap::new(multibuffer, font, px(14.0), None, 2, 2, 1, cx));
             let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
             assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
