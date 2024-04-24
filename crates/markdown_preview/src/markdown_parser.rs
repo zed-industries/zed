@@ -484,9 +484,9 @@ impl<'a> MarkdownParser<'a> {
         let mut task_item = None;
         let mut order = order;
         let mut order_stack = Vec::new();
-        let mut list_item_source_range = list_source_range.clone();
-        let mut list_item_source_range_stack = Vec::new();
         let mut insertion_indices = HashMap::new();
+        let mut source_ranges = HashMap::new();
+        let mut start_item_range = list_source_range.clone();
 
         while !self.eof() {
             let (current, source_range) = self.current().unwrap();
@@ -498,8 +498,9 @@ impl<'a> MarkdownParser<'a> {
 
                     // We will use the start of the nested list as the end for the current item's range,
                     // because we don't care about the hierarchy of list items
-                    list_item_source_range_stack
-                        .push(list_item_source_range.start..source_range.start);
+                    if !source_ranges.contains_key(&depth) {
+                        source_ranges.insert(depth, start_item_range.start..source_range.start);
+                    }
 
                     order_stack.push(order);
                     order = *new_order;
@@ -508,7 +509,6 @@ impl<'a> MarkdownParser<'a> {
                 }
                 Event::End(TagEnd::List(_)) => {
                     order = order_stack.pop().flatten();
-                    list_item_source_range = list_item_source_range_stack.pop().unwrap_or_default();
                     self.cursor += 1;
                     depth -= 1;
 
@@ -517,7 +517,7 @@ impl<'a> MarkdownParser<'a> {
                     }
                 }
                 Event::Start(Tag::Item) => {
-                    list_item_source_range = source_range.clone();
+                    start_item_range = source_range.clone();
 
                     self.cursor += 1;
                     items_stack.push(Vec::new());
@@ -575,8 +575,11 @@ impl<'a> MarkdownParser<'a> {
                     }
 
                     if let Some(content) = items_stack.pop() {
+                        let source_range = source_ranges
+                            .remove(&depth)
+                            .unwrap_or(start_item_range.clone());
                         let item = ParsedMarkdownElement::ListItem(ParsedMarkdownListItem {
-                            source_range: list_item_source_range.clone(),
+                            source_range,
                             content,
                             depth,
                             item_type,
@@ -1061,11 +1064,11 @@ Some other content
         assert_eq!(
             parsed.children,
             vec![
-                list_item(0..10, 1, Ordered(1), vec![p("a", 3..4)],),
-                list_item(10..23, 2, Ordered(1), vec![p("b", 12..13),],),
-                list_item(23..33, 3, Ordered(1), vec![p("c", 20..21),],),
-                p("text", 33..43),
-                list_item(43..47, 2, Ordered(1), vec![p("d", 45..46),],),
+                list_item(0..8, 1, Ordered(1), vec![p("a", 3..4)],),
+                list_item(8..21, 2, Ordered(1), vec![p("b", 12..13),],),
+                list_item(21..28, 3, Ordered(1), vec![p("c", 25..26),],),
+                p("text", 32..37),
+                list_item(41..46, 2, Ordered(1), vec![p("d", 45..46),],),
             ],
         );
     }
