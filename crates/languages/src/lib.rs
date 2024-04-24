@@ -13,12 +13,11 @@ use crate::{
     rust::RustContextProvider,
 };
 
-use self::{deno::DenoSettings, elixir::ElixirSettings};
+use self::elixir::ElixirSettings;
 
 mod bash;
 mod c;
 mod css;
-mod deno;
 mod elixir;
 mod go;
 mod json;
@@ -49,7 +48,6 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     ElixirSettings::register(cx);
-    DenoSettings::register(cx);
 
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::language()),
@@ -193,58 +191,33 @@ pub fn init(
         vec![Arc::new(rust::RustLspAdapter)],
         RustContextProvider
     );
-    match &DenoSettings::get(None, cx).enable {
-        true => {
-            language!(
-                "tsx",
-                vec![
-                    Arc::new(deno::DenoLspAdapter::new()),
-                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ]
-            );
-            language!("typescript", vec![Arc::new(deno::DenoLspAdapter::new())]);
-            language!(
-                "javascript",
-                vec![
-                    Arc::new(deno::DenoLspAdapter::new()),
-                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ]
-            );
-            language!("jsdoc", vec![Arc::new(deno::DenoLspAdapter::new())]);
-        }
-        false => {
-            language!(
-                "tsx",
-                vec![
-                    Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-                    Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ]
-            );
-            language!(
-                "typescript",
-                vec![
-                    Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-                    Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-                ]
-            );
-            language!(
-                "javascript",
-                vec![
-                    Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-                    Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ]
-            );
-            language!(
-                "jsdoc",
-                vec![Arc::new(typescript::TypeScriptLspAdapter::new(
-                    node_runtime.clone(),
-                ))]
-            );
-        }
-    }
-
+    language!(
+        "tsx",
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+        ]
+    );
+    language!(
+        "typescript",
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+        ]
+    );
+    language!(
+        "javascript",
+        vec![
+            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
+        ]
+    );
+    language!(
+        "jsdoc",
+        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
+            node_runtime.clone(),
+        ))]
+    );
     language!("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
     language!(
         "erb",
@@ -260,26 +233,22 @@ pub fn init(
     );
     language!("proto");
 
-    languages.register_secondary_lsp_adapter(
-        "Astro".into(),
-        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-    );
-    languages.register_secondary_lsp_adapter(
-        "HTML".into(),
-        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-    );
-    languages.register_secondary_lsp_adapter(
-        "PHP".into(),
-        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-    );
-    languages.register_secondary_lsp_adapter(
-        "Svelte".into(),
-        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-    );
-    languages.register_secondary_lsp_adapter(
-        "Vue.js".into(),
-        Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-    );
+    let tailwind_languages = [
+        "Astro",
+        "HTML",
+        "PHP",
+        "Svelte",
+        "TSX",
+        "JavaScript",
+        "Vue.js",
+    ];
+
+    for language in tailwind_languages {
+        languages.register_secondary_lsp_adapter(
+            language.into(),
+            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        );
+    }
 
     let mut subscription = languages.subscribe();
     let mut prev_language_settings = languages.language_settings();

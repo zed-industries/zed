@@ -109,6 +109,7 @@ members = [
     "extensions/clojure",
     "extensions/csharp",
     "extensions/dart",
+    "extensions/deno",
     "extensions/elm",
     "extensions/emmet",
     "extensions/erlang",

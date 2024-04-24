@@ -576,10 +576,6 @@
     //
     "lsp": "elixir_ls"
   },
-  // Settings specific to our deno integration
-  "deno": {
-    "enable": false
-  },
   "code_actions_on_format": {},
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
