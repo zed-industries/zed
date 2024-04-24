@@ -96,7 +96,6 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
-embed-manifest = "1.4.0"
 winresource = "0.1"
 
 [dev-dependencies]

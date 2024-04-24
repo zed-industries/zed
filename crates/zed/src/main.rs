@@ -138,6 +138,13 @@ fn init_headless(dev_server_token: DevServerToken) {
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
 
+        let user_settings_file_rx = watch_config_file(
+            &cx.background_executor(),
+            fs.clone(),
+            paths::SETTINGS.clone(),
+        );
+        handle_settings_file_changes(user_settings_file_rx, cx);
+
         headless::init(
             client.clone(),
             headless::AppState {
