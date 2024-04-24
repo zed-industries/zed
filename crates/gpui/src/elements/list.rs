@@ -613,6 +613,9 @@ impl StateInner {
             let mut layout_response =
                 self.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
 
+            // Avoid honoring autoscroll requests from elements other than our children.
+            cx.take_autoscroll();
+
             // Only paint the visible items, if there is actually any space for them (taking padding into account)
             if bounds.size.height > padding.top + padding.bottom {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
