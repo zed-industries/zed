@@ -803,30 +803,28 @@ fn surrounding_markers(
     let mut matched_closes = 0;
     let mut opening = None;
 
+    let mut before_ch = match movement::chars_before(map, point).next() {
+        Some((ch, _)) => ch,
+        _ => '\0',
+    };
     if let Some((ch, range)) = movement::chars_after(map, point).next() {
-        if ch == open_marker {
-            match movement::chars_before(map, point).next() {
-                Some(('\\', _)) => {}
-                _ => {
-                    if open_marker == close_marker {
-                        let mut total = 0;
-                        for ((ch, _), (before_ch, _)) in
-                            movement::chars_before(map, point).tuple_windows()
-                        {
-                            if ch == '\n' {
-                                break;
-                            }
-                            if ch == open_marker && before_ch != '\\' {
-                                total += 1;
-                            }
-                        }
-                        if total % 2 == 0 {
-                            opening = Some(range)
-                        }
-                    } else {
-                        opening = Some(range)
+        if ch == open_marker && before_ch != '\\' {
+            if open_marker == close_marker {
+                let mut total = 0;
+                for ((ch, _), (before_ch, _)) in movement::chars_before(map, point).tuple_windows()
+                {
+                    if ch == '\n' {
+                        break;
+                    }
+                    if ch == open_marker && before_ch != '\\' {
+                        total += 1;
                     }
                 }
+                if total % 2 == 0 {
+                    opening = Some(range)
+                }
+            } else {
+                opening = Some(range)
             }
         }
     }
@@ -852,20 +850,18 @@ fn surrounding_markers(
             }
         }
     }
-
     if opening.is_none() {
-        for ((ch, _), (after_ch, after_range)) in movement::chars_after(map, point).tuple_windows()
-        {
-            if ch == '\\' {
-                continue;
+        for (ch, range) in movement::chars_after(map, point) {
+            if before_ch != '\\' {
+                if ch == open_marker {
+                    opening = Some(range);
+                    break;
+                } else if ch == close_marker {
+                    break;
+                }
             }
 
-            if after_ch == open_marker {
-                opening = Some(after_range);
-                break;
-            } else if after_ch == close_marker {
-                break;
-            }
+            before_ch = ch;
         }
     }
 
@@ -875,27 +871,30 @@ fn surrounding_markers(
 
     let mut matched_opens = 0;
     let mut closing = None;
+    before_ch = match movement::chars_before(map, opening.end).next() {
+        Some((ch, _)) => ch,
+        _ => '\0',
+    };
+    println!("before ch close {:?}", before_ch);
+    for (ch, range) in movement::chars_after(map, opening.end) {
+        println!("after, ch is {:?}, before {:?}", ch, before_ch);
 
-    for ((ch, _), (after_ch, after_range)) in
-        movement::chars_after(map, opening.end).tuple_windows()
-    {
-        if ch == '\\' {
-            continue;
-        }
-
-        if after_ch == '\n' && !search_across_lines {
+        if ch == '\n' && !search_across_lines {
             break;
         }
-
-        if after_ch == close_marker {
-            if matched_opens == 0 {
-                closing = Some(after_range);
-                break;
+        if before_ch != '\\' {
+            if ch == close_marker {
+                if matched_opens == 0 {
+                    closing = Some(range);
+                    break;
+                }
+                matched_opens -= 1;
+            } else if ch == open_marker {
+                matched_opens += 1;
             }
-            matched_opens -= 1;
-        } else if after_ch == open_marker {
-            matched_opens += 1;
         }
+
+        before_ch = ch;
     }
 
     let Some(mut closing) = closing else {
