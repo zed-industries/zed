@@ -1,0 +1,19 @@
+id = "elixir"
+name = "Elixir"
+description = "Elixir support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Antonio Scandurra <me@as-cii.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.elixir-ls]
+name = "ElixirLS"
+languages = ["Elixir"]
+
+[language_servers.next-ls]
+name = "Next LS"
+languages = ["Elixir"]
+
+[grammars.elixir]
+repository = "https://github.com/elixir-lang/tree-sitter-elixir"
+commit = "a2861e88a730287a60c11ea9299c033c7d076e30"

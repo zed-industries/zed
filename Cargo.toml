@@ -110,6 +110,7 @@ members = [
     "extensions/csharp",
     "extensions/dart",
     "extensions/deno",
+    "extensions/elixir",
     "extensions/elm",
     "extensions/emmet",
     "extensions/erlang",
