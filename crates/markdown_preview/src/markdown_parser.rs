@@ -1,9 +1,10 @@
 use crate::markdown_elements::*;
 use async_recursion::async_recursion;
+use collections::FxHashMap;
 use gpui::FontWeight;
 use language::LanguageRegistry;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
-use std::{collections::HashMap, ops::Range, path::PathBuf, sync::Arc};
+use std::{ops::Range, path::PathBuf, sync::Arc};
 
 pub async fn parse_markdown(
     markdown_input: &str,
@@ -484,8 +485,9 @@ impl<'a> MarkdownParser<'a> {
         let mut task_item = None;
         let mut order = order;
         let mut order_stack = Vec::new();
-        let mut insertion_indices = HashMap::new();
-        let mut source_ranges = HashMap::new();
+
+        let mut insertion_indices = FxHashMap::default();
+        let mut source_ranges = FxHashMap::default();
         let mut start_item_range = list_source_range.clone();
 
         while !self.eof() {
