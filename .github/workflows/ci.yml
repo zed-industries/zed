@@ -173,9 +173,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          # We need to fetch tags so that `script/draft-release-notes`
+          # We need to fetch more than one commit so that `script/draft-release-notes`
           # is able to diff between the current and previous tag.
-          fetch-tags: true
+          #
+          # 25 was chosen arbitrarily.
+          fetch-depth: 25
           clean: false
           submodules: "recursive"
 
