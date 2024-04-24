@@ -1626,22 +1626,25 @@ mod tests {
                 .enumerate()
                 .filter_map(|(ix, (row, block))| {
                     let name: SharedString = match block {
-                        TransformBlock::Custom(block) => cx.with_element_context({
-                            |cx| -> Option<SharedString> {
-                                let mut element = block.render(&mut BlockContext {
-                                    context: cx,
-                                    anchor_x: px(0.),
-                                    gutter_dimensions: &GutterDimensions::default(),
-                                    line_height: px(0.),
-                                    em_width: px(0.),
-                                    max_width: px(0.),
-                                    block_id: ix,
-                                    editor_style: &editor::EditorStyle::default(),
-                                });
-                                let element = element.downcast_mut::<Stateful<Div>>().unwrap();
-                                element.interactivity().element_id.clone()?.try_into().ok()
-                            }
-                        })?,
+                        TransformBlock::Custom(block) => {
+                            let mut element = block.render(&mut BlockContext {
+                                context: cx,
+                                anchor_x: px(0.),
+                                gutter_dimensions: &GutterDimensions::default(),
+                                line_height: px(0.),
+                                em_width: px(0.),
+                                max_width: px(0.),
+                                block_id: ix,
+                                editor_style: &editor::EditorStyle::default(),
+                            });
+                            let element = element.downcast_mut::<Stateful<Div>>().unwrap();
+                            element
+                                .interactivity()
+                                .element_id
+                                .clone()?
+                                .try_into()
+                                .ok()?
+                        }
 
                         TransformBlock::ExcerptHeader {
                             starts_new_buffer, ..

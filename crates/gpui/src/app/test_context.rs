@@ -732,13 +732,10 @@ impl VisualTestContext {
         f: impl FnOnce(&mut WindowContext) -> AnyElement,
     ) {
         self.update(|cx| {
-            cx.with_element_context(|cx| {
-                let mut element = f(cx);
-                element.layout_as_root(space, cx);
-                cx.with_absolute_element_offset(origin, |cx| element.prepaint(cx));
-                element.paint(cx);
-            });
-
+            let mut element = f(cx);
+            element.layout_as_root(space, cx);
+            cx.with_absolute_element_offset(origin, |cx| element.prepaint(cx));
+            element.paint(cx);
             cx.refresh();
         })
     }
