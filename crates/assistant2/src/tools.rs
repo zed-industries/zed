@@ -4,7 +4,7 @@ use gpui::{prelude::*, AppContext, Model, Task};
 use project::Fs;
 use schemars::JsonSchema;
 use semantic_index::ProjectIndex;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 use ui::{
     div, prelude::*, CollapsibleContainer, Color, Icon, IconName, Label, SharedString,
@@ -14,14 +14,12 @@ use util::ResultExt as _;
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
 
-#[derive(Serialize, Clone)]
+#[derive(Clone)]
 pub struct CodebaseExcerpt {
     path: SharedString,
     text: SharedString,
     score: f32,
-    #[serde(skip)]
     element_id: ElementId,
-    #[serde(skip)]
     expanded: bool,
 }
 

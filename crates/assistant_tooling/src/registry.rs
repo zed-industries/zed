@@ -99,153 +99,189 @@ impl ToolRegistry {
     }
 }
 
-// #[cfg(test)]
-// mod test {
+#[cfg(test)]
+mod test {
 
-//     use super::*;
+    use crate::tool::ToolView;
 
-//     use schemars::schema_for;
+    use super::*;
 
-//     use gpui::TestAppContext;
-//     use schemars::JsonSchema;
-//     use serde::{Deserialize, Serialize};
-//     use serde_json::json;
+    use schemars::schema_for;
 
-//     #[derive(Deserialize, Serialize, JsonSchema)]
-//     struct WeatherQuery {
-//         location: String,
-//         unit: String,
-//     }
+    use gpui::{div, prelude::*, Render, TestAppContext};
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+    use serde_json::json;
 
-//     struct WeatherTool {
-//         current_weather: WeatherResult,
-//     }
+    #[derive(Deserialize, Serialize, JsonSchema)]
+    struct WeatherQuery {
+        location: String,
+        unit: String,
+    }
 
-//     #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-//     struct WeatherResult {
-//         location: String,
-//         temperature: f64,
-//         unit: String,
-//     }
+    struct WeatherTool {
+        current_weather: WeatherResult,
+    }
 
-//     impl LanguageModelTool for WeatherTool {
-//         type Input = WeatherQuery;
-//         type Output = WeatherResult;
+    #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+    struct WeatherResult {
+        location: String,
+        temperature: f64,
+        unit: String,
+    }
 
-//         fn name(&self) -> String {
-//             "get_current_weather".to_string()
-//         }
+    struct WeatherView {
+        result: WeatherResult,
+    }
 
-//         fn description(&self) -> String {
-//             "Fetches the current weather for a given location.".to_string()
-//         }
+    impl Render for WeatherView {
+        fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+            div().child("I hope it's sunny")
+        }
+    }
 
-//         fn execute(&self, input: &WeatherQuery, _cx: &AppContext) -> Task<Result<Self::Output>> {
-//             let _location = input.location.clone();
-//             let _unit = input.unit.clone();
+    impl ToolView for WeatherView {
+        fn format(&mut self, _cx: &mut gpui::ViewContext<Self>) -> String {
+            serde_json::to_string(&self.result).unwrap()
+        }
+    }
 
-//             let weather = self.current_weather.clone();
+    impl LanguageModelTool for WeatherTool {
+        type Input = WeatherQuery;
+        type Output = WeatherResult;
 
-//             Task::ready(Ok(weather))
-//         }
-//     }
+        type View = WeatherView;
 
-//     #[gpui::test]
-//     async fn test_function_registry(cx: &mut TestAppContext) {
-//         cx.background_executor.run_until_parked();
+        fn name(&self) -> String {
+            "get_current_weather".to_string()
+        }
 
-//         let mut registry = ToolRegistry::new();
+        fn description(&self) -> String {
+            "Fetches the current weather for a given location.".to_string()
+        }
 
-//         let tool = WeatherTool {
-//             current_weather: WeatherResult {
-//                 location: "San Francisco".to_string(),
-//                 temperature: 21.0,
-//                 unit: "Celsius".to_string(),
-//             },
-//         };
+        fn execute(
+            &self,
+            input: &Self::Input,
+            _cx: &gpui::AppContext,
+        ) -> Task<Result<Self::Output>> {
+            let _location = input.location.clone();
+            let _unit = input.unit.clone();
 
-//         registry.register(tool).unwrap();
+            let weather = self.current_weather.clone();
 
-//         let _result = cx
-//             .update(|cx| {
-//                 registry.call(
-//                     &ToolFunctionCall {
-//                         name: "get_current_weather".to_string(),
-//                         arguments: r#"{ "location": "San Francisco", "unit": "Celsius" }"#
-//                             .to_string(),
-//                         id: "test-123".to_string(),
-//                         result: None,
-//                     },
-//                     cx,
-//                 )
-//             })
-//             .await;
+            Task::ready(Ok(weather))
+        }
 
-//         // assert!(result.is_ok());
-//         // let result = result.unwrap();
+        fn new_view(
+            _tool_call_id: String,
+            _input: Self::Input,
+            result: Result<Self::Output>,
+            cx: &mut WindowContext,
+        ) -> View<Self::View> {
+            cx.new_view(|_cx| {
+                let result = result.unwrap();
+                WeatherView { result }
+            })
+        }
+    }
 
-//         // let expected = r#"{"location":"San Francisco","temperature":21.0,"unit":"Celsius"}"#;
+    #[gpui::test]
+    async fn test_function_registry(cx: &mut TestAppContext) {
+        cx.background_executor.run_until_parked();
 
-//         // todo!(): Put this back in after the interface is stabilized
-//         // assert_eq!(result, expected);
-//     }
+        let mut registry = ToolRegistry::new();
 
-//     #[gpui::test]
-//     async fn test_openai_weather_example(cx: &mut TestAppContext) {
-//         cx.background_executor.run_until_parked();
+        let tool = WeatherTool {
+            current_weather: WeatherResult {
+                location: "San Francisco".to_string(),
+                temperature: 21.0,
+                unit: "Celsius".to_string(),
+            },
+        };
 
-//         let tool = WeatherTool {
-//             current_weather: WeatherResult {
-//                 location: "San Francisco".to_string(),
-//                 temperature: 21.0,
-//                 unit: "Celsius".to_string(),
-//             },
-//         };
+        registry.register(tool).unwrap();
 
-//         let tools = vec![tool.definition()];
-//         assert_eq!(tools.len(), 1);
+        // let _result = cx
+        //     .update(|cx| {
+        //         registry.call(
+        //             &ToolFunctionCall {
+        //                 name: "get_current_weather".to_string(),
+        //                 arguments: r#"{ "location": "San Francisco", "unit": "Celsius" }"#
+        //                     .to_string(),
+        //                 id: "test-123".to_string(),
+        //                 result: None,
+        //             },
+        //             cx,
+        //         )
+        //     })
+        //     .await;
 
-//         let expected = ToolFunctionDefinition {
-//             name: "get_current_weather".to_string(),
-//             description: "Fetches the current weather for a given location.".to_string(),
-//             parameters: schema_for!(WeatherQuery),
-//         };
+        // assert!(result.is_ok());
+        // let result = result.unwrap();
 
-//         assert_eq!(tools[0].name, expected.name);
-//         assert_eq!(tools[0].description, expected.description);
+        // let expected = r#"{"location":"San Francisco","temperature":21.0,"unit":"Celsius"}"#;
 
-//         let expected_schema = serde_json::to_value(&tools[0].parameters).unwrap();
+        // todo!(): Put this back in after the interface is stabilized
+        // assert_eq!(result, expected);
+    }
 
-//         assert_eq!(
-//             expected_schema,
-//             json!({
-//                 "$schema": "http://json-schema.org/draft-07/schema#",
-//                 "title": "WeatherQuery",
-//                 "type": "object",
-//                 "properties": {
-//                     "location": {
-//                         "type": "string"
-//                     },
-//                     "unit": {
-//                         "type": "string"
-//                     }
-//                 },
-//                 "required": ["location", "unit"]
-//             })
-//         );
+    #[gpui::test]
+    async fn test_openai_weather_example(cx: &mut TestAppContext) {
+        cx.background_executor.run_until_parked();
 
-//         let args = json!({
-//             "location": "San Francisco",
-//             "unit": "Celsius"
-//         });
+        let tool = WeatherTool {
+            current_weather: WeatherResult {
+                location: "San Francisco".to_string(),
+                temperature: 21.0,
+                unit: "Celsius".to_string(),
+            },
+        };
 
-//         let query: WeatherQuery = serde_json::from_value(args).unwrap();
+        let tools = vec![tool.definition()];
+        assert_eq!(tools.len(), 1);
 
-//         let result = cx.update(|cx| tool.execute(&query, cx)).await;
+        let expected = ToolFunctionDefinition {
+            name: "get_current_weather".to_string(),
+            description: "Fetches the current weather for a given location.".to_string(),
+            parameters: schema_for!(WeatherQuery),
+        };
 
-//         assert!(result.is_ok());
-//         let result = result.unwrap();
+        assert_eq!(tools[0].name, expected.name);
+        assert_eq!(tools[0].description, expected.description);
 
-//         assert_eq!(result, tool.current_weather);
-//     }
-// }
+        let expected_schema = serde_json::to_value(&tools[0].parameters).unwrap();
+
+        assert_eq!(
+            expected_schema,
+            json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "title": "WeatherQuery",
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string"
+                    },
+                    "unit": {
+                        "type": "string"
+                    }
+                },
+                "required": ["location", "unit"]
+            })
+        );
+
+        let args = json!({
+            "location": "San Francisco",
+            "unit": "Celsius"
+        });
+
+        let query: WeatherQuery = serde_json::from_value(args).unwrap();
+
+        let result = cx.update(|cx| tool.execute(&query, cx)).await;
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+
+        assert_eq!(result, tool.current_weather);
+    }
+}
