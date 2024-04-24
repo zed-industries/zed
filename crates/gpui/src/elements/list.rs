@@ -202,13 +202,14 @@ impl ListState {
     ///
     /// Note that this will cause scroll events to be dropped until the next paint.
     pub fn reset(&self, element_count: usize) {
-        {
+        let old_count = {
             let state = &mut *self.0.borrow_mut();
             state.reset = true;
             state.logical_scroll_top = None;
-        }
+            state.items.summary().count
+        };
 
-        self.splice(0..element_count, element_count);
+        self.splice(0..old_count, element_count);
     }
 
     /// The number of items in this list.
