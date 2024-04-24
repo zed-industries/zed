@@ -211,7 +211,8 @@ jobs:
             exit 1
           fi
           mkdir -p target/
-          script/draft-release-notes "$version" "$channel" > target/release-notes.md
+          # Ignore any errors that occur while drafting release notes to not fail the build.
+          script/draft-release-notes "$version" "$channel" > target/release-notes.md || true
 
       - name: Generate license file
         run: script/generate-licenses
