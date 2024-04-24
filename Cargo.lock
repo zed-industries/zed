@@ -3434,12 +3434,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "embed-manifest"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41cd446c890d6bed1d8b53acef5f240069ebef91d6fae7c5f52efe61fe8b5eae"
-
-[[package]]
 name = "emojis"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9489,7 +9483,6 @@ dependencies = [
  "ctrlc",
  "dialoguer",
  "editor",
- "embed-manifest",
  "fuzzy",
  "gpui",
  "indoc",
@@ -9505,6 +9498,7 @@ dependencies = [
  "strum",
  "theme",
  "ui",
+ "winresource",
 ]
 
 [[package]]
@@ -12634,7 +12628,6 @@ dependencies = [
  "db",
  "diagnostics",
  "editor",
- "embed-manifest",
  "env_logger",
  "extension",
  "extensions_ui",
