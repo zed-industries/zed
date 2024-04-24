@@ -38,7 +38,7 @@ impl zed::Extension for ElixirExtension {
 
                 Ok(zed::Command {
                     command: next_ls.language_server_binary_path(language_server_id, worktree)?,
-                    args: vec!["lsp".to_string()],
+                    args: vec!["--stdio".to_string()],
                     env: Default::default(),
                 })
             }

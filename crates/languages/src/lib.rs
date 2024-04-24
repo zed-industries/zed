@@ -54,7 +54,7 @@ pub fn init(
         ("c", tree_sitter_c::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
-        ("elixir", tree_sitter_elixir::language()),
+        // ("elixir", tree_sitter_elixir::language()),
         (
             "embedded_template",
             tree_sitter_embedded_template::language(),
@@ -62,7 +62,7 @@ pub fn init(
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
-        ("heex", tree_sitter_heex::language()),
+        // ("heex", tree_sitter_heex::language()),
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("markdown", tree_sitter_markdown::language()),
@@ -132,45 +132,45 @@ pub fn init(
         ]
     );
 
-    match &ElixirSettings::get(None, cx).lsp {
-        elixir::ElixirLspSetting::ElixirLs => {
-            language!(
-                "elixir",
-                vec![
-                    Arc::new(elixir::ElixirLspAdapter),
-                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ],
-                elixir_task_context()
-            );
-        }
-        elixir::ElixirLspSetting::NextLs => {
-            language!(
-                "elixir",
-                vec![Arc::new(elixir::NextLspAdapter)],
-                elixir_task_context()
-            );
-        }
-        elixir::ElixirLspSetting::Local { path, arguments } => {
-            language!(
-                "elixir",
-                vec![Arc::new(elixir::LocalLspAdapter {
-                    path: path.clone(),
-                    arguments: arguments.clone(),
-                })],
-                elixir_task_context()
-            );
-        }
-    }
+    // match &ElixirSettings::get(None, cx).lsp {
+    //     elixir::ElixirLspSetting::ElixirLs => {
+    //         language!(
+    //             "elixir",
+    //             vec![
+    //                 Arc::new(elixir::ElixirLspAdapter),
+    //                 Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    //             ],
+    //             elixir_task_context()
+    //         );
+    //     }
+    //     elixir::ElixirLspSetting::NextLs => {
+    //         language!(
+    //             "elixir",
+    //             vec![Arc::new(elixir::NextLspAdapter)],
+    //             elixir_task_context()
+    //         );
+    //     }
+    //     elixir::ElixirLspSetting::Local { path, arguments } => {
+    //         language!(
+    //             "elixir",
+    //             vec![Arc::new(elixir::LocalLspAdapter {
+    //                 path: path.clone(),
+    //                 arguments: arguments.clone(),
+    //             })],
+    //             elixir_task_context()
+    //         );
+    //     }
+    // }
     language!("go", vec![Arc::new(go::GoLspAdapter)]);
     language!("gomod");
     language!("gowork");
-    language!(
-        "heex",
-        vec![
-            Arc::new(elixir::ElixirLspAdapter),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
+    // language!(
+    //     "heex",
+    //     vec![
+    //         Arc::new(elixir::ElixirLspAdapter),
+    //         Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+    //     ]
+    // );
     language!(
         "json",
         vec![Arc::new(json::JsonLspAdapter::new(
@@ -235,6 +235,7 @@ pub fn init(
 
     let tailwind_languages = [
         "Astro",
+        "HEEX",
         "HTML",
         "PHP",
         "Svelte",
