@@ -593,11 +593,11 @@ impl<'a> MarkdownParser<'a> {
                     task_item = None;
                 }
                 _ => {
-                    if depth <= 0 {
+                    if depth == 0 {
                         break;
                     }
-                    // This can only happen if a list item contains a block after
-                    // nested list items have been parsed
+                    // This can only happen if a list item starts with more then one paragraph,
+                    // or the list item contains blocks that should be rendered after the nested list items
                     let block = self.parse_block().await;
                     if let Some(block) = block {
                         if let Some(items_stack) = items_stack.last_mut() {
