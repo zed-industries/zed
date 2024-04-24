@@ -200,6 +200,16 @@ impl BladePipelines {
         shader.check_struct_size::<MonochromeSprite>();
         shader.check_struct_size::<PolychromeSprite>();
 
+        let color_targets = &[gpu::ColorTargetState {
+            format: surface_info.format,
+            blend: Some(match surface_info.alpha {
+                gpu::AlphaMode::Ignored => gpu::BlendState::ALPHA_BLENDING,
+                gpu::AlphaMode::PreMultiplied => gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+                gpu::AlphaMode::PostMultiplied => gpu::BlendState::ALPHA_BLENDING,
+            }),
+            write_mask: gpu::ColorWrites::default(),
+        }];
+
         Self {
             quads: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "quads",
@@ -212,11 +222,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_quad"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             shadows: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "shadows",
@@ -229,11 +235,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_shadow"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             path_rasterization: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "path_rasterization",
@@ -263,11 +265,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_path"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             underlines: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "underlines",
@@ -280,11 +278,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_underline"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             mono_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "mono-sprites",
@@ -297,11 +291,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_mono_sprite"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             poly_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "poly-sprites",
@@ -314,11 +304,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_poly_sprite"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
             surfaces: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "surfaces",
@@ -331,11 +317,7 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: shader.at("fs_surface"),
-                color_targets: &[gpu::ColorTargetState {
-                    format: surface_info.format,
-                    blend: Some(gpu::BlendState::ALPHA_BLENDING),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                color_targets,
             }),
         }
     }
@@ -365,7 +347,7 @@ impl BladeRenderer {
             // but ultimaterly we need to switch to `Linear`.
             color_space: gpu::ColorSpace::Srgb,
             allow_exclusive_full_screen: false,
-            transparent: false,
+            transparent: true,
         }
     }
 
