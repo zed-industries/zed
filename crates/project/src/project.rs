@@ -5546,6 +5546,7 @@ impl Project {
                         Err(_) => continue,
                     };
 
+                    any_completion_resolved = true;
                     let resolved = Self::resolve_completion_documentation_local(
                         server,
                         language.clone(),
@@ -5556,7 +5557,6 @@ impl Project {
                         language_registry.clone(),
                     )
                     .await;
-                    any_completion_resolved = any_completion_resolved || resolved;
                 }
             }
 
@@ -5589,39 +5589,35 @@ impl Project {
             return false;
         };
 
-        let mut completions = completions.write();
-        let completion = &mut completions[completion_index];
-
-        if let Some((lsp_adapter, language)) = lsp_adapter.zip(language.as_ref()) {
-            if let Some(label) = lsp_adapter
+        let label = if let Some((lsp_adapter, language)) = lsp_adapter.zip(language.as_ref()) {
+            lsp_adapter
                 .adapter
                 .label_for_resolved_completion(&lsp_completion, language)
                 .await
-            {
-                completion.label = label;
-                println!("{:?}", completion.label.filter_range);
-            }
         } else {
-            completion.label = CodeLabel::plain(
-                lsp_completion.label.clone(),
-                lsp_completion.filter_text.as_deref(),
-            )
-        }
-
-        let documentation = match lsp_completion.documentation.as_ref() {
-            Some(lsp_documentation) => {
-                language::prepare_completion_documentation(
-                    lsp_documentation,
-                    &language_registry,
-                    language.clone(),
-                )
-                .await
-            }
-            None => Documentation::Undocumented,
+            None
         };
 
-        completion.documentation = Some(documentation);
+        let documentation = if let Some(lsp_documentation) = lsp_completion.documentation.as_ref() {
+            let documentation = language::prepare_completion_documentation(
+                lsp_documentation,
+                &language_registry,
+                language.clone(),
+            )
+            .await;
+            Some(documentation)
+        } else {
+            Some(Documentation::Undocumented)
+        };
+
+        let mut completions = completions.write();
+        let completion = &mut completions[completion_index];
+        completion.documentation = documentation;
         completion.lsp_completion = lsp_completion;
+        if let Some(label) = label {
+            completion.label = label;
+        }
+
         return true;
     }
 
