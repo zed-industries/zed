@@ -249,9 +249,8 @@ async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "810ec594358aafea29a4a3d8ab601d25292b2ce4" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "810ec594358aafea29a4a3d8ab601d25292b2ce4" }
-blade-rwh = { package = "raw-window-handle", version = "0.5" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e82eec97691c3acdb43494484be60d661edfebf3" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e82eec97691c3acdb43494484be60d661edfebf3" }
 cap-std = "3.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
