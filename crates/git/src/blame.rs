@@ -81,8 +81,7 @@ fn run_git_blame(
 ) -> Result<String> {
     let mut child = process::Process::new(git_binary);
     child
-        .arg("-C")
-        .arg(working_directory)
+        .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")
         .arg("--contents")
@@ -97,6 +96,7 @@ fn run_git_blame(
 
     let child = child
         .spawn()
+        .standard()
         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
 
     let mut stdin = child

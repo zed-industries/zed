@@ -8,9 +8,12 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
-[features]
-flatpak = []
-
 [lib]
 path = "src/process.rs"
 doctest = false
+
+[features]
+flatpak = []
+
+[dependencies]
+smol.workspace = true

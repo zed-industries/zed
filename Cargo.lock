@@ -7321,6 +7321,9 @@ dependencies = [
 [[package]]
 name = "process"
 version = "0.1.0"
+dependencies = [
+ "smol",
+]
 
 [[package]]
 name = "profiling"

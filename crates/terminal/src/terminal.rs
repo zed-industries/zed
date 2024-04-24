@@ -1560,7 +1560,7 @@ fn flatpak_get_user_shell() -> Option<String> {
     let mut process = process::Process::new("getent");
     process.arg("passwd").arg(std::env::var("USER").unwrap());
 
-    match process.output() {
+    match process.output().standard() {
         Ok(output) => match String::from_utf8(output.stdout) {
             Ok(output) => output.trim().split(':').last().map(|str| str.to_string()),
             Err(_) => None,

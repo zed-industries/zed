@@ -1,10 +1,13 @@
 use std::ffi::{OsStr, OsString};
-use std::io::Result;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, CommandEnvs, ExitStatus, Output, Stdio};
+use std::process::{Command, CommandEnvs, Stdio};
+
+pub mod output;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+
+use output::{Child, ExitStatus, Output};
 
 #[cfg(windows)]
 pub trait WindowsCommandExt {
@@ -18,7 +21,9 @@ pub struct Process {
     program: OsString,
     working_dir: Option<PathBuf>,
     args: Vec<OsString>,
+
     use_pty: bool,
+    is_async: bool,
 }
 
 impl Process {
@@ -32,12 +37,19 @@ impl Process {
             program: program.as_ref().into(),
             working_dir: None,
             args: Vec::new(),
+
             use_pty: false,
+            is_async: false,
         }
     }
 
     pub fn flatpak_use_pty(&mut self) -> &mut Self {
         self.use_pty = true;
+        self
+    }
+
+    pub fn make_async(&mut self) -> &mut Self {
+        self.is_async = true;
         self
     }
 
@@ -96,31 +108,47 @@ impl Process {
         self
     }
 
-    pub fn spawn(&mut self) -> Result<Child> {
+    pub fn spawn(mut self) -> Child {
         self.process.args(self.get_actual_args());
         if let Some(working_dir) = &self.working_dir {
             self.process.current_dir(working_dir);
         }
 
-        self.process.spawn()
+        if self.is_async {
+            Child::Smol(smol::process::Command::from(self.process).spawn())
+        } else {
+            Child::Standard(self.process.spawn())
+        }
     }
 
-    pub fn output(&mut self) -> Result<Output> {
+    pub fn output(mut self) -> Output {
         self.process.args(self.get_actual_args());
         if let Some(working_dir) = &self.working_dir {
             self.process.current_dir(working_dir);
         }
 
-        self.process.output()
+        if self.is_async {
+            Output::Smol(Box::new(
+                smol::process::Command::from(self.process).output(),
+            ))
+        } else {
+            Output::Standard(self.process.output())
+        }
     }
 
-    pub fn status(&mut self) -> Result<ExitStatus> {
+    pub fn status(mut self) -> ExitStatus {
         self.process.args(self.get_actual_args());
         if let Some(working_dir) = &self.working_dir {
             self.process.current_dir(working_dir);
         }
 
-        self.process.status()
+        if self.is_async {
+            ExitStatus::Smol(Box::new(
+                smol::process::Command::from(self.process).status(),
+            ))
+        } else {
+            ExitStatus::Standard(self.process.status())
+        }
     }
 
     pub fn get_program(&self) -> &OsStr {

@@ -12,8 +12,7 @@ pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oi
     let mut command = process::Process::new("git");
 
     command
-        .arg("-C")
-        .arg(working_directory)
+        .current_dir(working_directory)
         .arg("show")
         .arg("-s")
         .arg(format!("--format=%B{}", MARKER))
@@ -24,6 +23,7 @@ pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oi
 
     let output = command
         .output()
+        .standard()
         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
 
     anyhow::ensure!(

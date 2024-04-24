@@ -118,14 +118,18 @@ impl ExtensionBuilder {
         let cargo_toml: CargoToml = toml::from_str(&cargo_toml_content)?;
 
         log::info!("compiling rust extension {}", extension_dir.display());
-        let output = process::Process::new("cargo")
+        let mut process = process::Process::new("cargo");
+        process
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
             .arg(extension_dir.join("target"))
-            .current_dir(&extension_dir)
+            .current_dir(&extension_dir);
+        let output = process
             .output()
+            .standard()
             .context("failed to run `cargo`")?;
+
         if !output.status.success() {
             bail!(
                 "failed to build extension {}",
@@ -206,7 +210,8 @@ impl ExtensionBuilder {
         let scanner_path = src_path.join("scanner.c");
 
         log::info!("compiling {grammar_name} parser");
-        let clang_output = process::Process::new(&clang_path)
+        let mut process = process::Process::new(&clang_path);
+        process
             .args(["-fPIC", "-shared", "-Os"])
             .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
             .arg("-o")
@@ -214,9 +219,8 @@ impl ExtensionBuilder {
             .arg("-I")
             .arg(&src_path)
             .arg(&parser_path)
-            .args(scanner_path.exists().then_some(scanner_path))
-            .output()
-            .context("failed to run clang")?;
+            .args(scanner_path.exists().then_some(scanner_path));
+        let clang_output = process.output().standard().context("failed to run clang")?;
         if !clang_output.status.success() {
             bail!(
                 "failed to compile {} parser with clang: {}",
@@ -232,11 +236,13 @@ impl ExtensionBuilder {
         let git_dir = directory.join(".git");
 
         if directory.exists() {
-            let remotes_output = process::Process::new("git")
+            let mut process = process::Process::new("git");
+            process
                 .arg("--git-dir")
                 .arg(&git_dir)
-                .args(["remote", "-v"])
-                .output()?;
+                .args(["remote", "-v"]);
+            let remotes_output = process.output().standard()?;
+
             let has_remote = remotes_output.status.success()
                 && String::from_utf8_lossy(&remotes_output.stdout)
                     .lines()
@@ -255,10 +261,10 @@ impl ExtensionBuilder {
             fs::create_dir_all(&directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
-            let init_output = process::Process::new("git")
-                .arg("init")
-                .current_dir(&directory)
-                .output()?;
+            let mut process = process::Process::new("git");
+            process.arg("init").current_dir(&directory);
+            let init_output = process.output().standard()?;
+
             if !init_output.status.success() {
                 bail!(
                     "failed to run `git init` in directory '{}'",
@@ -266,12 +272,16 @@ impl ExtensionBuilder {
                 );
             }
 
-            let remote_add_output = process::Process::new("git")
+            let mut process = process::Process::new("git");
+            process
                 .arg("--git-dir")
                 .arg(&git_dir)
-                .args(["remote", "add", "origin", url])
+                .args(["remote", "add", "origin", url]);
+            let remote_add_output = process
                 .output()
+                .standard()
                 .context("failed to execute `git remote add`")?;
+
             if !remote_add_output.status.success() {
                 bail!(
                     "failed to add remote {url} for git repository {}",
@@ -280,20 +290,27 @@ impl ExtensionBuilder {
             }
         }
 
-        let fetch_output = process::Process::new("git")
+        let mut process = process::Process::new("git");
+        process
             .arg("--git-dir")
             .arg(&git_dir)
-            .args(["fetch", "--depth", "1", "origin", &rev])
+            .args(["fetch", "--depth", "1", "origin", &rev]);
+        let fetch_output = process
             .output()
+            .standard()
             .context("failed to execute `git fetch`")?;
 
-        let checkout_output = process::Process::new("git")
+        let mut process = process::Process::new("git");
+        process
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["checkout", &rev])
-            .current_dir(&directory)
+            .current_dir(&directory);
+        let checkout_output = process
             .output()
+            .standard()
             .context("failed to execute `git checkout`")?;
+
         if !checkout_output.status.success() {
             if !fetch_output.status.success() {
                 bail!(
@@ -314,11 +331,10 @@ impl ExtensionBuilder {
     }
 
     fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
-        let rustc_output = process::Process::new("rustc")
-            .arg("--print")
-            .arg("sysroot")
-            .output()
-            .context("failed to run rustc")?;
+        let mut process = process::Process::new("rustc");
+        process.arg("--print").arg("sysroot");
+        let rustc_output = process.output().standard().context("failed to run rustc")?;
+
         if !rustc_output.status.success() {
             bail!(
                 "failed to retrieve rust sysroot: {}",
@@ -331,12 +347,16 @@ impl ExtensionBuilder {
             return Ok(());
         }
 
-        let output = process::Process::new("rustup")
+        let mut process = process::Process::new("rustup");
+        process
             .args(["target", "add", RUST_TARGET])
             .stderr(Stdio::inherit())
-            .stdout(Stdio::inherit())
+            .stdout(Stdio::inherit());
+        let output = process
             .output()
+            .standard()
             .context("failed to run `rustup target add`")?;
+
         if !output.status.success() {
             bail!("failed to install the `{RUST_TARGET}` target");
         }
