@@ -340,7 +340,6 @@ struct MacWindowState {
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
-    kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
@@ -633,7 +632,6 @@ impl MacWindow {
                     native_view as *mut _,
                     window_size,
                 ),
-                kind,
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
@@ -1343,7 +1341,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
-    let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
     let window_height = lock.content_size().height;
     let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
@@ -1428,8 +1425,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                         .detach();
                 }
             }
-
-            PlatformInput::MouseMove(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
 
             PlatformInput::MouseUp(MouseUpEvent { .. }) => {
                 lock.synthetic_drag_counter += 1;
