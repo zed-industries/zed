@@ -202,13 +202,14 @@ impl ListState {
     ///
     /// Note that this will cause scroll events to be dropped until the next paint.
     pub fn reset(&self, element_count: usize) {
-        {
+        let old_count = {
             let state = &mut *self.0.borrow_mut();
             state.reset = true;
             state.logical_scroll_top = None;
-        }
+            state.items.summary().count
+        };
 
-        self.splice(0..element_count, element_count);
+        self.splice(0..old_count, element_count);
     }
 
     /// The number of items in this list.
@@ -612,6 +613,9 @@ impl StateInner {
         cx.transact(|cx| {
             let mut layout_response =
                 self.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
+
+            // Avoid honoring autoscroll requests from elements other than our children.
+            cx.take_autoscroll();
 
             // Only paint the visible items, if there is actually any space for them (taking padding into account)
             if bounds.size.height > padding.top + padding.bottom {
