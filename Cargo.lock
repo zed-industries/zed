@@ -3592,6 +3592,7 @@ dependencies = [
  "lsp",
  "node_runtime",
  "parking_lot",
+ "process",
  "project",
  "schemars",
  "semantic_version",

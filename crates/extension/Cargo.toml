@@ -28,6 +28,7 @@ language.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
+process.workspace = true
 project.workspace = true
 schemars.workspace = true
 semantic_version.workspace = true

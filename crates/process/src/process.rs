@@ -1,5 +1,6 @@
 use std::ffi::{OsStr, OsString};
 use std::io::Result;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, CommandEnvs, ExitStatus, Output, Stdio};
 
 #[cfg(windows)]
@@ -15,6 +16,7 @@ pub struct Process {
     process: std::process::Command,
 
     program: OsString,
+    working_dir: Option<PathBuf>,
     args: Vec<OsString>,
     use_pty: bool,
 }
@@ -28,6 +30,7 @@ impl Process {
             process: Command::new(&program),
 
             program: program.as_ref().into(),
+            working_dir: None,
             args: Vec::new(),
             use_pty: false,
         }
@@ -47,6 +50,11 @@ impl Process {
         for arg in args {
             self.arg(arg);
         }
+        self
+    }
+
+    pub fn current_dir<P: AsRef<Path>>(&mut self, dir: P) -> &mut Self {
+        self.working_dir = Some(dir.as_ref().to_path_buf());
         self
     }
 
@@ -90,16 +98,28 @@ impl Process {
 
     pub fn spawn(&mut self) -> Result<Child> {
         self.process.args(self.get_actual_args());
+        if let Some(working_dir) = &self.working_dir {
+            self.process.current_dir(working_dir);
+        }
+
         self.process.spawn()
     }
 
     pub fn output(&mut self) -> Result<Output> {
         self.process.args(self.get_actual_args());
+        if let Some(working_dir) = &self.working_dir {
+            self.process.current_dir(working_dir);
+        }
+
         self.process.output()
     }
 
     pub fn status(&mut self) -> Result<ExitStatus> {
         self.process.args(self.get_actual_args());
+        if let Some(working_dir) = &self.working_dir {
+            self.process.current_dir(working_dir);
+        }
+
         self.process.status()
     }
 
@@ -152,6 +172,10 @@ impl Process {
         if !env_keys.is_empty() {
             flatpak_args.push("-env".into());
             flatpak_args.push(env_keys.into());
+        }
+        if let Some(working_dir) = &self.working_dir {
+            flatpak_args.push("-directory".into());
+            flatpak_args.push(working_dir.into());
         }
         flatpak_args.push(self.program.clone());
         flatpak_args

@@ -1,10 +1,10 @@
 [
     {
         "type": "archive",
-        "url": "https://proxy.golang.org/github.com/1player/host-spawn/@v/v1.5.1.zip",
-        "strip-components": 3,
+        "url": "https://github.com/someone13574/host-spawn/archive/refs/tags/temp.zip",
+        "strip-components": 1,
         "dest": "",
-        "sha256": "ea9cd40416b1d4e61cf437c68e74f828735cd5126b834337f720e0073bbb361f"
+        "sha256": "00b379e022430d505a3a7d1298584c0bf9f5a9e04019b3a5bed54581f63cd4b2"
     },
     {
         "type": "file",
