@@ -256,7 +256,7 @@ mod test {
         let expected = ToolFunctionDefinition {
             name: "get_current_weather".to_string(),
             description: "Fetches the current weather for a given location.".to_string(),
-            parameters: schema_for!(WeatherQuery).schema,
+            parameters: schema_for!(WeatherQuery),
         };
 
         assert_eq!(tools[0].name, expected.name);
@@ -267,6 +267,7 @@ mod test {
         assert_eq!(
             expected_schema,
             json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
                 "title": "WeatherQuery",
                 "type": "object",
                 "properties": {

@@ -1,8 +1,11 @@
 use anyhow::Result;
 use gpui::{div, AnyElement, AppContext, Element, ParentElement as _, Task, WindowContext};
-use schemars::{schema::SchemaObject, schema_for, JsonSchema};
+use schemars::{schema::RootSchema, schema_for, JsonSchema};
 use serde::Deserialize;
-use std::{any::Any, fmt::Debug};
+use std::{
+    any::Any,
+    fmt::{Debug, Display},
+};
 
 #[derive(Default, Deserialize)]
 pub struct ToolFunctionCall {
@@ -89,7 +92,17 @@ impl ToolFunctionCallResult {
 pub struct ToolFunctionDefinition {
     pub name: String,
     pub description: String,
-    pub parameters: SchemaObject,
+    pub parameters: RootSchema,
+}
+
+impl Display for ToolFunctionDefinition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let schema = serde_json::to_string(&self.parameters).ok();
+        let schema = schema.unwrap_or("None".to_string());
+        write!(f, "Name: {}:\n", self.name)?;
+        write!(f, "Description: {}\n", self.description)?;
+        write!(f, "Parameters: {}", schema)
+    }
 }
 
 impl Debug for ToolFunctionDefinition {
@@ -124,10 +137,12 @@ pub trait LanguageModelTool {
 
     /// The OpenAI Function definition for the tool, for direct use with OpenAI's API.
     fn definition(&self) -> ToolFunctionDefinition {
+        let root_schema = schema_for!(Self::Input);
+
         ToolFunctionDefinition {
             name: self.name(),
             description: self.description(),
-            parameters: schema_for!(Self::Input).schema,
+            parameters: root_schema,
         }
     }
 
