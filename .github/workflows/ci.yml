@@ -173,6 +173,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
+          # We need to fetch more than one commit so that `script/draft-release-notes`
+          # is able to diff between the current and previous tag.
+          #
+          # 25 was chosen arbitrarily.
+          fetch-depth: 25
           clean: false
           submodules: "recursive"
 
@@ -206,7 +211,8 @@ jobs:
             exit 1
           fi
           mkdir -p target/
-          script/draft-release-notes "$version" "$channel" > target/release-notes.md
+          # Ignore any errors that occur while drafting release notes to not fail the build.
+          script/draft-release-notes "$version" "$channel" > target/release-notes.md || true
 
       - name: Generate license file
         run: script/generate-licenses
