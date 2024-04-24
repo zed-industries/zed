@@ -3853,7 +3853,6 @@ impl Element for EditorElement {
         let key_context = self.editor.read(cx).key_context(cx);
         cx.set_focus_handle(&focus_handle);
         cx.set_key_context(key_context);
-        cx.set_view_id(self.editor.entity_id());
         cx.handle_input(
             &focus_handle,
             ElementInputHandler::new(bounds, self.editor.clone()),

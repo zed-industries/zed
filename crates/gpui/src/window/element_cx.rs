@@ -390,7 +390,7 @@ impl<'a> VisualContext for ElementContext<'a> {
 
 impl<'a> ElementContext<'a> {
     pub(crate) fn draw_roots(&mut self) {
-        self.window.draw_phase = DrawPhase::Layout;
+        self.window.draw_phase = DrawPhase::Prepaint;
         self.window.tooltip_bounds.take();
 
         // Layout all root elements.
@@ -645,11 +645,19 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
-    /// Use [`AppContext::text_style`] to get the current, combined text style.
+    /// Use [`AppContext::text_style`] to get the current, combined text style. This method
+    /// should only be called as part of element drawing.
     pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
         if let Some(style) = style {
             self.window.text_style_stack.push(style);
             let result = f(self);
@@ -660,8 +668,14 @@ impl<'a> ElementContext<'a> {
         }
     }
 
-    /// Updates the cursor style at the platform level.
+    /// Updates the cursor style at the platform level. This method should only be called
+    /// during the prepaint phase of element drawing.
     pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
         self.window
             .next_frame
             .cursor_styles
@@ -671,8 +685,14 @@ impl<'a> ElementContext<'a> {
             });
     }
 
-    /// Sets a tooltip to be rendered for the upcoming frame
+    /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
+    /// during the paint phase of element drawing.
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) -> TooltipId {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
+        );
         let id = TooltipId(post_inc(&mut self.window.next_tooltip_id.0));
         self.window
             .next_frame
@@ -684,12 +704,20 @@ impl<'a> ElementContext<'a> {
     /// Pushes the given element id onto the global stack and invokes the given closure
     /// with a `GlobalElementId`, which disambiguates the given id in the context of its ancestor
     /// ids. Because elements are discarded and recreated on each frame, the `GlobalElementId` is
-    /// used to associate state with identified elements across separate frames.
+    /// used to associate state with identified elements across separate frames. This method should
+    /// only be called as part of element drawing.
     pub fn with_element_id<R>(
         &mut self,
         id: Option<impl Into<ElementId>>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
         if let Some(id) = id.map(Into::into) {
             let window = self.window_mut();
             window.element_id_stack.push(id);
@@ -703,12 +731,19 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Invoke the given function with the given content mask after intersecting it
-    /// with the current mask.
+    /// with the current mask. This method should only be called during element drawing.
     pub fn with_content_mask<R>(
         &mut self,
         mask: Option<ContentMask<Pixels>>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
         if let Some(mask) = mask {
             let mask = mask.intersect(&self.content_mask());
             self.window_mut().content_mask_stack.push(mask);
@@ -721,12 +756,18 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Updates the global element offset relative to the current offset. This is used to implement
-    /// scrolling.
+    /// scrolling. This method should only be called during the prepaint phase of element drawing.
     pub fn with_element_offset<R>(
         &mut self,
         offset: Point<Pixels>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during request_layout, or prepaint"
+        );
+
         if offset.is_zero() {
             return f(self);
         };
@@ -736,12 +777,18 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Updates the global element offset based on the given offset. This is used to implement
-    /// drag handles and other manual painting of elements.
+    /// drag handles and other manual painting of elements. This method should only be called during
+    /// the prepaint phase of element drawing.
     pub fn with_absolute_element_offset<R>(
         &mut self,
         offset: Point<Pixels>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during request_layout, or prepaint"
+        );
         self.window_mut().element_offset_stack.push(offset);
         let result = f(self);
         self.window_mut().element_offset_stack.pop();
@@ -751,8 +798,14 @@ impl<'a> ElementContext<'a> {
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
-    /// element offset and prepaint again. See [`List`] for an example.
+    /// element offset and prepaint again. See [`List`] for an example. This method should only be
+    /// called during the prepaint phase of element drawing.
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
+        );
         let index = self.prepaint_index();
         let result = f(self);
         if result.is_err() {
@@ -786,14 +839,25 @@ impl<'a> ElementContext<'a> {
     /// When you call this method during [`prepaint`], containing elements will attempt to
     /// scroll to cause the specified bounds to become visible. When they decide to autoscroll, they will call
     /// [`prepaint`] again with a new set of bounds. See [`List`] for an example of an element
-    /// that supports this method being called on the elements it contains.
+    /// that supports this method being called on the elements it contains. This method should only be
+    /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
+        );
         self.window.requested_autoscroll = Some(bounds);
     }
 
     /// This method can be called from a containing element such as [`List`] to support the autoscroll behavior
     /// described in [`request_autoscroll`].
     pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
+        );
         self.window.requested_autoscroll.take()
     }
 
@@ -874,8 +938,14 @@ impl<'a> ElementContext<'a> {
         })
     }
 
-    /// Obtain the current element offset.
+    /// Obtain the current element offset. This method should only be called during the
+    /// prepaint phase of element drawing.
     pub fn element_offset(&self) -> Point<Pixels> {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
+        );
         self.window()
             .element_offset_stack
             .last()
@@ -883,8 +953,15 @@ impl<'a> ElementContext<'a> {
             .unwrap_or_default()
     }
 
-    /// Obtain the current content mask.
+    /// Obtain the current content mask. This method should only be called during element drawing.
     pub fn content_mask(&self) -> ContentMask<Pixels> {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during prepaint, or paint"
+        );
         self.window()
             .content_mask_stack
             .last()
@@ -897,16 +974,10 @@ impl<'a> ElementContext<'a> {
             })
     }
 
-    /// The size of an em for the base font of the application. Adjusting this value allows the
-    /// UI to scale, just like zooming a web page.
-    pub fn rem_size(&self) -> Pixels {
-        self.window().rem_size
-    }
-
     /// Updates or initializes state for an element with the given id that lives across multiple
     /// frames. If an element with this ID existed in the rendered frame, its state will be passed
     /// to the given closure. The state returned by the closure will be stored so it can be referenced
-    /// when drawing the next frame.
+    /// when drawing the next frame. This method should only be called as part of element drawing.
     pub fn with_element_state<S, R>(
         &mut self,
         element_id: Option<ElementId>,
@@ -915,6 +986,13 @@ impl<'a> ElementContext<'a> {
     where
         S: 'static,
     {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
         let id_is_none = element_id.is_none();
         self.with_element_id(element_id, |cx| {
             if id_is_none {
@@ -1004,6 +1082,8 @@ impl<'a> ElementContext<'a> {
     /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree
     /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
+    ///
+    /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn defer_draw(
         &mut self,
         element: AnyElement,
@@ -1011,10 +1091,10 @@ impl<'a> ElementContext<'a> {
         priority: usize,
     ) {
         let window = &mut self.cx.window;
-        assert_eq!(
+        debug_assert_eq!(
             window.draw_phase,
-            DrawPhase::Layout,
-            "defer_draw can only be called during request_layout or prepaint"
+            DrawPhase::Prepaint,
+            "this method can only be called during request_layout or prepaint"
         );
         let parent_node = window.next_frame.dispatch_tree.active_node_id().unwrap();
         window.next_frame.deferred_draws.push(DeferredDraw {
@@ -1032,7 +1112,15 @@ impl<'a> ElementContext<'a> {
     /// Creates a new painting layer for the specified bounds. A "layer" is a batch
     /// of geometry that are non-overlapping and have the same draw order. This is typically used
     /// for performance reasons.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let clipped_bounds = bounds.intersect(&content_mask.bounds);
@@ -1053,12 +1141,20 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_shadows(
         &mut self,
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
         shadows: &[BoxShadow],
     ) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         for shadow in shadows {
@@ -1079,7 +1175,15 @@ impl<'a> ElementContext<'a> {
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         self.window.next_frame.scene.insert_primitive(Quad {
@@ -1095,7 +1199,15 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         path.content_mask = content_mask;
@@ -1107,12 +1219,20 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_underline(
         &mut self,
         origin: Point<Pixels>,
         width: Pixels,
         style: &UnderlineStyle,
     ) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let height = if style.wavy {
             style.thickness * 3.
@@ -1137,12 +1257,20 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Paint a strikethrough into the scene for the next frame at the current z-index.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_strikethrough(
         &mut self,
         origin: Point<Pixels>,
         width: Pixels,
         style: &StrikethroughStyle,
     ) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let height = style.thickness;
         let bounds = Bounds {
@@ -1168,6 +1296,8 @@ impl<'a> ElementContext<'a> {
     /// You should generally prefer to use the [`ShapedLine::paint`](crate::ShapedLine::paint) or
     /// [`WrappedLine::paint`](crate::WrappedLine::paint) methods in the [`TextSystem`](crate::TextSystem).
     /// This method is only useful if you need to paint a single glyph that has already been shaped.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_glyph(
         &mut self,
         origin: Point<Pixels>,
@@ -1176,6 +1306,12 @@ impl<'a> ElementContext<'a> {
         font_size: Pixels,
         color: Hsla,
     ) -> Result<()> {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
         let subpixel_variant = Point {
@@ -1227,6 +1363,8 @@ impl<'a> ElementContext<'a> {
     /// You should generally prefer to use the [`ShapedLine::paint`](crate::ShapedLine::paint) or
     /// [`WrappedLine::paint`](crate::WrappedLine::paint) methods in the [`TextSystem`](crate::TextSystem).
     /// This method is only useful if you need to paint a single emoji that has already been shaped.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_emoji(
         &mut self,
         origin: Point<Pixels>,
@@ -1234,6 +1372,12 @@ impl<'a> ElementContext<'a> {
         glyph_id: GlyphId,
         font_size: Pixels,
     ) -> Result<()> {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
         let params = RenderGlyphParams {
@@ -1277,6 +1421,8 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Paint a monochrome SVG into the scene for the next frame at the current stacking context.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_svg(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -1284,6 +1430,12 @@ impl<'a> ElementContext<'a> {
         transformation: TransformationMatrix,
         color: Hsla,
     ) -> Result<()> {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         // Render the SVG at twice the size to get a higher quality result.
@@ -1320,6 +1472,8 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Paint an image into the scene for the next frame at the current z-index.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_image(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -1327,6 +1481,12 @@ impl<'a> ElementContext<'a> {
         data: Arc<ImageData>,
         grayscale: bool,
     ) -> Result<()> {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let params = RenderImageParams { image_id: data.id };
@@ -1355,8 +1515,16 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Paint a surface into the scene for the next frame at the current z-index.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(target_os = "macos")]
     pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
@@ -1374,12 +1542,20 @@ impl<'a> ElementContext<'a> {
     #[must_use]
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
-    /// calls to the `Element::layout` trait method and enables any element to participate in layout.
+    /// calls to the [`Element::request_layout`] trait method and enables any element to participate in layout.
+    ///
+    /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
     pub fn request_layout(
         &mut self,
         style: &Style,
         children: impl IntoIterator<Item = LayoutId>,
     ) -> LayoutId {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during request_layout, or prepaint"
+        );
+
         self.app.layout_id_buffer.clear();
         self.app.layout_id_buffer.extend(children);
         let rem_size = self.rem_size();
@@ -1398,6 +1574,8 @@ impl<'a> ElementContext<'a> {
     ///
     /// The given closure is invoked at layout time with the known dimensions and available space and
     /// returns a `Size`.
+    ///
+    /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
     pub fn request_measured_layout<
         F: FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut WindowContext) -> Size<Pixels>
             + 'static,
@@ -1406,6 +1584,12 @@ impl<'a> ElementContext<'a> {
         style: Style,
         measure: F,
     ) -> LayoutId {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during request_layout, or prepaint"
+        );
+
         let rem_size = self.rem_size();
         self.window
             .layout_engine
@@ -1417,7 +1601,15 @@ impl<'a> ElementContext<'a> {
     /// Compute the layout for the given id within the given available space.
     /// This method is called for its side effect, typically by the framework prior to painting.
     /// After calling it, you can request the bounds of the given layout node id or any descendant.
+    ///
+    /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn compute_layout(&mut self, layout_id: LayoutId, available_space: Size<AvailableSpace>) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during request_layout, or prepaint"
+        );
+
         let mut layout_engine = self.window.layout_engine.take().unwrap();
         layout_engine.compute_layout(layout_id, available_space, self);
         self.window.layout_engine = Some(layout_engine);
@@ -1425,7 +1617,15 @@ impl<'a> ElementContext<'a> {
 
     /// Obtain the bounds computed for the given LayoutId relative to the window. This method will usually be invoked by
     /// GPUI itself automatically in order to pass your element its `Bounds` automatically.
+    ///
+    /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during request_layout, or prepaint"
+        );
+
         let mut bounds = self
             .window
             .layout_engine
@@ -1440,7 +1640,15 @@ impl<'a> ElementContext<'a> {
     /// This method should be called during `prepaint`. You can use
     /// the returned [Hitbox] during `paint` or in an event handler
     /// to determine whether the inserted hitbox was the topmost.
+    ///
+    /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
+        );
+
         let content_mask = self.content_mask();
         let window = &mut self.window;
         let id = window.next_hitbox_id;
@@ -1457,7 +1665,14 @@ impl<'a> ElementContext<'a> {
 
     /// Sets the key context for the current element. This context will be used to translate
     /// keybindings into actions.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn set_key_context(&mut self, context: KeyContext) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
         self.window
             .next_frame
             .dispatch_tree
@@ -1466,7 +1681,14 @@ impl<'a> ElementContext<'a> {
 
     /// Sets the focus handle for the current element. This handle will be used to manage focus state
     /// and keyboard event dispatch for the element.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
         self.window
             .next_frame
             .dispatch_tree
@@ -1474,7 +1696,16 @@ impl<'a> ElementContext<'a> {
     }
 
     /// Sets the view id for the current element, which will be used to manage view caching.
+    ///
+    /// This method should only be called as part of element prepaint. We plan on removing this
+    /// method eventually when we solve some issues that require us to construct editor elements
+    /// directly instead of always using editors via views.
     pub fn set_view_id(&mut self, view_id: EntityId) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
+            "this method can only be called during prepaint"
+        );
         self.window.next_frame.dispatch_tree.set_view_id(view_id);
     }
 
@@ -1488,8 +1719,16 @@ impl<'a> ElementContext<'a> {
     /// as IME interactions. This handler will be active for the upcoming frame until the following frame is
     /// rendered.
     ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    ///
     /// [element_input_handler]: crate::ElementInputHandler
     pub fn handle_input(&mut self, focus_handle: &FocusHandle, input_handler: impl InputHandler) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         if focus_handle.is_focused(self) {
             let cx = self.to_async();
             self.window
@@ -1502,10 +1741,18 @@ impl<'a> ElementContext<'a> {
     /// Register a mouse event listener on the window for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn on_mouse_event<Event: MouseEvent>(
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         self.window.next_frame.mouse_listeners.push(Some(Box::new(
             move |event: &dyn Any, phase: DispatchPhase, cx: &mut ElementContext<'_>| {
                 if let Some(event) = event.downcast_ref() {
@@ -1521,10 +1768,18 @@ impl<'a> ElementContext<'a> {
     ///
     /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
     /// a specific need to register a global listener.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn on_key_event<Event: KeyEvent>(
         &mut self,
         listener: impl Fn(&Event, DispatchPhase, &mut ElementContext) + 'static,
     ) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         self.window.next_frame.dispatch_tree.on_key_event(Rc::new(
             move |event: &dyn Any, phase, cx: &mut ElementContext<'_>| {
                 if let Some(event) = event.downcast_ref::<Event>() {
@@ -1538,10 +1793,18 @@ impl<'a> ElementContext<'a> {
     ///
     /// This is a fairly low-level method, so prefer using event handlers on elements unless you have
     /// a specific need to register a global listener.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
     pub fn on_modifiers_changed(
         &mut self,
         listener: impl Fn(&ModifiersChangedEvent, &mut ElementContext) + 'static,
     ) {
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Paint,
+            "this method can only be called during paint"
+        );
+
         self.window
             .next_frame
             .dispatch_tree

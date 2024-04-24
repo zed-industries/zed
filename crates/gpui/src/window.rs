@@ -321,7 +321,7 @@ pub struct Window {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DrawPhase {
     None,
-    Layout,
+    Prepaint,
     Paint,
     Focus,
 }
