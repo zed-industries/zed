@@ -806,7 +806,7 @@ fn surrounding_markers(
     if let Some((ch, range)) = movement::chars_after(map, point).next() {
         if ch == open_marker {
             match movement::chars_before(map, point).next() {
-                Some((before_ch, _)) if before_ch == '\\' => {}
+                Some(('\\', _)) => {}
                 _ => {
                     if open_marker == close_marker {
                         let mut total = 0;
