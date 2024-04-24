@@ -176,7 +176,7 @@ mod linux {
             unimplemented!()
         }
 
-        pub fn spawn(&self, args: Vec<String>) -> Result<()> {
+        pub fn spawn(&self, _args: Vec<String>) -> anyhow::Result<()> {
             unimplemented!()
         }
 
@@ -213,7 +213,7 @@ mod windows {
             unimplemented!()
         }
 
-        pub fn spawn(&self, args: Vec<String>) -> Result<()> {
+        pub fn spawn(&self, _args: Vec<String>) -> anyhow::Result<()> {
             unimplemented!()
         }
 
