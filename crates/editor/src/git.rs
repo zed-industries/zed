@@ -4,6 +4,8 @@ use std::ops::Range;
 
 use git::diff::{DiffHunk, DiffHunkStatus};
 use language::Point;
+use multi_buffer::Anchor;
+use text::Bias;
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
@@ -19,6 +21,7 @@ pub enum DisplayDiffHunk {
     Unfolded {
         diff_base_byte_range: Range<usize>,
         display_row_range: Range<u32>,
+        multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
         diff_base_version: usize,
     },
@@ -83,10 +86,18 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
 
         let hunk_end_row = hunk.associated_range.end.max(hunk.associated_range.start);
         let hunk_end_point = Point::new(hunk_end_row, 0);
+
+        let multi_buffer_start = snapshot
+            .buffer_snapshot
+            .anchor_at(hunk_start_point, Bias::Right);
+        let multi_buffer_end = snapshot
+            .buffer_snapshot
+            .anchor_at(hunk_end_point, Bias::Left);
         let end = hunk_end_point.to_display_point(snapshot).row();
 
         DisplayDiffHunk::Unfolded {
             display_row_range: start..end,
+            multi_buffer_range: multi_buffer_start..multi_buffer_end,
             status: hunk.status(),
             diff_base_version: hunk.diff_base_version,
             diff_base_byte_range: hunk.diff_base_byte_range,

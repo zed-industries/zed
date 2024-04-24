@@ -9535,16 +9535,16 @@ async fn test_toggled_diff_base_change(
         let git_additions_background_highlights = expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
         assert_eq!(
             git_additions_background_highlights,
-            vec![1..1, 7..7, 9..9],
+            vec![9..10, 13..14],
             "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
         assert_eq!(
             all_hunks,
             vec![
-                (DiffHunkStatus::Modified, 1..2),
-                (DiffHunkStatus::Removed, 4..4),
-                (DiffHunkStatus::Modified, 7..8),
-                (DiffHunkStatus::Added, 9..10),
+                (DiffHunkStatus::Removed, 1..1),
+                (DiffHunkStatus::Removed, 5..5),
+                (DiffHunkStatus::Modified, 9..11),
+                (DiffHunkStatus::Added, 13..15),
             ],
             "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
             (from modified and removed hunks)"

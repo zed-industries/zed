@@ -9099,26 +9099,8 @@ impl Editor {
     pub fn toggle_git_hunk_diff(&mut self, _: &ToggleGitHunkDiff, cx: &mut ViewContext<Self>) {
         let snapshot = self.snapshot(cx);
         let selections = self.selections.disjoint_anchors();
-        let rows_with_expanded_hunks = self
-            .expanded_hunks
-            .iter()
-            .map(|hunk| &hunk.hunk_range)
-            .map(|anchor_range| {
-                (
-                    anchor_range
-                        .start
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row(),
-                    anchor_range
-                        .end
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row(),
-                )
-            })
-            .collect::<HashMap<_, _>>();
         self.toggle_hunks_expanded(
-            rows_with_expanded_hunks,
-            hunks_for_selections(&snapshot.display_snapshot.buffer_snapshot, &selections),
+            hunks_for_selections(&snapshot.buffer_snapshot, &selections),
             &snapshot.display_snapshot,
             cx,
         );
@@ -9154,52 +9136,99 @@ impl Editor {
             .filter(|hunk| {
                 let hunk_display_row_range = Point::new(hunk.associated_range.start, 0)
                     .to_display_point(&snapshot.display_snapshot)
-                    .row()
                     ..Point::new(hunk.associated_range.end, 0)
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row();
+                        .to_display_point(&snapshot.display_snapshot);
                 let row_range_end =
-                    display_rows_with_expanded_hunks.get(&hunk_display_row_range.start);
-                row_range_end.is_none() || row_range_end != Some(&hunk_display_row_range.end)
-            })
-            .collect();
-        self.toggle_hunks_expanded(
-            display_rows_with_expanded_hunks,
-            hunks,
-            &snapshot.display_snapshot,
-            cx,
-        );
+                    display_rows_with_expanded_hunks.get(&hunk_display_row_range.start.row());
+                row_range_end.is_none() || row_range_end != Some(&hunk_display_row_range.end.row())
+            });
+        self.toggle_hunks_expanded(hunks, &snapshot.display_snapshot, cx);
     }
 
     fn toggle_hunks_expanded(
         &mut self,
-        display_rows_with_expanded_hunks: HashMap<u32, u32>,
-        hunks_to_toggle: Vec<DiffHunk<u32>>,
+        hunks_to_toggle: impl IntoIterator<Item = DiffHunk<u32>>,
         snapshot: &DisplaySnapshot,
         cx: &mut ViewContext<Self>,
     ) {
+        let mut expanded_hunks = self
+            .expanded_hunks
+            .clone()
+            .into_iter()
+            .map(|hunk| hunk.hunk_range)
+            .fuse()
+            .peekable();
         for hunk_to_toggle in hunks_to_toggle {
-            let hunk_display_row_range = Point::new(hunk_to_toggle.associated_range.start, 0)
-                .to_display_point(snapshot)
+            let hunk_to_toggle_point_range = Point::new(hunk_to_toggle.associated_range.start, 0)
+                ..Point::new(hunk_to_toggle.associated_range.end, 0);
+            let hunk_to_toggle_display_row_range = hunk_to_toggle_point_range
+                .start
+                .to_display_point(&snapshot)
                 .row()
-                ..Point::new(hunk_to_toggle.associated_range.end, 0)
-                    .to_display_point(snapshot)
+                ..hunk_to_toggle_point_range
+                    .end
+                    .to_display_point(&snapshot)
                     .row();
-            match display_rows_with_expanded_hunks.get(&hunk_display_row_range.start) {
-                Some(&row_end) if row_end == hunk_display_row_range.end => {
-                    self.remove_git_diff_hunk(&hunk_to_toggle, cx);
+            let hunk_to_toggle_range = snapshot
+                .buffer_snapshot
+                .anchor_at(hunk_to_toggle_point_range.start, Bias::Right)
+                ..snapshot
+                    .buffer_snapshot
+                    .anchor_at(hunk_to_toggle_point_range.end, Bias::Left);
+
+            let show_hunk = loop {
+                let Some(expanded_hunk_range) = expanded_hunks.peek() else {
+                    break true;
+                };
+                if expanded_hunk_range
+                    .end
+                    .cmp(&hunk_to_toggle_range.start, &snapshot.buffer_snapshot)
+                    .is_lt()
+                {
+                    let _ = expanded_hunks.next();
+                    continue;
                 }
-                _ => {
-                    self.show_git_diff_hunk(
-                        &HunkToShow {
-                            status: hunk_to_toggle.status(),
-                            display_row_range: hunk_display_row_range,
-                            diff_base_version: hunk_to_toggle.diff_base_version,
-                            diff_base_byte_range: hunk_to_toggle.diff_base_byte_range,
-                        },
-                        cx,
-                    );
+                if expanded_hunk_range
+                    .start
+                    .cmp(&hunk_to_toggle_range.end, &snapshot.buffer_snapshot)
+                    .is_gt()
+                {
+                    break true;
                 }
+
+                match (
+                    expanded_hunk_range
+                        .start
+                        .cmp(&hunk_to_toggle_range.start, &snapshot.buffer_snapshot),
+                    expanded_hunk_range
+                        .end
+                        .cmp(&hunk_to_toggle_range.end, &snapshot.buffer_snapshot),
+                ) {
+                    (Ordering::Equal, Ordering::Equal) => {
+                        let _ = expanded_hunks.next();
+                        break false;
+                    }
+                    (Ordering::Equal | Ordering::Greater, _) => break true,
+                    (Ordering::Less, _) => {
+                        let _ = expanded_hunks.next();
+                        continue;
+                    }
+                }
+            };
+
+            if show_hunk {
+                self.show_git_diff_hunk(
+                    &HunkToShow {
+                        status: hunk_to_toggle.status(),
+                        display_row_range: hunk_to_toggle_display_row_range,
+                        multi_buffer_range: hunk_to_toggle_range,
+                        diff_base_version: hunk_to_toggle.diff_base_version,
+                        diff_base_byte_range: hunk_to_toggle.diff_base_byte_range,
+                    },
+                    cx,
+                );
+            } else {
+                self.remove_git_diff_hunk(&hunk_to_toggle, cx);
             }
         }
     }
@@ -9207,25 +9236,23 @@ impl Editor {
     // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
     // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
     // TODO kb is possible to simplify the code and unite hitboxes with the HunkToShow?
-    // TODO kb panics or does not expand all on toggle all hunks
     // TODO kb deleted block editors are still scrollable with keys (select all + down or click somewhere + shift + cmd + down)
     fn show_git_diff_hunk(
         &mut self,
         hunk: &HunkToShow,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<()> {
-        let editor_snapshot = self.snapshot(cx);
-        let buffer_range = DisplayPoint::new(hunk.display_row_range.start, 0)
-            .to_point(&editor_snapshot.display_snapshot)
-            ..DisplayPoint::new(hunk.display_row_range.end, 0)
-                .to_point(&editor_snapshot.display_snapshot);
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let buffer_range = hunk.multi_buffer_range.start.to_point(&snapshot)
+            ..hunk.multi_buffer_range.end.to_point(&snapshot);
+        dbg!((hunk.status, &hunk.display_row_range, &buffer_range));
         let (multi_buffer_snapshot, deleted_text) = self.buffer().update(cx, |buffer, cx| {
             let buffer_snapshot = buffer.snapshot(cx);
             let original_text = original_text(buffer, buffer_range.clone(), cx);
             (buffer_snapshot, original_text)
         });
-        let hunk_start = multi_buffer_snapshot.anchor_at(buffer_range.start, Bias::Left);
-        let hunk_end_exclusive = multi_buffer_snapshot.anchor_at(buffer_range.end, Bias::Right);
+        let hunk_start = hunk.multi_buffer_range.start;
+        let hunk_end_exclusive = hunk.multi_buffer_range.end;
         let hunk_end_inclusive = multi_buffer_snapshot.anchor_at(
             Point::new(buffer_range.end.row.saturating_sub(1), 0),
             Bias::Right,
@@ -11350,7 +11377,7 @@ fn original_text(
 ) -> Option<String> {
     let snapshot = buffer.snapshot(cx);
     let diff_base = buffer_diff_base(buffer, buffer_range.clone(), cx)?;
-    let hunk = buffer_diff_hunk(&snapshot, buffer_range)?;
+    let hunk = dbg!(buffer_diff_hunk(&snapshot, buffer_range))?;
     diff_base
         .get(hunk.diff_base_byte_range)
         .map(ToString::to_string)
@@ -11434,8 +11461,10 @@ fn buffer_diff_hunk(
     row_range: Range<Point>,
 ) -> Option<DiffHunk<u32>> {
     let mut hunks = buffer_snapshot.git_diff_hunks_in_range(row_range.start.row..row_range.end.row);
-    let hunk = hunks.next()?;
+    dbg!(&row_range);
+    let hunk = dbg!(hunks.next())?;
     let second_hunk = hunks.next();
+    dbg!(&second_hunk);
     if second_hunk.is_none() {
         return Some(hunk);
     }
@@ -11445,6 +11474,7 @@ fn buffer_diff_hunk(
 #[derive(Debug, Clone)]
 struct HunkToShow {
     display_row_range: Range<u32>,
+    multi_buffer_range: Range<Anchor>,
     status: DiffHunkStatus,
     diff_base_version: usize,
     diff_base_byte_range: Range<usize>,

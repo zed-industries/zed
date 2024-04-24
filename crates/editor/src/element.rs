@@ -2414,9 +2414,11 @@ impl EditorElement {
                         display_row_range,
                         diff_base_version,
                         diff_base_byte_range,
+                        multi_buffer_range,
                     } => {
                         let mut new_hunk_to_expand = Some((
                             display_row_range,
+                            multi_buffer_range,
                             diff_base_byte_range,
                             status,
                             diff_base_version,
@@ -2587,6 +2589,7 @@ impl EditorElement {
                 );
                 if let Some((
                     display_row_range,
+                    multi_buffer_range,
                     diff_base_byte_range,
                     &status,
                     &diff_base_version,
@@ -2598,6 +2601,7 @@ impl EditorElement {
                             bounds,
                             HunkToShow {
                                 display_row_range: display_row_range.clone(),
+                                multi_buffer_range: multi_buffer_range.clone(),
                                 diff_base_byte_range: diff_base_byte_range.clone(),
                                 status,
                                 diff_base_version,
