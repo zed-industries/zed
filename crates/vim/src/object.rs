@@ -880,6 +880,7 @@ fn surrounding_markers(
         if ch == '\n' && !search_across_lines {
             break;
         }
+
         if before_ch != '\\' {
             if ch == close_marker {
                 if matched_opens == 0 {
