@@ -9,6 +9,7 @@ use editor::{
     movement::{self, FindRange},
     Bias, DisplayPoint,
 };
+
 use itertools::Itertools;
 
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
@@ -875,10 +876,7 @@ fn surrounding_markers(
         Some((ch, _)) => ch,
         _ => '\0',
     };
-    println!("before ch close {:?}", before_ch);
     for (ch, range) in movement::chars_after(map, opening.end) {
-        println!("after, ch is {:?}, before {:?}", ch, before_ch);
-
         if ch == '\n' && !search_across_lines {
             break;
         }
