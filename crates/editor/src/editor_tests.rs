@@ -9448,6 +9448,136 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     });
 }
 
+#[gpui::test]
+async fn test_toggled_diff_base_change(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            //println!("hello");
+
+            println!("world");
+            //
+            //
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = hunks_display_lines(&snapshot);
+        assert_eq!(
+            all_hunks,
+            vec![
+                (DiffHunkStatus::Removed, 0..0),
+                (DiffHunkStatus::Removed, 3..3),
+                (DiffHunkStatus::Modified, 5..7),
+                (DiffHunkStatus::Added, 9..11),
+            ]
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_git_hunk_diffs(&ExpandAllGitHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            //println!("hello");
+
+            println!("world");
+            //
+            //
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
+        let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
+        let git_additions_background_highlights = expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
+        assert_eq!(
+            git_additions_background_highlights,
+            vec![1..1, 7..7, 9..9],
+            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (DiffHunkStatus::Modified, 1..2),
+                (DiffHunkStatus::Removed, 4..4),
+                (DiffHunkStatus::Modified, 7..8),
+                (DiffHunkStatus::Added, 9..10),
+            ],
+            "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
+            (from modified and removed hunks)"
+        );
+        assert_eq!(
+            all_hunks, all_expanded_hunks,
+            "Editor hunks should not change and all be expanded"
+        );
+    });
+
+    cx.set_diff_base(Some("new diff base!"));
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
+        let all_expanded_hunks = expanded_hunks_display_lines(editor, &snapshot.display_snapshot);
+        let git_additions_background_highlights =
+            expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
+        assert_eq!(
+            git_additions_background_highlights,
+            Vec::new(),
+            "After diff base is changed, old git highlights should be removed"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            Vec::new(),
+            "After diff base is changed, old git hunk expandsions should be removed"
+        );
+        assert_eq!(all_hunks, Vec::new(), "// TODO kb");
+    });
+}
+
 fn hunks_display_lines(snapshot: &DisplaySnapshot) -> Vec<(DiffHunkStatus, Range<u32>)> {
     snapshot
         .buffer_snapshot
