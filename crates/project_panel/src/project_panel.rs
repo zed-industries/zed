@@ -1675,7 +1675,7 @@ impl ProjectPanel {
                                 if event.down.modifiers.secondary() {
                                     this.split_entry(entry_id, cx);
                                 } else {
-                                    let click_count = event.up.click_count;
+                                    let click_count = event.down.click_count;
                                     this.open_entry(
                                         entry_id,
                                         click_count > 1,
