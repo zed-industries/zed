@@ -545,18 +545,7 @@ impl AssistantChat {
                             Some(result) => div()
                                 .p_2()
                                 //.child(result.render(&name, &tool_call.id, cx))
-                                .child({
-                                    let element = match result {
-                                        assistant_tooling::tool::ToolFunctionCallResult::NoSuchTool => format!("Language Model attempted to call {name}").into_any_element(),
-                                        assistant_tooling::tool::ToolFunctionCallResult::ParsingFailed => format!("Language Model called {name} with bad arguments").into_any_element(),
-                                        assistant_tooling::tool::ToolFunctionCallResult::Finished(view) => {
-                                            let view = view.to_view();
-                                            view.into_any_element()
-                                        },
-                                    };
-
-                                    element
-                                })
+                                .child(result.into_any_element(&name))
                                 .into_any(),
                             None => div()
                                 .p_2()

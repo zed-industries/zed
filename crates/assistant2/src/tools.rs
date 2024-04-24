@@ -19,6 +19,10 @@ pub struct CodebaseExcerpt {
     path: SharedString,
     text: SharedString,
     score: f32,
+    #[serde(skip)]
+    element_id: ElementId,
+    #[serde(skip)]
+    expanded: bool,
 }
 
 // Note: Comments on a `LanguageModelTool::Input` become descriptions on the generated JSON schema as shown to the language model.
@@ -32,34 +36,21 @@ pub struct CodebaseQuery {
     limit: Option<usize>,
 }
 
-pub struct ProjectIndexTool {
-    project_index: Model<ProjectIndex>,
-    fs: Arc<dyn Fs>,
-}
-
-impl ProjectIndexTool {
-    pub fn new(project_index: Model<ProjectIndex>, fs: Arc<dyn Fs>) -> Self {
-        // TODO: setup a better description based on the user's current codebase.
-        Self { project_index, fs }
-    }
-}
-
 pub struct ProjectIndexView {
-    tool_call_id: String,
     input: CodebaseQuery,
     output: Result<Vec<CodebaseExcerpt>>,
 }
 
 impl ProjectIndexView {
     fn toggle_expanded(&mut self, element_id: ElementId, cx: &mut ViewContext<Self>) {
-        if let Ok(excerpts) = &self.output {
-            // if let Some(excerpt) = excerpts
-            //     .iter_mut()
-            //     .find(|excerpt| excerpt.element_id == element_id)
-            // {
-            //     excerpt.expanded = !excerpt.expanded;
-            //     cx.notify();
-            // }
+        if let Ok(excerpts) = &mut self.output {
+            if let Some(excerpt) = excerpts
+                .iter_mut()
+                .find(|excerpt| excerpt.element_id == element_id)
+            {
+                excerpt.expanded = !excerpt.expanded;
+                cx.notify();
+            }
         }
     }
 }
@@ -92,12 +83,8 @@ impl Render for ProjectIndexView {
                     ),
             )
             .children(excerpts.iter().map(|excerpt| {
-                // This render doesn't have state/model, so we can't use the listener
-                // let expanded = excerpt.expanded;
-                // let element_id = excerpt.element_id.clone();
-                // let element_id = ElementId::Name(self.tool_call_id + );
-                let element_id = ElementId::Name(nanoid::nanoid!().into());
-                let expanded = false;
+                let element_id = excerpt.element_id.clone();
+                let expanded = excerpt.expanded;
 
                 CollapsibleContainer::new(element_id.clone(), expanded)
                     .start_slot(
@@ -149,6 +136,18 @@ impl ToolView for ProjectIndexView {
     }
 }
 
+pub struct ProjectIndexTool {
+    project_index: Model<ProjectIndex>,
+    fs: Arc<dyn Fs>,
+}
+
+impl ProjectIndexTool {
+    pub fn new(project_index: Model<ProjectIndex>, fs: Arc<dyn Fs>) -> Self {
+        // TODO: setup a better description based on the user's current codebase.
+        Self { project_index, fs }
+    }
+}
+
 impl LanguageModelTool for ProjectIndexTool {
     type Input = CodebaseQuery;
     type Output = Vec<CodebaseExcerpt>;
@@ -196,6 +195,8 @@ impl LanguageModelTool for ProjectIndexTool {
                     }
 
                     anyhow::Ok(CodebaseExcerpt {
+                        element_id: ElementId::Name(nanoid::nanoid!().into()),
+                        expanded: false,
                         path: path.to_string_lossy().to_string().into(),
                         text: SharedString::from(text[start..end].to_string()),
                         score: result.score,
@@ -213,20 +214,11 @@ impl LanguageModelTool for ProjectIndexTool {
     }
 
     fn new_view(
-        tool_call_id: String,
+        _tool_call_id: String,
         input: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,
     ) -> gpui::View<Self::View> {
-        cx.new_view(|cx| ProjectIndexView {
-            tool_call_id,
-            input,
-            output,
-        })
+        cx.new_view(|_cx| ProjectIndexView { input, output })
     }
 }
-
-// NOTES
-//
-// Must call to_view on the
-// Downcast back to a regular AnyView

@@ -1,5 +1,8 @@
 use anyhow::Result;
-use gpui::{AnyView, AppContext, Render, Task, View, ViewContext, WindowContext};
+use gpui::{
+    AnyElement, AnyView, AppContext, IntoElement as _, Render, Task, View, ViewContext,
+    WindowContext,
+};
 use schemars::{schema::RootSchema, schema_for, JsonSchema};
 use serde::Deserialize;
 use std::fmt::Display;
@@ -27,6 +30,21 @@ impl ToolFunctionCallResult {
                 format!("Unable to parse arguments for {name}")
             }
             ToolFunctionCallResult::Finished(view) => view.format(cx),
+        }
+    }
+
+    pub fn into_any_element(&self, name: &String) -> AnyElement {
+        match self {
+            ToolFunctionCallResult::NoSuchTool => {
+                format!("Language Model attempted to call {name}").into_any_element()
+            }
+            ToolFunctionCallResult::ParsingFailed => {
+                format!("Language Model called {name} with bad arguments").into_any_element()
+            }
+            ToolFunctionCallResult::Finished(view) => {
+                let view = view.to_view();
+                view.into_any_element()
+            }
         }
     }
 }
