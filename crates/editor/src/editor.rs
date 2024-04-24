@@ -9119,6 +9119,7 @@ impl Editor {
         self.toggle_hunks_expanded(
             rows_with_expanded_hunks,
             hunks_for_selections(&snapshot.display_snapshot.buffer_snapshot, &selections),
+            &snapshot.display_snapshot,
             cx,
         );
     }
@@ -9129,7 +9130,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let snapshot = self.snapshot(cx);
-        let rows_with_expanded_hunks = self
+        let display_rows_with_expanded_hunks = self
             .expanded_hunks
             .iter()
             .map(|hunk| &hunk.hunk_range)
@@ -9151,29 +9152,48 @@ impl Editor {
             .buffer_snapshot
             .git_diff_hunks_in_range(0..snapshot.display_snapshot.max_point().row())
             .filter(|hunk| {
-                let row_range_end = rows_with_expanded_hunks.get(&hunk.associated_range.start);
-                row_range_end.is_none() || row_range_end != Some(&hunk.associated_range.end)
+                let hunk_display_row_range = Point::new(hunk.associated_range.start, 0)
+                    .to_display_point(&snapshot.display_snapshot)
+                    .row()
+                    ..Point::new(hunk.associated_range.end, 0)
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row();
+                let row_range_end =
+                    display_rows_with_expanded_hunks.get(&hunk_display_row_range.start);
+                row_range_end.is_none() || row_range_end != Some(&hunk_display_row_range.end)
             })
             .collect();
-        self.toggle_hunks_expanded(rows_with_expanded_hunks, hunks, cx);
+        self.toggle_hunks_expanded(
+            display_rows_with_expanded_hunks,
+            hunks,
+            &snapshot.display_snapshot,
+            cx,
+        );
     }
 
     fn toggle_hunks_expanded(
         &mut self,
-        rows_with_expanded_hunks: HashMap<u32, u32>,
+        display_rows_with_expanded_hunks: HashMap<u32, u32>,
         hunks_to_toggle: Vec<DiffHunk<u32>>,
+        snapshot: &DisplaySnapshot,
         cx: &mut ViewContext<Self>,
     ) {
         for hunk_to_toggle in hunks_to_toggle {
-            match rows_with_expanded_hunks.get(&hunk_to_toggle.associated_range.start) {
-                Some(&row_end) if row_end == hunk_to_toggle.associated_range.end => {
+            let hunk_display_row_range = Point::new(hunk_to_toggle.associated_range.start, 0)
+                .to_display_point(snapshot)
+                .row()
+                ..Point::new(hunk_to_toggle.associated_range.end, 0)
+                    .to_display_point(snapshot)
+                    .row();
+            match display_rows_with_expanded_hunks.get(&hunk_display_row_range.start) {
+                Some(&row_end) if row_end == hunk_display_row_range.end => {
                     self.remove_git_diff_hunk(&hunk_to_toggle, cx);
                 }
                 _ => {
                     self.show_git_diff_hunk(
                         &HunkToShow {
                             status: hunk_to_toggle.status(),
-                            display_row_range: hunk_to_toggle.associated_range,
+                            display_row_range: hunk_display_row_range,
                             diff_base_version: hunk_to_toggle.diff_base_version,
                             diff_base_byte_range: hunk_to_toggle.diff_base_byte_range,
                         },
@@ -9188,14 +9208,17 @@ impl Editor {
     // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
     // TODO kb is possible to simplify the code and unite hitboxes with the HunkToShow?
     // TODO kb panics or does not expand all on toggle all hunks
-    // !!!! TODO kb `DiffHunk.associated_range` is a MULTIBUFFER range, NOT a DISPLAY range. Check all related code.
+    // TODO kb deleted block editors are still scrollable with keys (select all + down or click somewhere + shift + cmd + down)
     fn show_git_diff_hunk(
         &mut self,
         hunk: &HunkToShow,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<()> {
         let editor_snapshot = self.snapshot(cx);
-        let buffer_range = buffer_range(&hunk.display_row_range, &editor_snapshot.display_snapshot);
+        let buffer_range = DisplayPoint::new(hunk.display_row_range.start, 0)
+            .to_point(&editor_snapshot.display_snapshot)
+            ..DisplayPoint::new(hunk.display_row_range.end, 0)
+                .to_point(&editor_snapshot.display_snapshot);
         let (multi_buffer_snapshot, deleted_text) = self.buffer().update(cx, |buffer, cx| {
             let buffer_snapshot = buffer.snapshot(cx);
             let original_text = original_text(buffer, buffer_range.clone(), cx);
@@ -9271,7 +9294,8 @@ impl Editor {
             DiffHunkStatus::Removed => (false, true),
         };
         let snapshot = self.snapshot(cx);
-        let buffer_range = buffer_range(&hunk.associated_range, &snapshot.display_snapshot);
+        let buffer_range =
+            Point::new(hunk.associated_range.start, 0)..Point::new(hunk.associated_range.end, 0);
         let multi_buffer_range = snapshot
             .buffer_snapshot
             .anchor_at(buffer_range.start, Bias::Right)
@@ -11317,14 +11341,6 @@ impl<T: ToOffset> RangeToAnchorExt for Range<T> {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor> {
         snapshot.anchor_after(self.start)..snapshot.anchor_before(self.end)
     }
-}
-
-fn buffer_range(
-    display_row_range: &Range<u32>,
-    display_snapshot: &DisplaySnapshot,
-) -> Range<Point> {
-    DisplayPoint::new(display_row_range.start, 0).to_point(display_snapshot)
-        ..DisplayPoint::new(display_row_range.end, 0).to_point(display_snapshot)
 }
 
 fn original_text(

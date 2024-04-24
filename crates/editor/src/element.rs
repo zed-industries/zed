@@ -2325,7 +2325,6 @@ impl EditorElement {
     }
 
     // TODO kb split into functions
-    // TODO kb need to move gutter hunks below by all expanded hunks height
     fn paint_diff_hunks(
         editor: &View<Editor>,
         bounds: Bounds<Pixels>,

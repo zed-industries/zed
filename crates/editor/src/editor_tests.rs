@@ -9327,7 +9327,6 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
         .unwrap();
 }
 
-// TODO kb tests for both actions + different diff cases + diff base change + editing in the diff hunk and reverting
 #[gpui::test]
 async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
@@ -9364,31 +9363,16 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
 
     cx.set_diff_base(Some(&diff_base));
     executor.run_until_parked();
+    let unexpanded_hunks = vec![
+        (DiffHunkStatus::Modified, 0..1),
+        (DiffHunkStatus::Removed, 2..2),
+        (DiffHunkStatus::Modified, 4..5),
+        (DiffHunkStatus::Added, 6..7),
+    ];
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = snapshot
-            .display_snapshot
-            .buffer_snapshot
-            .git_diff_hunks_in_range(0..snapshot.display_snapshot.max_point().row())
-            .map(|hunk| {
-                let display_range = Point::new(hunk.associated_range.start, 0)
-                    .to_display_point(&snapshot.display_snapshot)
-                    .row()
-                    ..Point::new(hunk.associated_range.end, 0)
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row();
-                (hunk.status(), display_range)
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            all_hunks,
-            vec![
-                (DiffHunkStatus::Modified, 0..1),
-                (DiffHunkStatus::Removed, 2..2),
-                (DiffHunkStatus::Modified, 4..5),
-                (DiffHunkStatus::Added, 6..7),
-            ]
-        );
+        let all_hunks = hunks_display_lines(&snapshot);
+        assert_eq!(all_hunks, unexpanded_hunks);
     });
 
     cx.update_editor(|editor, cx| {
@@ -9414,55 +9398,18 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     );
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = snapshot
-            .display_snapshot
-            .buffer_snapshot
-            .git_diff_hunks_in_range(0..snapshot.display_snapshot.max_point().row())
-            .map(|hunk| {
-                assert_eq!(hunk.diff_base_version, 0, "Diff base was never updated");
-                let display_range = Point::new(hunk.associated_range.start, 0)
-                    .to_display_point(&snapshot.display_snapshot)
-                    .row()
-                    ..Point::new(hunk.associated_range.end, 0)
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row();
-                (hunk.status(), display_range)
-            })
-            .collect::<Vec<_>>();
-        let all_expanded_hunks = editor
-            .expanded_hunks
-            .iter()
-            .map(|expanded_hunk| {
-                let hunk_display_range = expanded_hunk
-                    .hunk_range
-                    .start
-                    .to_display_point(&snapshot.display_snapshot).row()
-                    ..expanded_hunk
-                        .hunk_range
-                        .end
-                        .to_display_point(&snapshot.display_snapshot).row();
-                assert_eq!(
-                    expanded_hunk.diff_base_version, 0,
-                    "Diff base was never updated"
-                );
-                (
-                    expanded_hunk.status,
-                    hunk_display_range,
-                )
-            })
-            .collect::<Vec<_>>();
-        let git_additions_background_highlights = editor.highlighted_rows::<GitRowHighlight>().into_iter().flatten()
-            .map(|(range, _)| range.start.to_display_point(&snapshot.display_snapshot).row()..range.end.to_display_point(&snapshot.display_snapshot).row())
-            .unique()
-            .collect::<Vec<_>>();
+        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
+        let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
+        let git_additions_background_highlights = expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
         assert_eq!(
             git_additions_background_highlights,
-            vec![1..1, 7..7, 8..8, 9..9]
+            vec![1..1, 7..7, 9..9],
+            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
         assert_eq!(
             all_hunks,
             vec![
-                (DiffHunkStatus::Modified, 1..3),
+                (DiffHunkStatus::Modified, 1..2),
                 (DiffHunkStatus::Removed, 4..4),
                 (DiffHunkStatus::Modified, 7..8),
                 (DiffHunkStatus::Added, 9..10),
@@ -9472,9 +9419,92 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         );
         assert_eq!(
             all_hunks, all_expanded_hunks,
-            "Editor hunks should not change"
+            "Editor hunks should not change and all be expanded"
         );
     });
+
+    cx.update_editor(|editor, cx| {
+        editor.cancel(&Cancel, cx);
+
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
+        let all_expanded_hunks = expanded_hunks_display_lines(editor, &snapshot.display_snapshot);
+        let git_additions_background_highlights =
+            expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
+        assert_eq!(
+            git_additions_background_highlights,
+            Vec::new(),
+            "After cancelling in editor, no git highlights should be left"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            Vec::new(),
+            "After cancelling in editor, no hunks should be expanded"
+        );
+        assert_eq!(
+            all_hunks, unexpanded_hunks,
+            "After cancelling in editor, regular hunks' coordinates should get back to normal"
+        );
+    });
+}
+
+fn hunks_display_lines(snapshot: &DisplaySnapshot) -> Vec<(DiffHunkStatus, Range<u32>)> {
+    snapshot
+        .buffer_snapshot
+        .git_diff_hunks_in_range(0..snapshot.max_point().row())
+        .map(|hunk| {
+            assert_eq!(hunk.diff_base_version, 0, "Diff base was never updated");
+            let display_range = Point::new(hunk.associated_range.start, 0)
+                .to_display_point(snapshot)
+                .row()
+                ..Point::new(hunk.associated_range.end, 0)
+                    .to_display_point(snapshot)
+                    .row();
+            (hunk.status(), display_range)
+        })
+        .collect()
+}
+
+fn expanded_hunks_display_lines(
+    editor: &Editor,
+    snapshot: &DisplaySnapshot,
+) -> Vec<(DiffHunkStatus, Range<u32>)> {
+    editor
+        .expanded_hunks
+        .iter()
+        .map(|expanded_hunk| {
+            let hunk_display_range = expanded_hunk
+                .hunk_range
+                .start
+                .to_display_point(snapshot)
+                .row()
+                ..expanded_hunk
+                    .hunk_range
+                    .end
+                    .to_display_point(snapshot)
+                    .row();
+            assert_eq!(
+                expanded_hunk.diff_base_version, 0,
+                "Diff base was never updated"
+            );
+            (expanded_hunk.status, hunk_display_range)
+        })
+        .collect()
+}
+
+fn expanded_hunks_background_highlights(
+    editor: &Editor,
+    snapshot: &DisplaySnapshot,
+) -> Vec<Range<u32>> {
+    editor
+        .highlighted_rows::<GitRowHighlight>()
+        .into_iter()
+        .flatten()
+        .map(|(range, _)| {
+            range.start.to_display_point(snapshot).row()..range.end.to_display_point(snapshot).row()
+        })
+        .unique()
+        .collect()
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
