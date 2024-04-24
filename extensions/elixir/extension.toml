@@ -14,6 +14,10 @@ languages = ["Elixir", "HEEX"]
 name = "Next LS"
 languages = ["Elixir", "HEEX"]
 
+[language_servers.lexical]
+name = "Lexical"
+languages = ["Elixir", "HEEX"]
+
 [grammars.elixir]
 repository = "https://github.com/elixir-lang/tree-sitter-elixir"
 commit = "de690fa8a028f122af46d9d2685679fe5f2d7d60"
