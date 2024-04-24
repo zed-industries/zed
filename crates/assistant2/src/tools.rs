@@ -1,5 +1,5 @@
 use anyhow::Result;
-use assistant_tooling::LanguageModelTool;
+use assistant_tooling::{tool::ToolView, LanguageModelTool};
 use gpui::{prelude::*, AnyElement, AppContext, Model, Task};
 use project::Fs;
 use schemars::JsonSchema;
@@ -44,9 +44,82 @@ impl ProjectIndexTool {
     }
 }
 
+struct ProjectIndexView {
+    input: CodebaseQuery,
+    output: Vec<CodebaseExcerpt>,
+}
+
+impl Render for ProjectIndexView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let query = self.input.query.clone();
+        let excerpts = self.output.clone();
+
+        div()
+            .v_flex()
+            .gap_2()
+            .child(
+                div()
+                    .p_2()
+                    .rounded_md()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        h_flex()
+                            .child(Label::new("Query: ").color(Color::Modified))
+                            .child(Label::new(query).color(Color::Muted)),
+                    ),
+            )
+            .children(excerpts.iter().map(|excerpt| {
+                // This render doesn't have state/model, so we can't use the listener
+                // let expanded = excerpt.expanded;
+                // let element_id = excerpt.element_id.clone();
+                let element_id = ElementId::Name(nanoid::nanoid!().into());
+                let expanded = false;
+
+                CollapsibleContainer::new(element_id.clone(), expanded)
+                    .start_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(Icon::new(IconName::File).color(Color::Muted))
+                            .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
+                    )
+                    // .on_click(cx.listener(move |this, _, cx| {
+                    //     this.toggle_expanded(element_id.clone(), cx);
+                    // }))
+                    .child(
+                        div()
+                            .p_2()
+                            .rounded_md()
+                            .bg(cx.theme().colors().editor_background)
+                            .child(
+                                excerpt.text.clone(), // todo!(): Show as an editor block
+                            ),
+                    )
+            }))
+    }
+}
+
+impl ToolView for ProjectIndexView {
+    fn format(_input: &Self::Input, excerpts: &Self::Output) -> String {
+        let mut body = "Semantic search results:\n".to_string();
+
+        for excerpt in excerpts {
+            body.push_str("Excerpt from ");
+            body.push_str(excerpt.path.as_ref());
+            body.push_str(", score ");
+            body.push_str(&excerpt.score.to_string());
+            body.push_str(":\n");
+            body.push_str("~~~\n");
+            body.push_str(excerpt.text.as_ref());
+            body.push_str("~~~\n");
+        }
+        body
+    }
+}
+
 impl LanguageModelTool for ProjectIndexTool {
     type Input = CodebaseQuery;
     type Output = Vec<CodebaseExcerpt>;
+    type View = ProjectIndexView;
 
     fn name(&self) -> String {
         "query_codebase".to_string()
@@ -106,71 +179,17 @@ impl LanguageModelTool for ProjectIndexTool {
         })
     }
 
-    fn render(
-        _tool_call_id: &str,
-        input: &Self::Input,
-        excerpts: &Self::Output,
+    fn new_view(
+        tool_call_id: String,
+        input: Self::Input,
+        output: Result<Self::Output>,
         cx: &mut WindowContext,
-    ) -> AnyElement {
-        let query = input.query.clone();
-
-        div()
-            .v_flex()
-            .gap_2()
-            .child(
-                div()
-                    .p_2()
-                    .rounded_md()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(
-                        h_flex()
-                            .child(Label::new("Query: ").color(Color::Modified))
-                            .child(Label::new(query).color(Color::Muted)),
-                    ),
-            )
-            .children(excerpts.iter().map(|excerpt| {
-                // This render doesn't have state/model, so we can't use the listener
-                // let expanded = excerpt.expanded;
-                // let element_id = excerpt.element_id.clone();
-                let element_id = ElementId::Name(nanoid::nanoid!().into());
-                let expanded = false;
-
-                CollapsibleContainer::new(element_id.clone(), expanded)
-                    .start_slot(
-                        h_flex()
-                            .gap_1()
-                            .child(Icon::new(IconName::File).color(Color::Muted))
-                            .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
-                    )
-                    // .on_click(cx.listener(move |this, _, cx| {
-                    //     this.toggle_expanded(element_id.clone(), cx);
-                    // }))
-                    .child(
-                        div()
-                            .p_2()
-                            .rounded_md()
-                            .bg(cx.theme().colors().editor_background)
-                            .child(
-                                excerpt.text.clone(), // todo!(): Show as an editor block
-                            ),
-                    )
-            }))
-            .into_any_element()
-    }
-
-    fn format(_input: &Self::Input, excerpts: &Self::Output) -> String {
-        let mut body = "Semantic search results:\n".to_string();
-
-        for excerpt in excerpts {
-            body.push_str("Excerpt from ");
-            body.push_str(excerpt.path.as_ref());
-            body.push_str(", score ");
-            body.push_str(&excerpt.score.to_string());
-            body.push_str(":\n");
-            body.push_str("~~~\n");
-            body.push_str(excerpt.text.as_ref());
-            body.push_str("~~~\n");
-        }
-        body
+    ) -> gpui::View<Self::View> {
+        ProjectIndexView { input, output }
     }
 }
+
+// NOTES
+//
+// Must call to_view on the
+// Downcast back to a regular AnyView
