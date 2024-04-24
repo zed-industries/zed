@@ -9,6 +9,8 @@ use editor::{
     movement::{self, FindRange},
     Bias, DisplayPoint,
 };
+use itertools::Itertools;
+
 use gpui::{actions, impl_actions, ViewContext, WindowContext};
 use language::{char_kind, BufferSnapshot, CharKind, Point, Selection};
 use serde::Deserialize;
@@ -803,29 +805,40 @@ fn surrounding_markers(
 
     if let Some((ch, range)) = movement::chars_after(map, point).next() {
         if ch == open_marker {
-            if open_marker == close_marker {
-                let mut total = 0;
-                for (ch, _) in movement::chars_before(map, point) {
-                    if ch == '\n' {
-                        break;
-                    }
-                    if ch == open_marker {
-                        total += 1;
+            match movement::chars_before(map, point).next() {
+                Some((before_ch, _)) if before_ch == '\\' => {}
+                _ => {
+                    if open_marker == close_marker {
+                        let mut total = 0;
+                        for ((ch, _), (before_ch, _)) in
+                            movement::chars_before(map, point).tuple_windows()
+                        {
+                            if ch == '\n' {
+                                break;
+                            }
+                            if ch == open_marker && before_ch != '\\' {
+                                total += 1;
+                            }
+                        }
+                        if total % 2 == 0 {
+                            opening = Some(range)
+                        }
+                    } else {
+                        opening = Some(range)
                     }
                 }
-                if total % 2 == 0 {
-                    opening = Some(range)
-                }
-            } else {
-                opening = Some(range)
             }
         }
     }
 
     if opening.is_none() {
-        for (ch, range) in movement::chars_before(map, point) {
+        for ((ch, range), (before_ch, _)) in movement::chars_before(map, point).tuple_windows() {
             if ch == '\n' && !search_across_lines {
                 break;
+            }
+
+            if before_ch == '\\' {
+                continue;
             }
 
             if ch == open_marker {
@@ -841,11 +854,16 @@ fn surrounding_markers(
     }
 
     if opening.is_none() {
-        for (ch, range) in movement::chars_after(map, point) {
-            if ch == open_marker {
-                opening = Some(range);
+        for ((ch, _), (after_ch, after_range)) in movement::chars_after(map, point).tuple_windows()
+        {
+            if ch == '\\' {
+                continue;
+            }
+
+            if after_ch == open_marker {
+                opening = Some(after_range);
                 break;
-            } else if ch == close_marker {
+            } else if after_ch == close_marker {
                 break;
             }
         }
@@ -858,18 +876,24 @@ fn surrounding_markers(
     let mut matched_opens = 0;
     let mut closing = None;
 
-    for (ch, range) in movement::chars_after(map, opening.end) {
-        if ch == '\n' && !search_across_lines {
+    for ((ch, _), (after_ch, after_range)) in
+        movement::chars_after(map, opening.end).tuple_windows()
+    {
+        if ch == '\\' {
+            continue;
+        }
+
+        if after_ch == '\n' && !search_across_lines {
             break;
         }
 
-        if ch == close_marker {
+        if after_ch == close_marker {
             if matched_opens == 0 {
-                closing = Some(range);
+                closing = Some(after_range);
                 break;
             }
             matched_opens -= 1;
-        } else if ch == open_marker {
+        } else if after_ch == open_marker {
             matched_opens += 1;
         }
     }
@@ -1465,6 +1489,32 @@ mod test {
                  return false
             }"})
             .await;
+    }
+
+    #[gpui::test]
+    async fn test_singleline_surrounding_character_objects_with_escape(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "h\"e\\\"lˇlo \\\"world\"!"
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "h\"«e\\\"llo \\\"worldˇ»\"!"
+        })
+        .await;
+
+        cx.set_shared_state(indoc! {
+            "hello \"teˇst \\\"inside\\\" world\""
+        })
+        .await;
+        cx.simulate_shared_keystrokes(["v", "i", "\""]).await;
+        cx.assert_shared_state(indoc! {
+            "hello \"«test \\\"inside\\\" worldˇ»\""
+        })
+        .await;
     }
 
     #[gpui::test]
