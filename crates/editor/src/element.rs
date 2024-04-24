@@ -3501,10 +3501,11 @@ impl Element for EditorElement {
                 let content_origin =
                     text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
 
-                let mut autoscroll_requested = false;
+                let mut autoscroll_containing_element = false;
                 let mut autoscroll_horizontally = false;
                 self.editor.update(cx, |editor, cx| {
-                    autoscroll_requested = editor.autoscroll_requested();
+                    autoscroll_containing_element =
+                        editor.autoscroll_requested() || editor.has_pending_selection();
                     autoscroll_horizontally = editor.autoscroll_vertically(bounds, line_height, cx);
                     snapshot = editor.snapshot(cx);
                 });
@@ -3683,7 +3684,7 @@ impl Element for EditorElement {
                     scroll_pixel_position,
                     line_height,
                     em_width,
-                    autoscroll_requested,
+                    autoscroll_containing_element,
                     cx,
                 );
 
