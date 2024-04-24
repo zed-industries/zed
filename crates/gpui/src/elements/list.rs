@@ -608,6 +608,7 @@ impl StateInner {
         &mut self,
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
+        autoscroll: bool,
         cx: &mut ElementContext,
     ) -> Result<LayoutItemsResponse, ListOffset> {
         cx.transact(|cx| {
@@ -627,11 +628,45 @@ impl StateInner {
                     });
 
                     if let Some(autoscroll_bounds) = cx.take_autoscroll() {
-                        if bounds.intersect(&autoscroll_bounds) != autoscroll_bounds {
-                            return Err(ListOffset {
-                                item_ix: item.index,
-                                offset_in_item: autoscroll_bounds.origin.y - item_origin.y,
-                            });
+                        if autoscroll {
+                            if autoscroll_bounds.top() < bounds.top() {
+                                return Err(ListOffset {
+                                    item_ix: item.index,
+                                    offset_in_item: autoscroll_bounds.top() - item_origin.y,
+                                });
+                            } else if autoscroll_bounds.bottom() > bounds.bottom() {
+                                let mut cursor = self.items.cursor::<Count>();
+                                cursor.seek(&Count(item.index), Bias::Right, &());
+                                let mut height = bounds.size.height - padding.top - padding.bottom;
+
+                                // Account for the height of the element down until the autoscroll bottom.
+                                height -= autoscroll_bounds.bottom() - item_origin.y;
+
+                                // Keep decreasing the scroll top until we fill all the available space.
+                                while height > Pixels::ZERO {
+                                    cursor.prev(&());
+                                    let Some(item) = cursor.item() else { break };
+
+                                    let size = item.size().unwrap_or_else(|| {
+                                        let mut item = (self.render_item)(cursor.start().0, cx);
+                                        let item_available_size = size(
+                                            bounds.size.width.into(),
+                                            AvailableSpace::MinContent,
+                                        );
+                                        item.layout_as_root(item_available_size, cx)
+                                    });
+                                    height -= size.height;
+                                }
+
+                                return Err(ListOffset {
+                                    item_ix: cursor.start().0,
+                                    offset_in_item: if height < Pixels::ZERO {
+                                        -height
+                                    } else {
+                                        Pixels::ZERO
+                                    },
+                                });
+                            }
                         }
                     }
 
@@ -762,11 +797,11 @@ impl Element for List {
         }
 
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-        let layout = match state.prepaint_items(bounds, padding, cx) {
+        let layout = match state.prepaint_items(bounds, padding, true, cx) {
             Ok(layout) => layout,
             Err(autoscroll_request) => {
                 state.logical_scroll_top = Some(autoscroll_request);
-                state.prepaint_items(bounds, padding, cx).unwrap()
+                state.prepaint_items(bounds, padding, false, cx).unwrap()
             }
         };
 

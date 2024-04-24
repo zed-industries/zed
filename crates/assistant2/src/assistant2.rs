@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use assistant_tooling::{ToolFunctionCall, ToolRegistry};
 use client::{proto, Client};
 use completion_provider::*;
-use editor::{Editor, EditorEvent};
+use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
 use futures::{channel::oneshot, future::join_all, Future, FutureExt, StreamExt};
 use gpui::{
@@ -426,31 +426,10 @@ impl AssistantChat {
             }
             editor
         });
-        let _subscription = cx.subscribe(&body, move |this, editor, event, cx| match event {
-            EditorEvent::SelectionsChanged { .. } => {
-                if editor.read(cx).is_focused(cx) {
-                    let (message_ix, _message) = this
-                        .messages
-                        .iter()
-                        .enumerate()
-                        .find_map(|(ix, message)| match message {
-                            ChatMessage::User(user_message) if user_message.id == id => {
-                                Some((ix, user_message))
-                            }
-                            _ => None,
-                        })
-                        .expect("user message not found");
-
-                    this.list_state.scroll_to_reveal_item(message_ix);
-                }
-            }
-            _ => {}
-        });
         let message = ChatMessage::User(UserMessage {
             id,
             body,
             contexts: Vec::new(),
-            _subscription,
         });
         self.push_message(message, cx);
     }
@@ -733,7 +712,6 @@ struct UserMessage {
     id: MessageId,
     body: View<Editor>,
     contexts: Vec<AssistantContext>,
-    _subscription: gpui::Subscription,
 }
 
 struct AssistantMessage {
