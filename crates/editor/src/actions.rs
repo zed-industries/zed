@@ -44,6 +44,12 @@ pub struct ToggleCodeActions {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ToggleTestRunner {
+    #[serde(default)]
+    pub deployed_from_indicator: Option<u32>,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct ConfirmCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,

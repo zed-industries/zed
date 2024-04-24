@@ -2954,9 +2954,9 @@ impl BufferSnapshot {
     ) -> impl Iterator<Item = (Range<usize>, SmallVec<[TestTag; 1]>)> + '_ {
         let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        let mut syntax_matches = self
-            .syntax
-            .matches(offset_range, self, |grammar| grammar.tests_query.as_ref());
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar.tests_config.as_ref().map(|config| &config.query)
+        });
 
         let test_configs = syntax_matches
             .grammars()

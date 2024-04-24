@@ -1,6 +1,6 @@
 (
-    (attribute_item (attribute) @attribute
-        (#match? @attribute ".*test.*"))
+    (attribute_item (attribute) @_attribute
+        (#match? @_attribute ".*test.*"))
     (function_item
-        name: (_) @capture @run)
-) @zed-rust-test @zed-test
+        name: (_) @run)
+) @rust-test

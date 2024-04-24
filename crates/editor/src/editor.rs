@@ -1336,6 +1336,8 @@ impl InlayHintRefreshReason {
     }
 }
 
+struct TestInvocation {}
+
 impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
@@ -3678,6 +3680,47 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
+    pub fn toggle_test_runner(&mut self, action: &ToggleTestRunner, cx: &mut ViewContext<Self>) {
+        unimplemented!()
+        // let mut context_menu = self.context_menu.write();
+        // if matches!(context_menu.as_ref(), Some(ContextMenu::CodeActions(_))) {
+        //     *context_menu = None;
+        //     cx.notify();
+        //     return;
+        // }
+        // drop(context_menu);
+
+        // let deployed_from_indicator = action.deployed_from_indicator;
+        // let mut task = self.code_actions_task.take();
+        // cx.spawn(|this, mut cx| async move {
+        //     while let Some(prev_task) = task {
+        //         prev_task.await;
+        //         task = this.update(&mut cx, |this, _| this.code_actions_task.take())?;
+        //     }
+
+        //     this.update(&mut cx, |this, cx| {
+        //         if this.focus_handle.is_focused(cx) {
+        //             if let Some((buffer, actions)) = this.available_code_actions.clone() {
+        //                 this.completion_tasks.clear();
+        //                 this.discard_inline_completion(cx);
+        //                 *this.context_menu.write() =
+        //                     Some(ContextMenu::CodeActions(CodeActionsMenu {
+        //                         buffer,
+        //                         actions,
+        //                         selected_item: Default::default(),
+        //                         scroll_handle: UniformListScrollHandle::default(),
+        //                         deployed_from_indicator,
+        //                     }));
+        //                 cx.notify();
+        //             }
+        //         }
+        //     })?;
+
+        //     Ok::<_, anyhow::Error>(())
+        // })
+        // .detach_and_log_err(cx);
+    }
+
     pub fn confirm_code_action(
         &mut self,
         action: &ConfirmCodeAction,
@@ -4198,6 +4241,28 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    pub fn render_test_run_indicator(
+        &self,
+        _style: &EditorStyle,
+        is_active: bool,
+        indicator: u32,
+        cx: &mut ViewContext<Self>,
+    ) -> IconButton {
+        IconButton::new("code_actions_indicator", ui::IconName::Play)
+            .icon_size(IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(Color::Muted)
+            .selected(is_active)
+            .on_click(cx.listener(move |editor, _e, cx| {
+                editor.toggle_test_runner(
+                    &ToggleTestRunner {
+                        deployed_from_indicator: Some(indicator),
+                    },
+                    cx,
+                );
+            }))
     }
 
     pub fn render_fold_indicators(
@@ -7376,26 +7441,34 @@ impl Editor {
         self.select_larger_syntax_node_stack = stack;
     }
 
-    pub fn test_lines(
-        &mut self,
+    pub fn test_display_rows(
+        &self,
         range: Range<Anchor>,
-        cx: &mut ViewContext<Self>,
+        snapshot: &DisplaySnapshot,
+        _cx: &WindowContext,
     ) -> Vec<(u32, SmallVec<[TestTag; 1]>)> {
-        let snapshot = self.snapshot(cx);
-
         snapshot
             .buffer_snapshot
             .test_ranges(range)
-            .map(|(multi_buffer_range, tags)| {
-                (
-                    multi_buffer_range
-                        .start
-                        .to_display_point(&snapshot.display_snapshot)
-                        .row(),
-                    tags,
-                )
+            .filter_map(|(multi_buffer_range, tags)| {
+                let tasks = self.resolve_test_tags(tags);
+
+                if tasks.is_empty() {
+                    return None;
+                }
+
+                Some((
+                    dbg!(multi_buffer_range.start.to_display_point(&snapshot).row()),
+                    dbg!(tasks),
+                ))
             })
             .collect()
+    }
+
+    fn resolve_test_tags(&self, tags: SmallVec<[TestTag; 1]>) -> SmallVec<[TestInvocation; 1]> {
+        for tag in tags.into_iter() {
+            // Something
+        }
     }
 
     pub fn move_to_enclosing_bracket(

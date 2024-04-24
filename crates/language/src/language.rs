@@ -530,7 +530,7 @@ pub struct CodeLabel {
 }
 
 // This is a new type representing a specific capture name in the langauge's tests.scm query
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TestTag(SharedString);
 
 #[derive(Clone, Deserialize, JsonSchema)]
@@ -830,7 +830,6 @@ pub struct Grammar {
     pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Query,
     pub(crate) highlights_query: Option<Query>,
-    pub(crate) tests_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) tests_config: Option<TestConfig>,
@@ -882,9 +881,10 @@ struct RedactionConfig {
 
 struct TestConfig {
     pub query: Query,
-    // A mapping from captures indices to known test tags
+    /// A mapping from captures indices to known test tags
     pub test_tags: HashMap<u32, TestTag>,
-    pub run_index: u32,
+    /// index of the capture that corresponds to @run
+    pub run_capture_ix: u32,
 }
 
 struct OverrideConfig {
@@ -929,7 +929,6 @@ impl Language {
                     override_config: None,
                     redactions_config: None,
                     tests_config: None,
-                    tests_query: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -1012,8 +1011,8 @@ impl Language {
         for (ix, name) in query.capture_names().iter().enumerate() {
             if *name == "run" {
                 run_capture_index = Some(ix as u32);
-            } else if let Some(tag_name) = name.strip_prefix("zed-") {
-                test_tags.insert(ix as u32, TestTag(tag_name.to_string().into()));
+            } else if !name.starts_with("_") {
+                test_tags.insert(ix as u32, TestTag(name.to_string().into()));
             }
         }
 
