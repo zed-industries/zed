@@ -173,6 +173,9 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
+          # We need to fetch tags so that `script/draft-release-notes`
+          # is able to diff between the current and previous tag.
+          fetch-tags: true
           clean: false
           submodules: "recursive"
 
