@@ -9574,7 +9574,11 @@ async fn test_toggled_diff_base_change(
             Vec::new(),
             "After diff base is changed, old git hunk expandsions should be removed"
         );
-        assert_eq!(all_hunks, Vec::new(), "// TODO kb");
+        assert_eq!(
+            all_hunks,
+            vec![(DiffHunkStatus::Modified, 1..16)],
+            "After diff base is changed, hunks should update"
+        );
     });
 }
 

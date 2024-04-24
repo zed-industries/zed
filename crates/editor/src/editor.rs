@@ -9236,7 +9236,6 @@ impl Editor {
     // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
     // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
     // TODO kb is possible to simplify the code and unite hitboxes with the HunkToShow?
-    // TODO kb deleted block editors are still scrollable with keys (select all + down or click somewhere + shift + cmd + down)
     fn show_git_diff_hunk(
         &mut self,
         hunk: &HunkToShow,
@@ -9245,7 +9244,6 @@ impl Editor {
         let snapshot = self.buffer().read(cx).snapshot(cx);
         let buffer_range = hunk.multi_buffer_range.start.to_point(&snapshot)
             ..hunk.multi_buffer_range.end.to_point(&snapshot);
-        dbg!((hunk.status, &hunk.display_row_range, &buffer_range));
         let (multi_buffer_snapshot, deleted_text) = self.buffer().update(cx, |buffer, cx| {
             let buffer_snapshot = buffer.snapshot(cx);
             let original_text = original_text(buffer, buffer_range.clone(), cx);
@@ -11377,7 +11375,7 @@ fn original_text(
 ) -> Option<String> {
     let snapshot = buffer.snapshot(cx);
     let diff_base = buffer_diff_base(buffer, buffer_range.clone(), cx)?;
-    let hunk = dbg!(buffer_diff_hunk(&snapshot, buffer_range))?;
+    let hunk = buffer_diff_hunk(&snapshot, buffer_range)?;
     diff_base
         .get(hunk.diff_base_byte_range)
         .map(ToString::to_string)
@@ -11461,10 +11459,8 @@ fn buffer_diff_hunk(
     row_range: Range<Point>,
 ) -> Option<DiffHunk<u32>> {
     let mut hunks = buffer_snapshot.git_diff_hunks_in_range(row_range.start.row..row_range.end.row);
-    dbg!(&row_range);
-    let hunk = dbg!(hunks.next())?;
+    let hunk = hunks.next()?;
     let second_hunk = hunks.next();
-    dbg!(&second_hunk);
     if second_hunk.is_none() {
         return Some(hunk);
     }

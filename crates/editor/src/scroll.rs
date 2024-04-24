@@ -187,6 +187,9 @@ impl ScrollManager {
         workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Editor>,
     ) {
+        if self.forbid_vertical_scroll {
+            return;
+        }
         let (new_anchor, top_row) = if scroll_position.y <= 0. {
             (
                 ScrollAnchor {
@@ -226,6 +229,9 @@ impl ScrollManager {
         workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Editor>,
     ) {
+        if self.forbid_vertical_scroll {
+            return;
+        }
         self.anchor = anchor;
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbar(cx);
