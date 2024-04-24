@@ -2,8 +2,8 @@ pub mod items;
 mod project_diagnostics_settings;
 mod toolbar_controls;
 
-use anyhow::{Context as _, Result};
-use collections::{HashMap, HashSet};
+use anyhow::Result;
+use collections::{BTreeSet, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
@@ -11,7 +11,6 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
-use futures::future::try_join_all;
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
@@ -19,8 +18,7 @@ use gpui::{
     WeakView, WindowContext,
 };
 use language::{
-    Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
-    SelectionGoal,
+    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -29,14 +27,12 @@ use settings::Settings;
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
-    mem,
     ops::Range,
     path::PathBuf,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
-use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
@@ -58,8 +54,7 @@ struct ProjectDiagnosticsEditor {
     summary: DiagnosticSummary,
     excerpts: Model<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: HashMap<LanguageServerId, HashSet<ProjectPath>>,
-    current_diagnostics: HashMap<LanguageServerId, HashSet<ProjectPath>>,
+    paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
     include_warnings: bool,
     context: u32,
     _subscriptions: Vec<Subscription>,
@@ -68,13 +63,6 @@ struct ProjectDiagnosticsEditor {
 struct PathState {
     path: ProjectPath,
     diagnostic_groups: Vec<DiagnosticGroupState>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct Jump {
-    path: ProjectPath,
-    position: Point,
-    anchor: Anchor,
 }
 
 struct DiagnosticGroupState {
@@ -122,7 +110,7 @@ impl ProjectDiagnosticsEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let project_event_subscription =
-            cx.subscribe(&project_handle, |this, _, event, cx| match event {
+            cx.subscribe(&project_handle, |this, project, event, cx| match event {
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     log::debug!("Disk based diagnostics finished for server {language_server_id}");
                     this.update_excerpts(Some(*language_server_id), cx);
@@ -133,19 +121,11 @@ impl ProjectDiagnosticsEditor {
                 } => {
                     log::debug!("Adding path {path:?} to update for server {language_server_id}");
                     this.paths_to_update
-                        .entry(*language_server_id)
-                        .or_default()
-                        .insert(path.clone());
-
-                    if this.is_dirty(cx) {
-                        return;
-                    }
-                    let selections = this.editor.read(cx).selections.all::<usize>(cx);
-                    if selections.len() < 2
-                        && selections
-                            .first()
-                            .map_or(true, |selection| selection.end == selection.start)
-                    {
+                        .insert((path.clone(), *language_server_id));
+                    this.summary = project.read(cx).diagnostic_summary(false, cx);
+                    if this.editor.read(cx).is_focused(cx) {
+                        cx.notify();
+                    } else {
                         this.update_excerpts(Some(*language_server_id), cx);
                     }
                 }
@@ -172,12 +152,22 @@ impl ProjectDiagnosticsEditor {
         let editor_event_subscription =
             cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
                 cx.emit(event.clone());
-                if event == &EditorEvent::Focused && this.path_states.is_empty() {
-                    cx.focus(&this.focus_handle);
+                match event {
+                    EditorEvent::Focused => {
+                        if this.path_states.is_empty() {
+                            cx.focus(&this.focus_handle);
+                        }
+                    }
+                    EditorEvent::Blurred => this.update_excerpts(None, cx),
+                    _ => {}
                 }
             });
 
         let project = project_handle.read(cx);
+        let paths_to_update = project
+            .diagnostic_summaries(false, cx)
+            .map(|(path, server_id, _)| (path, server_id))
+            .collect();
         let summary = project.diagnostic_summary(false, cx);
         let mut this = Self {
             project: project_handle,
@@ -188,9 +178,8 @@ impl ProjectDiagnosticsEditor {
             focus_handle,
             editor,
             path_states: Default::default(),
-            paths_to_update: HashMap::default(),
+            paths_to_update,
             include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
-            current_diagnostics: HashMap::default(),
             _subscriptions: vec![
                 project_event_subscription,
                 editor_event_subscription,
@@ -228,7 +217,6 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
-        self.paths_to_update = self.current_diagnostics.clone();
         self.update_excerpts(None, cx);
         cx.notify();
     }
@@ -245,98 +233,29 @@ impl ProjectDiagnosticsEditor {
         cx: &mut ViewContext<Self>,
     ) {
         log::debug!("Updating excerpts for server {language_server_id:?}");
-        let mut paths_to_recheck = HashSet::default();
-        let mut new_summaries: HashMap<LanguageServerId, HashSet<ProjectPath>> = self
-            .project
-            .read(cx)
-            .diagnostic_summaries(false, cx)
-            .fold(HashMap::default(), |mut summaries, (path, server_id, _)| {
-                summaries.entry(server_id).or_default().insert(path);
-                summaries
-            });
-        let mut old_diagnostics = if let Some(language_server_id) = language_server_id {
-            new_summaries.retain(|server_id, _| server_id == &language_server_id);
-            self.paths_to_update.retain(|server_id, paths| {
-                if server_id == &language_server_id {
-                    paths_to_recheck.extend(paths.drain());
-                    false
-                } else {
-                    true
-                }
-            });
-            let mut old_diagnostics = HashMap::default();
-            if let Some(new_paths) = new_summaries.get(&language_server_id) {
-                if let Some(old_paths) = self
-                    .current_diagnostics
-                    .insert(language_server_id, new_paths.clone())
-                {
-                    old_diagnostics.insert(language_server_id, old_paths);
-                }
+        let mut paths = Vec::new();
+        self.paths_to_update.retain(|(path, server_id)| {
+            if language_server_id.map_or(true, |id| id == *server_id) {
+                paths.push(path.clone());
+                false
             } else {
-                if let Some(old_paths) = self.current_diagnostics.remove(&language_server_id) {
-                    old_diagnostics.insert(language_server_id, old_paths);
-                }
+                true
             }
-            old_diagnostics
-        } else {
-            paths_to_recheck.extend(self.paths_to_update.drain().flat_map(|(_, paths)| paths));
-            mem::replace(&mut self.current_diagnostics, new_summaries.clone())
-        };
-        for (server_id, new_paths) in new_summaries {
-            match old_diagnostics.remove(&server_id) {
-                Some(mut old_paths) => {
-                    paths_to_recheck.extend(
-                        new_paths
-                            .into_iter()
-                            .filter(|new_path| !old_paths.remove(new_path)),
-                    );
-                    paths_to_recheck.extend(old_paths);
-                }
-                None => paths_to_recheck.extend(new_paths),
-            }
-        }
-        paths_to_recheck.extend(old_diagnostics.into_iter().flat_map(|(_, paths)| paths));
+        });
 
-        if paths_to_recheck.is_empty() {
-            log::debug!("No paths to recheck for language server {language_server_id:?}");
-            return;
-        }
-        log::debug!(
-            "Rechecking {} paths for language server {:?}",
-            paths_to_recheck.len(),
-            language_server_id
-        );
         let project = self.project.clone();
-        cx.spawn(|this, mut cx| {
-            async move {
-                let _: Vec<()> = try_join_all(paths_to_recheck.into_iter().map(|path| {
-                    let mut cx = cx.clone();
-                    let project = project.clone();
-                    let this = this.clone();
-                    async move {
-                        let buffer = project
-                            .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
-                            .await
-                            .with_context(|| format!("opening buffer for path {path:?}"))?;
-                        this.update(&mut cx, |this, cx| {
-                            this.populate_excerpts(path, language_server_id, buffer, cx);
-                        })
-                        .context("missing project")?;
-                        anyhow::Ok(())
-                    }
-                }))
-                .await
-                .context("rechecking diagnostics for paths")?;
-
+        cx.spawn(|this, mut cx| async move {
+            for path in paths {
+                let buffer = project
+                    .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
+                    .await?;
                 this.update(&mut cx, |this, cx| {
-                    this.summary = this.project.read(cx).diagnostic_summary(false, cx);
-                    cx.emit(EditorEvent::TitleChanged);
+                    this.populate_excerpts(path, language_server_id, buffer, cx)
                 })?;
-                anyhow::Ok(())
             }
-            .log_err()
+            anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn populate_excerpts(
