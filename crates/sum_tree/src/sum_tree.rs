@@ -151,8 +151,10 @@ impl Bias {
     }
 }
 
-/// A B+ tree in which each leaf node contains an `Item` of type `T` and a `Summary` of that `Item`.
+/// A B+ tree in which each leaf node contains `Item`s of type `T` and a `Summary`s for each `Item`.
 /// Each internal node contains a `Summary` of the items in its subtree.
+///
+/// The maximum number of items per node is `TREE_BASE * 2`.
 ///
 /// Any [`Dimension`] supported by the [`Summary`] type can be used to seek to a specific location in the tree.
 #[derive(Debug, Clone)]
