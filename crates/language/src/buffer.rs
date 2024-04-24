@@ -13,7 +13,7 @@ use crate::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
         SyntaxSnapshot, ToTreeSitterPoint,
     },
-    LanguageScope, Outline,
+    LanguageScope, Outline, TestTag,
 };
 use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
@@ -2945,6 +2945,50 @@ impl BufferSnapshot {
                 .map(|mat| mat.node.byte_range());
             syntax_matches.advance();
             redacted_range
+        })
+    }
+
+    pub fn test_ranges(
+        &self,
+        range: Range<Anchor>,
+    ) -> impl Iterator<Item = (Range<usize>, SmallVec<[TestTag; 1]>)> + '_ {
+        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        let mut syntax_matches = self
+            .syntax
+            .matches(offset_range, self, |grammar| grammar.tests_query.as_ref());
+
+        let test_configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.tests_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            let test_range = syntax_matches
+                .peek()
+                .and_then(|mat| {
+                    test_configs[mat.grammar_index].and_then(|test_configs| {
+                        let test_tags =
+                            SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
+                                test_configs.test_tags.get(&capture.index).cloned()
+                            }));
+
+                        if test_tags.is_empty() {
+                            return None;
+                        }
+
+                        Some((
+                            mat.captures
+                                .iter()
+                                .find(|capture| capture.index == test_configs.run_index)?,
+                            test_tags,
+                        ))
+                    })
+                })
+                .map(|(mat, test_tags)| (mat.node.byte_range(), test_tags));
+            syntax_matches.advance();
+            test_range
         })
     }
 

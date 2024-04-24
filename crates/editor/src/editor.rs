@@ -75,6 +75,7 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
+use language::TestTag;
 use language::{
     char_kind,
     language_settings::{self, all_language_settings, InlayHintSettings},
@@ -7373,6 +7374,28 @@ impl Editor {
             });
         }
         self.select_larger_syntax_node_stack = stack;
+    }
+
+    pub fn test_lines(
+        &mut self,
+        range: Range<Anchor>,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<(u32, SmallVec<[TestTag; 1]>)> {
+        let snapshot = self.snapshot(cx);
+
+        snapshot
+            .buffer_snapshot
+            .test_ranges(range)
+            .map(|(multi_buffer_range, tags)| {
+                (
+                    multi_buffer_range
+                        .start
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row(),
+                    tags,
+                )
+            })
+            .collect()
     }
 
     pub fn move_to_enclosing_bracket(

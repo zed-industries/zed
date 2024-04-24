@@ -3132,6 +3132,31 @@ impl MultiBufferSnapshot {
             .flatten()
     }
 
+    pub fn test_ranges(
+        &self,
+        range: Range<Anchor>,
+    ) -> impl Iterator<Item = (Range<usize>, SmallVec<[language::TestTag; 1]>)> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        self.excerpts_for_range(range.clone())
+            .flat_map(move |(excerpt, excerpt_offset)| {
+                let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+
+                excerpt
+                    .buffer
+                    .test_ranges(excerpt.range.context.clone())
+                    .map(move |(mut match_range, test_tags)| {
+                        // Re-base onto the excerpts coordinates in the multibuffer
+                        match_range.start =
+                            excerpt_offset + (match_range.start - excerpt_buffer_start);
+                        match_range.end = excerpt_offset + (match_range.end - excerpt_buffer_start);
+
+                        (match_range, test_tags)
+                    })
+                    .skip_while(move |(match_range, _)| match_range.end < range.start)
+                    .take_while(move |(match_range, _)| match_range.start < range.end)
+            })
+    }
+
     pub fn diagnostics_update_count(&self) -> usize {
         self.diagnostics_update_count
     }

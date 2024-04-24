@@ -24,7 +24,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use futures::Future;
-use gpui::{AppContext, AsyncAppContext, Model, Task};
+use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
@@ -529,6 +529,10 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
+// This is a new type representing a specific capture name in the langauge's tests.scm query
+#[derive(Clone)]
+pub struct TestTag(SharedString);
+
 #[derive(Clone, Deserialize, JsonSchema)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
@@ -601,16 +605,6 @@ pub struct LanguageConfig {
     /// How to soft-wrap long lines of text.
     #[serde(default)]
     pub soft_wrap: Option<SoftWrap>,
-
-    #[serde(default)]
-    pub test_templates: Option<Vec<TestTemplates>>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
-pub struct TestTemplates {
-    capture_name: String,
-    template: String,
-    label: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -698,7 +692,6 @@ impl Default for LanguageConfig {
             hard_tabs: Default::default(),
             tab_size: Default::default(),
             soft_wrap: Default::default(),
-            test_templates: Default::default(),
         }
     }
 }
@@ -840,6 +833,7 @@ pub struct Grammar {
     pub(crate) tests_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
+    pub(crate) tests_config: Option<TestConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub embedding_config: Option<EmbeddingConfig>,
@@ -886,6 +880,13 @@ struct RedactionConfig {
     pub redaction_capture_ix: u32,
 }
 
+struct TestConfig {
+    pub query: Query,
+    // A mapping from captures indices to known test tags
+    pub test_tags: HashMap<u32, TestTag>,
+    pub run_index: u32,
+}
+
 struct OverrideConfig {
     query: Query,
     values: HashMap<u32, (String, LanguageConfigOverride)>,
@@ -927,6 +928,7 @@ impl Language {
                     injection_config: None,
                     override_config: None,
                     redactions_config: None,
+                    tests_config: None,
                     tests_query: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
@@ -1003,7 +1005,26 @@ impl Language {
         let grammar = self
             .grammar_mut()
             .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
-        grammar.tests_query = Some(Query::new(&grammar.ts_language, source)?);
+
+        let query = Query::new(&grammar.ts_language, source)?;
+        let mut run_capture_index = None;
+        let mut test_tags = HashMap::default();
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            if *name == "run" {
+                run_capture_index = Some(ix as u32);
+            } else if let Some(tag_name) = name.strip_prefix("zed-") {
+                test_tags.insert(ix as u32, TestTag(tag_name.to_string().into()));
+            }
+        }
+
+        if let Some(run_index) = run_capture_index {
+            grammar.tests_config = Some(TestConfig {
+                query,
+                run_index,
+                test_tags,
+            });
+        }
+
         Ok(self)
     }
 
@@ -1315,10 +1336,6 @@ impl Language {
 
     pub fn path_suffixes(&self) -> &[String] {
         &self.config.matcher.path_suffixes
-    }
-
-    pub fn test_templates(&self) -> Option<&[TestTemplates]> {
-        self.config.test_templates.as_deref()
     }
 
     pub fn should_autoclose_before(&self, c: char) -> bool {
