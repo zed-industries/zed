@@ -182,18 +182,19 @@ impl X11Client {
     fn handle_event(&self, event: Event) -> Option<()> {
         match event {
             Event::ClientMessage(event) => {
+                let window = self.get_window(event.window)?;
                 let [atom, ..] = event.data.as_data32();
                 let mut state = self.0.borrow_mut();
 
                 if atom == state.atoms.WM_DELETE_WINDOW {
                     // window "x" button clicked by user, we gracefully exit
-                    let window_ref = state.windows.remove(&event.window)?;
+                    if window.handle_close() {
+                        let window_ref = state.windows.remove(&event.window)?;
+                        state.loop_handle.remove(window_ref.refresh_event_token);
 
-                    state.loop_handle.remove(window_ref.refresh_event_token);
-                    window_ref.window.destroy();
-
-                    if state.windows.is_empty() {
-                        state.common.signal.stop();
+                        if state.windows.is_empty() {
+                            state.common.signal.stop();
+                        }
                     }
                 }
             }

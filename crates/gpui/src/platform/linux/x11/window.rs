@@ -250,6 +250,17 @@ impl Drop for X11Window {
     fn drop(&mut self) {
         // TODO
         println!("X11Window: drop");
+
+        let mut state = self.0.state.borrow_mut();
+        state.renderer.destroy();
+        drop(state);
+
+        self.0.xcb_connection.unmap_window(self.0.x_window).unwrap();
+        self.0
+            .xcb_connection
+            .destroy_window(self.0.x_window)
+            .unwrap();
+        self.0.xcb_connection.flush().unwrap();
     }
 }
 
@@ -277,17 +288,26 @@ impl X11Window {
 }
 
 impl X11WindowStatePtr {
-    pub fn destroy(&self) {
-        let mut state = self.state.borrow_mut();
-        state.renderer.destroy();
-        drop(state);
-
-        self.xcb_connection.unmap_window(self.x_window).unwrap();
-        self.xcb_connection.destroy_window(self.x_window).unwrap();
-        if let Some(fun) = self.callbacks.borrow_mut().close.take() {
-            fun();
+    pub fn handle_close(&self) -> bool {
+        let mut cb = self.callbacks.borrow_mut();
+        if let Some(mut should_close) = cb.should_close.take() {
+            let result = (should_close)();
+            cb.should_close = Some(should_close);
+            if result {
+                drop(cb);
+                self.close();
+            }
+            result
+        } else {
+            true
         }
-        self.xcb_connection.flush().unwrap();
+    }
+
+    pub fn close(&self) {
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(fun) = callbacks.close.take() {
+            fun()
+        }
     }
 
     pub fn refresh(&self) {
