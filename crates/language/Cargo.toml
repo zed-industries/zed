@@ -32,6 +32,7 @@ collections.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
+glob = "0.3.1"
 globset.workspace = true
 gpui.workspace = true
 itertools.workspace = true
