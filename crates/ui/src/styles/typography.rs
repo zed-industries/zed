@@ -6,8 +6,73 @@ use theme::{ActiveTheme, ThemeSettings};
 
 use crate::rems_from_px;
 
+/// Extends [`gpui::Styled`] with typography-related styling methods.
+pub trait StyledTypography: Styled + Sized {
+    /// Sets the text size using a [`UiTextSize`].
+    fn text_ui_size(self, size: TextSize, cx: &WindowContext) -> Self {
+        self.text_size(size.rems(cx))
+    }
+
+    /// The large size for UI text.
+    ///
+    /// `1rem` or `16px` at the default scale of `1rem` = `16px`.
+    ///
+    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
+    ///
+    /// Use `text_ui` for regular-sized text.
+    fn text_ui_lg(self, cx: &WindowContext) -> Self {
+        self.text_size(TextSize::Large.rems(cx))
+    }
+
+    /// The default size for UI text.
+    ///
+    /// `0.825rem` or `14px` at the default scale of `1rem` = `16px`.
+    ///
+    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
+    ///
+    /// Use `text_ui_sm` for smaller text.
+    fn text_ui(self, cx: &WindowContext) -> Self {
+        self.text_size(TextSize::default().rems(cx))
+    }
+
+    /// The small size for UI text.
+    ///
+    /// `0.75rem` or `12px` at the default scale of `1rem` = `16px`.
+    ///
+    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
+    ///
+    /// Use `text_ui` for regular-sized text.
+    fn text_ui_sm(self, cx: &WindowContext) -> Self {
+        self.text_size(TextSize::Small.rems(cx))
+    }
+
+    /// The extra small size for UI text.
+    ///
+    /// `0.625rem` or `10px` at the default scale of `1rem` = `16px`.
+    ///
+    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
+    ///
+    /// Use `text_ui` for regular-sized text.
+    fn text_ui_xs(self, cx: &WindowContext) -> Self {
+        self.text_size(TextSize::XSmall.rems(cx))
+    }
+
+    /// The font size for buffer text.
+    ///
+    /// Retrieves the default font size, or the user's custom font size if set.
+    ///
+    /// This should only be used for text that is displayed in a buffer,
+    /// or other places that text needs to match the user's buffer font size.
+    fn text_buffer(self, cx: &mut WindowContext) -> Self {
+        let settings = ThemeSettings::get_global(cx);
+        self.text_size(settings.buffer_font_size(cx))
+    }
+}
+
+impl<E: Styled> StyledTypography for E {}
+
 #[derive(Debug, Default, Clone)]
-pub enum UiTextSize {
+pub enum TextSize {
     /// The default size for UI text.
     ///
     /// `0.825rem` or `14px` at the default scale of `1rem` = `16px`.
@@ -35,15 +100,28 @@ pub enum UiTextSize {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     XSmall,
+
+    /// The `ui_font_size` set by the user.
+    UI,
+    /// The `buffer_font_size` set by the user.
+    Editor,
+    // TODO: The terminal settings will need to be passed to
+    // ThemeSettings before we can enable this.
+    //// The `terminal.font_size` set by the user.
+    // Terminal,
 }
 
-impl UiTextSize {
-    pub fn rems(self) -> Rems {
+impl TextSize {
+    pub fn rems(self, cx: &WindowContext) -> Rems {
+        let theme_settings = ThemeSettings::get_global(cx);
+
         match self {
             Self::Large => rems_from_px(16.),
             Self::Default => rems_from_px(14.),
             Self::Small => rems_from_px(12.),
             Self::XSmall => rems_from_px(10.),
+            Self::UI => rems_from_px(theme_settings.ui_font_size.into()),
+            Self::Editor => rems_from_px(theme_settings.buffer_font_size.into()),
         }
     }
 }
