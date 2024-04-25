@@ -2093,6 +2093,7 @@ impl Snapshot {
         cursor.seek(&TraversalTarget::Path(parent_path), Bias::Right, &());
         let traversal = Traversal {
             cursor,
+            include_files: true,
             include_dirs: true,
             include_ignored: true,
         };
@@ -2112,6 +2113,7 @@ impl Snapshot {
         cursor.seek(&TraversalTarget::Path(parent_path), Bias::Left, &());
         let mut traversal = Traversal {
             cursor,
+            include_files: true,
             include_dirs,
             include_ignored,
         };
@@ -4541,12 +4543,15 @@ struct TraversalProgress<'a> {
 }
 
 impl<'a> TraversalProgress<'a> {
-    fn count(&self, include_dirs: bool, include_ignored: bool) -> usize {
-        match (include_ignored, include_dirs) {
-            (true, true) => self.count,
-            (true, false) => self.file_count,
-            (false, true) => self.non_ignored_count,
-            (false, false) => self.non_ignored_file_count,
+    fn count(&self, include_files: bool, include_dirs: bool, include_ignored: bool) -> usize {
+        match (include_files, include_dirs, include_ignored) {
+            (true, true, true) => self.count,
+            (true, true, false) => self.non_ignored_count,
+            (true, false, true) => self.file_count,
+            (true, false, false) => self.non_ignored_file_count,
+            (false, true, true) => self.count - self.file_count,
+            (false, true, false) => self.non_ignored_count - self.non_ignored_file_count,
+            (false, false, _) => 0,
         }
     }
 }
@@ -4653,13 +4658,13 @@ impl<'a> Traversal<'a> {
     pub fn start_offset(&self) -> usize {
         self.cursor
             .start()
-            .count(self.include_dirs, self.include_ignored)
+            .count(self.include_files, self.include_dirs, self.include_ignored)
     }
 
     pub fn end_offset(&self) -> usize {
         self.cursor
             .end(&())
-            .count(self.include_dirs, self.include_ignored)
+            .count(self.include_files, self.include_dirs, self.include_ignored)
     }
 }
 
@@ -4701,11 +4706,12 @@ impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTa
             }
             TraversalTarget::Count {
                 count,
+                include_files,
                 include_dirs,
                 include_ignored,
             } => Ord::cmp(
                 count,
-                &cursor_location.count(*include_dirs, *include_ignored),
+                &cursor_location.count(*include_files, *include_dirs, *include_ignored),
             ),
         }
     }

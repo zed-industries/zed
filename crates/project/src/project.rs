@@ -32,6 +32,7 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
+use fuzzy::CharBag;
 use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
@@ -10416,15 +10417,16 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
     type Item = fuzzy::PathMatchCandidate<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.traversal.next().map(|entry| {
-            if let EntryKind::File(char_bag) = entry.kind {
-                fuzzy::PathMatchCandidate {
-                    path: &entry.path,
-                    char_bag,
-                }
-            } else {
-                unreachable!()
-            }
+        self.traversal.next().map(|entry| match entry.kind {
+            EntryKind::Dir => fuzzy::PathMatchCandidate {
+                path: &entry.path,
+                char_bag: CharBag::from_iter(entry.path.to_string_lossy().to_lowercase().chars()),
+            },
+            EntryKind::File(char_bag) => fuzzy::PathMatchCandidate {
+                path: &entry.path,
+                char_bag,
+            },
+            EntryKind::UnloadedDir | EntryKind::PendingDir => unreachable!(),
         })
     }
 }

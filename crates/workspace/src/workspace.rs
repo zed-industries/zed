@@ -544,9 +544,8 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
-type PromptForNewPath = Box<
-    dyn FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> oneshot::Receiver<Option<PathBuf>>,
->;
+type PromptForNewPath =
+    Box<dyn Fn(&mut Workspace, &mut ViewContext<Workspace>) -> oneshot::Receiver<Option<PathBuf>>>;
 
 /// Collects everything project-related for a certain window opened.
 /// In some way, is a counterpart of a window, as the [`WindowHandle`] could be downcast into `Workspace`.
@@ -880,6 +879,7 @@ impl Workspace {
             bounds: Default::default(),
             centered_layout: false,
             bounds_save_task_queued: None,
+            on_prompt_for_new_path: None,
         }
     }
 
@@ -1236,8 +1236,10 @@ impl Workspace {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> oneshot::Receiver<Option<PathBuf>> {
-        if let Some(prompt) = &self.on_prompt_for_new_path {
-            return prompt(self, cx);
+        if let Some(prompt) = self.on_prompt_for_new_path.take() {
+            let rx = prompt(self, cx);
+            self.on_prompt_for_new_path = Some(prompt);
+            rx
         } else {
             let start_abs_path = self
                 .project
