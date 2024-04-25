@@ -1400,11 +1400,7 @@ impl Terminal {
                     let argv = fpi.argv.clone();
 
                     #[cfg(feature = "flatpak")]
-                    let process_name = if argv[2] == "-env" {
-                        argv[4..].join(" ")
-                    } else {
-                        argv[2..].join(" ")
-                    };
+                    let process_name = argv[4..].join(" ");
 
                     #[cfg(not(feature = "flatpak"))]
                     let process_name = format!(
