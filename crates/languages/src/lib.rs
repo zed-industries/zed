@@ -22,15 +22,6 @@ mod tailwind;
 mod typescript;
 mod yaml;
 
-// 1. Add tree-sitter-{language} parser to zed crate
-// 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
-// 3. Add config.toml to the newly created language directory using existing languages as a template
-// 4. Copy highlights from tree sitter repo for the language into a highlights.scm file.
-//      Note: github highlights take the last match while zed takes the first
-// 5. Add indents.scm, outline.scm, and brackets.scm to implement indent on newline, outline/breadcrumbs,
-//    and autoclosing brackets respectively
-// 6. If the language has injections add an injections.scm query file
-
 #[derive(RustEmbed)]
 #[folder = "src/"]
 #[exclude = "*.rs"]
