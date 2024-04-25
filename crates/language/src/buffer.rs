@@ -2981,7 +2981,7 @@ impl BufferSnapshot {
                         Some((
                             mat.captures
                                 .iter()
-                                .find(|capture| capture.index == test_configs.run_index)?,
+                                .find(|capture| capture.index == test_configs.run_capture_ix)?,
                             test_tags,
                         ))
                     })

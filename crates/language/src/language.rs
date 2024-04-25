@@ -1016,10 +1016,10 @@ impl Language {
             }
         }
 
-        if let Some(run_index) = run_capture_index {
+        if let Some(run_capture_ix) = run_capture_index {
             grammar.tests_config = Some(TestConfig {
                 query,
-                run_index,
+                run_capture_ix,
                 test_tags,
             });
         }
