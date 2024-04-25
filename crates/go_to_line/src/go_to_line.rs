@@ -117,10 +117,23 @@ impl GoToLine {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                let anchor = snapshot.buffer_snapshot.anchor_before(point);
+
+                let next_row_point = snapshot
+                    .buffer_snapshot
+                    .clip_point(point + Point::new(1, 0), Bias::Right);
+                let anchor_range = if next_row_point == point {
+                    let mut previous_row_point = point;
+                    previous_row_point.row = previous_row_point.row.saturating_sub(1);
+                    snapshot.buffer_snapshot.anchor_after(previous_row_point)
+                        ..snapshot.buffer_snapshot.anchor_before(point)
+                } else {
+                    snapshot.buffer_snapshot.anchor_after(point)
+                        ..snapshot.buffer_snapshot.anchor_before(next_row_point)
+                };
+
                 active_editor.clear_row_highlights::<GoToLineRowHighlights>();
                 active_editor.highlight_rows::<GoToLineRowHighlights>(
-                    anchor..anchor,
+                    anchor_range,
                     Some(cx.theme().colors().editor_highlighted_line_background),
                     cx,
                 );
