@@ -498,6 +498,13 @@ pub enum CharKind {
     Word,
 }
 
+/// A runnable is a set of data about a region that could be resolved into a task
+pub struct Runnable {
+    pub tags: SmallVec<[RunnableTag; 1]>,
+    pub language: Arc<Language>,
+    pub buffer: BufferId,
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &mut ModelContext<Self>) -> Self {
@@ -2951,8 +2958,7 @@ impl BufferSnapshot {
     pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,
-    ) -> impl Iterator<Item = (Range<usize>, SmallVec<[(RunnableTag, Arc<Language>); 1]>)> + '_
-    {
+    ) -> impl Iterator<Item = (Range<usize>, Runnable)> + '_ {
         let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
@@ -2970,15 +2976,11 @@ impl BufferSnapshot {
                 .peek()
                 .and_then(|mat| {
                     test_configs[mat.grammar_index].and_then(|test_configs| {
-                        let test_tags =
-                            SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
-                                Some((
-                                    test_configs.runnable_tags.get(&capture.index).cloned()?,
-                                    mat.language.clone(),
-                                ))
-                            }));
+                        let tags = SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
+                            test_configs.runnable_tags.get(&capture.index).cloned()
+                        }));
 
-                        if test_tags.is_empty() {
+                        if tags.is_empty() {
                             return None;
                         }
 
@@ -2986,7 +2988,11 @@ impl BufferSnapshot {
                             mat.captures
                                 .iter()
                                 .find(|capture| capture.index == test_configs.run_capture_ix)?,
-                            test_tags,
+                            Runnable {
+                                tags,
+                                language: mat.language,
+                                buffer: self.remote_id(),
+                            },
                         ))
                     })
                 })

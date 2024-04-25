@@ -326,7 +326,7 @@ impl TaskSource for TestTaskSource {
         self
     }
 
-    fn tasks_to_schedule(&self, _: &ModelContext<Box<dyn TaskSource>>) -> TaskTemplates {
+    fn tasks_to_schedule(&self) -> TaskTemplates {
         self.tasks.clone()
     }
 }

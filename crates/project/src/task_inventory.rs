@@ -430,7 +430,7 @@ mod test_inventory {
     }
 
     impl TaskSource for StaticTestSource {
-        fn tasks_to_schedule(&self, _cx: &ModelContext<Box<dyn TaskSource>>) -> TaskTemplates {
+        fn tasks_to_schedule(&self) -> TaskTemplates {
             TaskTemplates(
                 self.tasks
                     .clone()

@@ -76,6 +76,7 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
+use language::Runnable;
 use language::{
     char_kind,
     language_settings::{self, all_language_settings, InlayHintSettings},
@@ -83,7 +84,7 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use task::{RunnableTag, TaskTemplate};
+use task::TaskTemplate;
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
@@ -98,7 +99,8 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
-    CodeAction, Completion, FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction,
+    CodeAction, Completion, FormatTrigger, Item, Location, Project, ProjectPath,
+    ProjectTransaction, WorktreeId,
 };
 use rand::prelude::*;
 use rpc::proto::*;
@@ -388,6 +390,13 @@ impl Default for ScrollbarMarkerState {
             pending_refresh: None,
         }
     }
+}
+
+struct RunnableTasks {
+    templates: SmallVec<[TaskTemplate; 1]>,
+    match_range: Range<usize>, // The equivalent of the newest selection,
+    language: Arc<Language>,   // For getting a context provider
+    worktree: Option<WorktreeId>,
 }
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
@@ -7440,52 +7449,69 @@ impl Editor {
         self.select_larger_syntax_node_stack = stack;
     }
 
-    pub fn runnable_display_rows(
+    fn runnable_display_rows(
         &self,
         range: Range<Anchor>,
         snapshot: &DisplaySnapshot,
         cx: &WindowContext,
-    ) -> Vec<(u32, SmallVec<[TaskTemplate; 1]>)> {
+    ) -> Vec<(u32, RunnableTasks)> {
         snapshot
             .buffer_snapshot
             .runnable_ranges(range)
-            .filter_map(|(multi_buffer_range, tags)| {
-                let tasks = self.resolve_runnable_tags(tags, cx);
+            .filter_map(|(multi_buffer_range, mut runnable)| {
+                let (tasks, worktree_id) = self.resolve_runnable(&mut runnable, cx);
                 if tasks.is_empty() {
                     return None;
                 }
 
                 Some((
-                    dbg!(multi_buffer_range.start.to_display_point(&snapshot).row()),
-                    dbg!(tasks),
+                    multi_buffer_range.start.to_display_point(&snapshot).row(),
+                    RunnableTasks {
+                        templates: tasks,
+                        match_range: multi_buffer_range,
+                        language: runnable.language,
+                        worktree: worktree_id,
+                    },
                 ))
             })
             .collect()
     }
 
-    fn resolve_runnable_tags(
+    fn resolve_runnable(
         &self,
-        tags: SmallVec<[(task::RunnableTag, Arc<Language>); 1]>,
+        runnable: &mut Runnable,
         cx: &WindowContext<'_>,
-    ) -> SmallVec<[TaskTemplate; 1]> {
+    ) -> (SmallVec<[TaskTemplate; 1]>, Option<WorktreeId>) {
         let Some(project) = self.project.as_ref() else {
             return Default::default();
         };
-        let inventory = project.read(cx).task_inventory().read(cx);
+        let (inventory, worktree_id) = project.read_with(cx, |project, cx| {
+            let worktree_id = project
+                .buffer_for_id(runnable.buffer)
+                .and_then(|buffer| buffer.read(cx).file())
+                .map(|file| WorktreeId::from_usize(file.worktree_id()));
 
-        SmallVec::from_iter(
-            tags.into_iter()
-                .flat_map(|(tag, language)| {
-                    let tag = tag.0.clone();
-                    inventory
-                        .list_tasks(Some(language), None, cx)
-                        .into_iter()
-                        .filter(move |(_, template)| {
-                            template.tags.iter().any(|source_tag| source_tag == &tag)
-                        })
-                })
-                .sorted_by_key(|(kind, _)| kind.to_owned())
-                .map(|(_, template)| template),
+            (project.task_inventory().clone(), worktree_id)
+        });
+
+        let inventory = inventory.read(cx);
+        let tags = mem::take(&mut runnable.tags);
+        (
+            SmallVec::from_iter(
+                tags.into_iter()
+                    .flat_map(|tag| {
+                        let tag = tag.0.clone();
+                        inventory
+                            .list_tasks(Some(runnable.language.clone()), worktree_id, cx)
+                            .into_iter()
+                            .filter(move |(_, template)| {
+                                template.tags.iter().any(|source_tag| source_tag == &tag)
+                            })
+                    })
+                    .sorted_by_key(|(kind, _)| kind.to_owned())
+                    .map(|(_, template)| template),
+            ),
+            worktree_id,
         )
     }
 
