@@ -912,7 +912,7 @@ mod tests {
         display_map::{BlockContext, TransformBlock},
         DisplayPoint, GutterDimensions,
     };
-    use gpui::{px, Stateful, TestAppContext, VisualTestContext, WindowContext};
+    use gpui::{px, AvailableSpace, Stateful, TestAppContext, VisualTestContext};
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
     use project::FakeFs;
     use serde_json::json;
@@ -1049,67 +1049,66 @@ mod tests {
                 cx,
             )
         });
+        let editor = view.update(cx, |view, _| view.editor.clone());
 
         view.next_notification(cx).await;
-        view.update(cx, |view, cx| {
-            assert_eq!(
-                editor_blocks(&view.editor, cx),
-                [
-                    (0, "path header block".into()),
-                    (2, "diagnostic header".into()),
-                    (15, "collapsed context".into()),
-                    (16, "diagnostic header".into()),
-                    (25, "collapsed context".into()),
-                ]
-            );
-            assert_eq!(
-                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
-                concat!(
-                    //
-                    // main.rs
-                    //
-                    "\n", // filename
-                    "\n", // padding
-                    // diagnostic group 1
-                    "\n", // primary message
-                    "\n", // padding
-                    "    let x = vec![];\n",
-                    "    let y = vec![];\n",
-                    "\n", // supporting diagnostic
-                    "    a(x);\n",
-                    "    b(y);\n",
-                    "\n", // supporting diagnostic
-                    "    // comment 1\n",
-                    "    // comment 2\n",
-                    "    c(y);\n",
-                    "\n", // supporting diagnostic
-                    "    d(x);\n",
-                    "\n", // context ellipsis
-                    // diagnostic group 2
-                    "\n", // primary message
-                    "\n", // padding
-                    "fn main() {\n",
-                    "    let x = vec![];\n",
-                    "\n", // supporting diagnostic
-                    "    let y = vec![];\n",
-                    "    a(x);\n",
-                    "\n", // supporting diagnostic
-                    "    b(y);\n",
-                    "\n", // context ellipsis
-                    "    c(y);\n",
-                    "    d(x);\n",
-                    "\n", // supporting diagnostic
-                    "}"
-                )
-            );
+        assert_eq!(
+            editor_blocks(&editor, cx),
+            [
+                (0, "path header block".into()),
+                (2, "diagnostic header".into()),
+                (15, "collapsed context".into()),
+                (16, "diagnostic header".into()),
+                (25, "collapsed context".into()),
+            ]
+        );
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.display_text(cx)),
+            concat!(
+                //
+                // main.rs
+                //
+                "\n", // filename
+                "\n", // padding
+                // diagnostic group 1
+                "\n", // primary message
+                "\n", // padding
+                "    let x = vec![];\n",
+                "    let y = vec![];\n",
+                "\n", // supporting diagnostic
+                "    a(x);\n",
+                "    b(y);\n",
+                "\n", // supporting diagnostic
+                "    // comment 1\n",
+                "    // comment 2\n",
+                "    c(y);\n",
+                "\n", // supporting diagnostic
+                "    d(x);\n",
+                "\n", // context ellipsis
+                // diagnostic group 2
+                "\n", // primary message
+                "\n", // padding
+                "fn main() {\n",
+                "    let x = vec![];\n",
+                "\n", // supporting diagnostic
+                "    let y = vec![];\n",
+                "    a(x);\n",
+                "\n", // supporting diagnostic
+                "    b(y);\n",
+                "\n", // context ellipsis
+                "    c(y);\n",
+                "    d(x);\n",
+                "\n", // supporting diagnostic
+                "}"
+            )
+        );
 
-            // Cursor is at the first diagnostic
-            view.editor.update(cx, |editor, cx| {
-                assert_eq!(
-                    editor.selections.display_ranges(cx),
-                    [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
-                );
-            });
+        // Cursor is at the first diagnostic
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
+            );
         });
 
         // Diagnostics are added for another earlier path.
@@ -1138,78 +1137,77 @@ mod tests {
         });
 
         view.next_notification(cx).await;
-        view.update(cx, |view, cx| {
-            assert_eq!(
-                editor_blocks(&view.editor, cx),
-                [
-                    (0, "path header block".into()),
-                    (2, "diagnostic header".into()),
-                    (7, "path header block".into()),
-                    (9, "diagnostic header".into()),
-                    (22, "collapsed context".into()),
-                    (23, "diagnostic header".into()),
-                    (32, "collapsed context".into()),
-                ]
-            );
-            assert_eq!(
-                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
-                concat!(
-                    //
-                    // consts.rs
-                    //
-                    "\n", // filename
-                    "\n", // padding
-                    // diagnostic group 1
-                    "\n", // primary message
-                    "\n", // padding
-                    "const a: i32 = 'a';\n",
-                    "\n", // supporting diagnostic
-                    "const b: i32 = c;\n",
-                    //
-                    // main.rs
-                    //
-                    "\n", // filename
-                    "\n", // padding
-                    // diagnostic group 1
-                    "\n", // primary message
-                    "\n", // padding
-                    "    let x = vec![];\n",
-                    "    let y = vec![];\n",
-                    "\n", // supporting diagnostic
-                    "    a(x);\n",
-                    "    b(y);\n",
-                    "\n", // supporting diagnostic
-                    "    // comment 1\n",
-                    "    // comment 2\n",
-                    "    c(y);\n",
-                    "\n", // supporting diagnostic
-                    "    d(x);\n",
-                    "\n", // collapsed context
-                    // diagnostic group 2
-                    "\n", // primary message
-                    "\n", // filename
-                    "fn main() {\n",
-                    "    let x = vec![];\n",
-                    "\n", // supporting diagnostic
-                    "    let y = vec![];\n",
-                    "    a(x);\n",
-                    "\n", // supporting diagnostic
-                    "    b(y);\n",
-                    "\n", // context ellipsis
-                    "    c(y);\n",
-                    "    d(x);\n",
-                    "\n", // supporting diagnostic
-                    "}"
-                )
-            );
+        assert_eq!(
+            editor_blocks(&editor, cx),
+            [
+                (0, "path header block".into()),
+                (2, "diagnostic header".into()),
+                (7, "path header block".into()),
+                (9, "diagnostic header".into()),
+                (22, "collapsed context".into()),
+                (23, "diagnostic header".into()),
+                (32, "collapsed context".into()),
+            ]
+        );
 
-            // Cursor keeps its position.
-            view.editor.update(cx, |editor, cx| {
-                assert_eq!(
-                    editor.selections.display_ranges(cx),
-                    [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
-                );
-            });
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.display_text(cx)),
+            concat!(
+                //
+                // consts.rs
+                //
+                "\n", // filename
+                "\n", // padding
+                // diagnostic group 1
+                "\n", // primary message
+                "\n", // padding
+                "const a: i32 = 'a';\n",
+                "\n", // supporting diagnostic
+                "const b: i32 = c;\n",
+                //
+                // main.rs
+                //
+                "\n", // filename
+                "\n", // padding
+                // diagnostic group 1
+                "\n", // primary message
+                "\n", // padding
+                "    let x = vec![];\n",
+                "    let y = vec![];\n",
+                "\n", // supporting diagnostic
+                "    a(x);\n",
+                "    b(y);\n",
+                "\n", // supporting diagnostic
+                "    // comment 1\n",
+                "    // comment 2\n",
+                "    c(y);\n",
+                "\n", // supporting diagnostic
+                "    d(x);\n",
+                "\n", // collapsed context
+                // diagnostic group 2
+                "\n", // primary message
+                "\n", // filename
+                "fn main() {\n",
+                "    let x = vec![];\n",
+                "\n", // supporting diagnostic
+                "    let y = vec![];\n",
+                "    a(x);\n",
+                "\n", // supporting diagnostic
+                "    b(y);\n",
+                "\n", // context ellipsis
+                "    c(y);\n",
+                "    d(x);\n",
+                "\n", // supporting diagnostic
+                "}"
+            )
+        );
+
+        // Cursor keeps its position.
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
+            );
         });
 
         // Diagnostics are added to the first path
@@ -1254,80 +1252,79 @@ mod tests {
         });
 
         view.next_notification(cx).await;
-        view.update(cx, |view, cx| {
-            assert_eq!(
-                editor_blocks(&view.editor, cx),
-                [
-                    (0, "path header block".into()),
-                    (2, "diagnostic header".into()),
-                    (7, "collapsed context".into()),
-                    (8, "diagnostic header".into()),
-                    (13, "path header block".into()),
-                    (15, "diagnostic header".into()),
-                    (28, "collapsed context".into()),
-                    (29, "diagnostic header".into()),
-                    (38, "collapsed context".into()),
-                ]
-            );
-            assert_eq!(
-                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
-                concat!(
-                    //
-                    // consts.rs
-                    //
-                    "\n", // filename
-                    "\n", // padding
-                    // diagnostic group 1
-                    "\n", // primary message
-                    "\n", // padding
-                    "const a: i32 = 'a';\n",
-                    "\n", // supporting diagnostic
-                    "const b: i32 = c;\n",
-                    "\n", // context ellipsis
-                    // diagnostic group 2
-                    "\n", // primary message
-                    "\n", // padding
-                    "const a: i32 = 'a';\n",
-                    "const b: i32 = c;\n",
-                    "\n", // supporting diagnostic
-                    //
-                    // main.rs
-                    //
-                    "\n", // filename
-                    "\n", // padding
-                    // diagnostic group 1
-                    "\n", // primary message
-                    "\n", // padding
-                    "    let x = vec![];\n",
-                    "    let y = vec![];\n",
-                    "\n", // supporting diagnostic
-                    "    a(x);\n",
-                    "    b(y);\n",
-                    "\n", // supporting diagnostic
-                    "    // comment 1\n",
-                    "    // comment 2\n",
-                    "    c(y);\n",
-                    "\n", // supporting diagnostic
-                    "    d(x);\n",
-                    "\n", // context ellipsis
-                    // diagnostic group 2
-                    "\n", // primary message
-                    "\n", // filename
-                    "fn main() {\n",
-                    "    let x = vec![];\n",
-                    "\n", // supporting diagnostic
-                    "    let y = vec![];\n",
-                    "    a(x);\n",
-                    "\n", // supporting diagnostic
-                    "    b(y);\n",
-                    "\n", // context ellipsis
-                    "    c(y);\n",
-                    "    d(x);\n",
-                    "\n", // supporting diagnostic
-                    "}"
-                )
-            );
-        });
+        assert_eq!(
+            editor_blocks(&editor, cx),
+            [
+                (0, "path header block".into()),
+                (2, "diagnostic header".into()),
+                (7, "collapsed context".into()),
+                (8, "diagnostic header".into()),
+                (13, "path header block".into()),
+                (15, "diagnostic header".into()),
+                (28, "collapsed context".into()),
+                (29, "diagnostic header".into()),
+                (38, "collapsed context".into()),
+            ]
+        );
+
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.display_text(cx)),
+            concat!(
+                //
+                // consts.rs
+                //
+                "\n", // filename
+                "\n", // padding
+                // diagnostic group 1
+                "\n", // primary message
+                "\n", // padding
+                "const a: i32 = 'a';\n",
+                "\n", // supporting diagnostic
+                "const b: i32 = c;\n",
+                "\n", // context ellipsis
+                // diagnostic group 2
+                "\n", // primary message
+                "\n", // padding
+                "const a: i32 = 'a';\n",
+                "const b: i32 = c;\n",
+                "\n", // supporting diagnostic
+                //
+                // main.rs
+                //
+                "\n", // filename
+                "\n", // padding
+                // diagnostic group 1
+                "\n", // primary message
+                "\n", // padding
+                "    let x = vec![];\n",
+                "    let y = vec![];\n",
+                "\n", // supporting diagnostic
+                "    a(x);\n",
+                "    b(y);\n",
+                "\n", // supporting diagnostic
+                "    // comment 1\n",
+                "    // comment 2\n",
+                "    c(y);\n",
+                "\n", // supporting diagnostic
+                "    d(x);\n",
+                "\n", // context ellipsis
+                // diagnostic group 2
+                "\n", // primary message
+                "\n", // filename
+                "fn main() {\n",
+                "    let x = vec![];\n",
+                "\n", // supporting diagnostic
+                "    let y = vec![];\n",
+                "    a(x);\n",
+                "\n", // supporting diagnostic
+                "    b(y);\n",
+                "\n", // context ellipsis
+                "    c(y);\n",
+                "    d(x);\n",
+                "\n", // supporting diagnostic
+                "}"
+            )
+        );
     }
 
     #[gpui::test]
@@ -1364,6 +1361,7 @@ mod tests {
                 cx,
             )
         });
+        let editor = view.update(cx, |view, _| view.editor.clone());
 
         // Two language servers start updating diagnostics
         project.update(cx, |project, cx| {
@@ -1397,27 +1395,25 @@ mod tests {
 
         // Only the first language server's diagnostics are shown.
         cx.executor().run_until_parked();
-        view.update(cx, |view, cx| {
-            assert_eq!(
-                editor_blocks(&view.editor, cx),
-                [
-                    (0, "path header block".into()),
-                    (2, "diagnostic header".into()),
-                ]
-            );
-            assert_eq!(
-                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
-                concat!(
-                    "\n", // filename
-                    "\n", // padding
-                    // diagnostic group 1
-                    "\n",     // primary message
-                    "\n",     // padding
-                    "a();\n", //
-                    "b();",
-                )
-            );
-        });
+        assert_eq!(
+            editor_blocks(&editor, cx),
+            [
+                (0, "path header block".into()),
+                (2, "diagnostic header".into()),
+            ]
+        );
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.display_text(cx)),
+            concat!(
+                "\n", // filename
+                "\n", // padding
+                // diagnostic group 1
+                "\n",     // primary message
+                "\n",     // padding
+                "a();\n", //
+                "b();",
+            )
+        );
 
         // The second language server finishes
         project.update(cx, |project, cx| {
@@ -1445,36 +1441,34 @@ mod tests {
 
         // Both language server's diagnostics are shown.
         cx.executor().run_until_parked();
-        view.update(cx, |view, cx| {
-            assert_eq!(
-                editor_blocks(&view.editor, cx),
-                [
-                    (0, "path header block".into()),
-                    (2, "diagnostic header".into()),
-                    (6, "collapsed context".into()),
-                    (7, "diagnostic header".into()),
-                ]
-            );
-            assert_eq!(
-                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
-                concat!(
-                    "\n", // filename
-                    "\n", // padding
-                    // diagnostic group 1
-                    "\n",     // primary message
-                    "\n",     // padding
-                    "a();\n", // location
-                    "b();\n", //
-                    "\n",     // collapsed context
-                    // diagnostic group 2
-                    "\n",     // primary message
-                    "\n",     // padding
-                    "a();\n", // context
-                    "b();\n", //
-                    "c();",   // context
-                )
-            );
-        });
+        assert_eq!(
+            editor_blocks(&editor, cx),
+            [
+                (0, "path header block".into()),
+                (2, "diagnostic header".into()),
+                (6, "collapsed context".into()),
+                (7, "diagnostic header".into()),
+            ]
+        );
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.display_text(cx)),
+            concat!(
+                "\n", // filename
+                "\n", // padding
+                // diagnostic group 1
+                "\n",     // primary message
+                "\n",     // padding
+                "a();\n", // location
+                "b();\n", //
+                "\n",     // collapsed context
+                // diagnostic group 2
+                "\n",     // primary message
+                "\n",     // padding
+                "a();\n", // context
+                "b();\n", //
+                "c();",   // context
+            )
+        );
 
         // Both language servers start updating diagnostics, and the first server finishes.
         project.update(cx, |project, cx| {
@@ -1513,37 +1507,35 @@ mod tests {
 
         // Only the first language server's diagnostics are updated.
         cx.executor().run_until_parked();
-        view.update(cx, |view, cx| {
-            assert_eq!(
-                editor_blocks(&view.editor, cx),
-                [
-                    (0, "path header block".into()),
-                    (2, "diagnostic header".into()),
-                    (7, "collapsed context".into()),
-                    (8, "diagnostic header".into()),
-                ]
-            );
-            assert_eq!(
-                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
-                concat!(
-                    "\n", // filename
-                    "\n", // padding
-                    // diagnostic group 1
-                    "\n",     // primary message
-                    "\n",     // padding
-                    "a();\n", // location
-                    "b();\n", //
-                    "c();\n", // context
-                    "\n",     // collapsed context
-                    // diagnostic group 2
-                    "\n",     // primary message
-                    "\n",     // padding
-                    "b();\n", // context
-                    "c();\n", //
-                    "d();",   // context
-                )
-            );
-        });
+        assert_eq!(
+            editor_blocks(&editor, cx),
+            [
+                (0, "path header block".into()),
+                (2, "diagnostic header".into()),
+                (7, "collapsed context".into()),
+                (8, "diagnostic header".into()),
+            ]
+        );
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.display_text(cx)),
+            concat!(
+                "\n", // filename
+                "\n", // padding
+                // diagnostic group 1
+                "\n",     // primary message
+                "\n",     // padding
+                "a();\n", // location
+                "b();\n", //
+                "c();\n", // context
+                "\n",     // collapsed context
+                // diagnostic group 2
+                "\n",     // primary message
+                "\n",     // padding
+                "b();\n", // context
+                "c();\n", //
+                "d();",   // context
+            )
+        );
 
         // The second language server finishes.
         project.update(cx, |project, cx| {
@@ -1571,37 +1563,35 @@ mod tests {
 
         // Both language servers' diagnostics are updated.
         cx.executor().run_until_parked();
-        view.update(cx, |view, cx| {
-            assert_eq!(
-                editor_blocks(&view.editor, cx),
-                [
-                    (0, "path header block".into()),
-                    (2, "diagnostic header".into()),
-                    (7, "collapsed context".into()),
-                    (8, "diagnostic header".into()),
-                ]
-            );
-            assert_eq!(
-                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
-                concat!(
-                    "\n", // filename
-                    "\n", // padding
-                    // diagnostic group 1
-                    "\n",     // primary message
-                    "\n",     // padding
-                    "b();\n", // location
-                    "c();\n", //
-                    "d();\n", // context
-                    "\n",     // collapsed context
-                    // diagnostic group 2
-                    "\n",     // primary message
-                    "\n",     // padding
-                    "c();\n", // context
-                    "d();\n", //
-                    "e();",   // context
-                )
-            );
-        });
+        assert_eq!(
+            editor_blocks(&editor, cx),
+            [
+                (0, "path header block".into()),
+                (2, "diagnostic header".into()),
+                (7, "collapsed context".into()),
+                (8, "diagnostic header".into()),
+            ]
+        );
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.display_text(cx)),
+            concat!(
+                "\n", // filename
+                "\n", // padding
+                // diagnostic group 1
+                "\n",     // primary message
+                "\n",     // padding
+                "b();\n", // location
+                "c();\n", //
+                "d();\n", // context
+                "\n",     // collapsed context
+                // diagnostic group 2
+                "\n",     // primary message
+                "\n",     // padding
+                "c();\n", // context
+                "d();\n", //
+                "e();",   // context
+            )
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1618,45 +1608,58 @@ mod tests {
         });
     }
 
-    fn editor_blocks(editor: &View<Editor>, cx: &mut WindowContext) -> Vec<(u32, SharedString)> {
-        editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            snapshot
-                .blocks_in_range(0..snapshot.max_point().row())
-                .enumerate()
-                .filter_map(|(ix, (row, block))| {
-                    let name: SharedString = match block {
-                        TransformBlock::Custom(block) => cx.with_element_context({
-                            |cx| -> Option<SharedString> {
-                                let mut element = block.render(&mut BlockContext {
-                                    context: cx,
-                                    anchor_x: px(0.),
-                                    gutter_dimensions: &GutterDimensions::default(),
-                                    line_height: px(0.),
-                                    em_width: px(0.),
-                                    max_width: px(0.),
-                                    block_id: ix,
-                                    editor_style: &editor::EditorStyle::default(),
-                                });
-                                let element = element.downcast_mut::<Stateful<Div>>().unwrap();
-                                element.interactivity().element_id.clone()?.try_into().ok()
-                            }
-                        })?,
+    fn editor_blocks(
+        editor: &View<Editor>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<(u32, SharedString)> {
+        let mut blocks = Vec::new();
+        cx.draw(gpui::Point::default(), AvailableSpace::min_size(), |cx| {
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                blocks.extend(
+                    snapshot
+                        .blocks_in_range(0..snapshot.max_point().row())
+                        .enumerate()
+                        .filter_map(|(ix, (row, block))| {
+                            let name: SharedString = match block {
+                                TransformBlock::Custom(block) => {
+                                    let mut element = block.render(&mut BlockContext {
+                                        context: cx,
+                                        anchor_x: px(0.),
+                                        gutter_dimensions: &GutterDimensions::default(),
+                                        line_height: px(0.),
+                                        em_width: px(0.),
+                                        max_width: px(0.),
+                                        block_id: ix,
+                                        editor_style: &editor::EditorStyle::default(),
+                                    });
+                                    let element = element.downcast_mut::<Stateful<Div>>().unwrap();
+                                    element
+                                        .interactivity()
+                                        .element_id
+                                        .clone()?
+                                        .try_into()
+                                        .ok()?
+                                }
 
-                        TransformBlock::ExcerptHeader {
-                            starts_new_buffer, ..
-                        } => {
-                            if *starts_new_buffer {
-                                "path header block".into()
-                            } else {
-                                "collapsed context".into()
-                            }
-                        }
-                    };
+                                TransformBlock::ExcerptHeader {
+                                    starts_new_buffer, ..
+                                } => {
+                                    if *starts_new_buffer {
+                                        "path header block".into()
+                                    } else {
+                                        "collapsed context".into()
+                                    }
+                                }
+                            };
 
-                    Some((row, name))
-                })
-                .collect()
-        })
+                            Some((row, name))
+                        }),
+                )
+            });
+
+            div().into_any()
+        });
+        blocks
     }
 }

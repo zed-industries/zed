@@ -78,9 +78,9 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, h_flex, Context as _, Div, Element, ElementContext, FluentBuilder,
-    InteractiveElement as _, IntoElement, Label, ParentElement as _, Pixels, SharedString,
-    Styled as _, ViewContext, VisualContext as _, WindowContext,
+    div, h_flex, Context as _, Div, Element, FluentBuilder, InteractiveElement as _, IntoElement,
+    Label, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
+    WindowContext,
 };
 use util::{maybe, ResultExt};
 use uuid::Uuid;
@@ -4991,7 +4991,7 @@ impl Element for DisconnectedOverlay {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()
@@ -5016,7 +5016,7 @@ impl Element for DisconnectedOverlay {
         &mut self,
         bounds: Bounds<Pixels>,
         overlay: &mut Self::RequestLayoutState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         cx.insert_hitbox(bounds, true);
         overlay.prepaint(cx);
@@ -5027,7 +5027,7 @@ impl Element for DisconnectedOverlay {
         _: Bounds<Pixels>,
         overlay: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         overlay.paint(cx)
     }

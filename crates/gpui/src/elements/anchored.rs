@@ -2,8 +2,8 @@ use smallvec::SmallVec;
 use taffy::style::{Display, Position};
 
 use crate::{
-    point, AnyElement, Bounds, Element, ElementContext, IntoElement, LayoutId, ParentElement,
-    Pixels, Point, Size, Style,
+    point, AnyElement, Bounds, Element, IntoElement, LayoutId, ParentElement, Pixels, Point, Size,
+    Style, WindowContext,
 };
 
 /// The state that the anchored element element uses to track its children.
@@ -74,7 +74,7 @@ impl Element for Anchored {
 
     fn request_layout(
         &mut self,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let child_layout_ids = self
             .children
@@ -97,7 +97,7 @@ impl Element for Anchored {
         &mut self,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         if request_layout.child_layout_ids.is_empty() {
             return;
@@ -180,7 +180,7 @@ impl Element for Anchored {
         _bounds: crate::Bounds<crate::Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         for child in &mut self.children {
             child.paint(cx);

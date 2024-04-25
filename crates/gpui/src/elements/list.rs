@@ -8,8 +8,8 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, ElementContext, FocusHandle, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent,
-    Size, Style, StyleRefinement, Styled, WindowContext,
+    Element, FocusHandle, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
+    StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -434,7 +434,7 @@ impl StateInner {
         available_width: Option<Pixels>,
         available_height: Pixels,
         padding: &Edges<Pixels>,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> LayoutItemsResponse {
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
@@ -609,7 +609,7 @@ impl StateInner {
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
         autoscroll: bool,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Result<LayoutItemsResponse, ListOffset> {
         cx.transact(|cx| {
             let mut layout_response =
@@ -706,7 +706,7 @@ impl Element for List {
 
     fn request_layout(
         &mut self,
-        cx: &mut crate::ElementContext,
+        cx: &mut crate::WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
@@ -772,7 +772,7 @@ impl Element for List {
         &mut self,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> ListPrepaintState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
@@ -815,7 +815,7 @@ impl Element for List {
         bounds: Bounds<crate::Pixels>,
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        cx: &mut crate::ElementContext,
+        cx: &mut crate::WindowContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             for item in &mut prepaint.layout.item_layouts {
@@ -951,11 +951,9 @@ mod test {
         });
 
         // Paint
-        cx.draw(
-            point(px(0.), px(0.)),
-            size(px(100.), px(20.)).into(),
-            |_| list(state.clone()).w_full().h_full().into_any(),
-        );
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_| {
+            list(state.clone()).w_full().h_full()
+        });
 
         // Reset
         state.reset(5);
