@@ -1,10 +1,11 @@
 use crate::{
     Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    AvailableSpace, BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, Empty,
-    Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
-    TextSystem, View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
+    AvailableSpace, BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context,
+    DrawPhase, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
+    Model, ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task,
+    TestDispatcher, TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -732,10 +733,15 @@ impl VisualTestContext {
         f: impl FnOnce(&mut WindowContext) -> AnyElement,
     ) {
         self.update(|cx| {
+            cx.window.draw_phase = DrawPhase::Prepaint;
             let mut element = f(cx);
             element.layout_as_root(space, cx);
             cx.with_absolute_element_offset(origin, |cx| element.prepaint(cx));
+
+            cx.window.draw_phase = DrawPhase::Paint;
             element.paint(cx);
+
+            cx.window.draw_phase = DrawPhase::None;
             cx.refresh();
         })
     }
