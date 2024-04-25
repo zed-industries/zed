@@ -2548,11 +2548,9 @@ impl<'a> WindowContext<'a> {
     ///
     /// This method should only be called as part of element drawing.
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
-        debug_assert!(
-            matches!(
-                self.window.draw_phase,
-                DrawPhase::Prepaint | DrawPhase::Paint
-            ),
+        debug_assert_eq!(
+            self.window.draw_phase,
+            DrawPhase::Prepaint,
             "this method can only be called during request_layout, prepaint, or paint"
         );
 
