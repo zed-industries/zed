@@ -14,6 +14,7 @@ use futures::{
     future::Shared,
     Future, FutureExt as _,
 };
+use glob::Pattern;
 use gpui::{AppContext, BackgroundExecutor, Task};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
@@ -485,7 +486,16 @@ impl LanguageRegistry {
                 .and_then(|types| types.get(language_name))
                 .unwrap_or(&empty)
                 .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+                .any(|suffix| {
+                    path_suffixes.iter().any(|path_suffix| {
+                        if let Some(suffix_str) = path_suffix {
+                            Pattern::new(suffix)
+                                .map_or(false, |pattern| pattern.matches(suffix_str))
+                        } else {
+                            false
+                        }
+                    })
+                });
             let content_matches = content.zip(config.first_line_pattern.as_ref()).map_or(
                 false,
                 |(content, pattern)| {
