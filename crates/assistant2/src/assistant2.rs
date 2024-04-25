@@ -34,8 +34,6 @@ pub use assistant_settings::AssistantSettings;
 
 const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
 
-// gpui::actions!(assistant, [Submit]);
-
 #[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
 pub struct Submit(SubmitMode);
 
@@ -50,7 +48,7 @@ pub enum SubmitMode {
     Codebase,
 }
 
-gpui::actions!(assistant2, [ToggleFocus]);
+gpui::actions!(assistant2, [Cancel, ToggleFocus]);
 gpui::impl_actions!(assistant2, [Submit]);
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
@@ -256,6 +254,21 @@ impl AssistantChat {
         })
     }
 
+    fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        if self.pending_completion.take().is_none() {
+            cx.propagate();
+            return;
+        }
+
+        if let Some(ChatMessage::Assistant(message)) = self.messages.last() {
+            if message.body.text.is_empty() {
+                self.pop_message(cx);
+            } else {
+                self.push_new_user_message(false, cx);
+            }
+        }
+    }
+
     fn submit(&mut self, Submit(mode): &Submit, cx: &mut ViewContext<Self>) {
         let Some(focused_message_id) = self.focused_message_id(cx) else {
             log::error!("unexpected state: no user message editor is focused.");
@@ -282,6 +295,7 @@ impl AssistantChat {
                     .focus_handle(cx)
                     .contains_focused(cx);
                 this.push_new_user_message(focus, cx);
+                this.pending_completion = None;
             })
             .context("Failed to push new user message")
             .log_err();
@@ -450,6 +464,17 @@ impl AssistantChat {
         self.messages.push(message);
         self.list_state
             .splice_focusable(old_len..old_len, focus_handle);
+        cx.notify();
+    }
+
+    fn pop_message(&mut self, cx: &mut ViewContext<Self>) {
+        if self.messages.is_empty() {
+            return;
+        }
+
+        self.messages.pop();
+        self.list_state
+            .splice(self.messages.len()..self.messages.len() + 1, 0);
         cx.notify();
     }
 
@@ -677,6 +702,7 @@ impl Render for AssistantChat {
             .flex_1()
             .v_flex()
             .key_context("AssistantChat")
+            .on_action(cx.listener(Self::cancel))
             .text_color(Color::Default.color(cx))
             .child(self.render_model_dropdown(cx))
             .child(list(self.list_state.clone()).flex_1())
