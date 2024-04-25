@@ -319,11 +319,12 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn do_confirm(&mut self, secondary: bool, cx: &mut ViewContext<Self>) {
-        if let Some(update_uery) = self.delegate.confirm_update_query(cx) {
-            self.set_query(update_uery, cx);
+        if let Some(update_query) = self.delegate.confirm_update_query(cx) {
+            self.set_query(update_query, cx);
             self.delegate.set_selected_index(0, cx);
+        } else {
+            self.delegate.confirm(secondary, cx)
         }
-        self.delegate.confirm(secondary, cx)
     }
 
     fn on_input_editor_event(

@@ -1,23 +1,23 @@
 use futures::channel::oneshot;
 use fuzzy::PathMatch;
-use gpui::Model;
+use gpui::{HighlightStyle, Model, StyledText};
 use picker::{Picker, PickerDelegate};
 use project::{Entry, PathMatchCandidateSet, Project, WorktreeId};
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{self, AtomicBool},
         Arc,
     },
 };
-use ui::{prelude::*, HighlightedLabel};
+use ui::{highlight_ranges, prelude::*};
 use ui::{ListItem, ViewContext};
 use util::ResultExt;
 use workspace::Workspace;
 
 pub(crate) struct NewPathPrompt;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Match {
     path_match: Option<PathMatch>,
     suffix: Option<String>,
@@ -44,6 +44,141 @@ impl Match {
             None
         }
     }
+
+    fn is_dir(&self, project: &Project, cx: &WindowContext) -> bool {
+        self.entry(project, cx).is_some_and(|e| e.is_dir())
+            || self.suffix.as_ref().is_some_and(|s| s.ends_with('/'))
+    }
+
+    fn relative_path(&self) -> String {
+        if let Some(path_match) = &self.path_match {
+            if let Some(suffix) = &self.suffix {
+                format!(
+                    "{}/{}",
+                    path_match.path.to_string_lossy(),
+                    suffix.trim_end_matches('/')
+                )
+            } else {
+                path_match.path.to_string_lossy().to_string()
+            }
+        } else if let Some(suffix) = &self.suffix {
+            suffix.trim_end_matches('/').to_string()
+        } else {
+            "".to_string()
+        }
+    }
+
+    fn absolute_path(&self, project: &Project, cx: &WindowContext) -> Option<PathBuf> {
+        let worktree = if let Some(path_match) = &self.path_match {
+            project.worktree_for_id(WorktreeId::from_usize(path_match.worktree_id), cx)?
+        } else {
+            project.worktrees().next()?
+        };
+
+        Some(worktree.read(cx).abs_path().join(self.relative_path()))
+    }
+
+    fn existing_prefix(&self, project: &Project, cx: &WindowContext) -> Option<PathBuf> {
+        let worktree = project.worktrees().next()?.read(cx);
+        let mut prefix = PathBuf::new();
+        let parts = self.suffix.as_ref()?.split('/');
+        for part in parts {
+            if worktree.entry_for_path(prefix.join(&part)).is_none() {
+                return Some(prefix);
+            }
+            prefix = prefix.join(part);
+        }
+
+        None
+    }
+
+    fn styled_text(&self, project: &Project, cx: &WindowContext) -> StyledText {
+        let mut text = "./".to_string();
+        let mut highlights = Vec::new();
+        let mut offset = text.as_bytes().len();
+
+        let separator = '/';
+        let dir_indicator = "[…]";
+
+        if let Some(path_match) = &self.path_match {
+            text.push_str(&path_match.path.to_string_lossy());
+            for (range, style) in highlight_ranges(
+                &path_match.path.to_string_lossy(),
+                &path_match.positions,
+                gpui::HighlightStyle::color(Color::Accent.color(cx)),
+            ) {
+                highlights.push((range.start + offset..range.end + offset, style))
+            }
+            text.push(separator);
+            offset = text.as_bytes().len();
+
+            if let Some(suffix) = &self.suffix {
+                text.push_str(suffix);
+                let entry = self.entry(project, cx);
+                let color = if let Some(entry) = entry {
+                    if entry.is_dir() {
+                        Color::Accent
+                    } else {
+                        Color::Conflict
+                    }
+                } else {
+                    Color::Created
+                };
+                highlights.push((
+                    offset..offset + suffix.as_bytes().len(),
+                    HighlightStyle::color(color.color(cx)),
+                ));
+                offset += suffix.as_bytes().len();
+                if entry.is_some_and(|e| e.is_dir()) {
+                    text.push(separator);
+                    offset += separator.len_utf8();
+
+                    text.push_str(dir_indicator);
+                    highlights.push((
+                        offset..offset + dir_indicator.bytes().len(),
+                        HighlightStyle::color(Color::Muted.color(cx)),
+                    ));
+                }
+            } else {
+                text.push_str(dir_indicator);
+                highlights.push((
+                    offset..offset + dir_indicator.bytes().len(),
+                    HighlightStyle::color(Color::Muted.color(cx)),
+                ))
+            }
+        } else if let Some(suffix) = &self.suffix {
+            text.push_str(suffix);
+            let existing_prefix_len = self
+                .existing_prefix(project, cx)
+                .map(|prefix| prefix.to_string_lossy().as_bytes().len())
+                .unwrap_or(0);
+
+            if existing_prefix_len > 0 {
+                highlights.push((
+                    offset..offset + existing_prefix_len,
+                    HighlightStyle::color(Color::Accent.color(cx)),
+                ));
+            }
+            highlights.push((
+                offset + existing_prefix_len..offset + suffix.as_bytes().len(),
+                HighlightStyle::color(if self.entry(project, cx).is_some() {
+                    Color::Conflict.color(cx)
+                } else {
+                    Color::Created.color(cx)
+                }),
+            ));
+            offset += suffix.as_bytes().len();
+            if suffix.ends_with('/') {
+                text.push_str(dir_indicator);
+                highlights.push((
+                    offset..offset + dir_indicator.bytes().len(),
+                    HighlightStyle::color(Color::Muted.color(cx)),
+                ));
+            }
+        }
+
+        StyledText::new(text).with_highlights(&cx.text_style().clone(), highlights)
+    }
 }
 
 pub struct NewPathDelegate {
@@ -51,11 +186,12 @@ pub struct NewPathDelegate {
     tx: Option<oneshot::Sender<Option<PathBuf>>>,
     selected_index: usize,
     matches: Vec<Match>,
+    last_selected_dir: Option<String>,
     cancel_flag: Arc<AtomicBool>,
 }
 
 impl NewPathPrompt {
-    pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.set_prompt_for_new_path(Box::new(|workspace, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
             Self::prompt_for_new_path(workspace, tx, cx);
@@ -76,6 +212,7 @@ impl NewPathPrompt {
                 selected_index: 0,
                 matches: vec![],
                 cancel_flag: Arc::new(AtomicBool::new(false)),
+                last_selected_dir: None,
             };
 
             Picker::uniform_list(delegate, cx).width(rems(34.))
@@ -169,16 +306,14 @@ impl PickerDelegate for NewPathDelegate {
     }
 
     fn confirm_update_query(&mut self, cx: &mut ViewContext<Picker<Self>>) -> Option<String> {
-        self.matches.get(self.selected_index).and_then(|m| {
-            if m.suffix.is_none() && m.path_match.is_some() {
-                Some(format!(
-                    "{}/",
-                    m.path_match.as_ref().unwrap().path.to_string_lossy()
-                ))
-            } else {
-                None
-            }
-        })
+        let m = self.matches.get(self.selected_index)?;
+        if m.is_dir(self.project.read(cx), cx) {
+            let path = m.relative_path();
+            self.last_selected_dir = Some(path.clone());
+            Some(format!("{}/", path))
+        } else {
+            None
+        }
     }
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
@@ -186,36 +321,43 @@ impl PickerDelegate for NewPathDelegate {
             return;
         };
 
-        let Some(suffix) = &m.suffix else { return };
-
-        let abs_path = if let Some(path_match) = &m.path_match {
-            let Some(worktree) = self
-                .project
-                .read(cx)
-                .worktree_for_id(WorktreeId::from_usize(path_match.worktree_id), cx)
-            else {
-                cx.emit(gpui::DismissEvent);
-                return;
-            };
-
-            worktree
-                .read(cx)
-                .abs_path()
-                .join(path_match.path.as_ref())
-                .join(suffix)
-        } else {
-            let Some(worktree) = self.project.read(cx).worktrees().next() else {
-                cx.emit(gpui::DismissEvent);
-                return;
-            };
-
-            worktree.read(cx).abs_path().join(suffix)
-        };
-
-        if let Some(tx) = self.tx.take() {
-            tx.send(Some(abs_path)).ok();
+        let exists = m.entry(self.project.read(cx), cx).is_some();
+        if exists {
+            let answer = cx.prompt(
+                gpui::PromptLevel::Warning,
+                "File already exists.",
+                Some(&format!(
+                    "{} already exists. Do you want to overwrite it?",
+                    m.relative_path()
+                )),
+                &["Cancel", "Overwrite"],
+            );
+            let m = m.clone();
+            cx.spawn(|picker, mut cx| async move {
+                if answer.await.ok() != Some(1) {
+                    return;
+                }
+                picker
+                    .update(&mut cx, |picker, cx| {
+                        if let Some(path) = m.absolute_path(picker.delegate.project.read(cx), cx) {
+                            if let Some(tx) = picker.delegate.tx.take() {
+                                tx.send(Some(path)).ok();
+                            }
+                        }
+                        cx.emit(gpui::DismissEvent);
+                    })
+                    .ok();
+            })
+            .detach();
+            return;
         }
-        cx.emit(gpui::DismissEvent)
+
+        if let Some(path) = m.absolute_path(self.project.read(cx), cx) {
+            if let Some(tx) = self.tx.take() {
+                tx.send(Some(path)).ok();
+            }
+        }
+        cx.emit(gpui::DismissEvent);
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<picker::Picker<Self>>) {
@@ -225,13 +367,6 @@ impl PickerDelegate for NewPathDelegate {
         cx.emit(gpui::DismissEvent)
     }
 
-    /// Cases to consider for each match:
-    /// - if there's no path_match, then we are in the "root" directory
-    /// - if there's a path_match, then we are in that directory.
-    /// - if there's no suffix, then we only prompt to select the directory
-    /// - if there's a suffix, and a directory exists with that name, we prompt to select it
-    /// - if there's a suffix, and a file exists, we show it as a conflict.
-    /// - otherwise, we prompt you to create the file called "suffix" in the directory.
     fn render_match(
         &self,
         ix: usize,
@@ -240,53 +375,10 @@ impl PickerDelegate for NewPathDelegate {
     ) -> Option<Self::ListItem> {
         let m = self.matches.get(ix)?;
 
-        let mut suffix = m.suffix.as_ref();
-        let entry = m.entry(self.project.read(cx), cx);
-        let match_label = m.path_match.as_ref().map(|path_match| {
-            HighlightedLabel::new(
-                path_match.path.to_string_lossy().to_string(),
-                path_match.positions.clone(),
-            )
-        });
-        let suffix_dir_label = if let Some(entry) = entry {
-            if entry.is_dir() {
-                suffix
-                    .take()
-                    .map(|suffix| Label::new(suffix.to_string()).color(Color::Accent))
-            } else {
-                None
-            }
-        } else if suffix.is_some_and(|s| s.ends_with("/")) {
-            // TODO: in the case that you are creating a new directory, we should highlight the existing part of the path in white.
-            suffix.take().map(|suffix| {
-                Label::new(suffix.trim_end_matches('/').to_string()).color(Color::Created)
-            })
-        } else {
-            None
-        };
-
-        // TODO: used StyledText for this so the kerning doesn't change as you type
         Some(
-            ListItem::new(ix).selected(selected).child(
-                h_flex()
-                    .child(".")
-                    .when_some(match_label, |el, match_label| {
-                        el.child(Label::new("/")).child(match_label)
-                    })
-                    .when_some(suffix_dir_label, |el, suffix_dir_label| {
-                        el.child(Label::new("/")).child(suffix_dir_label)
-                    })
-                    .child(Label::new("/"))
-                    .child(if let Some(suffix) = suffix {
-                        Label::new(suffix.clone()).color(if entry.is_some() {
-                            Color::Conflict
-                        } else {
-                            Color::Created
-                        })
-                    } else {
-                        Label::new("[…]").color(Color::Muted)
-                    }),
-            ),
+            ListItem::new(ix)
+                .selected(selected)
+                .child(m.styled_text(self.project.read(cx), cx)),
         )
     }
 
@@ -326,7 +418,12 @@ impl NewPathDelegate {
             .collect();
 
         if !directory_exists {
-            if suffix.is_none() {
+            if suffix.is_none()
+                || self
+                    .last_selected_dir
+                    .as_ref()
+                    .is_some_and(|d| query.starts_with(d))
+            {
                 self.matches.insert(
                     0,
                     Match {
