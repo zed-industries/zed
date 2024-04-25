@@ -73,7 +73,7 @@ pub fn highlight_ranges(
             break;
         }
 
-        highlights.push((start_ix..end_ix, style.clone()));
+        highlights.push((start_ix..end_ix, style));
     }
 
     highlights
@@ -92,7 +92,7 @@ impl RenderOnce for HighlightedLabel {
             },
         );
 
-        let mut text_style = cx.text_style().clone();
+        let mut text_style = cx.text_style();
         text_style.color = self.base.color.color(cx);
 
         self.base
