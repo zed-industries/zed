@@ -306,7 +306,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 .selected(selected)
                 .child(
                     div()
-                        .text_ui()
+                        .text_ui(cx)
                         .pl(rems(outline_item.depth as f32))
                         .child(styled_text),
                 ),
