@@ -61,13 +61,13 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
-    div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
-    AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds,
-    ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView,
-    FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model,
-    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle,
-    Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle,
-    View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+    div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
+    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
+    Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton, PaintQuad,
+    ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText,
+    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1550,7 +1550,7 @@ impl Editor {
     }
 
     fn key_context(&self, cx: &AppContext) -> KeyContext {
-        let mut key_context = KeyContext::default();
+        let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
             EditorMode::SingleLine => "single_line",
@@ -8885,7 +8885,6 @@ impl Editor {
         self.style = Some(style);
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn style(&self) -> Option<&EditorStyle> {
         self.style.as_ref()
     }
@@ -8982,6 +8981,10 @@ impl Editor {
             let Some(buffer) = self.buffer().read(cx).as_singleton() else {
                 return;
             };
+
+            if buffer.read(cx).file().is_none() {
+                return;
+            }
 
             let project = project.clone();
             let blame = cx.new_model(|cx| GitBlame::new(buffer, project, user_triggered, cx));
@@ -10322,6 +10325,7 @@ impl FocusableView for Editor {
 impl Render for Editor {
     fn render<'a>(&mut self, cx: &mut ViewContext<'a, Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
+
         let text_style = match self.mode {
             EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
@@ -10336,7 +10340,6 @@ impl Render for Editor {
                 strikethrough: None,
                 white_space: WhiteSpace::Normal,
             },
-
             EditorMode::Full => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
@@ -10801,7 +10804,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
 
         let icon_size = buttons(&diagnostic, cx.block_id)
             .into_any_element()
-            .measure(AvailableSpace::min_size(), cx);
+            .layout_as_root(AvailableSpace::min_size(), cx);
 
         h_flex()
             .id(cx.block_id)

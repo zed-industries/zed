@@ -15,7 +15,8 @@ pub mod search_history;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use client::{
-    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
+    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, RemoteProjectId,
+    TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
 use collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque};
@@ -207,6 +208,7 @@ pub struct Project {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
+    remote_project_id: Option<client::RemoteProjectId>,
     search_history: SearchHistory,
 }
 
@@ -268,6 +270,7 @@ enum ProjectClientState {
         capability: Capability,
         remote_id: u64,
         replica_id: ReplicaId,
+        in_room: bool,
     },
 }
 
@@ -723,6 +726,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
+                remote_project_id: None,
                 search_history: Self::new_search_history(),
             }
         })
@@ -836,6 +840,7 @@ impl Project {
                     capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
+                    in_room: response.payload.remote_project_id.is_none(),
                 },
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
@@ -877,6 +882,10 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
+                remote_project_id: response
+                    .payload
+                    .remote_project_id
+                    .map(|remote_project_id| RemoteProjectId(remote_project_id)),
                 search_history: Self::new_search_history(),
             };
             this.set_role(role, cx);
@@ -1235,6 +1244,10 @@ impl Project {
         self.hosted_project_id
     }
 
+    pub fn remote_project_id(&self) -> Option<RemoteProjectId> {
+        self.remote_project_id
+    }
+
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
             ProjectClientState::Remote { replica_id, .. } => replica_id,
@@ -1552,7 +1565,16 @@ impl Project {
 
     pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
         if !matches!(self.client_state, ProjectClientState::Local) {
-            return Err(anyhow!("project was already shared"));
+            if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
+                if *in_room || self.remote_project_id.is_none() {
+                    return Err(anyhow!("project was already shared"));
+                } else {
+                    *in_room = true;
+                    return Ok(());
+                }
+            } else {
+                return Err(anyhow!("project was already shared"));
+            }
         }
         self.client_subscriptions.push(
             self.client
@@ -1763,7 +1785,14 @@ impl Project {
 
     fn unshare_internal(&mut self, cx: &mut AppContext) -> Result<()> {
         if self.is_remote() {
-            return Err(anyhow!("attempted to unshare a remote project"));
+            if self.remote_project_id().is_some() {
+                if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
+                    *in_room = false
+                }
+                return Ok(());
+            } else {
+                return Err(anyhow!("attempted to unshare a remote project"));
+            }
         }
 
         if let ProjectClientState::Shared { remote_id, .. } = self.client_state {
@@ -3031,7 +3060,29 @@ impl Project {
             return;
         }
 
-        for adapter in self.languages.clone().lsp_adapters(&language) {
+        let available_lsp_adapters = self.languages.clone().lsp_adapters(&language);
+        let available_language_servers = available_lsp_adapters
+            .iter()
+            .map(|lsp_adapter| lsp_adapter.name.clone())
+            .collect::<Vec<_>>();
+
+        let enabled_language_servers =
+            settings.customized_language_servers(&available_language_servers);
+        let enabled_lsp_adapters = available_lsp_adapters
+            .into_iter()
+            .filter(|adapter| enabled_language_servers.contains(&adapter.name))
+            .collect::<Vec<_>>();
+
+        log::info!(
+            "starting language servers for {language}: {adapters}",
+            language = language.name(),
+            adapters = enabled_lsp_adapters
+                .iter()
+                .map(|adapter| adapter.name.0.as_ref())
+                .join(", ")
+        );
+
+        for adapter in enabled_lsp_adapters {
             self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
         }
     }
@@ -4625,12 +4676,21 @@ impl Project {
 
         let mut project_transaction = ProjectTransaction::default();
         for (buffer, buffer_abs_path) in &buffers_with_paths {
-            let adapters_and_servers: Vec<_> = project.update(&mut cx, |project, cx| {
-                project
-                    .language_servers_for_buffer(&buffer.read(cx), cx)
-                    .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
-                    .collect()
-            })?;
+            let (primary_adapter_and_server, adapters_and_servers) =
+                project.update(&mut cx, |project, cx| {
+                    let buffer = buffer.read(cx);
+
+                    let adapters_and_servers = project
+                        .language_servers_for_buffer(buffer, cx)
+                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
+                        .collect::<Vec<_>>();
+
+                    let primary_adapter = project
+                        .primary_language_server_for_buffer(buffer, cx)
+                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()));
+
+                    (primary_adapter, adapters_and_servers)
+                })?;
 
             let settings = buffer.update(&mut cx, |buffer, cx| {
                 language_settings(buffer.language(), buffer.file(), cx).clone()
@@ -4683,10 +4743,8 @@ impl Project {
             // Apply language-specific formatting using either the primary language server
             // or external command.
             // Except for code actions, which are applied with all connected language servers.
-            let primary_language_server = adapters_and_servers
-                .first()
-                .cloned()
-                .map(|(_, lsp)| lsp.clone());
+            let primary_language_server =
+                primary_adapter_and_server.map(|(_adapter, server)| server.clone());
             let server_and_buffer = primary_language_server
                 .as_ref()
                 .zip(buffer_abs_path.as_ref());
@@ -6959,7 +7017,8 @@ impl Project {
     pub fn is_shared(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Shared { .. } => true,
-            ProjectClientState::Local | ProjectClientState::Remote { .. } => false,
+            ProjectClientState::Local => false,
+            ProjectClientState::Remote { in_room, .. } => *in_room,
         }
     }
 

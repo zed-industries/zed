@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, ElementContext, Pixels};
+use gpui::{AnyElement, Pixels, WindowContext};
 use language::{BufferSnapshot, Chunk, Patch, Point};
 use multi_buffer::{Anchor, ExcerptId, ExcerptRange, ToPoint as _};
 use parking_lot::Mutex;
@@ -82,7 +82,7 @@ pub enum BlockStyle {
 }
 
 pub struct BlockContext<'a, 'b> {
-    pub context: &'b mut ElementContext<'a>,
+    pub context: &'b mut WindowContext<'a>,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
     pub gutter_dimensions: &'b GutterDimensions,
@@ -934,7 +934,7 @@ impl BlockDisposition {
 }
 
 impl<'a> Deref for BlockContext<'a, '_> {
-    type Target = ElementContext<'a>;
+    type Target = WindowContext<'a>;
 
     fn deref(&self) -> &Self::Target {
         self.context

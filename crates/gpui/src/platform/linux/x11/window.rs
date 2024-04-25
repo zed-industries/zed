@@ -13,10 +13,7 @@ use raw_window_handle as rwh;
 use util::ResultExt;
 use x11rb::{
     connection::Connection,
-    protocol::{
-        xinput,
-        xproto::{self, ConnectionExt as _, CreateWindowAux},
-    },
+    protocol::xproto::{self, ConnectionExt as _, CreateWindowAux},
     wrapper::ConnectionExt,
     xcb_ffi::XCBConnection,
 };
@@ -80,8 +77,8 @@ pub struct Callbacks {
 }
 
 pub(crate) struct X11WindowState {
-    raw: RawWindow,
     atoms: XcbAtoms,
+    raw: RawWindow,
     bounds: Bounds<i32>,
     scale_factor: f32,
     renderer: BladeRenderer,
@@ -99,40 +96,29 @@ pub(crate) struct X11Window {
 }
 
 // todo(linux): Remove other RawWindowHandle implementation
-unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
-    fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
-        let mut wh = blade_rwh::XcbWindowHandle::empty();
-        wh.window = self.window_id;
-        wh.visual_id = self.visual_id;
-        wh.into()
+impl rwh::HasWindowHandle for RawWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
+        let non_zero = NonZeroU32::new(self.window_id).unwrap();
+        let handle = rwh::XcbWindowHandle::new(non_zero);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
-unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
-    fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
-        let mut dh = blade_rwh::XcbDisplayHandle::empty();
-        dh.connection = self.connection;
-        dh.screen = self.screen_id as i32;
-        dh.into()
+impl rwh::HasDisplayHandle for RawWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
+        let non_zero = NonNull::new(self.connection).unwrap();
+        let handle = rwh::XcbDisplayHandle::new(Some(non_zero), self.screen_id as i32);
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
     }
 }
 
 impl rwh::HasWindowHandle for X11Window {
     fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
-        Ok(unsafe {
-            let non_zero = NonZeroU32::new(self.state.borrow().raw.window_id).unwrap();
-            let handle = rwh::XcbWindowHandle::new(non_zero);
-            rwh::WindowHandle::borrow_raw(handle.into())
-        })
+        unimplemented!()
     }
 }
 impl rwh::HasDisplayHandle for X11Window {
     fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
-        Ok(unsafe {
-            let this = self.state.borrow();
-            let non_zero = NonNull::new(this.raw.connection).unwrap();
-            let handle = rwh::XcbDisplayHandle::new(Some(non_zero), this.raw.screen_id as i32);
-            rwh::DisplayHandle::borrow_raw(handle.into())
-        })
+        unimplemented!()
     }
 }
 
@@ -143,7 +129,6 @@ impl X11WindowState {
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
-        scroll_devices: &Vec<xinput::DeviceInfo>,
     ) -> Self {
         let x_screen_index = params
             .display_id
@@ -164,6 +149,8 @@ impl X11WindowState {
                 | xproto::EventMask::BUTTON1_MOTION
                 | xproto::EventMask::BUTTON2_MOTION
                 | xproto::EventMask::BUTTON3_MOTION
+                | xproto::EventMask::BUTTON4_MOTION
+                | xproto::EventMask::BUTTON5_MOTION
                 | xproto::EventMask::BUTTON_MOTION,
         );
 
@@ -182,20 +169,6 @@ impl X11WindowState {
                 &win_aux,
             )
             .unwrap();
-
-        for device in scroll_devices {
-            xinput::ConnectionExt::xinput_xi_select_events(
-                &xcb_connection,
-                x_window,
-                &[xinput::EventMask {
-                    deviceid: device.device_id as u16,
-                    mask: vec![xinput::XIEventMask::MOTION],
-                }],
-            )
-            .unwrap()
-            .check()
-            .unwrap();
-        }
 
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
@@ -278,7 +251,6 @@ impl X11Window {
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
-        scroll_devices: &Vec<xinput::DeviceInfo>,
     ) -> Self {
         X11Window {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -287,7 +259,6 @@ impl X11Window {
                 x_main_screen_index,
                 x_window,
                 atoms,
-                scroll_devices,
             ))),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),

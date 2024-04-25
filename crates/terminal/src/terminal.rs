@@ -1497,7 +1497,7 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (String, String) {
 /// * ignores `\n` and \r` character input, requiring the `newline` call instead
 ///
 /// * does not alter grid state after `newline` call
-/// so its `bottommost_line` is always the the same additions, and
+/// so its `bottommost_line` is always the same additions, and
 /// the cursor's `point` is not updated to the new line and column values
 ///
 /// * ??? there could be more consequences, and any further "proper" streaming from the PTY might bug and/or panic.

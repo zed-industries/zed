@@ -93,7 +93,7 @@ impl RenderOnce for Headline {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
 
         div()
-            .font(ui_font)
+            .font_family(ui_font)
             .line_height(self.size.line_height())
             .text_size(self.size.size())
             .text_color(cx.theme().colors().text)

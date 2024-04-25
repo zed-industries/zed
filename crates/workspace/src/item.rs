@@ -513,8 +513,9 @@ impl<T: Item> ItemHandle for View<T> {
                 }));
             }
 
-            let mut event_subscription =
-                Some(cx.subscribe(self, move |workspace, item, event, cx| {
+            let mut event_subscription = Some(cx.subscribe(
+                self,
+                move |workspace, item: View<T>, event, cx| {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item
                         .get(&item.item_id())
@@ -575,7 +576,8 @@ impl<T: Item> ItemHandle for View<T> {
 
                         _ => {}
                     });
-                }));
+                },
+            ));
 
             cx.on_blur(&self.focus_handle(cx), move |workspace, cx| {
                 if WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange {

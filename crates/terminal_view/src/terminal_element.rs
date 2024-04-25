@@ -1,11 +1,11 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, ElementContext,
-    FocusHandle, Font, FontStyle, FontWeight, HighlightStyle, Hitbox, Hsla, InputHandler,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Model, ModelContext,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
-    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
-    WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, FocusHandle, Font,
+    FontStyle, FontWeight, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement,
+    Interactivity, IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton,
+    MouseMoveEvent, Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle,
+    Styled, TextRun, TextStyle, UnderlineStyle, WeakView, WhiteSpace, WindowContext,
+    WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -85,7 +85,7 @@ impl LayoutCell {
         origin: Point<Pixels>,
         layout: &LayoutState,
         _visible_bounds: Bounds<Pixels>,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         let pos = {
             let point = self.point;
@@ -124,7 +124,7 @@ impl LayoutRect {
         }
     }
 
-    fn paint(&self, origin: Point<Pixels>, layout: &LayoutState, cx: &mut ElementContext) {
+    fn paint(&self, origin: Point<Pixels>, layout: &LayoutState, cx: &mut WindowContext) {
         let position = {
             let alac_point = self.point;
             point(
@@ -418,7 +418,7 @@ impl TerminalElement {
         origin: Point<Pixels>,
         mode: TermMode,
         hitbox: &Hitbox,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
@@ -541,12 +541,12 @@ impl TerminalElement {
 }
 
 impl Element for TerminalElement {
-    type BeforeLayout = ();
-    type AfterLayout = LayoutState;
+    type RequestLayoutState = ();
+    type PrepaintState = LayoutState;
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
+    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
         self.interactivity.occlude_mouse();
-        let layout_id = self.interactivity.before_layout(cx, |mut style, cx| {
+        let layout_id = self.interactivity.request_layout(cx, |mut style, cx| {
             style.size.width = relative(1.).into();
             style.size.height = relative(1.).into();
             let layout_id = cx.request_layout(&style, None);
@@ -556,14 +556,14 @@ impl Element for TerminalElement {
         (layout_id, ())
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::BeforeLayout,
-        cx: &mut ElementContext,
-    ) -> Self::AfterLayout {
+        _: &mut Self::RequestLayoutState,
+        cx: &mut WindowContext,
+    ) -> Self::PrepaintState {
         self.interactivity
-            .after_layout(bounds, bounds.size, cx, |_, _, hitbox, cx| {
+            .prepaint(bounds, bounds.size, cx, |_, _, hitbox, cx| {
                 let hitbox = hitbox.unwrap();
                 let settings = ThemeSettings::get_global(cx).clone();
 
@@ -669,7 +669,7 @@ impl Element for TerminalElement {
                         .id("terminal-element")
                         .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
                         .into_any_element();
-                    element.layout(offset, bounds.size.into(), cx);
+                    element.prepaint_as_root(offset, bounds.size.into(), cx);
                     element
                 });
 
@@ -775,9 +775,9 @@ impl Element for TerminalElement {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _: &mut Self::BeforeLayout,
-        layout: &mut Self::AfterLayout,
-        cx: &mut ElementContext<'_>,
+        _: &mut Self::RequestLayoutState,
+        layout: &mut Self::PrepaintState,
+        cx: &mut WindowContext<'_>,
     ) {
         cx.paint_quad(fill(bounds, layout.background_color));
         let origin = bounds.origin + Point::new(layout.gutter, px(0.));
