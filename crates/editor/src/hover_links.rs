@@ -95,6 +95,7 @@ pub fn exclude_link_to_position(
     let snapshot = buffer.read(cx).snapshot();
     !(buffer == &location.target.buffer
         && current_position
+            .bias_right(&snapshot)
             .cmp(&location.target.range.start, &snapshot)
             .is_ge()
         && current_position
