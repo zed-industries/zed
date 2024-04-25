@@ -7747,7 +7747,7 @@ impl Editor {
                         Some(kind),
                         definitions
                             .into_iter()
-                            .filter(|location: &project::LocationLink| {
+                            .filter(|location| {
                                 hover_links::exclude_link_to_position(&buffer, &head, location, cx)
                             })
                             .map(HoverLink::Text)
