@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use gpui::{Task, View, WindowContext};
+use gpui::{Task, WindowContext};
 use std::collections::HashMap;
 
 use crate::tool::{
@@ -51,14 +51,17 @@ impl ToolRegistry {
 
                     cx.spawn(move |mut cx| async move {
                         let result: Result<T::Output> = result.await;
-                        let view: View<T::View> =
-                            cx.update(|cx| T::new_view(id.clone(), input, result, cx))?;
+                        let for_model = T::format(&input, &result);
+                        let view = cx.update(|cx| T::new_view(id.clone(), input, result, cx))?;
 
                         Ok(ToolFunctionCall {
                             id,
                             name: name.clone(),
                             arguments,
-                            result: Some(ToolFunctionCallResult::Finished(Box::new(view))),
+                            result: Some(ToolFunctionCallResult::Finished {
+                                view: view.into(),
+                                for_model,
+                            }),
                         })
                     })
                 },
@@ -101,14 +104,10 @@ impl ToolRegistry {
 
 #[cfg(test)]
 mod test {
-
-    use crate::tool::ToolView;
-
     use super::*;
-
-    use schemars::schema_for;
-
+    use gpui::View;
     use gpui::{div, prelude::*, Render, TestAppContext};
+    use schemars::schema_for;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
@@ -136,20 +135,13 @@ mod test {
 
     impl Render for WeatherView {
         fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-            div().child("I hope it's sunny")
-        }
-    }
-
-    impl ToolView for WeatherView {
-        fn format(&mut self, _cx: &mut gpui::ViewContext<Self>) -> String {
-            serde_json::to_string(&self.result).unwrap()
+            div().child(format!("temperature: {}", self.result.temperature))
         }
     }
 
     impl LanguageModelTool for WeatherTool {
         type Input = WeatherQuery;
         type Output = WeatherResult;
-
         type View = WeatherView;
 
         fn name(&self) -> String {
@@ -183,6 +175,10 @@ mod test {
                 let result = result.unwrap();
                 WeatherView { result }
             })
+        }
+
+        fn format(_: &Self::Input, output: &Result<Self::Output>) -> String {
+            serde_json::to_string(&output.as_ref().unwrap()).unwrap()
         }
     }
 

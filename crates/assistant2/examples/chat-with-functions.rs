@@ -2,7 +2,7 @@
 use anyhow::{Context as _, Result};
 use assets::Assets;
 use assistant2::AssistantPanel;
-use assistant_tooling::{tool::ToolView, LanguageModelTool, ToolRegistry};
+use assistant_tooling::{LanguageModelTool, ToolRegistry};
 use client::Client;
 use gpui::{actions, AnyElement, App, AppContext, KeyBinding, Task, View, WindowOptions};
 use language::LanguageRegistry;
@@ -106,22 +106,6 @@ impl Render for DiceView {
     }
 }
 
-impl ToolView for DiceView {
-    fn format(&mut self, _cx: &mut ViewContext<Self>) -> String {
-        let output = match &self.result {
-            Ok(output) => output,
-            Err(_) => return "Somehow dice failed 🎲".to_string(),
-        };
-
-        let mut result = String::new();
-        for roll in &output.rolls {
-            let die = &roll.die;
-            result.push_str(&format!("{}: {}\n", die.into_str(), roll.roll));
-        }
-        result
-    }
-}
-
 impl LanguageModelTool for RollDiceTool {
     type Input = DiceParams;
     type Output = DiceRoll;
@@ -157,6 +141,20 @@ impl LanguageModelTool for RollDiceTool {
         cx: &mut WindowContext,
     ) -> gpui::View<Self::View> {
         cx.new_view(|_cx| DiceView { result })
+    }
+
+    fn format(_: &Self::Input, output: &Result<Self::Output>) -> String {
+        let output = match output {
+            Ok(output) => output,
+            Err(_) => return "Somehow dice failed 🎲".to_string(),
+        };
+
+        let mut result = String::new();
+        for roll in &output.rolls {
+            let die = &roll.die;
+            result.push_str(&format!("{}: {}\n", die.into_str(), roll.roll));
+        }
+        result
     }
 }
 

@@ -1,8 +1,5 @@
 use anyhow::Result;
-use gpui::{
-    AnyElement, AnyView, AppContext, IntoElement as _, Render, Task, View, ViewContext,
-    WindowContext,
-};
+use gpui::{AnyElement, AnyView, AppContext, IntoElement as _, Render, Task, View, WindowContext};
 use schemars::{schema::RootSchema, schema_for, JsonSchema};
 use serde::Deserialize;
 use std::fmt::Display;
@@ -19,17 +16,17 @@ pub struct ToolFunctionCall {
 pub enum ToolFunctionCallResult {
     NoSuchTool,
     ParsingFailed,
-    Finished(Box<dyn AnyToolView>),
+    Finished { for_model: String, view: AnyView },
 }
 
 impl ToolFunctionCallResult {
-    pub fn format(&self, name: &String, cx: &mut WindowContext) -> String {
+    pub fn format(&self, name: &String) -> String {
         match self {
             ToolFunctionCallResult::NoSuchTool => format!("No tool for {name}"),
             ToolFunctionCallResult::ParsingFailed => {
                 format!("Unable to parse arguments for {name}")
             }
-            ToolFunctionCallResult::Finished(view) => view.format(cx),
+            ToolFunctionCallResult::Finished { for_model, .. } => for_model.clone(),
         }
     }
 
@@ -41,30 +38,8 @@ impl ToolFunctionCallResult {
             ToolFunctionCallResult::ParsingFailed => {
                 format!("Language Model called {name} with bad arguments").into_any_element()
             }
-            ToolFunctionCallResult::Finished(view) => {
-                let view = view.to_view();
-                view.into_any_element()
-            }
+            ToolFunctionCallResult::Finished { view, .. } => view.clone().into_any_element(),
         }
-    }
-}
-
-pub trait ToolView: Render {
-    fn format(&mut self, cx: &mut ViewContext<Self>) -> String;
-}
-
-pub trait AnyToolView {
-    fn format(&self, cx: &mut WindowContext) -> String;
-    fn to_view(&self) -> AnyView;
-}
-
-impl<V: ToolView> AnyToolView for View<V> {
-    fn format(&self, cx: &mut WindowContext) -> String {
-        self.update(cx, |this, cx| this.format(cx))
-    }
-
-    fn to_view(&self) -> AnyView {
-        self.clone().into()
     }
 }
 
@@ -93,7 +68,7 @@ pub trait LanguageModelTool {
     /// The output returned by executing the tool.
     type Output: 'static;
 
-    type View: ToolView;
+    type View: Render;
 
     /// The name of the tool is exposed to the language model to allow
     /// the model to pick which tools to use. As this name is used to
@@ -117,6 +92,8 @@ pub trait LanguageModelTool {
 
     /// Execute the tool
     fn execute(&self, input: &Self::Input, cx: &AppContext) -> Task<Result<Self::Output>>;
+
+    fn format(input: &Self::Input, output: &Result<Self::Output>) -> String;
 
     fn new_view(
         tool_call_id: String,

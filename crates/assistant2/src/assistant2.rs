@@ -605,7 +605,7 @@ impl AssistantChat {
                         // For now I'm going to have to assume we send an empty string because otherwise
                         // the Chat API will break -- there is a required message for every tool call by ID
                         let content = match &tool_call.result {
-                            Some(result) => result.format(&tool_call.name, cx),
+                            Some(result) => result.format(&tool_call.name),
                             None => "".to_string(),
                         };
 

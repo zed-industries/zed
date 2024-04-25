@@ -1,5 +1,5 @@
 use anyhow::Result;
-use assistant_tooling::{tool::ToolView, LanguageModelTool};
+use assistant_tooling::LanguageModelTool;
 use gpui::{prelude::*, AppContext, Model, Task};
 use project::Fs;
 use schemars::JsonSchema;
@@ -107,33 +107,6 @@ impl Render for ProjectIndexView {
     }
 }
 
-impl ToolView for ProjectIndexView {
-    fn format(&mut self, _cx: &mut ViewContext<Self>) -> String {
-        match &self.output {
-            Ok(excerpts) => {
-                if excerpts.len() == 0 {
-                    return "No results found".to_string();
-                }
-
-                let mut body = "Semantic search results:\n".to_string();
-
-                for excerpt in excerpts {
-                    body.push_str("Excerpt from ");
-                    body.push_str(excerpt.path.as_ref());
-                    body.push_str(", score ");
-                    body.push_str(&excerpt.score.to_string());
-                    body.push_str(":\n");
-                    body.push_str("~~~\n");
-                    body.push_str(excerpt.text.as_ref());
-                    body.push_str("~~~\n");
-                }
-                body
-            }
-            Err(err) => format!("Error: {}", err),
-        }
-    }
-}
-
 pub struct ProjectIndexTool {
     project_index: Model<ProjectIndex>,
     fs: Arc<dyn Fs>,
@@ -218,5 +191,30 @@ impl LanguageModelTool for ProjectIndexTool {
         cx: &mut WindowContext,
     ) -> gpui::View<Self::View> {
         cx.new_view(|_cx| ProjectIndexView { input, output })
+    }
+
+    fn format(_input: &Self::Input, output: &Result<Self::Output>) -> String {
+        match &output {
+            Ok(excerpts) => {
+                if excerpts.len() == 0 {
+                    return "No results found".to_string();
+                }
+
+                let mut body = "Semantic search results:\n".to_string();
+
+                for excerpt in excerpts {
+                    body.push_str("Excerpt from ");
+                    body.push_str(excerpt.path.as_ref());
+                    body.push_str(", score ");
+                    body.push_str(&excerpt.score.to_string());
+                    body.push_str(":\n");
+                    body.push_str("~~~\n");
+                    body.push_str(excerpt.text.as_ref());
+                    body.push_str("~~~\n");
+                }
+                body
+            }
+            Err(err) => format!("Error: {}", err),
+        }
     }
 }
