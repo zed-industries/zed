@@ -174,7 +174,7 @@ pub fn init(
     // {
     //   "languages": {
     //     "My Language": {
-    //       "language_servers": ["tailwind-css-language-server", "..."]
+    //       "language_servers": ["tailwindcss-language-server", "..."]
     //     }
     //   }
     // }
