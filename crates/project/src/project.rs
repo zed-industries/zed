@@ -3066,12 +3066,34 @@ impl Project {
             .map(|lsp_adapter| lsp_adapter.name.clone())
             .collect::<Vec<_>>();
 
-        let enabled_language_servers =
+        let desired_language_servers =
             settings.customized_language_servers(&available_language_servers);
-        let enabled_lsp_adapters = available_lsp_adapters
-            .into_iter()
-            .filter(|adapter| enabled_language_servers.contains(&adapter.name))
-            .collect::<Vec<_>>();
+
+        let mut enabled_lsp_adapters: Vec<Arc<CachedLspAdapter>> = Vec::new();
+        for desired_language_server in desired_language_servers {
+            if let Some(adapter) = available_lsp_adapters
+                .iter()
+                .find(|adapter| adapter.name == desired_language_server)
+            {
+                enabled_lsp_adapters.push(adapter.clone());
+                continue;
+            }
+
+            if let Some(adapter) = self
+                .languages
+                .load_available_lsp_adapter(&desired_language_server)
+            {
+                self.languages()
+                    .register_lsp_adapter(language.name(), adapter.adapter.clone());
+                enabled_lsp_adapters.push(adapter);
+                continue;
+            }
+
+            log::warn!(
+                "no language server found matching '{}'",
+                desired_language_server.0
+            );
+        }
 
         log::info!(
             "starting language servers for {language}: {adapters}",
@@ -3083,7 +3105,7 @@ impl Project {
         );
 
         for adapter in enabled_lsp_adapters {
-            self.start_language_server(worktree, adapter.clone(), language.clone(), cx);
+            self.start_language_server(worktree, adapter, language.clone(), cx);
         }
     }
 
