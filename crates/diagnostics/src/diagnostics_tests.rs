@@ -15,7 +15,7 @@ use serde_json::json;
 use settings::SettingsStore;
 use std::{env, path::Path};
 use unindent::Unindent as _;
-use util::RandomCharIter;
+use util::{post_inc, RandomCharIter};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -709,7 +709,6 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
     let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
     let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-    // dbg!(window.is_active(cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
@@ -725,6 +724,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     });
 
     let mut next_group_id = 0;
+    let mut next_filename = 0;
     let mut language_server_ids = vec![LanguageServerId(0)];
     let mut updated_language_servers = HashSet::default();
     let mut current_diagnostics: HashMap<
@@ -741,44 +741,45 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                 project.update(cx, |project, cx| {
                     project.disk_based_diagnostics_finished(server_id, cx)
                 });
+                cx.run_until_parked();
             }
 
             // language server updates diagnostics
             _ => {
-                let (path, server_id, diagnostics) = match current_diagnostics
-                    .iter_mut()
-                    .choose(&mut rng)
-                {
-                    // update existing diagnostics
-                    Some(((path, server_id), diagnostics)) if rng.gen_bool(0.5) => {
-                        (path.clone(), *server_id, diagnostics)
-                    }
+                let (path, server_id, diagnostics) =
+                    match current_diagnostics.iter_mut().choose(&mut rng) {
+                        // update existing set of diagnostics
+                        Some(((path, server_id), diagnostics)) if rng.gen_bool(0.5) => {
+                            (path.clone(), *server_id, diagnostics)
+                        }
 
-                    // insert diagnostics for a new path
-                    _ => {
-                        let path: PathBuf = format!("/test/{}.rs", rng.gen_range(0..100)).into();
-                        let len = rng.gen_range(128..256);
-                        let content = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-                        fs.insert_file(&path, content.into_bytes()).await;
+                        // insert a set of diagnostics for a new path
+                        _ => {
+                            let path: PathBuf =
+                                format!("/test/{}.rs", post_inc(&mut next_filename)).into();
+                            let len = rng.gen_range(128..256);
+                            let content =
+                                RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                            fs.insert_file(&path, content.into_bytes()).await;
 
-                        let server_id = match language_server_ids.iter().choose(&mut rng) {
-                            Some(server_id) if rng.gen_bool(0.5) => server_id.clone(),
-                            _ => {
-                                let id = LanguageServerId(language_server_ids.len());
-                                language_server_ids.push(id);
-                                id
-                            }
-                        };
+                            let server_id = match language_server_ids.iter().choose(&mut rng) {
+                                Some(server_id) if rng.gen_bool(0.5) => server_id.clone(),
+                                _ => {
+                                    let id = LanguageServerId(language_server_ids.len());
+                                    language_server_ids.push(id);
+                                    id
+                                }
+                            };
 
-                        (
-                            path.clone(),
-                            server_id,
-                            current_diagnostics
-                                .entry((path, server_id))
-                                .or_insert(vec![]),
-                        )
-                    }
-                };
+                            (
+                                path.clone(),
+                                server_id,
+                                current_diagnostics
+                                    .entry((path, server_id))
+                                    .or_insert(vec![]),
+                            )
+                        }
+                    };
 
                 updated_language_servers.insert(server_id);
 
@@ -801,14 +802,14 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         }
     }
 
-    mutated_view.update(cx, |view, cx| {
-        view.update_excerpts(None, cx);
-    });
+    log::info!("updating mutated diagnostics view");
+    mutated_view.update(cx, |view, _| view.update_excerpts(None));
+    cx.run_until_parked();
 
+    log::info!("constructing reference diagnostics view");
     let reference_view = window.build_view(cx, |cx| {
         ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
     });
-
     cx.run_until_parked();
 
     let mutated_excerpts = get_diagnostics_excerpts(&mutated_view, cx);
@@ -833,8 +834,10 @@ fn init_test(cx: &mut TestAppContext) {
 #[derive(Debug, PartialEq, Eq)]
 struct ExcerptInfo {
     path: PathBuf,
-    range: Range<PointUtf16>,
-    diagnostic: Option<(LanguageServerId, String)>,
+    range: ExcerptRange<Point>,
+    group_id: usize,
+    primary: bool,
+    language_server: LanguageServerId,
 }
 
 fn get_diagnostics_excerpts(
@@ -850,20 +853,26 @@ fn get_diagnostics_excerpts(
                 excerpt_indices_by_id.insert(id, result.len());
                 result.push(ExcerptInfo {
                     path: buffer.file().unwrap().path().to_path_buf(),
-                    range: range.context.to_point_utf16(buffer),
-                    diagnostic: None,
+                    range: ExcerptRange {
+                        context: range.context.to_point(&buffer),
+                        primary: range.primary.map(|range| range.to_point(&buffer)),
+                    },
+                    group_id: usize::MAX,
+                    primary: false,
+                    language_server: LanguageServerId(0),
                 });
             }
         });
 
         for state in &view.path_states {
             for group in &state.diagnostic_groups {
-                let excerpt_id = group.excerpts[group.primary_excerpt_ix];
-                let excerpt_ix = excerpt_indices_by_id[&excerpt_id];
-                result[excerpt_ix].diagnostic = Some((
-                    group.language_server_id,
-                    group.primary_diagnostic.diagnostic.message.clone(),
-                ));
+                for (ix, excerpt_id) in group.excerpts.iter().enumerate() {
+                    let excerpt_ix = excerpt_indices_by_id[excerpt_id];
+                    let excerpt = &mut result[excerpt_ix];
+                    excerpt.group_id = group.primary_diagnostic.diagnostic.group_id;
+                    excerpt.language_server = group.language_server_id;
+                    excerpt.primary = ix == group.primary_excerpt_ix;
+                }
             }
         }
 

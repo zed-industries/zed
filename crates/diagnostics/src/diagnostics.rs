@@ -14,6 +14,10 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
+use futures::{
+    channel::mpsc::{self, UnboundedSender},
+    StreamExt as _,
+};
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
@@ -36,6 +40,7 @@ use std::{
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
+use util::ResultExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
@@ -60,6 +65,8 @@ struct ProjectDiagnosticsEditor {
     paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
     include_warnings: bool,
     context: u32,
+    update_paths_tx: UnboundedSender<(ProjectPath, Option<LanguageServerId>)>,
+    _update_task: Task<Result<()>>,
     _subscription: Subscription,
 }
 
@@ -116,7 +123,7 @@ impl ProjectDiagnosticsEditor {
             cx.subscribe(&project_handle, |this, project, event, cx| match event {
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     log::debug!("disk based diagnostics finished for server {language_server_id}");
-                    this.update_excerpts(Some(*language_server_id), cx);
+                    this.update_excerpts(Some(*language_server_id));
                 }
                 project::Event::DiagnosticsUpdated {
                     language_server_id,
@@ -130,7 +137,7 @@ impl ProjectDiagnosticsEditor {
                         cx.notify();
                     } else {
                         log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
-                        this.update_excerpts(Some(*language_server_id), cx);
+                        this.update_excerpts(Some(*language_server_id));
                     }
                 }
                 _ => {}
@@ -138,6 +145,8 @@ impl ProjectDiagnosticsEditor {
 
         let focus_handle = cx.focus_handle();
         cx.on_focus_in(&focus_handle, |this, cx| this.focus_in(cx))
+            .detach();
+        cx.on_focus_out(&focus_handle, |this, cx| this.focus_out(cx))
             .detach();
 
         let excerpts = cx.new_model(|cx| {
@@ -160,15 +169,17 @@ impl ProjectDiagnosticsEditor {
                         cx.focus(&this.focus_handle);
                     }
                 }
-                EditorEvent::Blurred => this.update_excerpts(None, cx),
+                EditorEvent::Blurred => this.update_excerpts(None),
                 _ => {}
             }
         })
         .detach();
 
+        let (update_paths_tx, mut update_paths_rx) = mpsc::unbounded();
+
         let project = project_handle.read(cx);
         let mut this = Self {
-            project: project_handle,
+            project: project_handle.clone(),
             context,
             summary: project.diagnostic_summary(false, cx),
             workspace,
@@ -181,9 +192,24 @@ impl ProjectDiagnosticsEditor {
                 .map(|(path, server_id, _)| (path, server_id))
                 .collect(),
             include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
+            update_paths_tx,
+            _update_task: cx.spawn(move |this, mut cx| async move {
+                while let Some((path, language_server_id)) = update_paths_rx.next().await {
+                    if let Some(buffer) = project_handle
+                        .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
+                        .await
+                        .log_err()
+                    {
+                        this.update(&mut cx, |this, cx| {
+                            this.populate_excerpts(path, language_server_id, buffer, cx);
+                        })?;
+                    }
+                }
+                anyhow::Ok(())
+            }),
             _subscription: project_event_subscription,
         };
-        this.update_excerpts(None, cx);
+        this.update_excerpts(None);
         this
     }
 
@@ -214,7 +240,7 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
-        self.update_excerpts(None, cx);
+        self.update_excerpts(None);
         cx.notify();
     }
 
@@ -224,36 +250,28 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn update_excerpts(
-        &mut self,
-        language_server_id: Option<LanguageServerId>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.focus_handle.is_focused(cx) && !self.editor.focus_handle(cx).is_focused(cx) {
+            self.update_excerpts(None);
+        }
+    }
+
+    fn update_excerpts(&mut self, language_server_id: Option<LanguageServerId>) {
         log::debug!("updating excerpts for server {language_server_id:?}");
 
         let mut paths = Vec::new();
         self.paths_to_update.retain(|(path, server_id)| {
             if language_server_id.map_or(true, |id| id == *server_id) {
-                paths.push(path.clone());
+                paths.push((path.clone(), language_server_id));
                 false
             } else {
                 true
             }
         });
 
-        let project = self.project.clone();
-        cx.spawn(|this, mut cx| async move {
-            for path in paths {
-                let buffer = project
-                    .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
-                    .await?;
-                this.update(&mut cx, |this, cx| {
-                    this.populate_excerpts(path, language_server_id, buffer, cx)
-                })?;
-            }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        for entry in paths {
+            self.update_paths_tx.unbounded_send(entry).unwrap();
+        }
     }
 
     fn populate_excerpts(
@@ -290,8 +308,8 @@ impl ProjectDiagnosticsEditor {
         };
 
         let path_state = &mut self.path_states[path_ix];
-        let mut groups_to_add = Vec::new();
-        let mut group_ixs_to_remove = Vec::new();
+        let mut new_group_states = Vec::new();
+        let mut new_group_state_ixs = Vec::new();
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_remove = HashSet::default();
         let mut first_excerpt_id = None;
@@ -300,8 +318,12 @@ impl ProjectDiagnosticsEditor {
         } else {
             DiagnosticSeverity::ERROR
         };
-        let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
-            let mut old_groups = path_state.diagnostic_groups.iter().enumerate().peekable();
+        let excerpts_snapshot = self.excerpts.update(cx, |excerpts, cx| {
+            let mut old_groups = path_state
+                .diagnostic_groups
+                .drain(..)
+                .enumerate()
+                .peekable();
             let mut new_groups = snapshot
                 .diagnostic_groups(language_server_id)
                 .into_iter()
@@ -375,6 +397,7 @@ impl ProjectDiagnosticsEditor {
                                 Point::new(range.end.row + self.context, u32::MAX),
                                 Bias::Left,
                             );
+
                             let excerpt_id = excerpts
                                 .insert_excerpts_after(
                                     prev_excerpt_id,
@@ -383,7 +406,7 @@ impl ProjectDiagnosticsEditor {
                                         context: excerpt_start..excerpt_end,
                                         primary: Some(range.clone()),
                                     }],
-                                    excerpts_cx,
+                                    cx,
                                 )
                                 .pop()
                                 .unwrap();
@@ -437,18 +460,19 @@ impl ProjectDiagnosticsEditor {
                         }
                     }
 
-                    groups_to_add.push(group_state);
-                } else if let Some((group_ix, group_state)) = to_remove {
-                    excerpts.remove_excerpts(group_state.excerpts.iter().copied(), excerpts_cx);
-                    group_ixs_to_remove.push(group_ix);
+                    new_group_state_ixs.push(new_group_states.len());
+                    new_group_states.push(group_state);
+                } else if let Some((_, group_state)) = to_remove {
+                    excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx);
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
-                } else if let Some((_, group)) = to_keep {
-                    prev_excerpt_id = *group.excerpts.last().unwrap();
+                } else if let Some((_, group_state)) = to_keep {
+                    prev_excerpt_id = *group_state.excerpts.last().unwrap();
                     first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
+                    new_group_states.push(group_state);
                 }
             }
 
-            excerpts.snapshot(excerpts_cx)
+            excerpts.snapshot(cx)
         });
 
         self.editor.update(cx, |editor, cx| {
@@ -469,24 +493,13 @@ impl ProjectDiagnosticsEditor {
             );
 
             let mut block_ids = block_ids.into_iter();
-            for group_state in &mut groups_to_add {
+            for ix in new_group_state_ixs {
+                let group_state = &mut new_group_states[ix];
                 group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
             }
         });
 
-        for ix in group_ixs_to_remove.into_iter().rev() {
-            path_state.diagnostic_groups.remove(ix);
-        }
-        path_state.diagnostic_groups.extend(groups_to_add);
-        path_state.diagnostic_groups.sort_unstable_by(|a, b| {
-            let range_a = &a.primary_diagnostic.range;
-            let range_b = &b.primary_diagnostic.range;
-            range_a
-                .start
-                .cmp(&range_b.start, &snapshot)
-                .then_with(|| range_a.end.cmp(&range_b.end, &snapshot))
-        });
-
+        path_state.diagnostic_groups = new_group_states;
         if path_state.diagnostic_groups.is_empty() {
             self.path_states.remove(path_ix);
         }
@@ -553,7 +566,31 @@ impl ProjectDiagnosticsEditor {
             let focus_handle = self.editor.focus_handle(cx);
             cx.focus(&focus_handle);
         }
+
+        #[cfg(test)]
+        self.check_invariants(cx);
+
         cx.notify();
+    }
+
+    #[cfg(test)]
+    fn check_invariants(&self, cx: &mut ViewContext<Self>) {
+        let mut excerpts = Vec::new();
+        for (id, buffer, _) in self.excerpts.read(cx).snapshot(cx).excerpts() {
+            if let Some(file) = buffer.file() {
+                excerpts.push((id, file.path().clone()));
+            }
+        }
+
+        let mut prev_path = None;
+        for (_, path) in &excerpts {
+            if let Some(prev_path) = prev_path {
+                if path < prev_path {
+                    panic!("excerpts are not sorted by path {:?}", excerpts);
+                }
+            }
+            prev_path = Some(path);
+        }
     }
 }
 
