@@ -9163,10 +9163,10 @@ impl Editor {
                 ..Point::new(hunk_to_toggle.associated_range.end, 0);
             let hunk_to_toggle_range = snapshot
                 .buffer_snapshot
-                .anchor_at(hunk_to_toggle_point_range.start, Bias::Right)
+                .anchor_after(hunk_to_toggle_point_range.start)
                 ..snapshot
                     .buffer_snapshot
-                    .anchor_at(hunk_to_toggle_point_range.end, Bias::Left);
+                    .anchor_before(hunk_to_toggle_point_range.end);
 
             let show_hunk = loop {
                 let Some(expanded_hunk_range) = expanded_hunks.peek() else {
@@ -9238,11 +9238,7 @@ impl Editor {
             .to_point(&multi_buffer_snapshot)
             ..hunk.multi_buffer_range.end.to_point(&multi_buffer_snapshot);
         let hunk_start = hunk.multi_buffer_range.start;
-        let hunk_end_exclusive = hunk.multi_buffer_range.end;
-        let hunk_end_inclusive = multi_buffer_snapshot.anchor_at(
-            Point::new(multi_buffer_row_range.end.row.saturating_sub(1), 0),
-            Bias::Right,
-        );
+        let hunk_end = hunk.multi_buffer_range.end;
 
         let (diff_base_version, deleted_text) = self.buffer().update(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
@@ -9283,7 +9279,7 @@ impl Editor {
             }
             DiffHunkStatus::Added => {
                 self.highlight_rows::<GitRowHighlight>(
-                    hunk_start..hunk_end_inclusive,
+                    hunk_start..hunk_end,
                     Some(added_hunk_color(cx)),
                     cx,
                 );
@@ -9291,7 +9287,7 @@ impl Editor {
             }
             DiffHunkStatus::Modified => {
                 self.highlight_rows::<GitRowHighlight>(
-                    hunk_start..hunk_end_inclusive,
+                    hunk_start..hunk_end,
                     Some(added_hunk_color(cx)),
                     cx,
                 );
@@ -9307,8 +9303,7 @@ impl Editor {
             block_insert_index,
             ExpandedGitHunk {
                 block,
-                // TODO kb why do I have to use inclusive/exclusive differently around?
-                hunk_range: hunk_start..hunk_end_exclusive,
+                hunk_range: hunk_start..hunk_end,
                 diff_base_version,
                 status: hunk.status,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
@@ -9325,14 +9320,12 @@ impl Editor {
             DiffHunkStatus::Removed => (false, true),
         };
         let snapshot = self.snapshot(cx);
-        let buffer_range =
-            Point::new(hunk.associated_range.start, 0)..Point::new(hunk.associated_range.end, 0);
-        let multi_buffer_range = snapshot
-            .buffer_snapshot
-            .anchor_at(buffer_range.start, Bias::Right)
+        let buffer_range = Point::new(hunk.associated_range.start, 0)
             ..snapshot
                 .buffer_snapshot
-                .anchor_at(buffer_range.end, Bias::Left);
+                .clip_point(Point::new(hunk.associated_range.end + 1, 0), Bias::Left);
+        let multi_buffer_range = snapshot.buffer_snapshot.anchor_after(buffer_range.start)
+            ..snapshot.buffer_snapshot.anchor_before(buffer_range.end);
 
         if has_row_highlights {
             self.highlight_rows::<GitRowHighlight>(multi_buffer_range.clone(), None, cx);
@@ -9491,7 +9484,7 @@ impl Editor {
         color: Option<Hsla>,
         cx: &mut ViewContext<Self>,
     ) {
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let snapshot = self.snapshot(cx);
         match self.highlighted_rows.entry(TypeId::of::<T>()) {
             hash_map::Entry::Occupied(o) => {
                 let row_highlights = o.into_mut();
@@ -9499,8 +9492,12 @@ impl Editor {
                     row_highlights.binary_search_by(|(_, highlight_range, _)| {
                         highlight_range
                             .start
-                            .cmp(&rows.start, &multi_buffer_snapshot)
-                            .then(highlight_range.end.cmp(&rows.end, &multi_buffer_snapshot))
+                            .cmp(&rows.start, &snapshot.buffer_snapshot)
+                            .then(
+                                highlight_range
+                                    .end
+                                    .cmp(&rows.end, &snapshot.buffer_snapshot),
+                            )
                     });
                 match color {
                     Some(color) => {

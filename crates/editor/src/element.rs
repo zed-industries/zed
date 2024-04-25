@@ -2605,9 +2605,15 @@ impl EditorElement {
             }
         });
 
-        // TODO kb process those
-        // hunks_to_remove
-        // hunks_to_reexpand
+        // TODO kb process `hunks_to_reexpand`
+        let blocks_to_remove = hunks_to_remove
+            .into_iter()
+            .map(|hunk| {
+                removed_row_highlights.push(hunk.hunk_range);
+                hunk.block
+            })
+            .flatten()
+            .collect();
         editor.update(cx, |editor, cx| {
             for added_rows in added_row_highlights {
                 editor.highlight_rows::<GitRowHighlight>(
@@ -2619,6 +2625,7 @@ impl EditorElement {
             for removed_rows in removed_row_highlights {
                 editor.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
             }
+            editor.remove_blocks(blocks_to_remove, None, cx);
         });
 
         clickable_hunks

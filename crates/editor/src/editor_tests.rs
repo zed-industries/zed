@@ -9403,7 +9403,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         let git_additions_background_highlights = expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
         assert_eq!(
             git_additions_background_highlights,
-            vec![1..1, 7..7, 9..9],
+            vec![1..2, 7..8, 9..10],
             "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
         assert_eq!(
@@ -9535,7 +9535,7 @@ async fn test_toggled_diff_base_change(
         let git_additions_background_highlights = expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
         assert_eq!(
             git_additions_background_highlights,
-            vec![9..10, 13..14],
+            vec![9..11, 13..15],
             "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
         assert_eq!(
@@ -9572,7 +9572,7 @@ async fn test_toggled_diff_base_change(
         assert_eq!(
             all_expanded_hunks,
             Vec::new(),
-            "After diff base is changed, old git hunk expandsions should be removed"
+            "After diff base is changed, old git hunk expansions should be removed"
         );
         assert_eq!(
             all_hunks,
