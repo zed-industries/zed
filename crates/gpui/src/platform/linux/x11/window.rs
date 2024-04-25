@@ -8,6 +8,7 @@ use crate::{
     Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions,
     WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
 };
+
 use blade_graphics as gpu;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
@@ -718,5 +719,11 @@ impl PlatformWindow for X11Window {
     fn sprite_atlas(&self) -> sync::Arc<dyn PlatformAtlas> {
         let inner = self.0.state.borrow();
         inner.renderer.sprite_atlas().clone()
+    }
+
+    fn mark_window_move(&self, _: WindowMoveState) {}
+
+    fn should_render_window_controls(&self) -> bool {
+        false
     }
 }

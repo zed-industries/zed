@@ -12,8 +12,8 @@ use crate::{
     RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions, WindowParams,
-    WindowTextSystem, SUBPIXEL_VARIANTS,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowMoveState, WindowOptions,
+    WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -1129,6 +1129,36 @@ impl<'a> WindowContext<'a> {
     /// Toggle zoom on the window.
     pub fn zoom_window(&self) {
         self.window.platform_window.zoom();
+    }
+
+    /// Mark the start of window move when using client side decorations in linux (only wayland)
+    pub fn mark_moving(&self) {
+        #[cfg(target_os = "linux")]
+        self.window
+            .platform_window
+            .mark_window_move(WindowMoveState::Start)
+    }
+
+    /// Mark the start of window move when using client side decorations in linux (only wayland)
+    pub fn start_moving(&self) {
+        #[cfg(target_os = "linux")]
+        self.window
+            .platform_window
+            .mark_window_move(WindowMoveState::Moving)
+    }
+
+    /// Mark the stop of window move when using client side decorations in linux (only wayland)
+    pub fn stop_moving(&self) {
+        #[cfg(target_os = "linux")]
+        self.window
+            .platform_window
+            .mark_window_move(WindowMoveState::Stop)
+    }
+
+    /// Specifies if the title bar window controls need to be rendered in linux (wayland and x11)
+    pub fn should_render_window_controls(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        self.window.platform_window.should_render_window_controls()
     }
 
     /// Updates the window's title at the platform level.

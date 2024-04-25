@@ -226,10 +226,27 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
 
+    #[cfg(target_os = "linux")]
+    fn mark_window_move(&self, move_state: WindowMoveState);
+
+    #[cfg(target_os = "linux")]
+    fn should_render_window_controls(&self) -> bool;
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
     }
+}
+
+/// All the window move states needed for CSD based window move.
+#[cfg(target_os = "linux")]
+pub enum WindowMoveState {
+    /// Start marks the probable start of the move event
+    Start,
+    /// Moving marks the actual start of the drag event
+    Moving,
+    /// Stop marks the end of the drag event
+    Stop
 }
 
 /// This type is public so that our test macro can generate and use it, but it should not
