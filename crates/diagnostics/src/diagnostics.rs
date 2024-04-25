@@ -60,7 +60,7 @@ struct ProjectDiagnosticsEditor {
     paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
     include_warnings: bool,
     context: u32,
-    _subscriptions: Vec<Subscription>,
+    _subscription: Subscription,
 }
 
 struct PathState {
@@ -136,9 +136,8 @@ impl ProjectDiagnosticsEditor {
             });
 
         let focus_handle = cx.focus_handle();
-
-        let focus_in_subscription =
-            cx.on_focus_in(&focus_handle, |diagnostics, cx| diagnostics.focus_in(cx));
+        cx.on_focus_in(&focus_handle, |this, cx| this.focus_in(cx))
+            .detach();
 
         let excerpts = cx.new_model(|cx| {
             MultiBuffer::new(
@@ -152,42 +151,36 @@ impl ProjectDiagnosticsEditor {
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
-        let editor_event_subscription =
-            cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
-                cx.emit(event.clone());
-                match event {
-                    EditorEvent::Focused => {
-                        if this.path_states.is_empty() {
-                            cx.focus(&this.focus_handle);
-                        }
+        cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
+            cx.emit(event.clone());
+            match event {
+                EditorEvent::Focused => {
+                    if this.path_states.is_empty() {
+                        cx.focus(&this.focus_handle);
                     }
-                    EditorEvent::Blurred => this.update_excerpts(None, cx),
-                    _ => {}
                 }
-            });
+                EditorEvent::Blurred => this.update_excerpts(None, cx),
+                _ => {}
+            }
+        })
+        .detach();
 
         let project = project_handle.read(cx);
-        let paths_to_update = project
-            .diagnostic_summaries(false, cx)
-            .map(|(path, server_id, _)| (path, server_id))
-            .collect();
-        let summary = project.diagnostic_summary(false, cx);
         let mut this = Self {
             project: project_handle,
             context,
-            summary,
+            summary: project.diagnostic_summary(false, cx),
             workspace,
             excerpts,
             focus_handle,
             editor,
             path_states: Default::default(),
-            paths_to_update,
+            paths_to_update: project
+                .diagnostic_summaries(false, cx)
+                .map(|(path, server_id, _)| (path, server_id))
+                .collect(),
             include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
-            _subscriptions: vec![
-                project_event_subscription,
-                editor_event_subscription,
-                focus_in_subscription,
-            ],
+            _subscription: project_event_subscription,
         };
         this.update_excerpts(None, cx);
         this
