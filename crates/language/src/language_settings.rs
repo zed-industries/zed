@@ -789,5 +789,24 @@ mod tests {
             ),
             language_server_names(&["deno", "eslint", "tailwind"])
         );
+
+        // Adding a language server not in the list of available languages servers adds it to the list.
+        assert_eq!(
+            LanguageSettings::resolve_language_servers(
+                &[
+                    "my-cool-language-server".into(),
+                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()
+                ],
+                &available_language_servers
+            ),
+            language_server_names(&[
+                "my-cool-language-server",
+                "typescript-language-server",
+                "biome",
+                "deno",
+                "eslint",
+                "tailwind",
+            ])
+        );
     }
 }
