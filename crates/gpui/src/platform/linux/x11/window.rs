@@ -4,9 +4,10 @@
 use crate::{
     platform::blade::BladeRenderer, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams,
-    X11Client, X11ClientState,
+    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowMoveState, WindowOptions,
+    WindowParams, X11Client, X11ClientState,
 };
+
 use blade_graphics as gpu;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
@@ -532,5 +533,11 @@ impl PlatformWindow for X11Window {
     fn sprite_atlas(&self) -> sync::Arc<dyn PlatformAtlas> {
         let inner = self.state.borrow();
         inner.renderer.sprite_atlas().clone()
+    }
+
+    fn mark_window_move(&self, _: WindowMoveState) {}
+
+    fn should_render_window_controls(&self) -> bool {
+        false
     }
 }

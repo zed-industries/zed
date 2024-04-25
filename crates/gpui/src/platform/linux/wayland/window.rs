@@ -24,9 +24,7 @@ use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
-    px, size, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay, PlatformInput,
-    Point, PromptLevel, Size, WaylandClientState, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowParams,
+    px, size, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay, PlatformInput, Point, PromptLevel, Size, WaylandClientState, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowMoveState, WindowParams
 };
 
 #[derive(Default)]
@@ -77,6 +75,7 @@ pub struct WaylandWindowState {
     decoration_state: WaylandDecorationState,
     fullscreen: bool,
     maximized: bool,
+    window_move_event_serial: u32,
     client: WaylandClientStatePtr,
     callbacks: Callbacks,
 }
@@ -146,6 +145,7 @@ impl WaylandWindowState {
             decoration_state: WaylandDecorationState::Client,
             fullscreen: false,
             maximized: false,
+            window_move_event_serial: 0,
             callbacks: Callbacks::default(),
             client,
         }
@@ -286,7 +286,7 @@ impl WaylandWindowStatePtr {
                     self.set_decoration_state(WaylandDecorationState::Server)
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
-                    self.set_decoration_state(WaylandDecorationState::Server)
+                    self.set_decoration_state(WaylandDecorationState::Client)
                 }
                 WEnum::Value(_) => {
                     log::warn!("Unknown decoration mode");
@@ -626,7 +626,11 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn zoom(&self) {
-        // todo(linux)
+        if self.is_maximized() {
+            self.borrow_mut().toplevel.unset_maximized()
+        } else {
+            self.borrow_mut().toplevel.set_maximized()
+        }
     }
 
     fn toggle_fullscreen(&self) {
@@ -696,6 +700,25 @@ impl PlatformWindow for WaylandWindow {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
         let state = self.borrow();
         state.renderer.sprite_atlas().clone()
+    }
+    
+    fn mark_window_move(&self, move_state: WindowMoveState) {
+        let mut state = self.borrow_mut();
+        match move_state {
+            WindowMoveState::Start => {
+                state.window_move_event_serial = state.client.get_event_serial();
+            }
+            WindowMoveState::Moving => {
+                state.toplevel._move(&state.globals.seat, state.window_move_event_serial);
+            }
+            WindowMoveState::Stop => {
+                state.window_move_event_serial = 0;
+            }
+        }
+    }
+
+    fn should_render_window_controls(&self) -> bool {
+        self.borrow().decoration_state == WaylandDecorationState::Client
     }
 }
 
