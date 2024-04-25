@@ -544,6 +544,10 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
+type PromptForNewPath = Box<
+    dyn FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> oneshot::Receiver<Option<PathBuf>>,
+>;
+
 /// Collects everything project-related for a certain window opened.
 /// In some way, is a counterpart of a window, as the [`WindowHandle`] could be downcast into `Workspace`.
 ///
@@ -585,6 +589,7 @@ pub struct Workspace {
     bounds: Bounds<Pixels>,
     centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
+    on_prompt_for_new_path: Option<PromptForNewPath>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1221,6 +1226,28 @@ impl Workspace {
     pub fn set_titlebar_item(&mut self, item: AnyView, cx: &mut ViewContext<Self>) {
         self.titlebar_item = Some(item);
         cx.notify();
+    }
+
+    pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
+        self.on_prompt_for_new_path = Some(prompt)
+    }
+
+    pub fn prompt_for_new_path(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> oneshot::Receiver<Option<PathBuf>> {
+        if let Some(prompt) = &self.on_prompt_for_new_path {
+            return prompt(self, cx);
+        } else {
+            let start_abs_path = self
+                .project
+                .update(cx, |project, cx| {
+                    let worktree = project.visible_worktrees(cx).next()?;
+                    Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                })
+                .unwrap_or_else(|| Path::new("").into());
+            cx.prompt_for_new_path(&start_abs_path)
+        }
     }
 
     pub fn titlebar_item(&self) -> Option<AnyView> {

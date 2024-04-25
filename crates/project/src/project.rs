@@ -10369,6 +10369,7 @@ pub struct PathMatchCandidateSet {
     pub snapshot: Snapshot,
     pub include_ignored: bool,
     pub include_root_name: bool,
+    pub directories_only: bool,
 }
 
 impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
@@ -10398,7 +10399,11 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
 
     fn candidates(&'a self, start: usize) -> Self::Candidates {
         PathMatchCandidateSetIter {
-            traversal: self.snapshot.files(self.include_ignored, start),
+            traversal: if self.directories_only {
+                self.snapshot.directories(self.include_ignored, start)
+            } else {
+                self.snapshot.files(self.include_ignored, start)
+            },
         }
     }
 }
