@@ -1023,6 +1023,8 @@ async fn test_channel_link_notifications(
         .await
         .unwrap();
 
+    executor.run_until_parked();
+
     // the new channel shows for b and c
     assert_channels_list_shape(
         client_a.channel_store(),

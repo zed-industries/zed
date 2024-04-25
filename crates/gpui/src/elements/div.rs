@@ -1120,17 +1120,17 @@ impl ParentElement for Div {
 }
 
 impl Element for Div {
-    type BeforeLayout = DivFrameState;
-    type AfterLayout = Option<Hitbox>;
+    type RequestLayoutState = DivFrameState;
+    type PrepaintState = Option<Hitbox>;
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
         let mut child_layout_ids = SmallVec::new();
-        let layout_id = self.interactivity.before_layout(cx, |style, cx| {
+        let layout_id = self.interactivity.request_layout(cx, |style, cx| {
             cx.with_text_style(style.text_style().cloned(), |cx| {
                 child_layout_ids = self
                     .children
                     .iter_mut()
-                    .map(|child| child.before_layout(cx))
+                    .map(|child| child.request_layout(cx))
                     .collect::<SmallVec<_>>();
                 cx.request_layout(&style, child_layout_ids.iter().copied())
             })
@@ -1138,23 +1138,23 @@ impl Element for Div {
         (layout_id, DivFrameState { child_layout_ids })
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        before_layout: &mut Self::BeforeLayout,
+        request_layout: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
     ) -> Option<Hitbox> {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
-        let content_size = if before_layout.child_layout_ids.is_empty() {
+        let content_size = if request_layout.child_layout_ids.is_empty() {
             bounds.size
         } else if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
             let mut state = scroll_handle.0.borrow_mut();
-            state.child_bounds = Vec::with_capacity(before_layout.child_layout_ids.len());
+            state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
             state.bounds = bounds;
             let requested = state.requested_scroll_top.take();
 
-            for (ix, child_layout_id) in before_layout.child_layout_ids.iter().enumerate() {
+            for (ix, child_layout_id) in request_layout.child_layout_ids.iter().enumerate() {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.lower_right());
@@ -1169,7 +1169,7 @@ impl Element for Div {
             }
             (child_max - child_min).into()
         } else {
-            for child_layout_id in &before_layout.child_layout_ids {
+            for child_layout_id in &request_layout.child_layout_ids {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.lower_right());
@@ -1177,14 +1177,14 @@ impl Element for Div {
             (child_max - child_min).into()
         };
 
-        self.interactivity.after_layout(
+        self.interactivity.prepaint(
             bounds,
             content_size,
             cx,
             |_style, scroll_offset, hitbox, cx| {
                 cx.with_element_offset(scroll_offset, |cx| {
                     for child in &mut self.children {
-                        child.after_layout(cx);
+                        child.prepaint(cx);
                     }
                 });
                 hitbox
@@ -1195,7 +1195,7 @@ impl Element for Div {
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        _before_layout: &mut Self::BeforeLayout,
+        _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
         cx: &mut ElementContext,
     ) {
@@ -1274,7 +1274,7 @@ pub struct Interactivity {
 
 impl Interactivity {
     /// Layout this element according to this interactivity state's configured styles
-    pub fn before_layout(
+    pub fn request_layout(
         &mut self,
         cx: &mut ElementContext,
         f: impl FnOnce(Style, &mut ElementContext) -> LayoutId,
@@ -1337,7 +1337,7 @@ impl Interactivity {
     }
 
     /// Commit the bounds of this element according to this interactivity state's configured styles.
-    pub fn after_layout<R>(
+    pub fn prepaint<R>(
         &mut self,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
@@ -2261,30 +2261,30 @@ impl<E> Element for Focusable<E>
 where
     E: Element,
 {
-    type BeforeLayout = E::BeforeLayout;
-    type AfterLayout = E::AfterLayout;
+    type RequestLayoutState = E::RequestLayoutState;
+    type PrepaintState = E::PrepaintState;
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
-        self.element.before_layout(cx)
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
+        self.element.request_layout(cx)
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::BeforeLayout,
+        state: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
-    ) -> E::AfterLayout {
-        self.element.after_layout(bounds, state, cx)
+    ) -> E::PrepaintState {
+        self.element.prepaint(bounds, state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        before_layout: &mut Self::BeforeLayout,
-        after_layout: &mut Self::AfterLayout,
+        request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
         cx: &mut ElementContext,
     ) {
-        self.element.paint(bounds, before_layout, after_layout, cx)
+        self.element.paint(bounds, request_layout, prepaint, cx)
     }
 }
 
@@ -2344,30 +2344,30 @@ impl<E> Element for Stateful<E>
 where
     E: Element,
 {
-    type BeforeLayout = E::BeforeLayout;
-    type AfterLayout = E::AfterLayout;
+    type RequestLayoutState = E::RequestLayoutState;
+    type PrepaintState = E::PrepaintState;
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
-        self.element.before_layout(cx)
+    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
+        self.element.request_layout(cx)
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        state: &mut Self::BeforeLayout,
+        state: &mut Self::RequestLayoutState,
         cx: &mut ElementContext,
-    ) -> E::AfterLayout {
-        self.element.after_layout(bounds, state, cx)
+    ) -> E::PrepaintState {
+        self.element.prepaint(bounds, state, cx)
     }
 
     fn paint(
         &mut self,
         bounds: Bounds<Pixels>,
-        before_layout: &mut Self::BeforeLayout,
-        after_layout: &mut Self::AfterLayout,
+        request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
         cx: &mut ElementContext,
     ) {
-        self.element.paint(bounds, before_layout, after_layout, cx);
+        self.element.paint(bounds, request_layout, prepaint, cx);
     }
 }
 

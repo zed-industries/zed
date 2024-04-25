@@ -69,6 +69,8 @@
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
   "restore_on_startup": "last_workspace",
+  // Size of the drop target in the editor.
+  "drop_target_size": 0.2,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // Whether to pop the completions menu while typing in an editor without
@@ -212,6 +214,8 @@
     "scroll_debounce_ms": 50
   },
   "project_panel": {
+    // Whether to show the project panel button in the status bar
+    "button": true,
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
@@ -290,6 +294,10 @@
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
+  // The list of language servers to use (or disable) for all languages.
+  //
+  // This is typically customized on a per-language basis.
+  "language_servers": ["..."],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -568,10 +576,6 @@
     //
     "lsp": "elixir_ls"
   },
-  // Settings specific to our deno integration
-  "deno": {
-    "enable": false
-  },
   "code_actions_on_format": {},
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
@@ -586,6 +590,13 @@
   // }
   //
   "file_types": {},
+  // The extensions that Zed should automatically install on startup.
+  //
+  // If you don't want any of these extensions, add this field to your settings
+  // and change the value to `false`.
+  "auto_install_extensions": {
+    "html": true
+  },
   // Different settings for specific languages.
   "languages": {
     "C++": {

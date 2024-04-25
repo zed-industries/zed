@@ -1,7 +1,7 @@
 use crate::{
     self as gpui, hsla, point, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle,
-    DefiniteLength, Fill, FlexDirection, FlexWrap, FontStyle, FontWeight, Hsla, JustifyContent,
-    Length, Position, SharedString, StyleRefinement, Visibility, WhiteSpace,
+    DefiniteLength, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
+    JustifyContent, Length, Position, SharedString, StyleRefinement, Visibility, WhiteSpace,
 };
 use crate::{BoxShadow, TextStyleRefinement};
 use smallvec::{smallvec, SmallVec};
@@ -771,11 +771,29 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Change the font on this element and its children.
-    fn font(mut self, family_name: impl Into<SharedString>) -> Self {
+    /// Change the font family on this element and its children.
+    fn font_family(mut self, family_name: impl Into<SharedString>) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
             .font_family = Some(family_name.into());
+        self
+    }
+
+    /// Change the font of this element and its children.
+    fn font(mut self, font: Font) -> Self {
+        let Font {
+            family,
+            features,
+            weight,
+            style,
+        } = font;
+
+        let text_style = self.text_style().get_or_insert_with(Default::default);
+        text_style.font_family = Some(family);
+        text_style.font_features = Some(features);
+        text_style.font_weight = Some(weight);
+        text_style.font_style = Some(style);
+
         self
     }
 

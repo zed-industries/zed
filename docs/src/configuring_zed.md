@@ -158,7 +158,7 @@ For example, to disable ligatures for a given font you can add the following to 
 **Options**
 
 The `left_padding` and `right_padding` options define the relative width of the
-left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.45`.
+left and right padding of the central pane from the workspace when the centered layout mode is activated. Valid values range is from `0` to `0.4`.
 
 ## Copilot
 
@@ -555,9 +555,14 @@ To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
 - Default:
 
 ```json
-"git": {
-  "git_gutter": "tracked_files"
-},
+{
+  "git": {
+    "git_gutter": "tracked_files",
+    "inline_blame": {
+      "enabled": true
+    }
+  }
+}
 ```
 
 ### Git Gutter
@@ -572,7 +577,9 @@ To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
 
 ```json
 {
-  "git_gutter": "tracked_files"
+  "git": {
+    "git_gutter": "tracked_files"
+  }
 }
 ```
 
@@ -580,7 +587,52 @@ To interpret all `.c` files as C++, and files called `MyLockFile` as TOML:
 
 ```json
 {
-  "git_gutter": "hide"
+  "git": {
+    "git_gutter": "hide"
+  }
+}
+```
+
+### Inline Git Blame
+
+- Description: Whether or not to show git blame information inline, on the currently focused line (requires Zed `0.132.0`).
+- Setting: `inline_blame`
+- Default:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true
+    }
+  }
+}
+```
+
+**Options**
+
+1. Disable inline git blame:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": false
+    }
+  }
+}
+```
+
+2. Only show inline git blame after a delay (that starts after cursor stops moving):
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": false,
+      "delay_ms": 500
+    }
+  }
 }
 ```
 
@@ -730,12 +782,13 @@ These values take in the same options as the root-level settings with the same n
 ## Preview tabs
 
 - Description:
+  (requires Zed `0.132.x`) \
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
 
   - Double-clicking on the file
   - Double-clicking on the tab header
-  - Using the 'project_panel::OpenPermanent' action
+  - Using the `project_panel::OpenPermanent` action
   - Editing the file
   - Dragging the file to a different pane
 
@@ -748,8 +801,6 @@ These values take in the same options as the root-level settings with the same n
   "enable_preview_from_file_finder": false
 }
 ```
-
-**Options**
 
 ### Enable preview from file finder
 
@@ -926,7 +977,7 @@ These values take in the same options as the root-level settings with the same n
   "font_features": null,
   "font_size": null,
   "option_as_meta": false,
-  "button": false
+  "button": false,
   "shell": {},
   "toolbar": {
     "title": true
@@ -1243,6 +1294,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 "project_panel": {
+  "button": true,
   "dock": "left",
   "git_status": true,
   "default_width": "N/A - width in pixels"
@@ -1304,6 +1356,21 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 **Options**
 
 `boolean` values
+
+## Calls
+
+- Description: Customise behaviour when participating in a call
+- Setting: `calls`
+- Default:
+
+```json
+"calls": {
+  // Join calls with the microphone live by default
+  "mute_on_join": false,
+  // Share your project when you are the first to join a channel
+  "share_on_join": true
+},
+```
 
 ## An example configuration:
 

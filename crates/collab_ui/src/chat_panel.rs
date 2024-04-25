@@ -234,10 +234,11 @@ impl ChatPanel {
             let channel_id = chat.read(cx).channel_id;
             {
                 self.markdown_data.clear();
-                let chat = chat.read(cx);
-                self.message_list.reset(chat.message_count());
 
+                let chat = chat.read(cx);
                 let channel_name = chat.channel(cx).map(|channel| channel.name.clone());
+                let message_count = chat.message_count();
+                self.message_list.reset(message_count);
                 self.message_editor.update(cx, |editor, cx| {
                     editor.set_channel(channel_id, channel_name, cx);
                     editor.clear_reply_to_message_id();
@@ -766,7 +767,7 @@ impl ChatPanel {
             body.push_str(MESSAGE_EDITED);
         }
 
-        let mut rich_text = rich_text::render_rich_text(body, &mentions, language_registry, None);
+        let mut rich_text = RichText::new(body, &mentions, language_registry);
 
         if message.edited_at.is_some() {
             let range = (rich_text.text.len() - MESSAGE_EDITED.len())..rich_text.text.len();

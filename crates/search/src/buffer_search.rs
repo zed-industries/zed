@@ -188,7 +188,7 @@ impl Render for BufferSearchBar {
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
-        let mut key_context = KeyContext::default();
+        let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
         if in_replace {
             key_context.add("in_replace");
@@ -436,6 +436,7 @@ impl BufferSearchBar {
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(ForDeployed(|this, _: &FocusSearch, cx| {
             this.query_editor.focus_handle(cx).focus(cx);
+            this.select_query(cx);
         }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleCaseSensitive, cx| {
             if this.supported_options().case {

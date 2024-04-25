@@ -2,7 +2,7 @@
 
 #![deny(missing_docs)]
 
-use std::env;
+use std::{env, str::FromStr};
 
 use gpui::{AppContext, Global, SemanticVersion};
 use once_cell::sync::Lazy;
@@ -18,11 +18,8 @@ static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
 
 #[doc(hidden)]
 pub static RELEASE_CHANNEL: Lazy<ReleaseChannel> =
-    Lazy::new(|| match RELEASE_CHANNEL_NAME.as_str() {
-        "dev" => ReleaseChannel::Dev,
-        "nightly" => ReleaseChannel::Nightly,
-        "preview" => ReleaseChannel::Preview,
-        "stable" => ReleaseChannel::Stable,
+    Lazy::new(|| match ReleaseChannel::from_str(&RELEASE_CHANNEL_NAME) {
+        Ok(channel) => channel,
         _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
     });
 
@@ -147,5 +144,23 @@ impl ReleaseChannel {
             Self::Preview => Some("preview=1"),
             Self::Stable => None,
         }
+    }
+}
+
+/// Error indicating that release channel string does not match any known release channel names.
+#[derive(Copy, Clone, Debug, Hash, PartialEq)]
+pub struct InvalidReleaseChannel;
+
+impl FromStr for ReleaseChannel {
+    type Err = InvalidReleaseChannel;
+
+    fn from_str(channel: &str) -> Result<Self, Self::Err> {
+        Ok(match channel {
+            "dev" => ReleaseChannel::Dev,
+            "nightly" => ReleaseChannel::Nightly,
+            "preview" => ReleaseChannel::Preview,
+            "stable" => ReleaseChannel::Stable,
+            _ => return Err(InvalidReleaseChannel),
+        })
     }
 }

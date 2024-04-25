@@ -655,8 +655,6 @@ pub struct ChannelsForUser {
     pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
     pub hosted_projects: Vec<proto::HostedProject>,
-    pub dev_servers: Vec<dev_server::Model>,
-    pub remote_projects: Vec<proto::RemoteProject>,
 
     pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
     pub observed_channel_messages: Vec<proto::ChannelMessageId>,
@@ -764,6 +762,7 @@ pub struct Project {
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
+    pub remote_project_id: Option<RemoteProjectId>,
 }
 
 pub struct ProjectCollaborator {
@@ -786,8 +785,7 @@ impl ProjectCollaborator {
 #[derive(Debug)]
 pub struct LeftProject {
     pub id: ProjectId,
-    pub host_user_id: Option<UserId>,
-    pub host_connection_id: Option<ConnectionId>,
+    pub should_unshare: bool,
     pub connection_ids: Vec<ConnectionId>,
 }
 

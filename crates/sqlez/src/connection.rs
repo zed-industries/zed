@@ -105,51 +105,50 @@ impl Connection {
                 let mut raw_statement = ptr::null_mut::<sqlite3_stmt>();
                 let mut remaining_sql_ptr = ptr::null();
 
-                let (res, offset, message, _conn) = if let Some(table_to_alter) = alter_table {
-                    // ALTER TABLE is a weird statement. When preparing the statement the table's
-                    // existence is checked *before* syntax checking any other part of the statement.
-                    // Therefore, we need to make sure that the table has been created before calling
-                    // prepare. As we don't want to trash whatever database this is connected to, we
-                    // create a new in-memory DB to test.
+                let (res, offset, message, _conn) =
+                    if let Some((table_to_alter, column)) = alter_table {
+                        // ALTER TABLE is a weird statement. When preparing the statement the table's
+                        // existence is checked *before* syntax checking any other part of the statement.
+                        // Therefore, we need to make sure that the table has been created before calling
+                        // prepare. As we don't want to trash whatever database this is connected to, we
+                        // create a new in-memory DB to test.
 
-                    let temp_connection = Connection::open_memory(None);
-                    //This should always succeed, if it doesn't then you really should know about it
-                    temp_connection
-                        .exec(&format!(
-                        "CREATE TABLE {table_to_alter}(__place_holder_column_for_syntax_checking)"
-                    ))
-                        .unwrap()()
-                    .unwrap();
+                        let temp_connection = Connection::open_memory(None);
+                        //This should always succeed, if it doesn't then you really should know about it
+                        temp_connection
+                            .exec(&format!("CREATE TABLE {table_to_alter}({column})"))
+                            .unwrap()()
+                        .unwrap();
 
-                    sqlite3_prepare_v2(
-                        temp_connection.sqlite3,
-                        remaining_sql.as_ptr(),
-                        -1,
-                        &mut raw_statement,
-                        &mut remaining_sql_ptr,
-                    );
+                        sqlite3_prepare_v2(
+                            temp_connection.sqlite3,
+                            remaining_sql.as_ptr(),
+                            -1,
+                            &mut raw_statement,
+                            &mut remaining_sql_ptr,
+                        );
 
-                    (
-                        sqlite3_errcode(temp_connection.sqlite3),
-                        sqlite3_error_offset(temp_connection.sqlite3),
-                        sqlite3_errmsg(temp_connection.sqlite3),
-                        Some(temp_connection),
-                    )
-                } else {
-                    sqlite3_prepare_v2(
-                        self.sqlite3,
-                        remaining_sql.as_ptr(),
-                        -1,
-                        &mut raw_statement,
-                        &mut remaining_sql_ptr,
-                    );
-                    (
-                        sqlite3_errcode(self.sqlite3),
-                        sqlite3_error_offset(self.sqlite3),
-                        sqlite3_errmsg(self.sqlite3),
-                        None,
-                    )
-                };
+                        (
+                            sqlite3_errcode(temp_connection.sqlite3),
+                            sqlite3_error_offset(temp_connection.sqlite3),
+                            sqlite3_errmsg(temp_connection.sqlite3),
+                            Some(temp_connection),
+                        )
+                    } else {
+                        sqlite3_prepare_v2(
+                            self.sqlite3,
+                            remaining_sql.as_ptr(),
+                            -1,
+                            &mut raw_statement,
+                            &mut remaining_sql_ptr,
+                        );
+                        (
+                            sqlite3_errcode(self.sqlite3),
+                            sqlite3_error_offset(self.sqlite3),
+                            sqlite3_errmsg(self.sqlite3),
+                            None,
+                        )
+                    };
 
                 sqlite3_finalize(raw_statement);
 
@@ -203,7 +202,7 @@ impl Connection {
     }
 }
 
-fn parse_alter_table(remaining_sql_str: &str) -> Option<String> {
+fn parse_alter_table(remaining_sql_str: &str) -> Option<(String, String)> {
     let remaining_sql_str = remaining_sql_str.to_lowercase();
     if remaining_sql_str.starts_with("alter") {
         if let Some(table_offset) = remaining_sql_str.find("table") {
@@ -215,7 +214,19 @@ fn parse_alter_table(remaining_sql_str: &str) -> Option<String> {
                 .take_while(|c| !c.is_whitespace())
                 .collect::<String>();
             if !table_to_alter.is_empty() {
-                return Some(table_to_alter);
+                let column_name =
+                    if let Some(rename_offset) = remaining_sql_str.find("rename column") {
+                        let after_rename_offset = rename_offset + "rename column".len();
+                        remaining_sql_str
+                            .chars()
+                            .skip(after_rename_offset)
+                            .skip_while(|c| c.is_whitespace())
+                            .take_while(|c| !c.is_whitespace())
+                            .collect::<String>()
+                    } else {
+                        "__place_holder_column_for_syntax_checking".to_string()
+                    };
+                return Some((table_to_alter, column_name));
             }
         }
     }

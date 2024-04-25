@@ -94,12 +94,19 @@ pub struct SelectDownByLines {
     pub(super) lines: u32,
 }
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ExpandExcerpts {
+    #[serde(default)]
+    pub(super) lines: u32,
+}
+
 impl_actions!(
     editor,
     [
         SelectNext,
         SelectPrevious,
         SelectToBeginningOfLine,
+        ExpandExcerpts,
         MovePageUp,
         MovePageDown,
         SelectToEndOfLine,
@@ -254,6 +261,6 @@ gpui::actions!(
         UndoSelection,
         UnfoldLines,
         UniqueLinesCaseSensitive,
-        UniqueLinesCaseInsensitive
+        UniqueLinesCaseInsensitive,
     ]
 );

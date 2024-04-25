@@ -156,7 +156,7 @@ impl TaskTemplate {
             &variable_names,
             &mut substituted_variables,
         )?;
-        let args = substitute_all_template_variables_in_vec(
+        let args_with_substitutions = substitute_all_template_variables_in_vec(
             &self.args,
             &task_variables,
             &variable_names,
@@ -187,8 +187,16 @@ impl TaskTemplate {
                 cwd,
                 full_label,
                 label: human_readable_label,
+                command_label: args_with_substitutions.iter().fold(
+                    command.clone(),
+                    |mut command_label, arg| {
+                        command_label.push(' ');
+                        command_label.push_str(arg);
+                        command_label
+                    },
+                ),
                 command,
-                args,
+                args: self.args.clone(),
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
@@ -524,11 +532,16 @@ mod tests {
             assert_eq!(
                 spawn_in_terminal.args,
                 &[
-                    "arg1 test_selected_text",
-                    "arg2 5678",
-                    &format!("arg3 {long_value}")
+                    "arg1 $ZED_SELECTED_TEXT",
+                    "arg2 $ZED_COLUMN",
+                    "arg3 $ZED_SYMBOL",
                 ],
-                "Args should be substituted with variables and those should not be shortened"
+                "Args should not be substituted with variables"
+            );
+            assert_eq!(
+                spawn_in_terminal.command_label,
+                format!("{} arg1 test_selected_text arg2 5678 arg3 {long_value}", spawn_in_terminal.command),
+                "Command label args should be substituted with variables and those should not be shortened"
             );
 
             assert_eq!(
