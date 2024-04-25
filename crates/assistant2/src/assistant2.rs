@@ -1,6 +1,9 @@
 mod assistant_settings;
 mod completion_provider;
+mod markdown_message;
 pub mod tools;
+
+use markdown_message::*;
 
 use anyhow::{Context, Result};
 use assistant_tooling::{ToolFunctionCall, ToolRegistry};
