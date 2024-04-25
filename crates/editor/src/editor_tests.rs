@@ -9576,7 +9576,10 @@ async fn test_toggled_diff_base_change(
         );
         assert_eq!(
             all_hunks,
-            vec![(DiffHunkStatus::Modified, 1..16)],
+            vec![(
+                DiffHunkStatus::Modified,
+                0..snapshot.display_snapshot.max_point().row()
+            )],
             "After diff base is changed, hunks should update"
         );
     });

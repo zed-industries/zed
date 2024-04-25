@@ -2606,9 +2606,11 @@ impl EditorElement {
         });
 
         // TODO kb process `hunks_to_reexpand`
+        let mut removed_expanded_hunks = HashSet::default();
         let blocks_to_remove = hunks_to_remove
             .into_iter()
             .map(|hunk| {
+                removed_expanded_hunks.insert(hunk.id);
                 removed_row_highlights.push(hunk.hunk_range);
                 hunk.block
             })
@@ -2626,6 +2628,9 @@ impl EditorElement {
                 editor.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
             }
             editor.remove_blocks(blocks_to_remove, None, cx);
+            editor
+                .expanded_hunks
+                .retain(|hunk| !removed_expanded_hunks.contains(&hunk.id));
         });
 
         clickable_hunks
