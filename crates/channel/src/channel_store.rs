@@ -3,10 +3,7 @@ mod channel_index;
 use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
 use anyhow::{anyhow, Result};
 use channel_index::ChannelIndex;
-use client::{
-    ChannelId, Client, ClientSettings, DevServerId, ProjectId, RemoteProjectId, Subscription, User,
-    UserId, UserStore,
-};
+use client::{ChannelId, Client, ClientSettings, ProjectId, Subscription, User, UserId, UserStore};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
@@ -15,7 +12,7 @@ use gpui::{
 };
 use language::Capability;
 use rpc::{
-    proto::{self, ChannelRole, ChannelVisibility, DevServerStatus},
+    proto::{self, ChannelRole, ChannelVisibility},
     TypedEnvelope,
 };
 use settings::Settings;
@@ -53,57 +50,12 @@ impl From<proto::HostedProject> for HostedProject {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct RemoteProject {
-    pub id: RemoteProjectId,
-    pub project_id: Option<ProjectId>,
-    pub channel_id: ChannelId,
-    pub name: SharedString,
-    pub path: SharedString,
-    pub dev_server_id: DevServerId,
-}
-
-impl From<proto::RemoteProject> for RemoteProject {
-    fn from(project: proto::RemoteProject) -> Self {
-        Self {
-            id: RemoteProjectId(project.id),
-            project_id: project.project_id.map(|id| ProjectId(id)),
-            channel_id: ChannelId(project.channel_id),
-            name: project.name.into(),
-            path: project.path.into(),
-            dev_server_id: DevServerId(project.dev_server_id),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DevServer {
-    pub id: DevServerId,
-    pub channel_id: ChannelId,
-    pub name: SharedString,
-    pub status: DevServerStatus,
-}
-
-impl From<proto::DevServer> for DevServer {
-    fn from(dev_server: proto::DevServer) -> Self {
-        Self {
-            id: DevServerId(dev_server.dev_server_id),
-            channel_id: ChannelId(dev_server.channel_id),
-            status: dev_server.status(),
-            name: dev_server.name.into(),
-        }
-    }
-}
-
 pub struct ChannelStore {
     pub channel_index: ChannelIndex,
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
     channel_states: HashMap<ChannelId, ChannelState>,
     hosted_projects: HashMap<ProjectId, HostedProject>,
-    remote_projects: HashMap<RemoteProjectId, RemoteProject>,
-    dev_servers: HashMap<DevServerId, DevServer>,
 
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
@@ -133,8 +85,6 @@ pub struct ChannelState {
     observed_chat_message: Option<u64>,
     role: Option<ChannelRole>,
     projects: HashSet<ProjectId>,
-    dev_servers: HashSet<DevServerId>,
-    remote_projects: HashSet<RemoteProjectId>,
 }
 
 impl Channel {
@@ -265,8 +215,6 @@ impl ChannelStore {
             channel_index: ChannelIndex::default(),
             channel_participants: Default::default(),
             hosted_projects: Default::default(),
-            remote_projects: Default::default(),
-            dev_servers: Default::default(),
             outgoing_invites: Default::default(),
             opened_buffers: Default::default(),
             opened_chats: Default::default(),
@@ -364,40 +312,6 @@ impl ChannelStore {
             .collect();
         projects.sort();
         projects
-    }
-
-    pub fn dev_servers_for_id(&self, channel_id: ChannelId) -> Vec<DevServer> {
-        let mut dev_servers: Vec<DevServer> = self
-            .channel_states
-            .get(&channel_id)
-            .map(|state| state.dev_servers.clone())
-            .unwrap_or_default()
-            .into_iter()
-            .flat_map(|id| self.dev_servers.get(&id).cloned())
-            .collect();
-        dev_servers.sort_by_key(|s| (s.name.clone(), s.id));
-        dev_servers
-    }
-
-    pub fn find_dev_server_by_id(&self, id: DevServerId) -> Option<&DevServer> {
-        self.dev_servers.get(&id)
-    }
-
-    pub fn find_remote_project_by_id(&self, id: RemoteProjectId) -> Option<&RemoteProject> {
-        self.remote_projects.get(&id)
-    }
-
-    pub fn remote_projects_for_id(&self, channel_id: ChannelId) -> Vec<RemoteProject> {
-        let mut remote_projects: Vec<RemoteProject> = self
-            .channel_states
-            .get(&channel_id)
-            .map(|state| state.remote_projects.clone())
-            .unwrap_or_default()
-            .into_iter()
-            .flat_map(|id| self.remote_projects.get(&id).cloned())
-            .collect();
-        remote_projects.sort_by_key(|p| (p.name.clone(), p.id));
-        remote_projects
     }
 
     pub fn has_open_channel_buffer(&self, channel_id: ChannelId, _cx: &AppContext) -> bool {
@@ -901,46 +815,6 @@ impl ChannelStore {
             Ok(())
         })
     }
-
-    pub fn create_remote_project(
-        &mut self,
-        channel_id: ChannelId,
-        dev_server_id: DevServerId,
-        name: String,
-        path: String,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<proto::CreateRemoteProjectResponse>> {
-        let client = self.client.clone();
-        cx.background_executor().spawn(async move {
-            client
-                .request(proto::CreateRemoteProject {
-                    channel_id: channel_id.0,
-                    dev_server_id: dev_server_id.0,
-                    name,
-                    path,
-                })
-                .await
-        })
-    }
-
-    pub fn create_dev_server(
-        &mut self,
-        channel_id: ChannelId,
-        name: String,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<proto::CreateDevServerResponse>> {
-        let client = self.client.clone();
-        cx.background_executor().spawn(async move {
-            let result = client
-                .request(proto::CreateDevServer {
-                    channel_id: channel_id.0,
-                    name,
-                })
-                .await?;
-            Ok(result)
-        })
-    }
-
     pub fn get_channel_member_details(
         &self,
         channel_id: ChannelId,
@@ -1221,11 +1095,7 @@ impl ChannelStore {
             || !payload.latest_channel_message_ids.is_empty()
             || !payload.latest_channel_buffer_versions.is_empty()
             || !payload.hosted_projects.is_empty()
-            || !payload.deleted_hosted_projects.is_empty()
-            || !payload.dev_servers.is_empty()
-            || !payload.deleted_dev_servers.is_empty()
-            || !payload.remote_projects.is_empty()
-            || !payload.deleted_remote_projects.is_empty();
+            || !payload.deleted_hosted_projects.is_empty();
 
         if channels_changed {
             if !payload.delete_channels.is_empty() {
@@ -1311,60 +1181,6 @@ impl ChannelStore {
                         .entry(old_project.channel_id)
                         .or_default()
                         .remove_hosted_project(old_project.project_id);
-                }
-            }
-
-            for remote_project in payload.remote_projects {
-                let remote_project: RemoteProject = remote_project.into();
-                if let Some(old_remote_project) = self
-                    .remote_projects
-                    .insert(remote_project.id, remote_project.clone())
-                {
-                    self.channel_states
-                        .entry(old_remote_project.channel_id)
-                        .or_default()
-                        .remove_remote_project(old_remote_project.id);
-                }
-                self.channel_states
-                    .entry(remote_project.channel_id)
-                    .or_default()
-                    .add_remote_project(remote_project.id);
-            }
-
-            for remote_project_id in payload.deleted_remote_projects {
-                let remote_project_id = RemoteProjectId(remote_project_id);
-
-                if let Some(old_project) = self.remote_projects.remove(&remote_project_id) {
-                    self.channel_states
-                        .entry(old_project.channel_id)
-                        .or_default()
-                        .remove_remote_project(old_project.id);
-                }
-            }
-
-            for dev_server in payload.dev_servers {
-                let dev_server: DevServer = dev_server.into();
-                if let Some(old_server) = self.dev_servers.insert(dev_server.id, dev_server.clone())
-                {
-                    self.channel_states
-                        .entry(old_server.channel_id)
-                        .or_default()
-                        .remove_dev_server(old_server.id);
-                }
-                self.channel_states
-                    .entry(dev_server.channel_id)
-                    .or_default()
-                    .add_dev_server(dev_server.id);
-            }
-
-            for dev_server_id in payload.deleted_dev_servers {
-                let dev_server_id = DevServerId(dev_server_id);
-
-                if let Some(old_server) = self.dev_servers.remove(&dev_server_id) {
-                    self.channel_states
-                        .entry(old_server.channel_id)
-                        .or_default()
-                        .remove_dev_server(old_server.id);
                 }
             }
         }
@@ -1480,21 +1296,5 @@ impl ChannelState {
 
     fn remove_hosted_project(&mut self, project_id: ProjectId) {
         self.projects.remove(&project_id);
-    }
-
-    fn add_remote_project(&mut self, remote_project_id: RemoteProjectId) {
-        self.remote_projects.insert(remote_project_id);
-    }
-
-    fn remove_remote_project(&mut self, remote_project_id: RemoteProjectId) {
-        self.remote_projects.remove(&remote_project_id);
-    }
-
-    fn add_dev_server(&mut self, dev_server_id: DevServerId) {
-        self.dev_servers.insert(dev_server_id);
-    }
-
-    fn remove_dev_server(&mut self, dev_server_id: DevServerId) {
-        self.dev_servers.remove(&dev_server_id);
     }
 }

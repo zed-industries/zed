@@ -4,6 +4,8 @@ members = [
     "crates/anthropic",
     "crates/assets",
     "crates/assistant",
+    "crates/assistant_tooling",
+    "crates/assistant2",
     "crates/audio",
     "crates/auto_update",
     "crates/breadcrumbs",
@@ -68,6 +70,7 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
+    "crates/remote_projects",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -107,6 +110,8 @@ members = [
     "extensions/clojure",
     "extensions/csharp",
     "extensions/dart",
+    "extensions/deno",
+    "extensions/elixir",
     "extensions/elm",
     "extensions/emmet",
     "extensions/erlang",
@@ -137,6 +142,8 @@ ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
+assistant2 = { path = "crates/assistant2" }
+assistant_tooling = { path = "crates/assistant_tooling" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 base64 = "0.13"
@@ -202,12 +209,14 @@ project_symbols = { path = "crates/project_symbols" }
 quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
+remote_projects = { path = "crates/remote_projects" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 search = { path = "crates/search" }
+semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
 settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
@@ -243,9 +252,8 @@ async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "810ec594358aafea29a4a3d8ab601d25292b2ce4" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "810ec594358aafea29a4a3d8ab601d25292b2ce4" }
-blade-rwh = { package = "raw-window-handle", version = "0.5" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "e82eec97691c3acdb43494484be60d661edfebf3" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "e82eec97691c3acdb43494484be60d661edfebf3" }
 cap-std = "3.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
@@ -401,7 +409,7 @@ features = [
 ]
 
 [patch.crates-io]
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "7f21c3b98c0749ac192da67a0d65dfe3eabc4a63" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "528bcd2274814ca53711a57d71d1e3cf7abd73fe" }
 # Workaround for a broken nightly build of gpui: See #7644 and revisit once 0.5.3 is released.
 pathfinder_simd = { git = "https://github.com/servo/pathfinder.git", rev = "30419d07660dc11a21e42ef4a7fa329600cff152" }
 

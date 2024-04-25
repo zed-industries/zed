@@ -3,7 +3,6 @@ mod only_instance;
 mod open_listener;
 
 pub use app_menus::*;
-use assistant::AssistantPanel;
 use breadcrumbs::Breadcrumbs;
 use client::ZED_URL_SCHEME;
 use collections::VecDeque;
@@ -181,10 +180,12 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 })
             });
         }
+
         cx.spawn(|workspace_handle, mut cx| async move {
+            let assistant_panel =
+                assistant::AssistantPanel::load(workspace_handle.clone(), cx.clone());
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
-            let assistant_panel = AssistantPanel::load(workspace_handle.clone(), cx.clone());
             let channels_panel =
                 collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
             let chat_panel =
@@ -193,6 +194,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
                 workspace_handle.clone(),
                 cx.clone(),
             );
+
             let (
                 project_panel,
                 terminal_panel,
@@ -210,14 +212,38 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
+                workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
                 workspace.add_panel(terminal_panel, cx);
-                workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
                 cx.focus_self();
             })
+        })
+        .detach();
+
+        let mut current_user = app_state.user_store.read(cx).watch_current_user();
+
+        cx.spawn(|workspace_handle, mut cx| async move {
+            while let Some(user) = current_user.next().await {
+                if user.is_some() {
+                    // User known now, can check feature flags / staff
+                    // At this point, should have the user with staff status available
+                    let use_assistant2 = cx.update(|cx| assistant2::enabled(cx))?;
+                    if use_assistant2 {
+                        let panel =
+                            assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone())
+                                .await?;
+                        workspace_handle.update(&mut cx, |workspace, cx| {
+                            workspace.add_panel(panel, cx);
+                        })?;
+                    }
+
+                    break;
+                }
+            }
+            anyhow::Ok(())
         })
         .detach();
 
@@ -3028,11 +3054,7 @@ mod tests {
             ])
             .unwrap();
         let themes = ThemeRegistry::default();
-        let mut settings = SettingsStore::default();
-        settings
-            .set_default_settings(&settings::default_settings(), cx)
-            .unwrap();
-        cx.set_global(settings);
+        settings::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;

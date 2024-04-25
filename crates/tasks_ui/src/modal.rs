@@ -313,7 +313,9 @@ impl PickerDelegate for TasksModalDelegate {
             String::new()
         };
         if let Some(resolved) = resolved_task.resolved.as_ref() {
-            if display_label != resolved.command_label {
+            if resolved.command_label != display_label
+                && resolved.command_label != resolved_task.resolved_label
+            {
                 if !tooltip_label_text.trim().is_empty() {
                     tooltip_label_text.push('\n');
                 }
@@ -330,6 +332,7 @@ impl PickerDelegate for TasksModalDelegate {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
             char_count: hit.string.chars().count(),
+            color: Color::Default,
         };
         let icon = match source_kind {
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),

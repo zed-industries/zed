@@ -21,7 +21,7 @@ use std::{
     cmp::Ordering,
     future::Future,
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -37,30 +37,29 @@ pub struct SemanticIndex {
 impl Global for SemanticIndex {}
 
 impl SemanticIndex {
-    pub fn new(
-        db_path: &Path,
+    pub async fn new(
+        db_path: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Self>> {
-        let db_path = db_path.to_path_buf();
-        cx.spawn(|cx| async move {
-            let db_connection = cx
-                .background_executor()
-                .spawn(async move {
-                    unsafe {
-                        heed::EnvOpenOptions::new()
-                            .map_size(1024 * 1024 * 1024)
-                            .max_dbs(3000)
-                            .open(db_path)
-                    }
-                })
-                .await?;
-
-            Ok(SemanticIndex {
-                db_connection,
-                embedding_provider,
-                project_indices: HashMap::default(),
+        cx: &mut AsyncAppContext,
+    ) -> Result<Self> {
+        let db_connection = cx
+            .background_executor()
+            .spawn(async move {
+                std::fs::create_dir_all(&db_path)?;
+                unsafe {
+                    heed::EnvOpenOptions::new()
+                        .map_size(1024 * 1024 * 1024)
+                        .max_dbs(3000)
+                        .open(db_path)
+                }
             })
+            .await
+            .context("opening database connection")?;
+
+        Ok(SemanticIndex {
+            db_connection,
+            embedding_provider,
+            project_indices: HashMap::default(),
         })
     }
 
@@ -91,7 +90,7 @@ pub struct ProjectIndex {
     worktree_indices: HashMap<EntityId, WorktreeIndexHandle>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
-    last_status: Status,
+    pub last_status: Status,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     _subscription: Subscription,
 }
@@ -397,7 +396,7 @@ impl WorktreeIndex {
     ) -> impl Future<Output = Result<()>> {
         let worktree = self.worktree.read(cx).as_local().unwrap().snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
-        let scan = self.scan_updated_entries(worktree, updated_entries, cx);
+        let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = self.embed_files(chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
@@ -498,7 +497,9 @@ impl WorktreeIndex {
                     | project::PathChange::Updated
                     | project::PathChange::AddedOrUpdated => {
                         if let Some(entry) = worktree.entry_for_id(*entry_id) {
-                            updated_entries_tx.send(entry.clone()).await?;
+                            if entry.is_file() {
+                                updated_entries_tx.send(entry.clone()).await?;
+                            }
                         }
                     }
                     project::PathChange::Removed => {
@@ -539,7 +540,14 @@ impl WorktreeIndex {
                         cx.spawn(async {
                             while let Ok(entry) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.path);
-                                let Some(text) = fs.load(&entry_abs_path).await.log_err() else {
+                                let Some(text) = fs
+                                    .load(&entry_abs_path)
+                                    .await
+                                    .with_context(|| {
+                                        format!("failed to read path {entry_abs_path:?}")
+                                    })
+                                    .log_err()
+                                else {
                                     continue;
                                 };
                                 let language = language_registry
@@ -683,7 +691,7 @@ impl WorktreeIndex {
                     .context("failed to create read transaction")?;
                 let db_entries = db.iter(&txn).context("failed to iterate database")?;
                 for db_entry in db_entries {
-                    let (_, db_embedded_file) = db_entry?;
+                    let (_key, db_embedded_file) = db_entry?;
                     for chunk in db_embedded_file.chunks {
                         chunks_tx
                             .send((db_embedded_file.path.clone(), chunk))
@@ -700,6 +708,7 @@ impl WorktreeIndex {
         cx.spawn(|cx| async move {
             #[cfg(debug_assertions)]
             let embedding_query_start = std::time::Instant::now();
+            log::info!("Searching for {query}");
 
             let mut query_embeddings = embedding_provider
                 .embed(&[TextToEmbed::new(&query)])
@@ -876,17 +885,13 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let mut semantic_index = cx
-            .update(|cx| {
-                let semantic_index = SemanticIndex::new(
-                    Path::new(temp_dir.path()),
-                    Arc::new(TestEmbeddingProvider),
-                    cx,
-                );
-                semantic_index
-            })
-            .await
-            .unwrap();
+        let mut semantic_index = SemanticIndex::new(
+            temp_dir.path().into(),
+            Arc::new(TestEmbeddingProvider),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
 
         let project_path = Path::new("./fixture");
 
