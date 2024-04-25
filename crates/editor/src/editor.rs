@@ -7449,8 +7449,8 @@ impl Editor {
         snapshot
             .buffer_snapshot
             .runnable_ranges(range)
-            .filter_map(|(multi_buffer_range, (tags, language) )| {
-                let tasks = self.resolve_runnable_tags(tags, language, cx);
+            .filter_map(|(multi_buffer_range, tags)| {
+                let tasks = self.resolve_runnable_tags(tags, cx);
                 if tasks.is_empty() {
                     return None;
                 }
@@ -7465,23 +7465,24 @@ impl Editor {
 
     fn resolve_runnable_tags(
         &self,
-        tags: SmallVec<[task::RunnableTag; 1]>,
+        tags: SmallVec<[(task::RunnableTag, Arc<Language>); 1]>,
         cx: &WindowContext<'_>,
     ) -> SmallVec<[TaskTemplate; 1]> {
         let Some(project) = self.project.as_ref() else {
             return Default::default();
         };
         let inventory = project.read(cx).task_inventory().read(cx);
-        let tasks = inventory.list_tasks(self.project., cx);
+
         SmallVec::from_iter(
             tags.into_iter()
-                .flat_map(|tag| {
-                    tasks.iter().filter_map(|(_, template)| {
-                        if template.tags.contains(&tag) {
-                            return Some(template.clone());
-                        }
-                        None
-                    })
+                .flat_map(|(tag, language)| {
+                    let tag = tag.0.clone();
+                    inventory
+                        .list_tasks(Some(language), None, cx)
+                        .into_iter()
+                        .filter(move |(_, template)| {
+                            template.tags.iter().any(|source_tag| source_tag == &tag)
+                        })
                 })
                 .sorted_by_key(|(kind, _)| kind.to_owned())
                 .map(|(_, template)| template),

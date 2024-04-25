@@ -16,7 +16,6 @@ use std::{
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
-use tree_sitter_rust::language;
 
 use super::PARSER;
 

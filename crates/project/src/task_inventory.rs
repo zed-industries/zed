@@ -162,7 +162,7 @@ impl Inventory {
         &self,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name(),
@@ -182,7 +182,8 @@ impl Inventory {
             .flat_map(|source| {
                 source
                     .source
-                    .update(cx, |source, cx| source.tasks_to_schedule())
+                    .read(cx)
+                    .tasks_to_schedule()
                     .0
                     .into_iter()
                     .map(|task| (&source.kind, task))
