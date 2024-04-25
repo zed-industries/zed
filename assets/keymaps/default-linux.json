@@ -297,13 +297,8 @@
       "ctrl-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
-      "ctrl-alt-shift-up": [
-        "editor::DuplicateLine",
-        {
-          "move_upwards": true
-        }
-      ],
-      "ctrl-alt-shift-down": "editor::DuplicateLine",
+      "ctrl-alt-shift-up": "editor::DuplicateLineUp",
+      "ctrl-alt-shift-down": "editor::DuplicateLineDown",
       "ctrl-shift-left": "editor::SelectToPreviousWordStart",
       "ctrl-shift-right": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::SelectLargerSyntaxNode", //todo(linux) tmp keybinding
@@ -591,12 +586,6 @@
     "context": "ChannelModal > Picker > Editor",
     "bindings": {
       "tab": "channel_modal::ToggleMode"
-    }
-  },
-  {
-    "context": "ChatPanel > MessageEditor",
-    "bindings": {
-      "escape": "chat_panel::CloseReplyPreview"
     }
   },
   {
