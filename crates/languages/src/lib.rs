@@ -173,7 +173,9 @@ pub fn init(
     // ```json
     // {
     //   "languages": {
-    //     "My Language": ["tailwind-css-language-server", "..."]
+    //     "My Language": {
+    //       "language_servers": ["tailwind-css-language-server", "..."]
+    //     }
     //   }
     // }
     // ```
