@@ -51,6 +51,9 @@ fn blurred(editor: View<Editor>, cx: &mut WindowContext) {
                 vim.clear_operator(cx);
             }
         }
+        editor.update(cx, |editor, cx| {
+            editor.set_cursor_shape(language::CursorShape::Hollow, cx);
+        });
     });
 }
 
