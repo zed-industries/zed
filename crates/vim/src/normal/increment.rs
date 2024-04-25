@@ -252,12 +252,12 @@ mod test {
 
         cx.simulate_shared_keystrokes(["ctrl-a"]).await;
         cx.assert_shared_state(indoc! {"
-            1..ˇ3
+            111..ˇ3
             "})
             .await;
         cx.simulate_shared_keystrokes(["ctrl-x"]).await;
         cx.assert_shared_state(indoc! {"
-            1..ˇ2
+            111..ˇ2
             "})
             .await;
     }
