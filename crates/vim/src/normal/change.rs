@@ -1,7 +1,18 @@
-use crate::{motion::Motion, object::Object, state::Mode, utils::copy_selections_content, Vim};
-use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Bias};
+use crate::{
+    motion::{self, Motion},
+    object::Object,
+    state::Mode,
+    utils::copy_selections_content,
+    Vim,
+};
+use editor::{
+    display_map::{DisplaySnapshot, ToDisplayPoint},
+    movement::TextLayoutDetails,
+    scroll::Autoscroll,
+    Bias, DisplayPoint,
+};
 use gpui::WindowContext;
-use language::{char_kind, CharKind};
+use language::{char_kind, CharKind, Selection};
 
 pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &mut WindowContext) {
     // Some motions ignore failure when switching to normal mode
