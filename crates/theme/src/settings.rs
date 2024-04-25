@@ -21,6 +21,42 @@ use util::ResultExt as _;
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
 
+#[derive(
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SpacingStyle {
+    #[serde(alias = "tight")]
+    Tight,
+    #[default]
+    #[serde(alias = "default")]
+    Normal,
+    #[serde(alias = "loose")]
+    Loose,
+}
+
+impl From<String> for SpacingStyle {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "tight" => Self::Tight,
+            "default" => Self::Normal,
+            "loose" => Self::Loose,
+            _ => Self::default(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ThemeSettings {
     pub ui_font_size: Pixels,
@@ -31,6 +67,7 @@ pub struct ThemeSettings {
     pub theme_selection: Option<ThemeSelection>,
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeStyleContent>,
+    pub spacing: SpacingStyle,
 }
 
 impl ThemeSettings {
@@ -182,6 +219,8 @@ pub struct ThemeSettingsContent {
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
+    #[serde(default)]
+    pub spacing: Option<SpacingStyle>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
@@ -343,6 +382,7 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
+            spacing: defaults.spacing.unwrap().into(),
         };
 
         for value in sources.user.into_iter().chain(sources.release_channel) {
