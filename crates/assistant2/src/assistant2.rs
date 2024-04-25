@@ -314,7 +314,8 @@ impl AssistantChat {
                 let completion = this.update(cx, |this, cx| {
                     this.push_new_assistant_message(cx);
 
-                    let definitions = if call_count < limit && matches!(mode, SubmitMode::Codebase)
+                    let definitions = if call_count < limit
+                        && matches!(mode, SubmitMode::Codebase | SubmitMode::Simple)
                     {
                         this.tool_registry.definitions()
                     } else {
