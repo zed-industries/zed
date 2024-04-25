@@ -790,7 +790,7 @@ mod tests {
             language_server_names(&["deno", "eslint", "tailwind"])
         );
 
-        // Adding a language server not in the list of available languages servers adds it to the list.
+        // Adding a language server not in the list of available language servers adds it to the list.
         assert_eq!(
             LanguageSettings::resolve_language_servers(
                 &[
