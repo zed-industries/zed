@@ -1,4 +1,5 @@
-use anyhow::Context as _;
+/// This example creates a basic Chat UI with a function for rolling a die.
+use anyhow::{Context as _, Result};
 use assets::Assets;
 use assistant2::AssistantPanel;
 use assistant_tooling::{LanguageModelTool, ToolRegistry};
@@ -83,9 +84,32 @@ struct DiceRoll {
     rolls: Vec<DieRoll>,
 }
 
+pub struct DiceView {
+    result: Result<DiceRoll>,
+}
+
+impl Render for DiceView {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let output = match &self.result {
+            Ok(output) => output,
+            Err(_) => return "Somehow dice failed 🎲".into_any_element(),
+        };
+
+        h_flex()
+            .children(
+                output
+                    .rolls
+                    .iter()
+                    .map(|roll| div().p_2().child(roll.render())),
+            )
+            .into_any_element()
+    }
+}
+
 impl LanguageModelTool for RollDiceTool {
     type Input = DiceParams;
     type Output = DiceRoll;
+    type View = DiceView;
 
     fn name(&self) -> String {
         "roll_dice".to_string()
@@ -110,23 +134,21 @@ impl LanguageModelTool for RollDiceTool {
         return Task::ready(Ok(DiceRoll { rolls }));
     }
 
-    fn render(
-        _tool_call_id: &str,
-        _input: &Self::Input,
-        output: &Self::Output,
-        _cx: &mut WindowContext,
-    ) -> gpui::AnyElement {
-        h_flex()
-            .children(
-                output
-                    .rolls
-                    .iter()
-                    .map(|roll| div().p_2().child(roll.render())),
-            )
-            .into_any_element()
+    fn new_view(
+        _tool_call_id: String,
+        _input: Self::Input,
+        result: Result<Self::Output>,
+        cx: &mut WindowContext,
+    ) -> gpui::View<Self::View> {
+        cx.new_view(|_cx| DiceView { result })
     }
 
-    fn format(_input: &Self::Input, output: &Self::Output) -> String {
+    fn format(_: &Self::Input, output: &Result<Self::Output>) -> String {
+        let output = match output {
+            Ok(output) => output,
+            Err(_) => return "Somehow dice failed 🎲".to_string(),
+        };
+
         let mut result = String::new();
         for roll in &output.rolls {
             let die = &roll.die;

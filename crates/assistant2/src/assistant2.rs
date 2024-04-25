@@ -322,9 +322,11 @@ impl AssistantChat {
                     };
                     call_count += 1;
 
+                    let messages = this.completion_messages(cx);
+
                     CompletionProvider::get(cx).complete(
                         this.model.clone(),
-                        this.completion_messages(cx),
+                        messages,
                         Vec::new(),
                         1.0,
                         definitions,
@@ -407,6 +409,10 @@ impl AssistantChat {
             }
 
             let tools = join_all(tool_tasks.into_iter()).await;
+            // If the WindowContext went away for any tool's view we don't include it
+            // especially since the below call would fail for the same reason.
+            let tools = tools.into_iter().filter_map(|tool| tool.ok()).collect();
+
             this.update(cx, |this, cx| {
                 if let Some(ChatMessage::Assistant(AssistantMessage { tool_calls, .. })) =
                     this.messages.last_mut()
@@ -561,10 +567,9 @@ impl AssistantChat {
                         let result = &tool_call.result;
                         let name = tool_call.name.clone();
                         match result {
-                            Some(result) => div()
-                                .p_2()
-                                .child(result.render(&name, &tool_call.id, cx))
-                                .into_any(),
+                            Some(result) => {
+                                div().p_2().child(result.into_any_element(&name)).into_any()
+                            }
                             None => div()
                                 .p_2()
                                 .child(Label::new(name).color(Color::Modified))
@@ -577,7 +582,7 @@ impl AssistantChat {
         }
     }
 
-    fn completion_messages(&self, cx: &WindowContext) -> Vec<CompletionMessage> {
+    fn completion_messages(&self, cx: &mut WindowContext) -> Vec<CompletionMessage> {
         let mut completion_messages = Vec::new();
 
         for message in &self.messages {
