@@ -3,7 +3,7 @@ use crate::{
     Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition, InlayId,
     PointForPosition, SelectPhase,
 };
-use gpui::{px, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
+use gpui::{px, AppContext, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
@@ -82,6 +82,24 @@ impl TriggerPoint {
             TriggerPoint::InlayHint(inlay_range, _, _) => &inlay_range.inlay_position,
         }
     }
+}
+
+pub fn exclude_link_to_position(
+    buffer: &Model<language::Buffer>,
+    current_position: &text::Anchor,
+    location: &LocationLink,
+    cx: &AppContext,
+) -> bool {
+    // Exclude definition links that points back to cursor position.
+    // (i.e., currently cursor upon definition).
+    let snapshot = buffer.read(cx).snapshot();
+    !(buffer == &location.target.buffer
+        && current_position
+            .cmp(&location.target.range.start, &snapshot)
+            .is_ge()
+        && current_position
+            .cmp(&location.target.range.end, &snapshot)
+            .is_le())
 }
 
 impl Editor {
@@ -163,12 +181,30 @@ impl Editor {
                     cx.focus(&self.focus_handle);
                 }
 
-                return self.navigate_to_hover_links(
-                    None,
-                    hovered_link_state.links,
-                    modifiers.alt,
-                    cx,
-                );
+                // exclude links pointing back to the current anchor
+                let current_position = point
+                    .next_valid
+                    .to_point(&self.snapshot(cx).display_snapshot);
+                let Some((buffer, anchor)) = self
+                    .buffer()
+                    .read(cx)
+                    .text_anchor_for_position(current_position, cx)
+                else {
+                    return Task::ready(Ok(false));
+                };
+                let links = hovered_link_state
+                    .links
+                    .into_iter()
+                    .filter(|link| {
+                        if let HoverLink::Text(location) = link {
+                            exclude_link_to_position(&buffer, &anchor, location, cx)
+                        } else {
+                            true
+                        }
+                    })
+                    .collect();
+
+                return self.navigate_to_hover_links(None, links, modifiers.alt, cx);
             }
         }
 
@@ -451,7 +487,6 @@ pub fn show_link_definition(
     let project = editor.project.clone();
 
     let snapshot = snapshot.buffer_snapshot.clone();
-    let anchor_buffer_snapshot = buffer.read(cx).snapshot();
     hovered_link_state.task = Some(cx.spawn(|this, mut cx| {
         async move {
             let result = match &trigger_point {
@@ -468,16 +503,6 @@ pub fn show_link_definition(
                         })
                         .ok()
                     } else if let Some(project) = project {
-                        // exclude definition links returned by lsp pointing to the current anchor
-                        let exclude_links_to_origin = |location: &project::LocationLink| {
-                            project::Project::exclude_link_to_position(
-                                &buffer,
-                                &anchor_buffer_snapshot,
-                                &buffer_position,
-                                location,
-                            )
-                        };
-
                         // query the LSP for definition info
                         project
                             .update(&mut cx, |project, cx| match preferred_kind {
@@ -493,27 +518,18 @@ pub fn show_link_definition(
                             .ok()
                             .map(|definition_result| {
                                 (
-                                    definition_result
-                                        .iter()
-                                        .filter(|&link| exclude_links_to_origin(link))
-                                        .find_map(|link| {
-                                            link.origin.as_ref().and_then(|origin| {
-                                                let start = snapshot.anchor_in_excerpt(
-                                                    excerpt_id,
-                                                    origin.range.start,
-                                                )?;
-                                                let end = snapshot.anchor_in_excerpt(
-                                                    excerpt_id,
-                                                    origin.range.end,
-                                                )?;
-                                                Some(RangeInEditor::Text(start..end))
-                                            })
-                                        }),
-                                    definition_result
-                                        .into_iter()
-                                        .filter(exclude_links_to_origin)
-                                        .map(HoverLink::Text)
-                                        .collect(),
+                                    definition_result.iter().find_map(|link| {
+                                        link.origin.as_ref().and_then(|origin| {
+                                            let start = snapshot.anchor_in_excerpt(
+                                                excerpt_id,
+                                                origin.range.start,
+                                            )?;
+                                            let end = snapshot
+                                                .anchor_in_excerpt(excerpt_id, origin.range.end)?;
+                                            Some(RangeInEditor::Text(start..end))
+                                        })
+                                    }),
+                                    definition_result.into_iter().map(HoverLink::Text).collect(),
                                 )
                             })
                     } else {
