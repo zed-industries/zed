@@ -1336,6 +1336,7 @@ impl InlayHintRefreshReason {
     }
 }
 
+#[derive(Debug)]
 struct TestInvocation {}
 
 impl Editor {
@@ -7451,15 +7452,15 @@ impl Editor {
             .buffer_snapshot
             .test_ranges(range)
             .filter_map(|(multi_buffer_range, tags)| {
-                let tasks = self.resolve_test_tags(tags);
+                // let tasks = self.resolve_test_tags(tags);
 
-                if tasks.is_empty() {
-                    return None;
-                }
+                // if tasks.is_empty() {
+                //     return None;
+                // }
 
                 Some((
                     dbg!(multi_buffer_range.start.to_display_point(&snapshot).row()),
-                    dbg!(tasks),
+                    dbg!(tags),
                 ))
             })
             .collect()
@@ -7469,6 +7470,7 @@ impl Editor {
         for tag in tags.into_iter() {
             // Something
         }
+        SmallVec::from_buf([TestInvocation {}])
     }
 
     pub fn move_to_enclosing_bracket(
