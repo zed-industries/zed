@@ -1,60 +1,58 @@
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
+use std::io::Result;
 use std::path::{Path, PathBuf};
-use std::process::{Command, CommandEnvs, Stdio};
-
-pub mod output;
+use std::process::Stdio;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-use output::{Child, ExitStatus, Output};
-
-#[cfg(windows)]
-pub trait WindowsCommandExt {
-    fn creation_flags(&mut self, flags: u32) -> &mut Process;
-    fn raw_arg<S: AsRef<OsStr>>(&mut self, text_to_append_as_is: S) -> &mut Process;
-}
-
 pub struct Process {
-    process: std::process::Command,
-
-    program: OsString,
+    program: PathBuf,
     working_dir: Option<PathBuf>,
-    args: Vec<OsString>,
+    args: Vec<(OsString, bool)>,
 
-    use_pty: bool,
-    is_async: bool,
+    stdin: Option<Stdio>,
+    stdout: Option<Stdio>,
+    stderr: Option<Stdio>,
+
+    envs: HashMap<OsString, OsString>,
+    cleared_env: bool,
+    removed_envs: Vec<OsString>,
+
+    flatpak_use_pty: bool,
+    #[cfg(windows)]
+    windows_creation_flags: u32,
 }
 
 impl Process {
-    pub fn new<S: AsRef<OsStr>>(program: S) -> Self {
+    pub fn new<P: AsRef<Path>>(program: P) -> Self {
         Self {
-            #[cfg(feature = "flatpak")]
-            process: Command::new("/app/bin/host-spawn"),
-            #[cfg(not(feature = "flatpak"))]
-            process: Command::new(&program),
-
-            program: program.as_ref().into(),
+            program: program.as_ref().to_path_buf(),
             working_dir: None,
             args: Vec::new(),
 
-            use_pty: false,
-            is_async: false,
+            stdin: None,
+            stdout: None,
+            stderr: None,
+
+            envs: HashMap::new(),
+            cleared_env: false,
+            removed_envs: Vec::new(),
+
+            flatpak_use_pty: false,
+            #[cfg(windows)]
+            windows_creation_flags: 0,
         }
     }
 
     pub fn flatpak_use_pty(&mut self) -> &mut Self {
-        self.use_pty = true;
-        self
-    }
-
-    pub fn make_async(&mut self) -> &mut Self {
-        self.is_async = true;
+        self.flatpak_use_pty = true;
         self
     }
 
     pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
-        self.args.push(arg.as_ref().into());
+        self.args.push((arg.as_ref().to_os_string(), false));
         self
     }
 
@@ -71,7 +69,8 @@ impl Process {
     }
 
     pub fn env<K: AsRef<OsStr>, V: AsRef<OsStr>>(&mut self, key: K, val: V) -> &mut Self {
-        self.process.env(key, val);
+        self.envs
+            .insert(key.as_ref().to_os_string(), val.as_ref().to_os_string());
         self
     }
 
@@ -79,146 +78,191 @@ impl Process {
         &mut self,
         vars: I,
     ) -> &mut Self {
-        self.process.envs(vars);
+        for (k, v) in vars {
+            self.env(k, v);
+        }
         self
     }
 
-    pub fn env_remove<K: AsRef<OsStr>>(&mut self, key: K) -> &mut Self {
-        self.process.env_remove(key);
+    pub fn env_remove<S: AsRef<OsStr>>(&mut self, key: S) -> &mut Self {
+        self.envs.remove(key.as_ref());
+        self.removed_envs.push(key.as_ref().to_os_string());
         self
     }
 
     pub fn env_clear(&mut self) -> &mut Self {
-        self.process.env_clear();
+        self.cleared_env = true;
+        self.envs.clear();
         self
     }
 
     pub fn stdin<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
-        self.process.stdin(cfg);
+        self.stdin = Some(cfg.into());
         self
     }
 
     pub fn stdout<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
-        self.process.stdout(cfg);
+        self.stdout = Some(cfg.into());
         self
     }
 
     pub fn stderr<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Self {
-        self.process.stderr(cfg);
+        self.stderr = Some(cfg.into());
         self
     }
 
-    pub fn spawn(mut self) -> Child {
-        self.process.args(self.get_actual_args());
-        if let Some(working_dir) = &self.working_dir {
-            self.process.current_dir(working_dir);
-        }
-
-        if self.is_async {
-            Child::Smol(smol::process::Command::from(self.process).spawn())
-        } else {
-            Child::Standard(self.process.spawn())
-        }
+    pub fn spawn(&mut self) -> Result<std::process::Child> {
+        self.make_command().spawn()
     }
 
-    pub fn output(mut self) -> Output {
-        self.process.args(self.get_actual_args());
-        if let Some(working_dir) = &self.working_dir {
-            self.process.current_dir(working_dir);
-        }
-
-        if self.is_async {
-            Output::Smol(Box::new(
-                smol::process::Command::from(self.process).output(),
-            ))
-        } else {
-            Output::Standard(self.process.output())
-        }
+    pub fn output(&mut self) -> Result<std::process::Output> {
+        self.make_command().output()
     }
 
-    pub fn status(mut self) -> ExitStatus {
-        self.process.args(self.get_actual_args());
-        if let Some(working_dir) = &self.working_dir {
-            self.process.current_dir(working_dir);
-        }
-
-        if self.is_async {
-            ExitStatus::Smol(Box::new(
-                smol::process::Command::from(self.process).status(),
-            ))
-        } else {
-            ExitStatus::Standard(self.process.status())
-        }
+    pub fn status(&mut self) -> Result<std::process::ExitStatus> {
+        self.make_command().status()
     }
 
-    pub fn get_program(&self) -> &OsStr {
+    pub fn spawn_async(&mut self, kill_on_drop: bool) -> Result<smol::process::Child> {
+        self.make_async_command(kill_on_drop).spawn()
+    }
+
+    pub fn output_async(
+        &mut self,
+        kill_on_drop: bool,
+    ) -> impl std::future::Future<Output = Result<std::process::Output>> {
+        self.make_async_command(kill_on_drop).output()
+    }
+
+    pub fn status_async(
+        &mut self,
+        kill_on_drop: bool,
+    ) -> impl std::future::Future<Output = Result<std::process::ExitStatus>> {
+        self.make_async_command(kill_on_drop).status()
+    }
+
+    pub fn get_program(&self) -> &PathBuf {
         &self.program
     }
 
-    pub fn get_args(&self) -> &[OsString] {
-        &self.args
+    pub fn get_args(&self) -> Vec<OsString> {
+        self.args
+            .iter()
+            .map(|(arg, _)| arg.clone())
+            .collect::<Vec<_>>()
     }
 
-    pub fn get_envs(&self) -> CommandEnvs<'_> {
-        self.process.get_envs()
+    pub fn get_envs(&self) -> &HashMap<OsString, OsString> {
+        &self.envs
     }
 
-    pub fn get_actual_program(&self) -> &OsStr {
-        self.process.get_program()
+    #[cfg(windows)]
+    pub fn windows_creation_flags(&mut self, flags: u32) -> &mut Self {
+        self.windows_creation_flags |= flags;
+        self
     }
 
-    pub fn get_actual_args(&self) -> Vec<OsString> {
+    pub fn windows_raw_arg<S: AsRef<OsStr>>(&mut self, raw_text: S) -> &mut Self {
+        self.args.push((raw_text.as_ref().to_os_string(), true));
+        self
+    }
+
+    pub fn get_actual_program(&self) -> PathBuf {
         #[cfg(feature = "flatpak")]
-        let mut args = self.flatpak_args();
+        return <PathBuf as std::str::FromStr>::from_str("/app/bin/host-spawn").unwrap();
+        #[cfg(not(feature = "flatpak"))]
+        return self.program.clone();
+    }
+
+    pub fn get_actual_args(&mut self) -> Vec<String> {
+        let command = self.make_command_common(true);
+        command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn make_command_common(&mut self, only_args: bool) -> std::process::Command {
+        let env = self
+            .envs
+            .clone()
+            .into_iter()
+            .chain(
+                std::env::vars()
+                    .map(|(key, val)| (OsString::from(key), OsString::from(val)))
+                    .filter(|(key, _)| !self.removed_envs.contains(key) && !self.cleared_env),
+            )
+            .collect::<Vec<_>>();
 
         #[cfg(not(feature = "flatpak"))]
-        let mut args = Vec::new();
+        let mut command = std::process::Command::new(&self.program);
+        #[cfg(feature = "flatpak")]
+        let mut command = {
+            let mut command = std::process::Command::new("/app/bin/host-spawn");
+            if let Some(working_directory) = &self.working_dir {
+                command.arg("-directory").arg(working_directory);
+            }
+            if !env.is_empty() {
+                command.arg("-env").arg(
+                    env.iter()
+                        .map(|(key, _)| key.clone())
+                        .collect::<Vec<_>>()
+                        .join(&OsString::from(",")),
+                );
+            }
+            command.arg(if self.flatpak_use_pty {
+                "-pty"
+            } else {
+                "-no-pty"
+            });
+            command.arg(self.program.as_os_str());
+            command
+        };
 
-        for arg in &self.args {
-            args.push(arg.clone());
+        if !only_args {
+            command.env_clear().envs(env);
+            if let Some(working_directory) = &self.working_dir {
+                command.current_dir(working_directory);
+            }
         }
-        args
+
+        for (arg, is_raw) in &self.args {
+            if *is_raw {
+                #[cfg(windows)]
+                command.raw_arg(arg);
+            } else {
+                command.arg(arg);
+            }
+        }
+        command
     }
 
-    #[cfg(feature = "flatpak")]
-    fn flatpak_args(&self) -> Vec<OsString> {
-        let env_keys = self
-            .process
-            .get_envs()
-            .map(|(k, _)| k.to_str().unwrap().to_string())
-            .chain(std::env::vars().map(|(k, _)| k))
-            .collect::<Vec<_>>()
-            .join(",");
-
-        let mut flatpak_args = Vec::new();
-
-        flatpak_args.push(if self.use_pty {
-            "-pty".into()
-        } else {
-            "-no-pty".into()
-        });
-        if !env_keys.is_empty() {
-            flatpak_args.push("-env".into());
-            flatpak_args.push(env_keys.into());
+    fn make_command(&mut self) -> std::process::Command {
+        let mut command = self.make_command_common(false);
+        if self.stdin.is_some() {
+            command.stdin(self.stdin.take().unwrap()); // smol::process::Command::from doesn't work with stdin et al
         }
-        if let Some(working_dir) = &self.working_dir {
-            flatpak_args.push("-directory".into());
-            flatpak_args.push(working_dir.into());
+        if self.stdout.is_some() {
+            command.stdout(self.stdout.take().unwrap());
         }
-        flatpak_args.push(self.program.clone());
-        flatpak_args
-    }
-}
-
-#[cfg(windows)]
-impl WindowsCommandExt for Process {
-    fn creation_flags(&mut self, flags: u32) -> &mut Self {
-        self.process.creation_flags(flags);
-        self
+        if self.stderr.is_some() {
+            command.stderr(self.stderr.take().unwrap());
+        }
+        command
     }
 
-    fn raw_arg<S: AsRef<OsStr>>(&mut self, raw_text: S) -> &mut Self {
-        self.process.raw_arg(raw_text);
-        self
+    fn make_async_command(&mut self, kill_on_drop: bool) -> smol::process::Command {
+        let mut command = smol::process::Command::from(self.make_command_common(false));
+        if self.stdin.is_some() {
+            command.stdin(self.stdin.take().unwrap()); // smol::process::Command::from doesn't work with stdin et al
+        }
+        if self.stdout.is_some() {
+            command.stdout(self.stdout.take().unwrap());
+        }
+        if self.stderr.is_some() {
+            command.stderr(self.stderr.take().unwrap());
+        }
+        command.kill_on_drop(kill_on_drop);
+        command
     }
 }

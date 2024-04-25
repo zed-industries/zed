@@ -331,21 +331,17 @@ impl TerminalBuilder {
                 Shell::WithArguments { program, args } => (Some(program), args),
             };
 
-            let mut process =
+            let mut command =
                 process::Process::new(shell_command.clone().unwrap_or("".to_string()));
-            process.flatpak_use_pty().envs(&env).args(additional_args);
+            command.flatpak_use_pty().envs(&env).args(additional_args);
 
             alacritty_terminal::tty::Options {
                 shell: if shell_command.is_none() {
                     None
                 } else {
                     Some(alacritty_terminal::tty::Shell::new(
-                        process.get_actual_program().to_str().unwrap().to_string(),
-                        process
-                            .get_actual_args()
-                            .iter()
-                            .map(|arg| arg.to_str().unwrap().to_string())
-                            .collect(),
+                        command.get_actual_program().to_str().unwrap().to_string(),
+                        command.get_actual_args(),
                     ))
                 },
                 working_directory: working_directory.clone(),
@@ -1557,10 +1553,11 @@ impl EventEmitter<Event> for Terminal {}
 
 #[cfg(feature = "flatpak")]
 fn flatpak_get_user_shell() -> Option<String> {
-    let mut process = process::Process::new("getent");
-    process.arg("passwd").arg(std::env::var("USER").unwrap());
-
-    match process.output().standard() {
+    match process::Process::new("getent")
+        .arg("passwd")
+        .arg(std::env::var("USER").unwrap())
+        .output()
+    {
         Ok(output) => match String::from_utf8(output.stdout) {
             Ok(output) => output.trim().split(':').last().map(|str| str.to_string()),
             Err(_) => None,

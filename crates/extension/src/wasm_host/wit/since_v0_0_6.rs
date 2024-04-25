@@ -344,7 +344,7 @@ impl ExtensionImports for WasmState {
                     futures::pin_mut!(body);
                     self.host.fs.create_file_with(&zip_path, body).await?;
 
-                    let unzip_status = std::process::Command::new("unzip")
+                    let unzip_status = process::Process::new("unzip")
                         .current_dir(&extension_work_dir)
                         .arg("-d")
                         .arg(&destination_path)

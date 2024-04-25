@@ -429,7 +429,7 @@ fn human_readable_package_name(package_directory: &Path) -> Option<String> {
     }
 
     let pkgid = String::from_utf8(
-        std::process::Command::new("cargo")
+        process::Process::new("cargo")
             .current_dir(package_directory)
             .arg("pkgid")
             .output()

@@ -77,9 +77,9 @@ impl LspAdapter for ElixirLspAdapter {
 
         let delegate = delegate.clone();
         Some(cx.spawn(|cx| async move {
-            let elixir_output = smol::process::Command::new("elixir")
+            let elixir_output = process::Process::new("elixir")
                 .args(["--version"])
-                .output()
+                .output_async(false)
                 .await;
             if elixir_output.is_err() {
                 if DID_SHOW_NOTIFICATION
@@ -149,11 +149,11 @@ impl LspAdapter for ElixirLspAdapter {
             fs::create_dir_all(&folder_path)
                 .await
                 .with_context(|| format!("failed to create directory {}", folder_path.display()))?;
-            let unzip_status = smol::process::Command::new("unzip")
+            let unzip_status = process::Process::new("unzip")
                 .arg(&zip_path)
                 .arg("-d")
                 .arg(&folder_path)
-                .output()
+                .output_async(false)
                 .await?
                 .status;
             if !unzip_status.success() {

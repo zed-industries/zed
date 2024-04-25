@@ -9,7 +9,7 @@ use project::project_settings::{BinarySettings, ProjectSettings};
 use regex::Regex;
 use serde_json::json;
 use settings::Settings;
-use smol::{fs, process};
+use smol::fs;
 use std::{
     any::Any,
     ffi::{OsStr, OsString},
@@ -109,7 +109,10 @@ impl super::LspAdapter for GoLspAdapter {
 
         let delegate = delegate.clone();
         Some(cx.spawn(|cx| async move {
-            let install_output = process::Command::new("go").args(["version"]).output().await;
+            let install_output = process::Process::new("go")
+                .args(["version"])
+                .output_async(false)
+                .await;
             if install_output.is_err() {
                 if DID_SHOW_NOTIFICATION
                     .compare_exchange(false, true, SeqCst, SeqCst)
@@ -159,11 +162,11 @@ impl super::LspAdapter for GoLspAdapter {
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
-        let install_output = process::Command::new("go")
+        let install_output = process::Process::new("go")
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
             .args(["install", "golang.org/x/tools/gopls@latest"])
-            .output()
+            .output_async(false)
             .await?;
 
         if !install_output.status.success() {
@@ -177,9 +180,9 @@ impl super::LspAdapter for GoLspAdapter {
         }
 
         let installed_binary_path = gobin_dir.join("gopls");
-        let version_output = process::Command::new(&installed_binary_path)
+        let version_output = process::Process::new(&installed_binary_path)
             .arg("version")
-            .output()
+            .output_async(false)
             .await
             .context("failed to run installed gopls binary")?;
         let version_stdout = str::from_utf8(&version_output.stdout)

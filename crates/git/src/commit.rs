@@ -3,9 +3,6 @@ use anyhow::{anyhow, Result};
 use collections::HashMap;
 use std::path::Path;
 
-#[cfg(windows)]
-use process::WindowsCommandExt;
-
 pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oid, String>> {
     const MARKER: &'static str = "<MARKER>";
 
@@ -19,11 +16,10 @@ pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oi
         .args(shas.iter().map(ToString::to_string));
 
     #[cfg(windows)]
-    command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+    command.windows_creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
 
     let output = command
         .output()
-        .standard()
         .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
 
     anyhow::ensure!(

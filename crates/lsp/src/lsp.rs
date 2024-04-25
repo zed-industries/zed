@@ -13,11 +13,8 @@ use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    process::{self, Child},
+    process::Child,
 };
-
-#[cfg(target_os = "windows")]
-use smol::process::windows::CommandExt;
 
 use std::{
     ffi::OsString,
@@ -259,18 +256,17 @@ impl LanguageServer {
             &binary.arguments
         );
 
-        let mut command = process::Command::new(&binary.path);
+        let mut command = process::Process::new(&binary.path);
         command
             .current_dir(working_dir)
             .args(binary.arguments)
             .envs(binary.env.unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .stderr(Stdio::piped());
         #[cfg(windows)]
-        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-        let mut server = command.spawn()?;
+        command.windows_creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+        let mut server = command.spawn_async(true)?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();

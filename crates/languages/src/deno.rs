@@ -106,12 +106,12 @@ impl LspAdapter for DenoLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            let unzip_status = smol::process::Command::new("unzip")
+            let unzip_status = process::Process::new("unzip")
                 .current_dir(&container_dir)
                 .arg(&zip_path)
                 .arg("-d")
                 .arg(&version_dir)
-                .output()
+                .output_async(false)
                 .await?
                 .status;
             if !unzip_status.success() {

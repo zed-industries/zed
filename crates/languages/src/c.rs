@@ -114,10 +114,10 @@ impl super::LspAdapter for CLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            let unzip_status = smol::process::Command::new("unzip")
+            let unzip_status = process::Process::new("unzip")
                 .current_dir(&container_dir)
                 .arg(&zip_path)
-                .output()
+                .output_async(false)
                 .await?
                 .status;
             if !unzip_status.success() {

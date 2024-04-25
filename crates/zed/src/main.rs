@@ -37,7 +37,6 @@ use settings::{
     default_settings, handle_settings_file_changes, watch_config_file, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
-use smol::process::Command;
 use std::{
     env,
     ffi::OsStr,
@@ -1008,9 +1007,9 @@ async fn load_login_shell_environment() -> Result<()> {
         shell_cmd_prefix.as_deref().unwrap_or("")
     );
 
-    let output = Command::new(&shell)
+    let output = process::Process::new(&shell)
         .args(["-l", "-i", "-c", &shell_cmd])
-        .output()
+        .output_async(false)
         .await
         .context("failed to spawn login shell to source login environment variables")?;
     if !output.status.success() {

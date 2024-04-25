@@ -3850,14 +3850,13 @@ impl Project {
 
             // A lack of test binary counts as a failure
             let process = installation_test_binary.and_then(|binary| {
-                smol::process::Command::new(&binary.path)
+                process::Process::new(&binary.path)
                     .current_dir(&binary.path)
                     .args(binary.arguments)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::inherit())
-                    .kill_on_drop(true)
-                    .spawn()
+                    .spawn_async(true)
                     .ok()
             });
 
@@ -4896,7 +4895,7 @@ impl Project {
 
         if let Some(working_dir_path) = working_dir_path {
             let mut child =
-                smol::process::Command::new(command)
+                process::Process::new(command)
                     .args(arguments.iter().map(|arg| {
                         arg.replace("{buffer_path}", &buffer_abs_path.to_string_lossy())
                     }))
@@ -4904,7 +4903,7 @@ impl Project {
                     .stdin(smol::process::Stdio::piped())
                     .stdout(smol::process::Stdio::piped())
                     .stderr(smol::process::Stdio::piped())
-                    .spawn()?;
+                    .spawn_async(false)?;
             let stdin = child
                 .stdin
                 .as_mut()
@@ -10651,9 +10650,9 @@ async fn load_shell_environment(dir: &Path) -> Result<HashMap<String, String>> {
         additional_command.unwrap_or("")
     );
 
-    let output = smol::process::Command::new(&shell)
+    let output = process::Process::new(&shell)
         .args(["-i", "-c", &command])
-        .output()
+        .output_async(false)
         .await
         .context("failed to spawn login shell to source login environment variables")?;
 
