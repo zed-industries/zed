@@ -115,16 +115,13 @@ impl TextSize {
     pub fn rems(self, cx: &WindowContext) -> Rems {
         let theme_settings = ThemeSettings::get_global(cx);
 
-        let ui_font_size = theme_settings.ui_font_size.clone();
-        let buffer_font_size = theme_settings.buffer_font_size.clone();
-
         match self {
             Self::Large => rems_from_px(16.),
             Self::Default => rems_from_px(14.),
             Self::Small => rems_from_px(12.),
             Self::XSmall => rems_from_px(10.),
-            Self::UI => rems_from_px(ui_font_size.into()),
-            Self::Editor => rems_from_px(buffer_font_size.into()),
+            Self::UI => rems_from_px(theme_settings.ui_font_size.into()),
+            Self::Editor => rems_from_px(theme_settings.buffer_font_size.into()),
         }
     }
 }
