@@ -2738,12 +2738,12 @@ impl Project {
                                             cx,
                                         );
                                         this.enqueue_buffer_ordered_message(
-                                                BufferOrderedMessage::LanguageServerUpdate {
-                                                    language_server_id,
-                                                    message:proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(Default::default())
-                                                },
-                                            )
-                                            .ok();
+                                            BufferOrderedMessage::LanguageServerUpdate {
+                                                language_server_id,
+                                                message:proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(Default::default())
+                                            },
+                                        )
+                                        .ok();
                                     }).ok();
                                 }
                             });
@@ -4000,10 +4000,10 @@ impl Project {
                     language_server_status.has_pending_diagnostic_updates = true;
                     self.disk_based_diagnostics_started(language_server_id, cx);
                     self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id,
-                            message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(Default::default())
-                        })
-                        .ok();
+                        language_server_id,
+                        message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(Default::default())
+                    })
+                    .ok();
                 } else {
                     self.on_lsp_work_start(
                         language_server_id,

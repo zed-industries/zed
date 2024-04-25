@@ -115,20 +115,21 @@ impl ProjectDiagnosticsEditor {
         let project_event_subscription =
             cx.subscribe(&project_handle, |this, project, event, cx| match event {
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
-                    log::debug!("Disk based diagnostics finished for server {language_server_id}");
+                    log::debug!("disk based diagnostics finished for server {language_server_id}");
                     this.update_excerpts(Some(*language_server_id), cx);
                 }
                 project::Event::DiagnosticsUpdated {
                     language_server_id,
                     path,
                 } => {
-                    log::debug!("Adding path {path:?} to update for server {language_server_id}");
                     this.paths_to_update
                         .insert((path.clone(), *language_server_id));
                     this.summary = project.read(cx).diagnostic_summary(false, cx);
-                    if this.editor.read(cx).is_focused(cx) {
+                    if this.editor.read(cx).is_focused(cx) || this.focus_handle.is_focused(cx) {
+                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
                         cx.notify();
                     } else {
+                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
                         this.update_excerpts(Some(*language_server_id), cx);
                     }
                 }
@@ -228,7 +229,8 @@ impl ProjectDiagnosticsEditor {
         language_server_id: Option<LanguageServerId>,
         cx: &mut ViewContext<Self>,
     ) {
-        log::debug!("Updating excerpts for server {language_server_id:?}");
+        log::debug!("updating excerpts for server {language_server_id:?}");
+
         let mut paths = Vec::new();
         self.paths_to_update.retain(|(path, server_id)| {
             if language_server_id.map_or(true, |id| id == *server_id) {
