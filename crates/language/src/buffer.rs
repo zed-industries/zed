@@ -13,7 +13,7 @@ use crate::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
         SyntaxSnapshot, ToTreeSitterPoint,
     },
-    LanguageScope, Outline, TestTag,
+    LanguageScope, Outline, RunnableTag,
 };
 use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
@@ -2948,20 +2948,21 @@ impl BufferSnapshot {
         })
     }
 
-    pub fn test_ranges(
+    pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,
-    ) -> impl Iterator<Item = (Range<usize>, SmallVec<[TestTag; 1]>)> + '_ {
+    ) -> impl Iterator<Item = (Range<usize>, SmallVec<[(RunnableTag, Arc<Language>); 1]>)> + '_
+    {
         let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
-            grammar.tests_config.as_ref().map(|config| &config.query)
+            grammar.runnable_config.as_ref().map(|config| &config.query)
         });
 
         let test_configs = syntax_matches
             .grammars()
             .iter()
-            .map(|grammar| grammar.tests_config.as_ref())
+            .map(|grammar| grammar.runnable_config.as_ref())
             .collect::<Vec<_>>();
 
         iter::from_fn(move || {
@@ -2971,7 +2972,10 @@ impl BufferSnapshot {
                     test_configs[mat.grammar_index].and_then(|test_configs| {
                         let test_tags =
                             SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
-                                test_configs.test_tags.get(&capture.index).cloned()
+                                Some((
+                                    test_configs.runnable_tags.get(&capture.index).cloned()?,
+                                    mat.language.clone(),
+                                ))
                             }));
 
                         if test_tags.is_empty() {

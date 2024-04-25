@@ -37,6 +37,7 @@ rand.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 sum_tree.workspace = true
+task.workspace = true
 text.workspace = true
 theme.workspace = true
 util.workspace = true

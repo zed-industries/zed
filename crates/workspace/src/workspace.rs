@@ -8,6 +8,7 @@ mod persistence;
 pub mod searchable;
 pub mod shared_screen;
 mod status_bar;
+pub mod tasks;
 mod toolbar;
 mod workspace_settings;
 

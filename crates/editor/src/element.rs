@@ -30,7 +30,7 @@ use gpui::{
     Styled, TextRun, TextStyle, TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
-use language::{language_settings::ShowWhitespaceSetting, TestTag};
+use language::language_settings::ShowWhitespaceSetting;
 use lsp::DiagnosticSeverity;
 use multi_buffer::Anchor;
 use project::{
@@ -49,6 +49,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
+use task::{RunnableTag, TaskTemplate};
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
@@ -1279,7 +1280,7 @@ impl EditorElement {
 
     fn layout_test_run_indicators(
         &self,
-        test_lines: Vec<(u32, SmallVec<[TestTag; 1]>)>,
+        test_lines: Vec<(u32, SmallVec<[TaskTemplate; 1]>)>,
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
@@ -3609,7 +3610,7 @@ impl Element for EditorElement {
                     cx,
                 );
 
-                let test_lines = self.editor.read(cx).test_display_rows(
+                let test_lines = self.editor.read(cx).runnable_display_rows(
                     start_anchor..end_anchor,
                     &snapshot.display_snapshot,
                     cx,

@@ -24,7 +24,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use futures::Future;
-use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
+use gpui::{AppContext, AsyncAppContext, Model, Task};
 pub use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
@@ -56,6 +56,7 @@ use std::{
     },
 };
 use syntax_map::SyntaxSnapshot;
+use task::RunnableTag;
 pub use task_context::{BasicContextProvider, ContextProvider, ContextProviderWithTasks};
 use theme::SyntaxTheme;
 use tree_sitter::{self, wasmtime, Query, WasmStore};
@@ -529,10 +530,6 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-// This is a new type representing a specific capture name in the langauge's tests.scm query
-#[derive(Clone, Debug)]
-pub struct TestTag(SharedString);
-
 #[derive(Clone, Deserialize, JsonSchema)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
@@ -832,7 +829,7 @@ pub struct Grammar {
     pub(crate) highlights_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
-    pub(crate) tests_config: Option<TestConfig>,
+    pub(crate) runnable_config: Option<RunnableConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub embedding_config: Option<EmbeddingConfig>,
@@ -879,10 +876,10 @@ struct RedactionConfig {
     pub redaction_capture_ix: u32,
 }
 
-struct TestConfig {
+struct RunnableConfig {
     pub query: Query,
     /// A mapping from captures indices to known test tags
-    pub test_tags: HashMap<u32, TestTag>,
+    pub runnable_tags: HashMap<u32, RunnableTag>,
     /// index of the capture that corresponds to @run
     pub run_capture_ix: u32,
 }
@@ -928,7 +925,7 @@ impl Language {
                     injection_config: None,
                     override_config: None,
                     redactions_config: None,
-                    tests_config: None,
+                    runnable_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -984,9 +981,9 @@ impl Language {
                 .with_redaction_query(query.as_ref())
                 .context("Error loading redaction query")?;
         }
-        if let Some(query) = queries.tests {
+        if let Some(query) = queries.runnables {
             self = self
-                .with_tests_query(query.as_ref())
+                .with_runnable_query(query.as_ref())
                 .context("Error loading tests query")?;
         }
         Ok(self)
@@ -1000,27 +997,27 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_tests_query(mut self, source: &str) -> Result<Self> {
+    pub fn with_runnable_query(mut self, source: &str) -> Result<Self> {
         let grammar = self
             .grammar_mut()
             .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
 
         let query = Query::new(&grammar.ts_language, source)?;
         let mut run_capture_index = None;
-        let mut test_tags = HashMap::default();
+        let mut runnable_tags = HashMap::default();
         for (ix, name) in query.capture_names().iter().enumerate() {
             if *name == "run" {
                 run_capture_index = Some(ix as u32);
             } else if !name.starts_with("_") {
-                test_tags.insert(ix as u32, TestTag(name.to_string().into()));
+                runnable_tags.insert(ix as u32, RunnableTag(name.to_string().into()));
             }
         }
 
         if let Some(run_capture_ix) = run_capture_index {
-            grammar.tests_config = Some(TestConfig {
+            grammar.runnable_config = Some(RunnableConfig {
                 query,
                 run_capture_ix,
-                test_tags,
+                runnable_tags,
             });
         }
 

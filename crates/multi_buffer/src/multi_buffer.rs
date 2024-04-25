@@ -3132,10 +3132,15 @@ impl MultiBufferSnapshot {
             .flatten()
     }
 
-    pub fn test_ranges(
+    pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,
-    ) -> impl Iterator<Item = (Range<usize>, SmallVec<[language::TestTag; 1]>)> + '_ {
+    ) -> impl Iterator<
+        Item = (
+            Range<usize>,
+            SmallVec<[(task::RunnableTag, Arc<Language>); 1]>,
+        ),
+    > + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.excerpts_for_range(range.clone())
             .flat_map(move |(excerpt, excerpt_offset)| {
@@ -3143,7 +3148,7 @@ impl MultiBufferSnapshot {
 
                 excerpt
                     .buffer
-                    .test_ranges(excerpt.range.context.clone())
+                    .runnable_ranges(excerpt.range.context.clone())
                     .map(move |(mut match_range, test_tags)| {
                         // Re-base onto the excerpts coordinates in the multibuffer
                         match_range.start =

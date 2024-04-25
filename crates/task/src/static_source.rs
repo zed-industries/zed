@@ -124,7 +124,7 @@ impl StaticSource {
 }
 
 impl TaskSource for StaticSource {
-    fn tasks_to_schedule(&mut self, _: &mut ModelContext<Box<dyn TaskSource>>) -> TaskTemplates {
+    fn tasks_to_schedule(&self) -> TaskTemplates {
         self.tasks.clone()
     }
 

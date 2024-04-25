@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{active_item_selection_properties, schedule_resolved_task};
+use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, Global,
@@ -16,7 +16,7 @@ use ui::{
     Tooltip, WindowContext,
 };
 use util::ResultExt;
-use workspace::{ModalView, Workspace};
+use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
 
 use serde::Deserialize;
 

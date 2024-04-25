@@ -33,6 +33,7 @@ mod persistence;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
+pub mod tasks;
 
 #[cfg(test)]
 mod editor_tests;
@@ -75,7 +76,6 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
-use language::TestTag;
 use language::{
     char_kind,
     language_settings::{self, all_language_settings, InlayHintSettings},
@@ -83,6 +83,7 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
+use task::{RunnableTag, TaskTemplate};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
@@ -1335,9 +1336,6 @@ impl InlayHintRefreshReason {
         }
     }
 }
-
-#[derive(Debug)]
-struct TestInvocation {}
 
 impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
@@ -7442,35 +7440,52 @@ impl Editor {
         self.select_larger_syntax_node_stack = stack;
     }
 
-    pub fn test_display_rows(
+    pub fn runnable_display_rows(
         &self,
         range: Range<Anchor>,
         snapshot: &DisplaySnapshot,
-        _cx: &WindowContext,
-    ) -> Vec<(u32, SmallVec<[TestTag; 1]>)> {
+        cx: &WindowContext,
+    ) -> Vec<(u32, SmallVec<[TaskTemplate; 1]>)> {
         snapshot
             .buffer_snapshot
-            .test_ranges(range)
-            .filter_map(|(multi_buffer_range, tags)| {
-                // let tasks = self.resolve_test_tags(tags);
-
-                // if tasks.is_empty() {
-                //     return None;
-                // }
+            .runnable_ranges(range)
+            .filter_map(|(multi_buffer_range, (tags, language) )| {
+                let tasks = self.resolve_runnable_tags(tags, language, cx);
+                if tasks.is_empty() {
+                    return None;
+                }
 
                 Some((
                     dbg!(multi_buffer_range.start.to_display_point(&snapshot).row()),
-                    dbg!(tags),
+                    dbg!(tasks),
                 ))
             })
             .collect()
     }
 
-    fn resolve_test_tags(&self, tags: SmallVec<[TestTag; 1]>) -> SmallVec<[TestInvocation; 1]> {
-        for tag in tags.into_iter() {
-            // Something
-        }
-        SmallVec::from_buf([TestInvocation {}])
+    fn resolve_runnable_tags(
+        &self,
+        tags: SmallVec<[task::RunnableTag; 1]>,
+        cx: &WindowContext<'_>,
+    ) -> SmallVec<[TaskTemplate; 1]> {
+        let Some(project) = self.project.as_ref() else {
+            return Default::default();
+        };
+        let inventory = project.read(cx).task_inventory().read(cx);
+        let tasks = inventory.list_tasks(self.project., cx);
+        SmallVec::from_iter(
+            tags.into_iter()
+                .flat_map(|tag| {
+                    tasks.iter().filter_map(|(_, template)| {
+                        if template.tags.contains(&tag) {
+                            return Some(template.clone());
+                        }
+                        None
+                    })
+                })
+                .sorted_by_key(|(kind, _)| kind.to_owned())
+                .map(|(_, template)| template),
+        )
     }
 
     pub fn move_to_enclosing_bracket(

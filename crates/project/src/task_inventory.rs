@@ -11,7 +11,9 @@ use collections::{hash_map, HashMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext, Subscription};
 use itertools::{Either, Itertools};
 use language::Language;
-use task::{ResolvedTask, TaskContext, TaskId, TaskSource, TaskTemplate, VariableName};
+use task::{
+    ResolvedTask, RunnableTag, TaskContext, TaskId, TaskSource, TaskTemplate, VariableName,
+};
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
@@ -29,7 +31,7 @@ struct SourceInInventory {
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TaskSourceKind {
     /// bash-like commands spawned by users, not associated with any path
     UserInput,
@@ -180,7 +182,7 @@ impl Inventory {
             .flat_map(|source| {
                 source
                     .source
-                    .update(cx, |source, cx| source.tasks_to_schedule(cx))
+                    .update(cx, |source, cx| source.tasks_to_schedule())
                     .0
                     .into_iter()
                     .map(|task| (&source.kind, task))
@@ -246,7 +248,7 @@ impl Inventory {
             .flat_map(|source| {
                 source
                     .source
-                    .update(cx, |source, cx| source.tasks_to_schedule(cx))
+                    .update(cx, |source, cx| source.tasks_to_schedule())
                     .0
                     .into_iter()
                     .map(|task| (&source.kind, task))
@@ -427,10 +429,7 @@ mod test_inventory {
     }
 
     impl TaskSource for StaticTestSource {
-        fn tasks_to_schedule(
-            &mut self,
-            _cx: &mut ModelContext<Box<dyn TaskSource>>,
-        ) -> TaskTemplates {
+        fn tasks_to_schedule(&self, _cx: &ModelContext<Box<dyn TaskSource>>) -> TaskTemplates {
             TaskTemplates(
                 self.tasks
                     .clone()
