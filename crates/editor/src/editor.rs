@@ -8982,6 +8982,10 @@ impl Editor {
                 return;
             };
 
+            if buffer.read(cx).file().is_none() {
+                return;
+            }
+
             let project = project.clone();
             let blame = cx.new_model(|cx| GitBlame::new(buffer, project, user_triggered, cx));
             self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
