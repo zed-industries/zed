@@ -25,8 +25,7 @@ use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
-    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementInputHandler, Entity,
+    ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
     GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
     ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
@@ -1179,9 +1178,12 @@ impl EditorElement {
     // If a fold contains any hunks then that fold line is marked as modified
     fn layout_git_gutters(
         &self,
+        line_height: Pixels,
+        gutter_hitbox: &Hitbox,
         display_rows: Range<u32>,
         snapshot: &EditorSnapshot,
-    ) -> Vec<DisplayDiffHunk> {
+        cx: &mut WindowContext,
+    ) -> Vec<(DisplayDiffHunk, Option<Hitbox>)> {
         let buffer_snapshot = &snapshot.buffer_snapshot;
 
         let buffer_start_row = DisplayPoint::new(display_rows.start, 0)
@@ -1195,6 +1197,16 @@ impl EditorElement {
             .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(hunk, snapshot))
             .dedup()
+            .map(|hunk| {
+                let hitbox = if let DisplayDiffHunk::Unfolded { .. } = &hunk {
+                    let hunk_bounds =
+                        Self::diff_hunk_bounds(&snapshot, line_height, gutter_hitbox.bounds, &hunk);
+                    Some(cx.insert_hitbox(hunk_bounds, true))
+                } else {
+                    None
+                };
+                (hunk, hitbox)
+            })
             .collect()
     }
 
@@ -2273,6 +2285,11 @@ impl EditorElement {
         let scroll_top = scroll_position.y * line_height;
 
         cx.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
+        for (_, hunk_hitbox) in &layout.display_hunks {
+            if let Some(hunk_hitbox) = hunk_hitbox {
+                cx.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
+            }
+        }
 
         let show_git_gutter = matches!(
             ProjectSettings::get_global(cx).git.git_gutter,
@@ -2377,7 +2394,7 @@ impl EditorElement {
         let mut removed_row_highlights = Vec::with_capacity(layout.display_hunks.len());
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
             let mut current_expanded_hunk = expanded_hunks.next();
-            for hunk in &layout.display_hunks {
+            for (hunk, _) in &layout.display_hunks {
                 let (clickable_hunk, background_color, corner_radii) = match hunk {
                     DisplayDiffHunk::Folded { display_row } => {
                         loop {
@@ -3993,20 +4010,13 @@ impl Element for EditorElement {
                     cx,
                 );
 
-                let display_hunks = self.layout_git_gutters(start_row..end_row, &snapshot);
-                cx.set_cursor_style(CursorStyle::Arrow, &gutter_hitbox);
-                for hunk in &display_hunks {
-                    if let DisplayDiffHunk::Unfolded { .. } = hunk {
-                        let hunk_bounds = Self::diff_hunk_bounds(
-                            &snapshot,
-                            line_height,
-                            gutter_hitbox.bounds,
-                            hunk,
-                        );
-                        let clickable_hunk_hitbox = cx.insert_hitbox(hunk_bounds, true);
-                        cx.set_cursor_style(CursorStyle::PointingHand, &clickable_hunk_hitbox);
-                    }
-                }
+                let display_hunks = self.layout_git_gutters(
+                    line_height,
+                    &gutter_hitbox,
+                    start_row..end_row,
+                    &snapshot,
+                    cx,
+                );
 
                 let mut max_visible_line_width = Pixels::ZERO;
                 let line_layouts =
@@ -4364,7 +4374,7 @@ pub struct EditorLayout {
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: BTreeMap<u32, Hsla>,
     line_numbers: Vec<Option<ShapedLine>>,
-    display_hunks: Vec<DisplayDiffHunk>,
+    display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
     folds: Vec<FoldLayout>,
