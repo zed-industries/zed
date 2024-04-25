@@ -1,8 +1,8 @@
 use futures::channel::oneshot;
 use fuzzy::PathMatch;
 use gpui::Model;
-use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, Project};
+use picker::{Picker, PickerDelegate};
+use project::{Entry, PathMatchCandidateSet, Project, WorktreeId};
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -17,10 +17,33 @@ use workspace::Workspace;
 
 pub(crate) struct NewPathPrompt;
 
+#[derive(Debug)]
 struct Match {
-    path: Arc<Path>,
-    path_positions: Vec<usize>,
+    path_match: Option<PathMatch>,
     suffix: Option<String>,
+}
+
+impl Match {
+    fn entry<'a>(&'a self, project: &'a Project, cx: &'a WindowContext) -> Option<&'a Entry> {
+        if let Some(suffix) = &self.suffix {
+            let (worktree, path) = if let Some(path_match) = &self.path_match {
+                (
+                    project.worktree_for_id(WorktreeId::from_usize(path_match.worktree_id), cx),
+                    path_match.path.join(suffix),
+                )
+            } else {
+                (project.worktrees().next(), PathBuf::from(suffix))
+            };
+
+            worktree.and_then(|worktree| worktree.read(cx).entry_for_path(path))
+        } else if let Some(path_match) = &self.path_match {
+            let worktree =
+                project.worktree_for_id(WorktreeId::from_usize(path_match.worktree_id), cx)?;
+            worktree.read(cx).entry_for_path(path_match.path.as_ref())
+        } else {
+            None
+        }
+    }
 }
 
 pub struct NewPathDelegate {
@@ -81,13 +104,16 @@ impl PickerDelegate for NewPathDelegate {
         query: String,
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> gpui::Task<()> {
-        let (dir, suffix) = if let Some(index) = query.find('/') {
-            (
-                query[0..index].to_string(),
-                Some(query[index + 1..].to_string()),
-            )
+        let query = query.trim().trim_start_matches('/');
+        let (dir, suffix) = if let Some(index) = query.rfind('/') {
+            let suffix = if index + 1 < query.len() {
+                Some(query[index + 1..].to_string())
+            } else {
+                None
+            };
+            (query[0..index].to_string(), suffix)
         } else {
-            (query, None)
+            (query.to_string(), None)
         };
 
         let worktrees = self
@@ -113,7 +139,10 @@ impl PickerDelegate for NewPathDelegate {
 
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
+
         let cancel_flag = self.cancel_flag.clone();
+        let query = query.to_string();
+        let prefix = dir.clone();
         cx.spawn(|picker, mut cx| async move {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
@@ -131,14 +160,62 @@ impl PickerDelegate for NewPathDelegate {
             }
             picker
                 .update(&mut cx, |picker, cx| {
-                    picker.delegate.set_search_matches(suffix, matches, cx)
+                    picker
+                        .delegate
+                        .set_search_matches(query, prefix, suffix, matches, cx)
                 })
                 .log_err();
         })
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
-        todo!()
+    fn confirm_update_query(&mut self, cx: &mut ViewContext<Picker<Self>>) -> Option<String> {
+        self.matches.get(self.selected_index).and_then(|m| {
+            if m.suffix.is_none() && m.path_match.is_some() {
+                Some(format!(
+                    "{}/",
+                    m.path_match.as_ref().unwrap().path.to_string_lossy()
+                ))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn confirm(&mut self, _: bool, cx: &mut ViewContext<picker::Picker<Self>>) {
+        let Some(m) = self.matches.get(self.selected_index) else {
+            return;
+        };
+
+        let Some(suffix) = &m.suffix else { return };
+
+        let abs_path = if let Some(path_match) = &m.path_match {
+            let Some(worktree) = self
+                .project
+                .read(cx)
+                .worktree_for_id(WorktreeId::from_usize(path_match.worktree_id), cx)
+            else {
+                cx.emit(gpui::DismissEvent);
+                return;
+            };
+
+            worktree
+                .read(cx)
+                .abs_path()
+                .join(path_match.path.as_ref())
+                .join(suffix)
+        } else {
+            let Some(worktree) = self.project.read(cx).worktrees().next() else {
+                cx.emit(gpui::DismissEvent);
+                return;
+            };
+
+            worktree.read(cx).abs_path().join(suffix)
+        };
+
+        if let Some(tx) = self.tx.take() {
+            tx.send(Some(abs_path)).ok();
+        }
+        cx.emit(gpui::DismissEvent)
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<picker::Picker<Self>>) {
@@ -148,6 +225,13 @@ impl PickerDelegate for NewPathDelegate {
         cx.emit(gpui::DismissEvent)
     }
 
+    /// Cases to consider for each match:
+    /// - if there's no path_match, then we are in the "root" directory
+    /// - if there's a path_match, then we are in that directory.
+    /// - if there's no suffix, then we only prompt to select the directory
+    /// - if there's a suffix, and a directory exists with that name, we prompt to select it
+    /// - if there's a suffix, and a file exists, we show it as a conflict.
+    /// - otherwise, we prompt you to create the file called "suffix" in the directory.
     fn render_match(
         &self,
         ix: usize,
@@ -156,16 +240,49 @@ impl PickerDelegate for NewPathDelegate {
     ) -> Option<Self::ListItem> {
         let m = self.matches.get(ix)?;
 
+        let mut suffix = m.suffix.as_ref();
+        let entry = m.entry(self.project.read(cx), cx);
+        let match_label = m.path_match.as_ref().map(|path_match| {
+            HighlightedLabel::new(
+                path_match.path.to_string_lossy().to_string(),
+                path_match.positions.clone(),
+            )
+        });
+        let suffix_dir_label = if let Some(entry) = entry {
+            if entry.is_dir() {
+                suffix
+                    .take()
+                    .map(|suffix| Label::new(suffix.to_string()).color(Color::Accent))
+            } else {
+                None
+            }
+        } else if suffix.is_some_and(|s| s.ends_with("/")) {
+            // TODO: in the case that you are creating a new directory, we should highlight the existing part of the path in white.
+            suffix.take().map(|suffix| {
+                Label::new(suffix.trim_end_matches('/').to_string()).color(Color::Created)
+            })
+        } else {
+            None
+        };
+
+        // TODO: used StyledText for this so the kerning doesn't change as you type
         Some(
-            ListItem::new(ix).child(
+            ListItem::new(ix).selected(selected).child(
                 h_flex()
-                    .child(HighlightedLabel::new(
-                        m.path.to_string_lossy().to_string(),
-                        m.path_positions.clone(),
-                    ))
-                    .child(div().child(Label::new("/")).mr_1())
-                    .child(if let Some(suffix) = &m.suffix {
-                        Label::new(suffix.clone()).color(Color::Created)
+                    .child(".")
+                    .when_some(match_label, |el, match_label| {
+                        el.child(Label::new("/")).child(match_label)
+                    })
+                    .when_some(suffix_dir_label, |el, suffix_dir_label| {
+                        el.child(Label::new("/")).child(suffix_dir_label)
+                    })
+                    .child(Label::new("/"))
+                    .child(if let Some(suffix) = suffix {
+                        Label::new(suffix.clone()).color(if entry.is_some() {
+                            Color::Conflict
+                        } else {
+                            Color::Created
+                        })
                     } else {
                         Label::new("[…]").color(Color::Muted)
                     }),
@@ -174,24 +291,55 @@ impl PickerDelegate for NewPathDelegate {
     }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
-        Arc::from("boop")
+        Arc::from("[directory/]filename.ext")
     }
 }
 
 impl NewPathDelegate {
     fn set_search_matches(
         &mut self,
+        query: String,
+        prefix: String,
         suffix: Option<String>,
         matches: Vec<PathMatch>,
         cx: &mut ViewContext<Picker<Self>>,
     ) {
+        cx.notify();
+        if query.is_empty() {
+            self.matches = vec![];
+            return;
+        }
+
+        let mut directory_exists = false;
+
         self.matches = matches
             .into_iter()
-            .map(|m| Match {
-                path: m.path.clone(),
-                path_positions: m.positions,
-                suffix: suffix.clone(),
+            .map(|m| {
+                if m.path.as_ref().to_string_lossy() == prefix {
+                    directory_exists = true
+                }
+                Match {
+                    path_match: Some(m),
+                    suffix: suffix.clone(),
+                }
             })
             .collect();
+
+        if !directory_exists {
+            if suffix.is_none() {
+                self.matches.insert(
+                    0,
+                    Match {
+                        path_match: None,
+                        suffix: Some(query.clone()),
+                    },
+                )
+            } else {
+                self.matches.push(Match {
+                    path_match: None,
+                    suffix: Some(query.clone()),
+                })
+            }
+        }
     }
 }
