@@ -51,6 +51,10 @@ impl FileIcons {
         // FIXME: Associate a type with the languages and have the file's language
         //        override these associations
         maybe!({
+            // If `filename`` can be found directly in `suffixes`
+            if let Some(type_str) = this.suffixes.get(path.file_name()?.to_str()?) {
+                return this.get_type_icon(type_str);
+            }
             let suffix = path.icon_stem_or_suffix()?;
 
             if let Some(type_str) = this.stems.get(suffix) {
