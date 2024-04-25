@@ -555,27 +555,6 @@
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
   },
-  // Settings specific to our elixir integration
-  "elixir": {
-    // Change the LSP zed uses for elixir.
-    // Note that changing this setting requires a restart of Zed
-    // to take effect.
-    //
-    // May take 3 values:
-    //  1. Use the standard ElixirLS, this is the default
-    //         "lsp": "elixir_ls"
-    //  2. Use the experimental NextLs
-    //         "lsp": "next_ls",
-    //  3. Use a language server installed locally on your machine:
-    //         "lsp": {
-    //           "local": {
-    //             "path": "~/next-ls/bin/start",
-    //             "arguments": ["--stdio"]
-    //            }
-    //          },
-    //
-    "lsp": "elixir_ls"
-  },
   "code_actions_on_format": {},
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
