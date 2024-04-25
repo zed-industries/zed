@@ -324,10 +324,12 @@ impl ProjectDiagnosticsEditor {
                             to_keep = old_groups.next();
                         }
                     }
-                    (Some((_, old_group)), Some((_, new_group))) => {
+                    (Some((_, old_group)), Some((new_language_server_id, new_group))) => {
                         let old_primary = &old_group.primary_diagnostic;
                         let new_primary = &new_group.entries[new_group.primary_ix];
-                        match compare_diagnostics(old_primary, new_primary, &snapshot) {
+                        match compare_diagnostics(old_primary, new_primary, &snapshot)
+                            .then_with(|| old_group.language_server_id.cmp(new_language_server_id))
+                        {
                             Ordering::Less => {
                                 if language_server_id
                                     .map_or(true, |id| id == old_group.language_server_id)
