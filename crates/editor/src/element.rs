@@ -1200,7 +1200,7 @@ impl EditorElement {
                 .map(|col| self.column_pixels(col as usize, cx))
                 .unwrap_or(px(0.));
 
-            content_origin.x + max(padded_line_width, min_column)
+            (content_origin.x - scroll_pixel_position.x) + max(padded_line_width, min_column)
         };
 
         let absolute_offset = point(start_x, start_y);
