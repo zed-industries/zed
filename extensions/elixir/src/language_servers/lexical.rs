@@ -1,7 +1,7 @@
 use std::fs;
 
-use zed::lsp::{Completion, Symbol};
-use zed::{CodeLabel, LanguageServerId};
+use zed::lsp::{Completion, CompletionKind, Symbol};
+use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
 pub struct Lexical {
@@ -78,8 +78,50 @@ impl Lexical {
         Ok(binary_path)
     }
 
-    pub fn label_for_completion(&self, _completion: Completion) -> Option<CodeLabel> {
-        None
+    pub fn label_for_completion(&self, completion: Completion) -> Option<CodeLabel> {
+        match completion.kind? {
+            CompletionKind::Module
+            | CompletionKind::Class
+            | CompletionKind::Interface
+            | CompletionKind::Struct => {
+                let name = completion.label;
+                let defmodule = "defmodule ";
+                let code = format!("{defmodule}{name}");
+
+                Some(CodeLabel {
+                    code,
+                    spans: vec![CodeLabelSpan::code_range(
+                        defmodule.len()..defmodule.len() + name.len(),
+                    )],
+                    filter_range: (0..name.len()).into(),
+                })
+            }
+            CompletionKind::Function | CompletionKind::Constant => {
+                let name = completion.label;
+                let def = "def ";
+                let code = format!("{def}{name}");
+
+                Some(CodeLabel {
+                    code,
+                    spans: vec![CodeLabelSpan::code_range(def.len()..def.len() + name.len())],
+                    filter_range: (0..name.len()).into(),
+                })
+            }
+            CompletionKind::Operator => {
+                let name = completion.label;
+                let def_a = "def a ";
+                let code = format!("{def_a}{name} b");
+
+                Some(CodeLabel {
+                    code,
+                    spans: vec![CodeLabelSpan::code_range(
+                        def_a.len()..def_a.len() + name.len(),
+                    )],
+                    filter_range: (0..name.len()).into(),
+                })
+            }
+            _ => None,
+        }
     }
 
     pub fn label_for_symbol(&self, _symbol: Symbol) -> Option<CodeLabel> {
