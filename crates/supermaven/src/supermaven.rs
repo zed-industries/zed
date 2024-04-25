@@ -23,7 +23,7 @@ use ui::prelude::*;
 use util::ResultExt;
 
 pub fn init(cx: &mut AppContext) {
-    cx.set_global(Supermaven::Disabled);
+    cx.set_global(Supermaven::Starting);
 
     let mut provider = all_language_settings(None, cx).inline_completions.provider;
     if provider == language::language_settings::InlineCompletionProvider::Supermaven {
@@ -45,7 +45,8 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub enum Supermaven {
-    Disabled,
+    DownloadingAgent,
+    Starting,
     Started {
         _process: Child,
         next_state_id: SupermavenCompletionStateId,
@@ -57,9 +58,15 @@ pub enum Supermaven {
 }
 
 impl Supermaven {
+    pub fn download(&mut self, _cx: &mut AppContext) {
+        // todo!(): Set up API client to download for current platform and architecture
+        // https://supermaven.com/api/download-path?platform=darwin&arch=arm64
+    }
+
     pub fn start(&mut self, cx: &mut AppContext) {
-        if let Self::Disabled = self {
+        if let Self::Starting = self {
             cx.spawn(|cx| async move {
+                // todo!(): Download supermaven binary if not already downloaded
                 let binary_path = std::env::var("SUPERMAVEN_AGENT_BINARY")
                     .expect("set SUPERMAVEN_AGENT_BINARY env variable");
                 let mut process = Command::new(&binary_path)
@@ -81,7 +88,7 @@ impl Supermaven {
                     .context("failed to get stdout for process")?;
                 cx.update(|cx| {
                     Self::update(cx, |this, cx| {
-                        if let Self::Disabled = this {
+                        if let Self::Starting = this {
                             let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
                             outgoing_tx
                                 .unbounded_send(OutboundMessage::UseFreeVersion)
@@ -106,7 +113,7 @@ impl Supermaven {
     }
 
     pub fn stop(&mut self) {
-        *self = Self::Disabled;
+        *self = Self::Starting;
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -303,66 +310,3 @@ impl Render for ActivationRequestPrompt {
         })
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use std::sync::Arc;
-
-//     use super::*;
-//     use gpui::{Context, TestAppContext};
-//     use language::{language_settings::AllLanguageSettings, Buffer, BufferId, LanguageRegistry};
-//     use project::Project;
-//     use settings::SettingsStore;
-
-//     #[gpui::test]
-//     async fn test_exploratory(cx: &mut TestAppContext) {
-//         env_logger::init();
-
-//         init_test(cx);
-//         let background_executor = cx.executor();
-//         background_executor.allow_parking();
-
-//         cx.update(Supermaven::launch).await.unwrap();
-
-//         let language_registry = Arc::new(LanguageRegistry::test(background_executor.clone()));
-
-//         let python = language_registry.language_for_name("Python");
-
-//         let buffer = cx.new_model(|cx| {
-//             let mut buffer = Buffer::new(0, BufferId::new(cx.entity_id().as_u64()).unwrap(), "");
-//             buffer.set_language_registry(language_registry);
-//             cx.spawn(|buffer, mut cx| async move {
-//                 let python = python.await?;
-//                 buffer.update(&mut cx, |buffer: &mut Buffer, cx| {
-//                     buffer.set_language(Some(python), cx);
-//                 })?;
-//                 anyhow::Ok(())
-//             })
-//             .detach_and_log_err(cx);
-//             buffer
-//         });
-
-//         let editor = cx.add_window(|cx| Editor::for_buffer(buffer, None, cx));
-//         editor
-//             .update(cx, |editor, cx| editor.insert("import numpy as ", cx))
-//             .unwrap();
-
-//         cx.executor()
-//             .timer(std::time::Duration::from_secs(60))
-//             .await;
-//     }
-
-//     pub fn init_test(cx: &mut TestAppContext) {
-//         _ = cx.update(|cx| {
-//             let store = SettingsStore::test(cx);
-//             cx.set_global(store);
-//             theme::init(theme::LoadThemes::JustBase, cx);
-//             language::init(cx);
-//             Project::init_settings(cx);
-//             editor::init(cx);
-//             SettingsStore::update(cx, |store, cx| {
-//                 store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
-//             });
-//         });
-//     }
-// }

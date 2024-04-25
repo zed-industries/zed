@@ -277,17 +277,19 @@ fn init_ui(args: Args) {
         editor::init(cx);
         image_viewer::init(cx);
         diagnostics::init(cx);
+
+        // Initialize each completion provider. Settings are used for toggling between them.
         copilot::init(
             copilot_language_server_id,
             client.http_client(),
             node_runtime.clone(),
             cx,
         );
+        supermaven::init(cx);
 
         assistant::init(client.clone(), cx);
         assistant2::init(client.clone(), cx);
 
-        supermaven::init(cx);
         inline_completion_registry::init(client.telemetry().clone(), cx);
 
         extension::init(

@@ -2316,6 +2316,7 @@ dependencies = [
  "sha2 0.10.7",
  "sqlx",
  "subtle",
+ "supermaven_api",
  "telemetry_events",
  "text",
  "theme",
@@ -9614,6 +9615,17 @@ dependencies = [
  "smol",
  "theme",
  "ui",
+ "util",
+]
+
+[[package]]
+name = "supermaven_api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "serde",
+ "serde_json",
  "util",
 ]
 
