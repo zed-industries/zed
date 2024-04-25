@@ -193,24 +193,21 @@ pub fn init(
     );
     language!(
         "tsx",
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-        ]
+        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
+            node_runtime.clone()
+        ))]
     );
     language!(
         "typescript",
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-        ]
+        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
+            node_runtime.clone()
+        ))]
     );
     language!(
         "javascript",
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
-        ]
+        vec![Arc::new(typescript::TypeScriptLspAdapter::new(
+            node_runtime.clone()
+        ))]
     );
     language!(
         "jsdoc",
@@ -247,6 +244,14 @@ pub fn init(
         languages.register_secondary_lsp_adapter(
             language.into(),
             Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
+        );
+    }
+
+    let eslint_languages = ["TSX", "TypeScript", "JavaScript", "Vue.js"];
+    for language in eslint_languages {
+        languages.register_secondary_lsp_adapter(
+            language.into(),
+            Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone())),
         );
     }
 
