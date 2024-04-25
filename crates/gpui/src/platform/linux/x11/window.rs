@@ -2,10 +2,10 @@
 #![allow(unused)]
 
 use crate::{
-    platform::blade::BladeRenderer, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams,
-    X11Client, X11ClientState,
+    platform::blade::BladeRenderer, size, Bounds, DevicePixels, ForegroundExecutor, Modifiers,
+    Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance,
+    WindowOptions, WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
@@ -77,6 +77,8 @@ pub struct Callbacks {
 }
 
 pub(crate) struct X11WindowState {
+    client: X11ClientStatePtr,
+    executor: ForegroundExecutor,
     atoms: XcbAtoms,
     raw: RawWindow,
     bounds: Bounds<i32>,
@@ -124,6 +126,8 @@ impl rwh::HasDisplayHandle for X11Window {
 
 impl X11WindowState {
     pub fn new(
+        client: X11ClientStatePtr,
+        executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
         x_main_screen_index: usize,
@@ -224,6 +228,8 @@ impl X11WindowState {
         let gpu_extent = query_render_extent(xcb_connection, x_window);
 
         Self {
+            client,
+            executor,
             display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
             raw,
             bounds: params.bounds.map(|v| v.0),
@@ -248,12 +254,8 @@ pub(crate) struct X11Window(pub X11WindowStatePtr);
 
 impl Drop for X11Window {
     fn drop(&mut self) {
-        // TODO
-        println!("X11Window: drop");
-
         let mut state = self.0.state.borrow_mut();
         state.renderer.destroy();
-        drop(state);
 
         self.0.xcb_connection.unmap_window(self.0.x_window).unwrap();
         self.0
@@ -261,11 +263,24 @@ impl Drop for X11Window {
             .destroy_window(self.0.x_window)
             .unwrap();
         self.0.xcb_connection.flush().unwrap();
+
+        let this_ptr = self.0.clone();
+        let client_ptr = state.client.clone();
+        state
+            .executor
+            .spawn(async move {
+                this_ptr.close();
+                client_ptr.drop_window(this_ptr.x_window);
+            })
+            .detach();
+        drop(state);
     }
 }
 
 impl X11Window {
     pub fn new(
+        client: X11ClientStatePtr,
+        executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
         x_main_screen_index: usize,
@@ -274,6 +289,8 @@ impl X11Window {
     ) -> Self {
         Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
+                client,
+                executor,
                 params,
                 xcb_connection,
                 x_main_screen_index,
@@ -288,15 +305,11 @@ impl X11Window {
 }
 
 impl X11WindowStatePtr {
-    pub fn handle_close(&self) -> bool {
+    pub fn should_close(&self) -> bool {
         let mut cb = self.callbacks.borrow_mut();
         if let Some(mut should_close) = cb.should_close.take() {
             let result = (should_close)();
             cb.should_close = Some(should_close);
-            if result {
-                drop(cb);
-                self.close();
-            }
             result
         } else {
             true

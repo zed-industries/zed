@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::ops::Deref;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 use calloop::{EventLoop, LoopHandle};
@@ -66,6 +66,24 @@ pub struct X11ClientState {
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: X11ClipboardContext<Clipboard>,
     pub(crate) primary: X11ClipboardContext<Primary>,
+}
+
+#[derive(Clone)]
+pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
+
+impl X11ClientStatePtr {
+    pub fn drop_window(&self, x_window: u32) {
+        let client = X11Client(self.0.upgrade().expect("client already dropped"));
+        let mut state = client.0.borrow_mut();
+
+        if let Some(window_ref) = state.windows.remove(&x_window) {
+            state.loop_handle.remove(window_ref.refresh_event_token);
+        }
+
+        if state.windows.is_empty() {
+            state.common.signal.stop();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -187,14 +205,11 @@ impl X11Client {
                 let mut state = self.0.borrow_mut();
 
                 if atom == state.atoms.WM_DELETE_WINDOW {
-                    // window "x" button clicked by user, we gracefully exit
-                    if window.handle_close() {
+                    // window "x" button clicked by user
+                    if window.should_close() {
                         let window_ref = state.windows.remove(&event.window)?;
                         state.loop_handle.remove(window_ref.refresh_event_token);
-
-                        if state.windows.is_empty() {
-                            state.common.signal.stop();
-                        }
+                        // Rest of the close logic is handled in drop_window()
                     }
                 }
             }
@@ -425,6 +440,8 @@ impl LinuxClient for X11Client {
         let x_window = state.xcb_connection.generate_id().unwrap();
 
         let window = X11Window::new(
+            X11ClientStatePtr(Rc::downgrade(&self.0)),
+            state.common.foreground_executor.clone(),
             params,
             &state.xcb_connection,
             state.x_root_index,
