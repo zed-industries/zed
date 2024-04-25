@@ -376,22 +376,13 @@ impl WorkspaceDb {
         // Note that we re-assign the workspace_id here in case it's empty
         // and we've grabbed the most recent workspace
         let (
-            
             workspace_id,
-           
             local_paths,
             dev_server_project_id,
-           
             open_status,
-           
             display,
-           
-            fullscreen,
-           
             centered_layout,
-           
             docks,
-        ,
         ): (
             WorkspaceId,
             Option<LocalPaths>,
@@ -605,19 +596,26 @@ impl WorkspaceDb {
 
     pub(crate) fn last_window(
         &self,
-    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowOpenStatus>, Option<bool>)> {
-        let mut prepared_query =
-            self.select::<(Option<Uuid>, Option<SerializedWindowOpenStatus>, Option<bool>)>(sql!(
-                SELECT
-                display,
-                window_state, window_x, window_y, window_width, window_height,
-                fullscreen
-                FROM workspaces
-                WHERE local_paths
-                IS NOT NULL
-                ORDER BY timestamp DESC
-                LIMIT 1
-            ))?;
+    ) -> anyhow::Result<(
+        Option<Uuid>,
+        Option<SerializedWindowOpenStatus>,
+        Option<bool>,
+    )> {
+        let mut prepared_query = self.select::<(
+            Option<Uuid>,
+            Option<SerializedWindowOpenStatus>,
+            Option<bool>,
+        )>(sql!(
+            SELECT
+            display,
+            window_state, window_x, window_y, window_width, window_height,
+            fullscreen
+            FROM workspaces
+            WHERE local_paths
+            IS NOT NULL
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ))?;
         let result = prepared_query()?;
         Ok(result
             .into_iter()
