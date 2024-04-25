@@ -1,7 +1,7 @@
 mod language_servers;
 
 use zed::lsp::{Completion, Symbol};
-use zed::{CodeLabel, LanguageServerId};
+use zed::{serde_json, CodeLabel, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
 use crate::language_servers::{ElixirLs, Lexical, NextLs};
@@ -83,6 +83,23 @@ impl zed::Extension for ElixirExtension {
             NextLs::LANGUAGE_SERVER_ID => self.next_ls.as_ref()?.label_for_symbol(symbol),
             Lexical::LANGUAGE_SERVER_ID => self.lexical.as_ref()?.label_for_symbol(symbol),
             _ => None,
+        }
+    }
+
+    fn language_server_initialization_options(
+        &mut self,
+        language_server_id: &LanguageServerId,
+        _worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        match language_server_id.as_ref() {
+            NextLs::LANGUAGE_SERVER_ID => Ok(Some(serde_json::json!({
+                "experimental": {
+                    "completions": {
+                        "enable": true
+                    }
+                }
+            }))),
+            _ => Ok(None),
         }
     }
 }
