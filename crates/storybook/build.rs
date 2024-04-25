@@ -12,7 +12,13 @@ fn main() {
 
         let manifest = std::path::Path::new("../zed/resources/windows/manifest.xml");
         println!("cargo:rerun-if-changed={}", manifest.display());
-        embed_manifest::embed_manifest(embed_manifest::new_manifest(manifest.to_str().unwrap()))
-            .unwrap();
+
+        let mut res = winresource::WindowsResource::new();
+        res.set_manifest_file(manifest.to_str().unwrap());
+
+        if let Err(e) = res.compile() {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
     }
 }

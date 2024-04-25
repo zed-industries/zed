@@ -759,7 +759,7 @@ mod element {
         fn layout_handle(
             axis: Axis,
             pane_bounds: Bounds<Pixels>,
-            cx: &mut ElementContext,
+            cx: &mut WindowContext,
         ) -> PaneAxisHandleLayout {
             let handle_bounds = Bounds {
                 origin: pane_bounds.origin.apply_along(axis, |origin| {
@@ -797,7 +797,7 @@ mod element {
 
         fn request_layout(
             &mut self,
-            cx: &mut ui::prelude::ElementContext,
+            cx: &mut ui::prelude::WindowContext,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let mut style = Style::default();
             style.flex_grow = 1.;
@@ -812,7 +812,7 @@ mod element {
             &mut self,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
-            cx: &mut ElementContext,
+            cx: &mut WindowContext,
         ) -> PaneAxisLayout {
             let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
                 Some(self.basis.into()),
@@ -900,7 +900,7 @@ mod element {
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
-            cx: &mut ui::prelude::ElementContext,
+            cx: &mut ui::prelude::WindowContext,
         ) {
             for child in &mut layout.children {
                 child.element.paint(cx);

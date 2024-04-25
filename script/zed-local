@@ -147,7 +147,7 @@ setTimeout(() => {
     }
     spawn(binaryPath, i == 0 ? args : [], {
       stdio: "inherit",
-      env: {
+      env: Object.assign({}, process.env, {
         ZED_IMPERSONATE: users[i],
         ZED_WINDOW_POSITION: position,
         ZED_STATELESS: isStateful && i == 0 ? "1" : "",
@@ -157,9 +157,8 @@ setTimeout(() => {
         ZED_ADMIN_API_TOKEN: "secret",
         ZED_WINDOW_SIZE: size,
         ZED_CLIENT_CHECKSUM_SEED: "development-checksum-seed",
-        PATH: process.env.PATH,
         RUST_LOG: process.env.RUST_LOG || "info",
-      },
+      }),
     });
   }
 }, 0.1);

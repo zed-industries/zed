@@ -26,6 +26,7 @@ project.workspace = true
 fs.workspace = true
 futures.workspace = true
 settings.workspace = true
+shellexpand.workspace = true
 postage.workspace = true
 
 [dev-dependencies]

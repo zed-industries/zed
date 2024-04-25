@@ -57,11 +57,10 @@ fn main() {
         println!("cargo:rerun-if-changed={}", manifest.display());
         println!("cargo:rerun-if-changed={}", icon.display());
 
-        embed_manifest::embed_manifest(embed_manifest::new_manifest(manifest.to_str().unwrap()))
-            .unwrap();
-
         let mut res = winresource::WindowsResource::new();
         res.set_icon(icon.to_str().unwrap());
+        res.set_manifest_file(manifest.to_str().unwrap());
+
         if let Err(e) = res.compile() {
             eprintln!("{}", e);
             std::process::exit(1);

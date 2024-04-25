@@ -36,6 +36,9 @@ struct Args {
     /// Custom Zed.app path
     #[arg(short, long)]
     bundle_path: Option<PathBuf>,
+    /// Run zed in dev-server mode
+    #[arg(long)]
+    dev_server_token: Option<String>,
 }
 
 fn parse_path_with_position(
@@ -66,6 +69,10 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     let bundle = Bundle::detect(args.bundle_path.as_deref()).context("Bundle detection")?;
+
+    if let Some(dev_server_token) = args.dev_server_token {
+        return bundle.spawn(vec!["--dev-server-token".into(), dev_server_token]);
+    }
 
     if args.version {
         println!("{}", bundle.zed_version_string());
@@ -169,6 +176,10 @@ mod linux {
             unimplemented!()
         }
 
+        pub fn spawn(&self, _args: Vec<String>) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+
         pub fn zed_version_string(&self) -> String {
             unimplemented!()
         }
@@ -202,6 +213,10 @@ mod windows {
             unimplemented!()
         }
 
+        pub fn spawn(&self, _args: Vec<String>) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+
         pub fn zed_version_string(&self) -> String {
             unimplemented!()
         }
@@ -217,7 +232,7 @@ mod mac_os {
         url::{CFURLCreateWithBytes, CFURL},
     };
     use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec, TCFType};
-    use std::{fs, path::Path, ptr};
+    use std::{fs, path::Path, process::Command, ptr};
 
     use cli::{CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME};
     use ipc_channel::ipc::{IpcOneShotServer, IpcReceiver, IpcSender};
@@ -276,6 +291,15 @@ mod mac_os {
                 Self::App { app_bundle, .. } => app_bundle,
                 Self::LocalPath { executable, .. } => executable,
             }
+        }
+
+        pub fn spawn(&self, args: Vec<String>) -> Result<()> {
+            let path = match self {
+                Self::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed"),
+                Self::LocalPath { executable, .. } => executable.clone(),
+            };
+            Command::new(path).args(args).status()?;
+            Ok(())
         }
 
         pub fn launch(&self) -> anyhow::Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)> {
@@ -358,12 +382,12 @@ mod mac_os {
             )
         }
     }
+
     pub(super) fn spawn_channel_cli(
         channel: release_channel::ReleaseChannel,
         leftover_args: Vec<String>,
     ) -> Result<()> {
         use anyhow::bail;
-        use std::process::Command;
 
         let app_id_prompt = format!("id of app \"{}\"", channel.display_name());
         let app_id_output = Command::new("osascript")

@@ -1880,22 +1880,70 @@ message CompleteWithLanguageModel {
     repeated LanguageModelRequestMessage messages = 2;
     repeated string stop = 3;
     float temperature = 4;
+    repeated ChatCompletionTool tools = 5;
+    optional string tool_choice = 6;
 }
 
+// A tool presented to the language model for its use
+message ChatCompletionTool {
+    oneof variant {
+        FunctionObject function = 1;
+    }
+
+    message FunctionObject {
+        string name = 1;
+        optional string description = 2;
+        optional string parameters = 3;
+    }
+}
+
+// A message to the language model
 message LanguageModelRequestMessage {
     LanguageModelRole role = 1;
     string content = 2;
+    optional string tool_call_id = 3;
+    repeated ToolCall tool_calls = 4;
 }
 
 enum LanguageModelRole {
     LanguageModelUser = 0;
     LanguageModelAssistant = 1;
     LanguageModelSystem = 2;
+    LanguageModelTool = 3;
 }
 
 message LanguageModelResponseMessage {
     optional LanguageModelRole role = 1;
     optional string content = 2;
+    repeated ToolCallDelta tool_calls = 3;
+}
+
+// A request to call a tool, by the language model
+message ToolCall {
+    string id = 1;
+
+    oneof variant {
+        FunctionCall function = 2;
+    }
+
+    message FunctionCall {
+        string name = 1;
+        string arguments = 2;
+    }
+}
+
+message ToolCallDelta {
+    uint32 index = 1;
+    optional string id = 2;
+
+    oneof variant {
+        FunctionCallDelta function = 3;
+    }
+
+    message FunctionCallDelta {
+        optional string name = 1;
+        optional string arguments = 2;
+    }
 }
 
 message LanguageModelResponse {

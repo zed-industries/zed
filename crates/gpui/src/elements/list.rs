@@ -8,8 +8,8 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, ElementContext, FocusHandle, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent,
-    Size, Style, StyleRefinement, Styled, WindowContext,
+    Element, FocusHandle, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
+    StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -202,13 +202,14 @@ impl ListState {
     ///
     /// Note that this will cause scroll events to be dropped until the next paint.
     pub fn reset(&self, element_count: usize) {
-        {
+        let old_count = {
             let state = &mut *self.0.borrow_mut();
             state.reset = true;
             state.logical_scroll_top = None;
-        }
+            state.items.summary().count
+        };
 
-        self.splice(0..element_count, element_count);
+        self.splice(0..old_count, element_count);
     }
 
     /// The number of items in this list.
@@ -433,7 +434,7 @@ impl StateInner {
         available_width: Option<Pixels>,
         available_height: Pixels,
         padding: &Edges<Pixels>,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> LayoutItemsResponse {
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
@@ -607,11 +608,15 @@ impl StateInner {
         &mut self,
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
-        cx: &mut ElementContext,
+        autoscroll: bool,
+        cx: &mut WindowContext,
     ) -> Result<LayoutItemsResponse, ListOffset> {
         cx.transact(|cx| {
             let mut layout_response =
                 self.layout_items(Some(bounds.size.width), bounds.size.height, &padding, cx);
+
+            // Avoid honoring autoscroll requests from elements other than our children.
+            cx.take_autoscroll();
 
             // Only paint the visible items, if there is actually any space for them (taking padding into account)
             if bounds.size.height > padding.top + padding.bottom {
@@ -623,11 +628,45 @@ impl StateInner {
                     });
 
                     if let Some(autoscroll_bounds) = cx.take_autoscroll() {
-                        if bounds.intersect(&autoscroll_bounds) != autoscroll_bounds {
-                            return Err(ListOffset {
-                                item_ix: item.index,
-                                offset_in_item: autoscroll_bounds.origin.y - item_origin.y,
-                            });
+                        if autoscroll {
+                            if autoscroll_bounds.top() < bounds.top() {
+                                return Err(ListOffset {
+                                    item_ix: item.index,
+                                    offset_in_item: autoscroll_bounds.top() - item_origin.y,
+                                });
+                            } else if autoscroll_bounds.bottom() > bounds.bottom() {
+                                let mut cursor = self.items.cursor::<Count>();
+                                cursor.seek(&Count(item.index), Bias::Right, &());
+                                let mut height = bounds.size.height - padding.top - padding.bottom;
+
+                                // Account for the height of the element down until the autoscroll bottom.
+                                height -= autoscroll_bounds.bottom() - item_origin.y;
+
+                                // Keep decreasing the scroll top until we fill all the available space.
+                                while height > Pixels::ZERO {
+                                    cursor.prev(&());
+                                    let Some(item) = cursor.item() else { break };
+
+                                    let size = item.size().unwrap_or_else(|| {
+                                        let mut item = (self.render_item)(cursor.start().0, cx);
+                                        let item_available_size = size(
+                                            bounds.size.width.into(),
+                                            AvailableSpace::MinContent,
+                                        );
+                                        item.layout_as_root(item_available_size, cx)
+                                    });
+                                    height -= size.height;
+                                }
+
+                                return Err(ListOffset {
+                                    item_ix: cursor.start().0,
+                                    offset_in_item: if height < Pixels::ZERO {
+                                        -height
+                                    } else {
+                                        Pixels::ZERO
+                                    },
+                                });
+                            }
                         }
                     }
 
@@ -667,7 +706,7 @@ impl Element for List {
 
     fn request_layout(
         &mut self,
-        cx: &mut crate::ElementContext,
+        cx: &mut crate::WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
@@ -733,7 +772,7 @@ impl Element for List {
         &mut self,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> ListPrepaintState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
@@ -758,11 +797,11 @@ impl Element for List {
         }
 
         let padding = style.padding.to_pixels(bounds.size.into(), cx.rem_size());
-        let layout = match state.prepaint_items(bounds, padding, cx) {
+        let layout = match state.prepaint_items(bounds, padding, true, cx) {
             Ok(layout) => layout,
             Err(autoscroll_request) => {
                 state.logical_scroll_top = Some(autoscroll_request);
-                state.prepaint_items(bounds, padding, cx).unwrap()
+                state.prepaint_items(bounds, padding, false, cx).unwrap()
             }
         };
 
@@ -776,7 +815,7 @@ impl Element for List {
         bounds: Bounds<crate::Pixels>,
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        cx: &mut crate::ElementContext,
+        cx: &mut crate::WindowContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             for item in &mut prepaint.layout.item_layouts {
@@ -912,11 +951,9 @@ mod test {
         });
 
         // Paint
-        cx.draw(
-            point(px(0.), px(0.)),
-            size(px(100.), px(20.)).into(),
-            |_| list(state.clone()).w_full().h_full().into_any(),
-        );
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_| {
+            list(state.clone()).w_full().h_full()
+        });
 
         // Reset
         state.reset(5);

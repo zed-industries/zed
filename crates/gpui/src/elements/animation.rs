@@ -91,7 +91,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
 
     fn request_layout(
         &mut self,
-        cx: &mut crate::ElementContext,
+        cx: &mut crate::WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         cx.with_element_state(Some(self.id.clone()), |state, cx| {
             let state = state.unwrap().unwrap_or_else(|| AnimationState {
@@ -138,7 +138,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         &mut self,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
-        cx: &mut crate::ElementContext,
+        cx: &mut crate::WindowContext,
     ) -> Self::PrepaintState {
         element.prepaint(cx);
     }
@@ -148,7 +148,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        cx: &mut crate::ElementContext,
+        cx: &mut crate::WindowContext,
     ) {
         element.paint(cx);
     }

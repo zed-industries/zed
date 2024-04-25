@@ -1,8 +1,8 @@
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
-    ElementContext, ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement,
-    LayoutId, Model, PaintIndex, Pixels, PrepaintStateIndex, Render, Style, StyleRefinement,
-    TextStyle, ViewContext, VisualContext, WeakModel,
+    ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement, LayoutId, Model,
+    PaintIndex, Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, ViewContext,
+    VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use refineable::Refineable;
@@ -93,7 +93,7 @@ impl<V: Render> Element for View<V> {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
         cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
             let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
             let layout_id = element.request_layout(cx);
@@ -105,7 +105,7 @@ impl<V: Render> Element for View<V> {
         &mut self,
         _: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         cx.set_view_id(self.entity_id());
         cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
@@ -118,7 +118,7 @@ impl<V: Render> Element for View<V> {
         _: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
             element.paint(cx)
@@ -220,7 +220,7 @@ impl<V> Eq for WeakView<V> {}
 #[derive(Clone, Debug)]
 pub struct AnyView {
     model: AnyModel,
-    render: fn(&AnyView, &mut ElementContext) -> AnyElement,
+    render: fn(&AnyView, &mut WindowContext) -> AnyElement,
     cached_style: Option<StyleRefinement>,
 }
 
@@ -279,7 +279,7 @@ impl Element for AnyView {
     type RequestLayoutState = Option<AnyElement>;
     type PrepaintState = Option<AnyElement>;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
         if let Some(style) = self.cached_style.as_ref() {
             let mut root_style = Style::default();
             root_style.refine(style);
@@ -298,7 +298,7 @@ impl Element for AnyView {
         &mut self,
         bounds: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         cx.set_view_id(self.entity_id());
         if self.cached_style.is_some() {
@@ -359,7 +359,7 @@ impl Element for AnyView {
         _bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         element: &mut Self::PrepaintState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         if self.cached_style.is_some() {
             cx.with_element_state::<AnyViewState, _>(
@@ -408,7 +408,7 @@ impl IntoElement for AnyView {
 /// A weak, dynamically-typed view handle that does not prevent the view from being released.
 pub struct AnyWeakView {
     model: AnyWeakModel,
-    render: fn(&AnyView, &mut ElementContext) -> AnyElement,
+    render: fn(&AnyView, &mut WindowContext) -> AnyElement,
 }
 
 impl AnyWeakView {
@@ -447,11 +447,11 @@ impl std::fmt::Debug for AnyWeakView {
 }
 
 mod any_view {
-    use crate::{AnyElement, AnyView, ElementContext, IntoElement, Render};
+    use crate::{AnyElement, AnyView, IntoElement, Render, WindowContext};
 
     pub(crate) fn render<V: 'static + Render>(
         view: &AnyView,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
         view.update(cx, |view, cx| view.render(cx).into_any_element())
