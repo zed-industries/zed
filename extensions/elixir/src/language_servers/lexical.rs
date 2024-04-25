@@ -1,6 +1,7 @@
 use std::fs;
 
-use zed::LanguageServerId;
+use zed::lsp::{Completion, Symbol};
+use zed::{CodeLabel, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
 pub struct Lexical {
@@ -8,6 +9,8 @@ pub struct Lexical {
 }
 
 impl Lexical {
+    pub const LANGUAGE_SERVER_ID: &'static str = "lexical";
+
     pub fn new() -> Self {
         Self {
             cached_binary_path: None,
@@ -73,5 +76,13 @@ impl Lexical {
 
         self.cached_binary_path = Some(binary_path.clone());
         Ok(binary_path)
+    }
+
+    pub fn label_for_completion(&self, _completion: Completion) -> Option<CodeLabel> {
+        None
+    }
+
+    pub fn label_for_symbol(&self, _symbol: Symbol) -> Option<CodeLabel> {
+        None
     }
 }

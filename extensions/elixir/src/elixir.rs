@@ -1,6 +1,7 @@
 mod language_servers;
 
-use zed::LanguageServerId;
+use zed::lsp::{Completion, Symbol};
+use zed::{CodeLabel, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
 use crate::language_servers::{ElixirLs, Lexical, NextLs};
@@ -26,7 +27,7 @@ impl zed::Extension for ElixirExtension {
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         match language_server_id.as_ref() {
-            "elixir-ls" => {
+            ElixirLs::LANGUAGE_SERVER_ID => {
                 let elixir_ls = self.elixir_ls.get_or_insert_with(|| ElixirLs::new());
 
                 Ok(zed::Command {
@@ -35,7 +36,7 @@ impl zed::Extension for ElixirExtension {
                     env: Default::default(),
                 })
             }
-            "next-ls" => {
+            NextLs::LANGUAGE_SERVER_ID => {
                 let next_ls = self.next_ls.get_or_insert_with(|| NextLs::new());
 
                 Ok(zed::Command {
@@ -44,7 +45,7 @@ impl zed::Extension for ElixirExtension {
                     env: Default::default(),
                 })
             }
-            "lexical" => {
+            Lexical::LANGUAGE_SERVER_ID => {
                 let lexical = self.lexical.get_or_insert_with(|| Lexical::new());
 
                 Ok(zed::Command {
@@ -54,6 +55,34 @@ impl zed::Extension for ElixirExtension {
                 })
             }
             language_server_id => Err(format!("unknown language server: {language_server_id}")),
+        }
+    }
+
+    fn label_for_completion(
+        &self,
+        language_server_id: &LanguageServerId,
+        completion: Completion,
+    ) -> Option<CodeLabel> {
+        match language_server_id.as_ref() {
+            ElixirLs::LANGUAGE_SERVER_ID => {
+                self.elixir_ls.as_ref()?.label_for_completion(completion)
+            }
+            NextLs::LANGUAGE_SERVER_ID => self.next_ls.as_ref()?.label_for_completion(completion),
+            Lexical::LANGUAGE_SERVER_ID => self.lexical.as_ref()?.label_for_completion(completion),
+            _ => None,
+        }
+    }
+
+    fn label_for_symbol(
+        &self,
+        language_server_id: &LanguageServerId,
+        symbol: Symbol,
+    ) -> Option<CodeLabel> {
+        match language_server_id.as_ref() {
+            ElixirLs::LANGUAGE_SERVER_ID => self.elixir_ls.as_ref()?.label_for_symbol(symbol),
+            NextLs::LANGUAGE_SERVER_ID => self.next_ls.as_ref()?.label_for_symbol(symbol),
+            Lexical::LANGUAGE_SERVER_ID => self.lexical.as_ref()?.label_for_symbol(symbol),
+            _ => None,
         }
     }
 }
