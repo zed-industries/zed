@@ -7745,7 +7745,13 @@ impl Editor {
                 .update(&mut cx, |editor, cx| {
                     editor.navigate_to_hover_links(
                         Some(kind),
-                        definitions.into_iter().map(HoverLink::Text).collect(),
+                        definitions
+                            .into_iter()
+                            .filter(|location| {
+                                hover_links::exclude_link_to_position(&buffer, &head, location, cx)
+                            })
+                            .map(HoverLink::Text)
+                            .collect::<Vec<_>>(),
                         split,
                         cx,
                     )
