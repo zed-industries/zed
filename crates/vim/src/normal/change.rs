@@ -31,25 +31,16 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
             editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|map, selection| {
-                    motion_succeeded |= if let Motion::NextWordStart { ignore_punctuation } = motion
+                    motion_succeeded |= if let Motion::NextWordStart {
+                        ignore_punctuation: _,
+                    } = motion
                     {
-                        expand_changed_word_selection(
-                            map,
-                            selection,
-                            times,
-                            ignore_punctuation,
-                            &text_layout_details,
-                            false,
-                        )
-                    } else if let Motion::NextSubwordStart { ignore_punctuation } = motion {
-                        expand_changed_word_selection(
-                            map,
-                            selection,
-                            times,
-                            ignore_punctuation,
-                            &text_layout_details,
-                            true,
-                        )
+                        motion.expand_selection(map, selection, times, false, &text_layout_details)
+                    } else if let Motion::NextSubwordStart {
+                        ignore_punctuation: _,
+                    } = motion
+                    {
+                        motion.expand_selection(map, selection, times, false, &text_layout_details)
                     } else {
                         let result = motion.expand_selection(
                             map,
@@ -109,58 +100,6 @@ pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
         vim.switch_mode(Mode::Insert, false, cx);
     } else {
         vim.switch_mode(Mode::Normal, false, cx);
-    }
-}
-
-// From the docs https://vimdoc.sourceforge.net/htmldoc/motion.html
-// Special case: "cw" and "cW" are treated like "ce" and "cE" if the cursor is
-// on a non-blank.  This is because "cw" is interpreted as change-word, and a
-// word does not include the following white space.  {Vi: "cw" when on a blank
-//     followed by other blanks changes only the first blank; this is probably a
-//     bug, because "dw" deletes all the blanks}
-fn expand_changed_word_selection(
-    map: &DisplaySnapshot,
-    selection: &mut Selection<DisplayPoint>,
-    times: Option<usize>,
-    ignore_punctuation: bool,
-    text_layout_details: &TextLayoutDetails,
-    use_subword: bool,
-) -> bool {
-    if times.is_none() || times.unwrap() == 1 {
-        let scope = map
-            .buffer_snapshot
-            .language_scope_at(selection.start.to_point(map));
-        let in_word = map
-            .buffer_chars_at(selection.head().to_offset(map, Bias::Left))
-            .next()
-            .map(|(c, _)| char_kind(&scope, c) != CharKind::Whitespace)
-            .unwrap_or_default();
-
-        if in_word {
-            if use_subword {
-                selection.end =
-                    motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
-            } else {
-                selection.end =
-                    motion::next_word_end(map, selection.end, ignore_punctuation, 1, false);
-            }
-            selection.end = motion::next_char(map, selection.end, false);
-            true
-        } else {
-            let motion = if use_subword {
-                Motion::NextSubwordStart { ignore_punctuation }
-            } else {
-                Motion::NextWordStart { ignore_punctuation }
-            };
-            motion.expand_selection(map, selection, None, false, &text_layout_details)
-        }
-    } else {
-        let motion = if use_subword {
-            Motion::NextSubwordStart { ignore_punctuation }
-        } else {
-            Motion::NextWordStart { ignore_punctuation }
-        };
-        motion.expand_selection(map, selection, times, false, &text_layout_details)
     }
 }
 
