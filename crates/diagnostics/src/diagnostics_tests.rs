@@ -1,14 +1,28 @@
 use super::*;
+use collections::HashMap;
 use editor::{
     display_map::{BlockContext, TransformBlock},
     DisplayPoint, GutterDimensions,
 };
 use gpui::{px, Stateful, TestAppContext, VisualTestContext, WindowContext};
-use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
+use language::{
+    Diagnostic, DiagnosticEntry, DiagnosticSeverity, OffsetRangeExt, PointUtf16, Rope, Unclipped,
+};
+use pretty_assertions::assert_eq;
 use project::FakeFs;
+use rand::{rngs::StdRng, seq::IteratorRandom as _, Rng};
 use serde_json::json;
 use settings::SettingsStore;
+use std::{env, path::Path};
 use unindent::Unindent as _;
+use util::RandomCharIter;
+
+#[ctor::ctor]
+fn init_logger() {
+    if env::var("RUST_LOG").is_ok() {
+        env_logger::init();
+    }
+}
 
 #[gpui::test]
 async fn test_diagnostics(cx: &mut TestAppContext) {
@@ -682,6 +696,126 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test(iterations = 100)]
+async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
+    init_test(cx);
+
+    let operations = env::var("OPERATIONS")
+        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        .unwrap_or(10);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/test", json!({})).await;
+
+    let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    // dbg!(window.is_active(cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let workspace = window.root(cx).unwrap();
+
+    let mutated_view = window.build_view(cx, |cx| {
+        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+    });
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.add_item_to_center(Box::new(mutated_view.clone()), cx);
+    });
+    mutated_view.update(cx, |view, cx| {
+        assert!(view.focus_handle.is_focused(cx));
+    });
+
+    let mut next_group_id = 0;
+    let mut language_server_ids = vec![LanguageServerId(0)];
+    let mut updated_language_servers = HashSet::default();
+    let mut current_diagnostics: HashMap<
+        (PathBuf, LanguageServerId),
+        Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+    > = Default::default();
+
+    for _ in 0..operations {
+        match rng.gen_range(0..100) {
+            // language server completes its diagnostic check
+            0..=20 if !updated_language_servers.is_empty() => {
+                let server_id = *updated_language_servers.iter().choose(&mut rng).unwrap();
+                log::info!("finishing diagnostic check for language server {server_id}");
+                project.update(cx, |project, cx| {
+                    project.disk_based_diagnostics_finished(server_id, cx)
+                });
+            }
+
+            // language server updates diagnostics
+            _ => {
+                let (path, server_id, diagnostics) = match current_diagnostics
+                    .iter_mut()
+                    .choose(&mut rng)
+                {
+                    // update existing diagnostics
+                    Some(((path, server_id), diagnostics)) if rng.gen_bool(0.5) => {
+                        (path.clone(), *server_id, diagnostics)
+                    }
+
+                    // insert diagnostics for a new path
+                    _ => {
+                        let path: PathBuf = format!("/test/{}.rs", rng.gen_range(0..100)).into();
+                        let len = rng.gen_range(128..256);
+                        let content = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                        fs.insert_file(&path, content.into_bytes()).await;
+
+                        let server_id = match language_server_ids.iter().choose(&mut rng) {
+                            Some(server_id) if rng.gen_bool(0.5) => server_id.clone(),
+                            _ => {
+                                let id = LanguageServerId(language_server_ids.len());
+                                language_server_ids.push(id);
+                                id
+                            }
+                        };
+
+                        (
+                            path.clone(),
+                            server_id,
+                            current_diagnostics
+                                .entry((path, server_id))
+                                .or_insert(vec![]),
+                        )
+                    }
+                };
+
+                updated_language_servers.insert(server_id);
+
+                project.update(cx, |project, cx| {
+                    log::info!("updating diagnostics. language server {server_id} path {path:?}");
+                    randomly_update_diagnostics_for_path(
+                        &fs,
+                        &path,
+                        diagnostics,
+                        &mut next_group_id,
+                        &mut rng,
+                    );
+                    project
+                        .update_diagnostic_entries(server_id, path, None, diagnostics.clone(), cx)
+                        .unwrap()
+                });
+
+                cx.run_until_parked();
+            }
+        }
+    }
+
+    mutated_view.update(cx, |view, cx| {
+        view.update_excerpts(None, cx);
+    });
+
+    let reference_view = window.build_view(cx, |cx| {
+        ProjectDiagnosticsEditor::new_with_context(1, project.clone(), workspace.downgrade(), cx)
+    });
+
+    cx.run_until_parked();
+
+    let mutated_excerpts = get_diagnostics_excerpts(&mutated_view, cx);
+    let reference_excerpts = get_diagnostics_excerpts(&reference_view, cx);
+    assert_eq!(mutated_excerpts, reference_excerpts);
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings = SettingsStore::test(cx);
@@ -694,6 +828,129 @@ fn init_test(cx: &mut TestAppContext) {
         crate::init(cx);
         editor::init(cx);
     });
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExcerptInfo {
+    path: PathBuf,
+    range: Range<PointUtf16>,
+    diagnostic: Option<(LanguageServerId, String)>,
+}
+
+fn get_diagnostics_excerpts(
+    view: &View<ProjectDiagnosticsEditor>,
+    cx: &mut VisualTestContext,
+) -> Vec<ExcerptInfo> {
+    view.update(cx, |view, cx| {
+        let mut result = vec![];
+        let mut excerpt_indices_by_id = HashMap::default();
+        view.excerpts.update(cx, |multibuffer, cx| {
+            let snapshot = multibuffer.snapshot(cx);
+            for (id, buffer, range) in snapshot.excerpts() {
+                excerpt_indices_by_id.insert(id, result.len());
+                result.push(ExcerptInfo {
+                    path: buffer.file().unwrap().path().to_path_buf(),
+                    range: range.context.to_point_utf16(buffer),
+                    diagnostic: None,
+                });
+            }
+        });
+
+        for state in &view.path_states {
+            for group in &state.diagnostic_groups {
+                let excerpt_id = group.excerpts[group.primary_excerpt_ix];
+                let excerpt_ix = excerpt_indices_by_id[&excerpt_id];
+                result[excerpt_ix].diagnostic = Some((
+                    group.language_server_id,
+                    group.primary_diagnostic.diagnostic.message.clone(),
+                ));
+            }
+        }
+
+        result
+    })
+}
+
+fn randomly_update_diagnostics_for_path(
+    fs: &FakeFs,
+    path: &Path,
+    diagnostics: &mut Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+    next_group_id: &mut usize,
+    rng: &mut impl Rng,
+) {
+    let file_content = fs.read_file_sync(path).unwrap();
+    let file_text = Rope::from(String::from_utf8_lossy(&file_content).as_ref());
+
+    let mut group_ids = diagnostics
+        .iter()
+        .map(|d| d.diagnostic.group_id)
+        .collect::<HashSet<_>>();
+
+    let mutation_count = rng.gen_range(1..=3);
+    for _ in 0..mutation_count {
+        if rng.gen_bool(0.5) && !group_ids.is_empty() {
+            let group_id = *group_ids.iter().choose(rng).unwrap();
+            log::info!("  removing diagnostic group {group_id}");
+            diagnostics.retain(|d| d.diagnostic.group_id != group_id);
+            group_ids.remove(&group_id);
+        } else {
+            let group_id = *next_group_id;
+            *next_group_id += 1;
+
+            let mut new_diagnostics = vec![random_diagnostic(rng, &file_text, group_id, true)];
+            for _ in 0..rng.gen_range(0..=1) {
+                new_diagnostics.push(random_diagnostic(rng, &file_text, group_id, false));
+            }
+
+            let ix = rng.gen_range(0..=diagnostics.len());
+            log::info!(
+                "  inserting diagnostic group {group_id} at index {ix}. ranges: {:?}",
+                new_diagnostics
+                    .iter()
+                    .map(|d| (d.range.start.0, d.range.end.0))
+                    .collect::<Vec<_>>()
+            );
+            diagnostics.splice(ix..ix, new_diagnostics);
+        }
+    }
+}
+
+fn random_diagnostic(
+    rng: &mut impl Rng,
+    file_text: &Rope,
+    group_id: usize,
+    is_primary: bool,
+) -> DiagnosticEntry<Unclipped<PointUtf16>> {
+    // Intentionally allow erroneous ranges some of the time (that run off the end of the file),
+    // because language servers can potentially give us those, and we should handle them gracefully.
+    const ERROR_MARGIN: usize = 10;
+
+    let start = rng.gen_range(0..file_text.len().saturating_add(ERROR_MARGIN));
+    let end = rng.gen_range(start..file_text.len().saturating_add(ERROR_MARGIN));
+    let range = Range {
+        start: Unclipped(file_text.offset_to_point_utf16(start)),
+        end: Unclipped(file_text.offset_to_point_utf16(end)),
+    };
+    let severity = if rng.gen_bool(0.5) {
+        DiagnosticSeverity::WARNING
+    } else {
+        DiagnosticSeverity::ERROR
+    };
+    let message = format!("diagnostic group {group_id}");
+
+    DiagnosticEntry {
+        range,
+        diagnostic: Diagnostic {
+            source: None, // (optional) service that created the diagnostic
+            code: None,   // (optional) machine-readable code that identifies the diagnostic
+            severity,
+            message,
+            group_id,
+            is_primary,
+            is_disk_based: false,
+            is_unnecessary: false,
+        },
+    }
 }
 
 fn editor_blocks(editor: &View<Editor>, cx: &mut WindowContext) -> Vec<(u32, SharedString)> {
