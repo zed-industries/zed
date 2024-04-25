@@ -228,7 +228,7 @@ impl Render for BufferSearchBar {
                                 }),
                             )
                         }))
-                        .children(supported_options.word.then(|| {
+                        .children(supported_options.selection.then(|| {
                             self.render_search_option_button(
                                 SearchOptions::SELECTION,
                                 cx.listener(|this, _, cx| {
@@ -236,7 +236,7 @@ impl Render for BufferSearchBar {
                                 }),
                             )
                         }))
-                        .children(supported_options.word.then(|| {
+                        .children(supported_options.regex.then(|| {
                             self.render_search_option_button(
                                 SearchOptions::REGEX,
                                 cx.listener(|this, _, cx| this.toggle_regex(&ToggleRegex, cx)),
@@ -367,6 +367,9 @@ impl Render for BufferSearchBar {
             .when(self.supported_options().regex, |this| {
                 this.on_action(cx.listener(Self::toggle_regex))
             })
+            .when(self.supported_options().selection, |this| {
+                this.on_action(cx.listener(Self::toggle_selection))
+            })
             .gap_2()
             .child(
                 h_flex()
@@ -449,7 +452,7 @@ impl BufferSearchBar {
             }
         }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleSelection, cx| {
-            if this.supported_options().word {
+            if this.supported_options().selection {
                 this.toggle_selection(action, cx);
             }
         }));

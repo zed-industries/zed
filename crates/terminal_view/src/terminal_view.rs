@@ -972,6 +972,7 @@ impl SearchableItem for TerminalView {
             word: false,
             regex: true,
             replacement: false,
+            selection: false,
         }
     }
 

@@ -41,6 +41,7 @@ pub struct SearchOptions {
     pub regex: bool,
     /// Specifies whether the item supports search & replace.
     pub replacement: bool,
+    pub selection: bool,
 }
 
 pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
@@ -52,6 +53,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
             word: true,
             regex: true,
             replacement: true,
+            selection: true,
         }
     }
 
