@@ -23,7 +23,6 @@ pub enum DisplayDiffHunk {
         display_row_range: Range<u32>,
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
-        diff_base_version: usize,
     },
 }
 
@@ -99,7 +98,6 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
             display_row_range: start..end,
             multi_buffer_range: multi_buffer_start..multi_buffer_end,
             status: hunk.status(),
-            diff_base_version: hunk.diff_base_version,
             diff_base_byte_range: hunk.diff_base_byte_range,
         }
     }

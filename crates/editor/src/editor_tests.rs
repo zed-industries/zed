@@ -9587,7 +9587,6 @@ fn hunks_display_lines(snapshot: &DisplaySnapshot) -> Vec<(DiffHunkStatus, Range
         .buffer_snapshot
         .git_diff_hunks_in_range(0..snapshot.max_point().row())
         .map(|hunk| {
-            assert_eq!(hunk.diff_base_version, 0, "Diff base was never updated");
             let display_range = Point::new(hunk.associated_range.start, 0)
                 .to_display_point(snapshot)
                 .row()
@@ -9618,8 +9617,8 @@ fn expanded_hunks_display_lines(
                     .to_display_point(snapshot)
                     .row();
             assert_eq!(
-                expanded_hunk.diff_base_version, 0,
-                "Diff base was never updated"
+                expanded_hunk.diff_base_version, 1,
+                "Diff base was never updated after the initial setup"
             );
             (expanded_hunk.status, hunk_display_range)
         })

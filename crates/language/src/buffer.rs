@@ -505,7 +505,6 @@ impl Buffer {
         Self::build(
             TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
             None,
-            0,
             None,
             Capability::ReadWrite,
         )
@@ -521,7 +520,6 @@ impl Buffer {
         Self::build(
             TextBuffer::new(replica_id, remote_id, base_text.into()),
             None,
-            0,
             None,
             capability,
         )
@@ -541,7 +539,6 @@ impl Buffer {
         let mut this = Self::build(
             buffer,
             message.diff_base.map(|text| text.into_boxed_str().into()),
-            message.diff_base_version as usize,
             file,
             capability,
         );
@@ -561,7 +558,6 @@ impl Buffer {
             file: self.file.as_ref().map(|f| f.to_proto()),
             base_text: self.base_text().to_string(),
             diff_base: self.diff_base.as_ref().map(|h| h.to_string()),
-            diff_base_version: self.diff_base_version() as u64,
             line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
             saved_version: proto::serialize_version(&self.saved_version),
             saved_mtime: self.saved_mtime.map(|time| time.into()),
@@ -635,7 +631,6 @@ impl Buffer {
     pub fn build(
         buffer: TextBuffer,
         diff_base: Option<String>,
-        diff_base_version: usize,
         file: Option<Arc<dyn File>>,
         capability: Capability,
     ) -> Self {
@@ -649,7 +644,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             diff_base,
-            diff_base_version,
+            diff_base_version: 0,
             git_diff: git::diff::BufferDiff::new(),
             file,
             capability,
@@ -893,10 +888,14 @@ impl Buffer {
         }
     }
 
+    /// Returns a number, unique per diff base set to the buffer.
+    pub fn diff_base_version(&self) -> usize {
+        self.diff_base_version
+    }
+
     /// Recomputes the Git diff status.
     pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
         let diff_base = self.diff_base.clone()?; // TODO: Make this an Arc
-        self.diff_base_version += 1;
         let snapshot = self.snapshot();
 
         let mut diff = self.git_diff.clone();

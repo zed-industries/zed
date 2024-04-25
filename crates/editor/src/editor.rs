@@ -9161,14 +9161,6 @@ impl Editor {
         for hunk_to_toggle in hunks_to_toggle {
             let hunk_to_toggle_point_range = Point::new(hunk_to_toggle.associated_range.start, 0)
                 ..Point::new(hunk_to_toggle.associated_range.end, 0);
-            let hunk_to_toggle_display_row_range = hunk_to_toggle_point_range
-                .start
-                .to_display_point(&snapshot)
-                .row()
-                ..hunk_to_toggle_point_range
-                    .end
-                    .to_display_point(&snapshot)
-                    .row();
             let hunk_to_toggle_range = snapshot
                 .buffer_snapshot
                 .anchor_at(hunk_to_toggle_point_range.start, Bias::Right)
@@ -9220,9 +9212,7 @@ impl Editor {
                 self.show_git_diff_hunk(
                     &HunkToShow {
                         status: hunk_to_toggle.status(),
-                        display_row_range: hunk_to_toggle_display_row_range,
                         multi_buffer_range: hunk_to_toggle_range,
-                        diff_base_version: hunk_to_toggle.diff_base_version,
                         diff_base_byte_range: hunk_to_toggle.diff_base_byte_range,
                     },
                     cx,
@@ -9241,20 +9231,36 @@ impl Editor {
         hunk: &HunkToShow,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<()> {
-        let snapshot = self.buffer().read(cx).snapshot(cx);
-        let buffer_range = hunk.multi_buffer_range.start.to_point(&snapshot)
-            ..hunk.multi_buffer_range.end.to_point(&snapshot);
-        let (multi_buffer_snapshot, deleted_text) = self.buffer().update(cx, |buffer, cx| {
-            let buffer_snapshot = buffer.snapshot(cx);
-            let original_text = original_text(buffer, buffer_range.clone(), cx);
-            (buffer_snapshot, original_text)
-        });
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let multi_buffer_row_range = hunk
+            .multi_buffer_range
+            .start
+            .to_point(&multi_buffer_snapshot)
+            ..hunk.multi_buffer_range.end.to_point(&multi_buffer_snapshot);
         let hunk_start = hunk.multi_buffer_range.start;
         let hunk_end_exclusive = hunk.multi_buffer_range.end;
         let hunk_end_inclusive = multi_buffer_snapshot.anchor_at(
-            Point::new(buffer_range.end.row.saturating_sub(1), 0),
+            Point::new(multi_buffer_row_range.end.row.saturating_sub(1), 0),
             Bias::Right,
         );
+
+        let (diff_base_version, deleted_text) = self.buffer().update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot(cx);
+            let hunk = buffer_diff_hunk(&snapshot, multi_buffer_row_range.clone())?;
+            let mut buffer_ranges = buffer.range_to_buffer_ranges(multi_buffer_row_range, cx);
+            if buffer_ranges.len() == 1 {
+                let (buffer, _, _) = buffer_ranges.pop()?;
+                let buffer = buffer.read(cx);
+                Some((
+                    buffer.diff_base_version(),
+                    buffer.diff_base().and_then(|diff_base| {
+                        Some(diff_base.get(hunk.diff_base_byte_range)?.to_owned())
+                    }),
+                ))
+            } else {
+                None
+            }
+        })?;
 
         let block_insert_index = match self.expanded_hunks.binary_search_by(|probe| {
             probe
@@ -9303,7 +9309,7 @@ impl Editor {
                 block,
                 // TODO kb why do I have to use inclusive/exclusive differently around?
                 hunk_range: hunk_start..hunk_end_exclusive,
-                diff_base_version: hunk.diff_base_version,
+                diff_base_version,
                 status: hunk.status,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
             },
@@ -11368,33 +11374,6 @@ impl<T: ToOffset> RangeToAnchorExt for Range<T> {
     }
 }
 
-fn original_text(
-    buffer: &MultiBuffer,
-    buffer_range: Range<Point>,
-    cx: &mut AppContext,
-) -> Option<String> {
-    let snapshot = buffer.snapshot(cx);
-    let diff_base = buffer_diff_base(buffer, buffer_range.clone(), cx)?;
-    let hunk = buffer_diff_hunk(&snapshot, buffer_range)?;
-    diff_base
-        .get(hunk.diff_base_byte_range)
-        .map(ToString::to_string)
-}
-
-fn buffer_diff_base(
-    buffer: &MultiBuffer,
-    row_range: Range<Point>,
-    cx: &mut AppContext,
-) -> Option<String> {
-    let mut ranges = buffer.range_to_buffer_ranges(row_range, cx);
-    if ranges.len() == 1 {
-        let (buffer, _, _) = ranges.pop()?;
-        buffer.read(cx).diff_base().map(ToString::to_string)
-    } else {
-        None
-    }
-}
-
 fn added_hunk_color(cx: &AppContext) -> Hsla {
     let mut created_color = cx.theme().status().git().created;
     created_color.fade_out(0.7);
@@ -11469,9 +11448,7 @@ fn buffer_diff_hunk(
 
 #[derive(Debug, Clone)]
 struct HunkToShow {
-    display_row_range: Range<u32>,
     multi_buffer_range: Range<Anchor>,
     status: DiffHunkStatus,
-    diff_base_version: usize,
     diff_base_byte_range: Range<usize>,
 }

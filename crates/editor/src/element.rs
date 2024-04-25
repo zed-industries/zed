@@ -2339,9 +2339,6 @@ impl EditorElement {
 
         let display_snapshot = &layout.position_map.snapshot.display_snapshot;
         let mut hunks_to_remove = Vec::with_capacity(layout.display_hunks.len());
-        let mut hunks_to_reexpand = Vec::with_capacity(layout.display_hunks.len());
-        let mut added_row_highlights = Vec::with_capacity(layout.display_hunks.len());
-        let mut removed_row_highlights = Vec::with_capacity(layout.display_hunks.len());
         let mut expanded_hunks = editor.update(cx, |editor, cx| {
             editor
                 .expanded_hunks
@@ -2375,6 +2372,9 @@ impl EditorElement {
         });
 
         let line_height = layout.position_map.line_height;
+        let mut hunks_to_reexpand = Vec::with_capacity(layout.display_hunks.len());
+        let mut added_row_highlights = Vec::with_capacity(layout.display_hunks.len());
+        let mut removed_row_highlights = Vec::with_capacity(layout.display_hunks.len());
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
             let mut current_expanded_hunk = expanded_hunks.next();
             for hunk in &layout.display_hunks {
@@ -2412,17 +2412,11 @@ impl EditorElement {
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
-                        diff_base_version,
                         diff_base_byte_range,
                         multi_buffer_range,
                     } => {
-                        let mut new_hunk_to_expand = Some((
-                            display_row_range,
-                            multi_buffer_range,
-                            diff_base_byte_range,
-                            status,
-                            diff_base_version,
-                        ));
+                        let mut new_hunk_to_expand =
+                            Some((multi_buffer_range, diff_base_byte_range, status));
                         loop {
                             if let Some((
                                 expanded_hunk_row_start,
@@ -2587,24 +2581,15 @@ impl EditorElement {
                     bounds,
                     &hunk,
                 );
-                if let Some((
-                    display_row_range,
-                    multi_buffer_range,
-                    diff_base_byte_range,
-                    &status,
-                    &diff_base_version,
-                )) = clickable_hunk
-                {
+                if let Some((multi_buffer_range, diff_base_byte_range, &status)) = clickable_hunk {
                     clickable_hunks.all.push(hunk_bounds);
                     if hunk_bounds.contains(mouse_position) {
                         clickable_hunks.hovered = Some((
                             bounds,
                             HunkToShow {
-                                display_row_range: display_row_range.clone(),
                                 multi_buffer_range: multi_buffer_range.clone(),
                                 diff_base_byte_range: diff_base_byte_range.clone(),
                                 status,
-                                diff_base_version,
                             },
                         ));
                     }

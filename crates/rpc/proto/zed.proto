@@ -1641,7 +1641,6 @@ message BufferState {
     optional File file = 2;
     string base_text = 3;
     optional string diff_base = 4;
-    uint64 diff_base_version = 9;
     LineEnding line_ending = 5;
     repeated VectorClockEntry saved_version = 6;
     reserved 7;
@@ -1835,7 +1834,6 @@ message UpdateDiffBase {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     optional string diff_base = 3;
-    uint64 diff_base_version = 4;
 }
 
 message GetNotifications {
