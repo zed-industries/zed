@@ -28,6 +28,7 @@ pub unsafe fn new_renderer(
     _native_window: *mut c_void,
     native_view: *mut c_void,
     bounds: crate::Size<f32>,
+    window_background: crate::WindowBackgroundAppearance,
 ) -> Renderer {
     use raw_window_handle as rwh;
     struct RawWindow {
@@ -64,10 +65,13 @@ pub unsafe fn new_renderer(
 
     BladeRenderer::new(
         gpu,
-        gpu::Extent {
-            width: bounds.width as u32,
-            height: bounds.height as u32,
-            depth: 1,
+        BladeSurfaceConfig {
+            size: gpu::Extent {
+                width: bounds.width as u32,
+                height: bounds.height as u32,
+                depth: 1,
+            },
+            transparent: window_background == crate::WindowBackgroundAppearance::Transparent,
         },
     )
 }
@@ -323,13 +327,18 @@ impl BladePipelines {
     }
 }
 
+pub struct BladeSurfaceConfig {
+    pub size: gpu::Extent,
+    pub transparent: bool,
+}
+
 pub struct BladeRenderer {
     gpu: Arc<gpu::Context>,
+    surface_config: gpu::SurfaceConfig,
     command_encoder: gpu::CommandEncoder,
     last_sync_point: Option<gpu::SyncPoint>,
     pipelines: BladePipelines,
     instance_belt: BladeBelt,
-    viewport_size: gpu::Extent,
     path_tiles: HashMap<PathId, AtlasTile>,
     atlas: Arc<BladeAtlas>,
     atlas_sampler: gpu::Sampler,
@@ -338,21 +347,19 @@ pub struct BladeRenderer {
 }
 
 impl BladeRenderer {
-    fn make_surface_config(size: gpu::Extent) -> gpu::SurfaceConfig {
-        gpu::SurfaceConfig {
-            size,
+    pub fn new(gpu: Arc<gpu::Context>, config: BladeSurfaceConfig) -> Self {
+        let surface_config = gpu::SurfaceConfig {
+            size: config.size,
             usage: gpu::TextureUsage::TARGET,
             display_sync: gpu::DisplaySync::Recent,
             //Note: this matches the original logic of the Metal backend,
             // but ultimaterly we need to switch to `Linear`.
             color_space: gpu::ColorSpace::Srgb,
             allow_exclusive_full_screen: false,
-            transparent: true,
-        }
-    }
+            transparent: config.transparent,
+        };
+        let surface_info = gpu.resize(surface_config);
 
-    pub fn new(gpu: Arc<gpu::Context>, size: gpu::Extent) -> Self {
-        let surface_info = gpu.resize(Self::make_surface_config(size));
         let command_encoder = gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
             buffer_count: 2,
@@ -379,11 +386,11 @@ impl BladeRenderer {
 
         Self {
             gpu,
+            surface_config,
             command_encoder,
             last_sync_point: None,
             pipelines,
             instance_belt,
-            viewport_size: size,
             path_tiles: HashMap::default(),
             atlas,
             atlas_sampler,
@@ -407,15 +414,24 @@ impl BladeRenderer {
             depth: 1,
         };
 
-        if gpu_size != self.viewport_size() {
+        if gpu_size != self.surface_config.size {
             self.wait_for_gpu();
-            self.gpu.resize(Self::make_surface_config(gpu_size));
-            self.viewport_size = gpu_size;
+            self.surface_config.size = gpu_size;
+            self.gpu.resize(self.surface_config);
         }
     }
 
+    pub fn update_transparency(&mut self, transparent: bool) {
+        if transparent != self.surface_config.transparent {
+            self.wait_for_gpu();
+            self.surface_config.transparent = transparent;
+            self.gpu.resize(self.surface_config);
+        }
+    }
+
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     pub fn viewport_size(&self) -> gpu::Extent {
-        self.viewport_size
+        self.surface_config.size
     }
 
     pub fn sprite_atlas(&self) -> &Arc<BladeAtlas> {
@@ -508,8 +524,8 @@ impl BladeRenderer {
 
         let globals = GlobalParams {
             viewport_size: [
-                self.viewport_size.width as f32,
-                self.viewport_size.height as f32,
+                self.surface_config.size.width as f32,
+                self.surface_config.size.height as f32,
             ],
             pad: [0; 2],
         };

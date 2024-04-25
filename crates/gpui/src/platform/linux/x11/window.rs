@@ -2,7 +2,7 @@
 #![allow(unused)]
 
 use crate::{
-    platform::blade::BladeRenderer, size, Bounds, DevicePixels, ForegroundExecutor, Modifiers,
+    platform::blade::{BladeRenderer, BladeSurfaceConfig}, size, Bounds, DevicePixels, ForegroundExecutor, Modifiers,
     Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformWindow, Point, PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance,
     WindowOptions, WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
@@ -240,9 +240,12 @@ impl X11WindowState {
             .unwrap(),
         );
 
-        // Note: this has to be done after the GPU init, or otherwise
-        // the sizes are immediately invalidated.
-        let gpu_extent = query_render_extent(xcb_connection, x_window);
+        let config = BladeSurfaceConfig {
+            // Note: this has to be done after the GPU init, or otherwise
+            // the sizes are immediately invalidated.
+            size: query_render_extent(xcb_connection, x_window),
+            transparent: params.window_background == WindowBackgroundAppearance::Transparent,
+        };
 
         Self {
             client,
@@ -251,9 +254,8 @@ impl X11WindowState {
             raw,
             bounds: params.bounds.map(|v| v.0),
             scale_factor,
-            renderer: BladeRenderer::new(gpu, gpu_extent),
+            renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
-
             input_handler: None,
         }
     }
@@ -533,8 +535,11 @@ impl PlatformWindow for X11Window {
     // todo(linux)
     fn set_edited(&mut self, edited: bool) {}
 
-    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
-        // todo(linux)
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+        let mut inner = self.0.state.borrow_mut();
+        inner
+            .renderer
+            .update_transparency(background_appearance == WindowBackgroundAppearance::Transparent);
     }
 
     // todo(linux), this corresponds to `orderFrontCharacterPalette` on macOS,
