@@ -741,7 +741,10 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                 project.update(cx, |project, cx| {
                     project.disk_based_diagnostics_finished(server_id, cx)
                 });
-                cx.run_until_parked();
+
+                if rng.gen_bool(0.5) {
+                    cx.run_until_parked();
+                }
             }
 
             // language server updates diagnostics
@@ -803,7 +806,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 
     log::info!("updating mutated diagnostics view");
-    mutated_view.update(cx, |view, _| view.update_excerpts(None));
+    mutated_view.update(cx, |view, _| view.enqueue_update_stale_excerpts(None));
     cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");
