@@ -951,11 +951,9 @@ mod test {
         });
 
         // Paint
-        cx.draw(
-            point(px(0.), px(0.)),
-            size(px(100.), px(20.)).into(),
-            |_| list(state.clone()).w_full().h_full().into_any(),
-        );
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_| {
+            list(state.clone()).w_full().h_full()
+        });
 
         // Reset
         state.reset(5);

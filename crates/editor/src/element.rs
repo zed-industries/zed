@@ -4409,7 +4409,7 @@ mod tests {
         editor_tests::{init_test, update_test_language_settings},
         Editor, MultiBuffer,
     };
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use language::language_settings;
     use log::info;
     use std::num::NonZeroU32;
@@ -4478,9 +4478,9 @@ mod tests {
             let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
             Editor::new(EditorMode::Full, buffer, None, cx)
         });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
-        let mut element = EditorElement::new(&editor, style);
 
         window
             .update(cx, |editor, cx| {
@@ -4494,18 +4494,10 @@ mod tests {
                 });
             })
             .unwrap();
-        let state = cx
-            .update_window(window.into(), |_view, cx| {
-                element.prepaint(
-                    Bounds {
-                        origin: point(px(500.), px(500.)),
-                        size: size(px(500.), px(500.)),
-                    },
-                    &mut (),
-                    cx,
-                )
-            })
-            .unwrap();
+
+        let (_, state) = cx.draw(point(px(500.), px(500.)), size(px(500.), px(500.)), |_| {
+            EditorElement::new(&editor, style)
+        });
 
         assert_eq!(state.selections.len(), 1);
         let local_selections = &state.selections[0].1;
@@ -4576,7 +4568,6 @@ mod tests {
         });
         let editor = window.root(cx).unwrap();
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
-        let mut element = EditorElement::new(&editor, style);
         let _state = window.update(cx, |editor, cx| {
             editor.cursor_shape = CursorShape::Block;
             editor.change_selections(None, cx, |s| {
@@ -4587,18 +4578,9 @@ mod tests {
             });
         });
 
-        let state = cx
-            .update_window(window.into(), |_view, cx| {
-                element.prepaint(
-                    Bounds {
-                        origin: point(px(500.), px(500.)),
-                        size: size(px(500.), px(500.)),
-                    },
-                    &mut (),
-                    cx,
-                )
-            })
-            .unwrap();
+        let (_, state) = cx.draw(point(px(500.), px(500.)), size(px(500.), px(500.)), |_| {
+            EditorElement::new(&editor, style)
+        });
         assert_eq!(state.selections.len(), 1);
         let local_selections = &state.selections[0].1;
         assert_eq!(local_selections.len(), 2);
@@ -4627,6 +4609,7 @@ mod tests {
             let buffer = MultiBuffer::build_simple("", cx);
             Editor::new(EditorMode::Full, buffer, None, cx)
         });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
         window
@@ -4649,20 +4632,9 @@ mod tests {
             })
             .unwrap();
 
-        let mut element = EditorElement::new(&editor, style);
-        let state = cx
-            .update_window(window.into(), |_view, cx| {
-                element.prepaint(
-                    Bounds {
-                        origin: point(px(500.), px(500.)),
-                        size: size(px(500.), px(500.)),
-                    },
-                    &mut (),
-                    cx,
-                )
-            })
-            .unwrap();
-
+        let (_, state) = cx.draw(point(px(500.), px(500.)), size(px(500.), px(500.)), |_| {
+            EditorElement::new(&editor, style)
+        });
         assert_eq!(state.position_map.line_layouts.len(), 4);
         assert_eq!(
             state
@@ -4835,29 +4807,19 @@ mod tests {
             let buffer = MultiBuffer::build_simple(&input_text, cx);
             Editor::new(editor_mode, buffer, None, cx)
         });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
-        let mut element = EditorElement::new(&editor, style);
         window
             .update(cx, |editor, cx| {
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_wrap_width(Some(editor_width), cx);
             })
             .unwrap();
-        let layout_state = cx
-            .update_window(window.into(), |_, cx| {
-                element.prepaint(
-                    Bounds {
-                        origin: point(px(500.), px(500.)),
-                        size: size(px(500.), px(500.)),
-                    },
-                    &mut (),
-                    cx,
-                )
-            })
-            .unwrap();
-
-        layout_state
+        let (_, state) = cx.draw(point(px(500.), px(500.)), size(px(500.), px(500.)), |_| {
+            EditorElement::new(&editor, style)
+        });
+        state
             .position_map
             .line_layouts
             .iter()

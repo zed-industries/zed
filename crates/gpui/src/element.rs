@@ -244,7 +244,7 @@ enum ElementDrawPhase<RequestLayoutState, PrepaintState> {
 
 /// A wrapper around an implementer of [`Element`] that allows it to be drawn in a window.
 impl<E: Element> Drawable<E> {
-    fn new(element: E) -> Self {
+    pub(crate) fn new(element: E) -> Self {
         Drawable {
             element,
             phase: ElementDrawPhase::Start,
@@ -265,7 +265,7 @@ impl<E: Element> Drawable<E> {
         }
     }
 
-    fn prepaint(&mut self, cx: &mut WindowContext) {
+    pub(crate) fn prepaint(&mut self, cx: &mut WindowContext) {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::RequestLayoutState {
                 layout_id,
@@ -291,7 +291,10 @@ impl<E: Element> Drawable<E> {
         }
     }
 
-    fn paint(&mut self, cx: &mut WindowContext) -> E::RequestLayoutState {
+    pub(crate) fn paint(
+        &mut self,
+        cx: &mut WindowContext,
+    ) -> (E::RequestLayoutState, E::PrepaintState) {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::PrepaintState {
                 node_id,
@@ -304,13 +307,13 @@ impl<E: Element> Drawable<E> {
                 self.element
                     .paint(bounds, &mut request_layout, &mut prepaint, cx);
                 self.phase = ElementDrawPhase::Painted;
-                request_layout
+                (request_layout, prepaint)
             }
             _ => panic!("must call prepaint before paint"),
         }
     }
 
-    fn layout_as_root(
+    pub(crate) fn layout_as_root(
         &mut self,
         available_space: Size<AvailableSpace>,
         cx: &mut WindowContext,
