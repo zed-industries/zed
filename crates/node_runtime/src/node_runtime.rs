@@ -4,7 +4,7 @@ use async_tar::Archive;
 use futures::AsyncReadExt;
 use semver::Version;
 use serde::Deserialize;
-use smol::{fs, io::BufReader, lock::Mutex, process::Command};
+use smol::{fs, io::BufReader, lock::Mutex};
 use std::io;
 use std::process::{Output, Stdio};
 use std::{
@@ -122,7 +122,7 @@ impl RealNodeRuntime {
         let node_binary = node_dir.join("bin/node");
         let npm_file = node_dir.join("bin/npm");
 
-        let result = Command::new(&node_binary)
+        let result = process::Process::new(&node_binary)
             .env_clear()
             .arg(npm_file)
             .arg("--version")
@@ -132,7 +132,7 @@ impl RealNodeRuntime {
             .args(["--cache".into(), node_dir.join("cache")])
             .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
             .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")])
-            .status()
+            .status_async(false)
             .await;
         let valid = matches!(result, Ok(status) if status.success());
 
@@ -199,7 +199,7 @@ impl NodeRuntime for RealNodeRuntime {
                 return Err(anyhow!("missing npm file"));
             }
 
-            let mut command = Command::new(node_binary);
+            let mut command = process::Process::new(node_binary);
             command.env_clear();
             command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand);
@@ -219,7 +219,10 @@ impl NodeRuntime for RealNodeRuntime {
                 command.args(["--prefix".into(), directory.to_path_buf()]);
             }
 
-            command.output().await.map_err(|e| anyhow!("{e}"))
+            command
+                .output_async(false)
+                .await
+                .map_err(|e| anyhow!("{e}"))
         };
 
         let mut output = attempt().await;
