@@ -295,13 +295,8 @@ impl ProjectDiagnosticsEditor {
         cx: &mut ViewContext<Self>,
     ) {
         self.paths_to_update.retain(|(path, server_id)| {
-            if *path == path_to_update
-                && server_to_update.map_or(true, |to_update| *server_id == to_update)
-            {
-                false
-            } else {
-                true
-            }
+            *path != path_to_update
+                || server_to_update.map_or(false, |to_update| *server_id != to_update)
         });
 
         let was_empty = self.path_states.is_empty();

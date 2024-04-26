@@ -756,7 +756,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                             fs.insert_file(&path, content.into_bytes()).await;
 
                             let server_id = match language_server_ids.iter().choose(&mut rng) {
-                                Some(server_id) if rng.gen_bool(0.5) => server_id.clone(),
+                                Some(server_id) if rng.gen_bool(0.5) => *server_id,
                                 _ => {
                                     let id = LanguageServerId(language_server_ids.len());
                                     language_server_ids.push(id);
