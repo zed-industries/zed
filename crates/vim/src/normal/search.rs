@@ -159,10 +159,20 @@ fn search_submit(workspace: &mut Workspace, _: &SearchSubmit, cx: &mut ViewConte
                     search_bar.select_match(direction, count, cx);
                     search_bar.focus_editor(&Default::default(), cx);
 
-                    let prior_selections = state.prior_selections.drain(..).collect();
+                    let mut prior_selections: Vec<_> = state.prior_selections.drain(..).collect();
                     let prior_mode = state.prior_mode;
                     let prior_operator = state.prior_operator.take();
                     let new_selections = vim.editor_selections(cx);
+
+                    // If the active editor has changed during a search, don't panic.
+                    if prior_selections.iter().any(|s| {
+                        vim.update_active_editor(cx, |_vim, editor, cx| {
+                            !s.start.is_valid(&editor.snapshot(cx).buffer_snapshot)
+                        })
+                        .unwrap_or(true)
+                    }) {
+                        prior_selections.clear();
+                    }
 
                     if prior_mode != vim.state().mode {
                         vim.switch_mode(prior_mode, true, cx);
