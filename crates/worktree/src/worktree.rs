@@ -673,7 +673,7 @@ fn start_background_scan_tasks(
 ) -> Vec<Task<()>> {
     let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
     let background_scanner = cx.background_executor().spawn({
-        let abs_path = abs_path.to_path_buf();
+        let abs_path = abs_path.canonicalize().expect("start backgroud scan tasks failed for canonicalize path {abs_path}");
         let background = cx.background_executor().clone();
         async move {
             let events = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
@@ -3585,15 +3585,6 @@ impl BackgroundScanner {
                     dot_git_paths_to_reload.insert(dot_git_path.to_path_buf());
                     is_git_related = true;
                 }
-
-                #[cfg(target_os = "windows")]
-                let abs_path = if let Ok(path) = abs_path.canonicalize() {
-                    path
-                } else {
-                    // compile intermediate file will hit here, generated and then disappear;
-                    // so fs cannot find them after disappear.
-                    return false;
-                };
 
                 let relative_path: Arc<Path> =
                     if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
