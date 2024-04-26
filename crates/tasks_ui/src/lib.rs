@@ -66,6 +66,8 @@ pub fn init(cx: &mut AppContext) {
                                 cx,
                             );
                         }
+                    } else {
+                        toggle_modal(workspace, cx);
                     };
                 });
         },
@@ -76,15 +78,17 @@ pub fn init(cx: &mut AppContext) {
 fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
     match &action.task_name {
         Some(name) => spawn_task_with_name(name.clone(), cx),
-        None => {
-            let inventory = workspace.project().read(cx).task_inventory().clone();
-            let workspace_handle = workspace.weak_handle();
-            let task_context = task_context(workspace, cx);
-            workspace.toggle_modal(cx, |cx| {
-                TasksModal::new(inventory, task_context, workspace_handle, cx)
-            })
-        }
+        None => toggle_modal(workspace, cx),
     }
+}
+
+fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) {
+    let inventory = workspace.project().read(cx).task_inventory().clone();
+    let workspace_handle = workspace.weak_handle();
+    let task_context = task_context(workspace, cx);
+    workspace.toggle_modal(cx, |cx| {
+        TasksModal::new(inventory, task_context, workspace_handle, cx)
+    })
 }
 
 fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
