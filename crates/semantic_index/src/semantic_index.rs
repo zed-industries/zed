@@ -105,18 +105,15 @@ pub struct ProjectIndex {
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     last_status: Status,
+    status_tx: channel::Sender<()>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
+    _maintain_status: Task<()>,
     _subscription: Subscription,
 }
 
 enum WorktreeIndexHandle {
-    Loading {
-        _task: Task<Result<()>>,
-    },
-    Loaded {
-        index: Model<WorktreeIndex>,
-        _maintain_status: Task<()>,
-    },
+    Loading { _task: Task<Result<()>> },
+    Loaded { index: Model<WorktreeIndex> },
 }
 
 impl ProjectIndex {
@@ -128,15 +125,27 @@ impl ProjectIndex {
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let fs = project.read(cx).fs().clone();
+        let (status_tx, mut status_rx) = channel::unbounded();
         let mut this = ProjectIndex {
             db_connection,
             project: project.downgrade(),
             worktree_indices: HashMap::default(),
             language_registry,
             fs,
+            status_tx,
             last_status: Status::Idle,
             embedding_provider,
             _subscription: cx.subscribe(&project, Self::handle_project_event),
+            _maintain_status: cx.spawn(|this, mut cx| async move {
+                while status_rx.next().await.is_some() {
+                    if this
+                        .update(&mut cx, |this, cx| this.update_status(cx))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }),
         };
         this.update_worktree_indices(cx);
         this
@@ -186,29 +195,18 @@ impl ProjectIndex {
                     self.db_connection.clone(),
                     self.language_registry.clone(),
                     self.fs.clone(),
+                    self.status_tx.clone(),
                     self.embedding_provider.clone(),
                     cx,
                 );
 
                 let load_worktree = cx.spawn(|this, mut cx| async move {
-                    if let Some((worktree_index, mut worktree_status)) =
-                        worktree_index.await.log_err()
-                    {
-                        this.update(&mut cx, |this, cx| {
+                    if let Some(worktree_index) = worktree_index.await.log_err() {
+                        this.update(&mut cx, |this, _| {
                             this.worktree_indices.insert(
                                 worktree_id,
                                 WorktreeIndexHandle::Loaded {
                                     index: worktree_index,
-                                    _maintain_status: cx.spawn(|this, mut cx| async move {
-                                        while worktree_status.next().await.is_some() {
-                                            if this
-                                                .update(&mut cx, |this, cx| this.update_status(cx))
-                                                .is_err()
-                                            {
-                                                break;
-                                            }
-                                        }
-                                    }),
                                 },
                             );
                         })?;
@@ -286,6 +284,17 @@ impl ProjectIndex {
             results
         })
     }
+
+    #[cfg(test)]
+    pub fn path_count(&self, cx: &AppContext) -> Result<u64> {
+        let mut result = 0;
+        for worktree_index in self.worktree_indices.values() {
+            if let WorktreeIndexHandle::Loaded { index, .. } = worktree_index {
+                result += index.read(cx).path_count()?;
+            }
+        }
+        Ok(result)
+    }
 }
 
 pub struct SearchResult {
@@ -322,9 +331,10 @@ impl WorktreeIndex {
         db_connection: heed::Env,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        status_tx: channel::Sender<()>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
         cx: &mut AppContext,
-    ) -> Task<Result<(Model<Self>, channel::Receiver<()>)>> {
+    ) -> Task<Result<Model<Self>>> {
         let worktree_abs_path = worktree.read(cx).abs_path();
         cx.spawn(|mut cx| async move {
             let db = cx
@@ -340,8 +350,7 @@ impl WorktreeIndex {
                     }
                 })
                 .await?;
-            let (status_tx, status_rx) = channel::unbounded();
-            let worktree_index = cx.new_model(|cx| {
+            cx.new_model(|cx| {
                 Self::new(
                     worktree,
                     db_connection,
@@ -352,8 +361,7 @@ impl WorktreeIndex {
                     embedding_provider,
                     cx,
                 )
-            })?;
-            Ok((worktree_index, status_rx))
+            })
         })
     }
 
@@ -700,13 +708,15 @@ impl WorktreeIndex {
             let mut embedded_files = embedded_files.chunks_timeout(4096, Duration::from_secs(2));
             while let Some(embedded_files) = embedded_files.next().await {
                 let mut txn = db_connection.write_txn()?;
-                for (file, handle) in embedded_files {
+                for (file, _) in &embedded_files {
                     log::debug!("saving embedding for file {:?}", file.path);
                     let key = db_key_for_path(&file.path);
-                    db.put(&mut txn, &key, &file)?;
-                    drop(handle);
+                    db.put(&mut txn, &key, file)?;
                 }
                 txn.commit()?;
+                eprintln!("committed {:?}", embedded_files.len());
+
+                drop(embedded_files);
                 log::debug!("committed");
             }
 
@@ -814,6 +824,15 @@ impl WorktreeIndex {
             Ok(search_results)
         })
     }
+
+    #[cfg(test)]
+    fn path_count(&self) -> Result<u64> {
+        let txn = self
+            .db_connection
+            .read_txn()
+            .context("failed to create read transaction")?;
+        Ok(self.db.len(&txn)?)
+    }
 }
 
 struct ScanEntries {
@@ -900,10 +919,7 @@ fn db_key_for_path(path: &Arc<Path>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use futures::channel::oneshot;
     use futures::{future::BoxFuture, FutureExt};
-
     use gpui::{Global, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use project::Project;
@@ -987,18 +1003,13 @@ mod tests {
 
         let project_index = cx.update(|cx| semantic_index.project_index(project.clone(), cx));
 
-        let (tx, rx) = oneshot::channel();
-        let mut tx = Some(tx);
-        let subscription = cx.update(|cx| {
-            cx.subscribe(&project_index, move |_, event, _| {
-                if let Some(tx) = tx.take() {
-                    _ = tx.send(*event);
-                }
-            })
-        });
-
-        rx.await.expect("no event emitted");
-        drop(subscription);
+        while project_index
+            .read_with(cx, |index, cx| index.path_count(cx))
+            .unwrap()
+            == 0
+        {
+            project_index.next_event(cx).await;
+        }
 
         let results = cx
             .update(|cx| {
