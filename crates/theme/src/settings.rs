@@ -36,23 +36,33 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
     JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum SpacingStyle {
-    #[serde(alias = "tight")]
-    Tight,
+pub enum UiDensity {
+    /// A denser UI with tigher spacing and smaller elements.
+    Compact,
     #[default]
-    #[serde(alias = "default")]
-    Normal,
-    #[serde(alias = "loose")]
-    Loose,
+    /// The default UI density.
+    Default,
+    /// A looser UI with more spacing and larger elements.
+    Comfortable,
 }
 
-impl From<String> for SpacingStyle {
+impl From<String> for UiDensity {
     fn from(s: String) -> Self {
         match s.as_str() {
-            "tight" => Self::Tight,
-            "default" => Self::Normal,
-            "loose" => Self::Loose,
+            "compact" => Self::Compact,
+            "default" => Self::Default,
+            "comfortable" => Self::Comfortable,
             _ => Self::default(),
+        }
+    }
+}
+
+impl Into<String> for UiDensity {
+    fn into(self) -> String {
+        match self {
+            UiDensity::Compact => "compact".to_string(),
+            UiDensity::Default => "default".to_string(),
+            UiDensity::Comfortable => "comfortable".to_string(),
         }
     }
 }
@@ -67,7 +77,7 @@ pub struct ThemeSettings {
     pub theme_selection: Option<ThemeSelection>,
     pub active_theme: Arc<Theme>,
     pub theme_overrides: Option<ThemeStyleContent>,
-    pub spacing: SpacingStyle,
+    pub ui_density: UiDensity,
 }
 
 impl ThemeSettings {
@@ -220,7 +230,7 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
     #[serde(default)]
-    pub spacing: Option<SpacingStyle>,
+    pub ui_density: Option<UiDensity>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
@@ -382,10 +392,14 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
-            spacing: defaults.spacing.unwrap().into(),
+            ui_density: defaults.ui_density.unwrap().into(),
         };
 
         for value in sources.user.into_iter().chain(sources.release_channel) {
+            if let Some(value) = value.ui_density {
+                this.ui_density = value;
+            }
+
             if let Some(value) = value.buffer_font_family.clone() {
                 this.buffer_font.family = value.into();
             }

@@ -1,65 +1,61 @@
 use gpui::*;
 use settings::Settings;
-use theme::{SpacingStyle, ThemeSettings};
+use theme::{ThemeSettings, UiDensity};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Spacing {
+    /// No spacing
     None,
+    /// Extra small spacing - @16px/rem: `1px`|`2px`|`4px`
+    ///
+    /// Relative to the user's `ui_font_size` and [UiDensity] setting.
     XSmall,
+    /// Small spacing - @16px/rem: `2px`|`4px`|`6px`
+    ///
+    /// Relative to the user's `ui_font_size` and [UiDensity] setting.
     Small,
+    /// Medium spacing - @16px/rem: `3px`|`6px`|`8px`
+    ///
+    /// Relative to the user's `ui_font_size` and [UiDensity] setting.
     Medium,
+    /// Large spacing - @16px/rem: `4px`|`8px`|`10px`
+    ///
+    /// Relative to the user's `ui_font_size` and [UiDensity] setting.
     Large,
 }
 
 impl Spacing {
-    fn rems(self, cx: &WindowContext) -> Rems {
-        let spacing_style = ThemeSettings::get_global(cx).spacing;
-
-        match spacing_style {
-            SpacingStyle::Loose => match self {
-                Self::None => rems(0.0),
-                Self::XSmall => rems(1. / 16.),
-                Self::Small => rems(2. / 16.),
-                Self::Medium => rems(3. / 16.),
-                Self::Large => rems(4. / 16.),
+    pub fn spacing_ratio(self, cx: &WindowContext) -> f32 {
+        match ThemeSettings::get_global(cx).ui_density {
+            UiDensity::Compact => match self {
+                Spacing::None => 0.0,
+                Spacing::XSmall => 1. / 16.,
+                Spacing::Small => 2. / 16.,
+                Spacing::Medium => 3. / 16.,
+                Spacing::Large => 4. / 16.,
             },
-            SpacingStyle::Tight => match self {
-                Self::None => rems(0.0),
-                Self::XSmall => rems(2. / 16.),
-                Self::Small => rems(4. / 16.),
-                Self::Medium => rems(6. / 16.),
-                Self::Large => rems(8. / 16.),
+            UiDensity::Default => match self {
+                Spacing::None => 0.0,
+                Spacing::XSmall => 2. / 16.,
+                Spacing::Small => 4. / 16.,
+                Spacing::Medium => 6. / 16.,
+                Spacing::Large => 8. / 16.,
             },
-            SpacingStyle::Normal => match self {
-                Self::None => rems(0.0),
-                Self::XSmall => rems(3. / 16.),
-                Self::Small => rems(4. / 16.),
-                Self::Medium => rems(8. / 16.),
-                Self::Large => rems(10. / 16.),
+            UiDensity::Comfortable => match self {
+                Spacing::None => 0.0,
+                Spacing::XSmall => 3. / 16.,
+                Spacing::Small => 6. / 16.,
+                Spacing::Medium => 8. / 16.,
+                Spacing::Large => 10. / 16.,
             },
         }
     }
-}
 
-// TODO: Split out a `ui_macros` crate and use a macro like in
-// `gpui_macros` to generate these methods
-
-/// Extends [`gpui::Styled`] with spacing-specific styling methods.
-pub trait StyledSpacing: Styled + Sized {
-    fn space_none(self, cx: &mut WindowContext) -> Rems {
-        Spacing::None.rems(cx)
-    }
-
-    fn space_gap_none(self, cx: &mut WindowContext) -> Self {
-        self.gap(Spacing::None.rems(cx))
-    }
-
-    fn space_p_none(self, cx: &mut WindowContext) -> Self {
-        self.px(Spacing::None.rems(cx))
-    }
-
-    fn space_px_none(self, cx: &mut WindowContext) -> Self {
-        self.px(Spacing::None.rems(cx))
+    pub fn rems(self, cx: &WindowContext) -> Rems {
+        rems(self.spacing_ratio(cx))
     }
 }
 
-impl<E: Styled> StyledSpacing for E {}
+pub fn user_spacing_style(cx: &WindowContext) -> UiDensity {
+    ThemeSettings::get_global(cx).ui_density
+}
