@@ -83,7 +83,7 @@ impl WindowsWindowInner {
                 Ok(unsafe {
                     let hwnd = NonZeroIsize::new_unchecked(self.hwnd);
                     let mut handle = rwh::Win32WindowHandle::new(hwnd);
-                    let hinstance = GetWindowLongPtrW(HWND(self.hwnd), GWLP_HINSTANCE);
+                    let hinstance = get_window_long(HWND(self.hwnd), GWLP_HINSTANCE);
                     handle.hinstance = NonZeroIsize::new(hinstance);
                     rwh::WindowHandle::borrow_raw(handle.into())
                 })
