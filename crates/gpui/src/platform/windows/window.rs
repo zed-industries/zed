@@ -81,9 +81,12 @@ impl WindowsWindowInner {
         impl rwh::HasWindowHandle for RawWindow {
             fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
                 Ok(unsafe {
-                    let hwnd = NonZeroIsize::new_unchecked(self.hwnd);
-                    let handle = rwh::Win32WindowHandle::new(hwnd);
-                    rwh::WindowHandle::borrow_raw(handle.into())
+                    let hwnd = NonZeroIsize::new(self.hwnd).unwrap();
+                    let mut handle = rwh::Win32WindowHandle::new(hwnd);
+                    let hinstance = GetWindowLongPtrW(HWND(self.hwnd), GWLP_HINSTANCE);
+                    handle.hinstance = std::num::NonZeroIsize::new(hinstance);
+                    let ret = rwh::RawWindowHandle::Win32(handle);
+                    rwh::WindowHandle::borrow_raw(ret)
                 })
             }
         }
