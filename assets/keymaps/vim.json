@@ -627,7 +627,8 @@
       "p": "project_panel::Open",
       "x": "project_panel::RevealInFinder",
       "shift-g": "menu::SelectLast",
-      "g g": "menu::SelectFirst"
+      "g g": "menu::SelectFirst",
+      "-": "project_panel::SelectParent"
     }
   }
 ]
