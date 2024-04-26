@@ -13,6 +13,7 @@ pub struct ConnectionPool {
     connected_users: BTreeMap<UserId, ConnectedPrincipal>,
     connected_dev_servers: BTreeMap<DevServerId, ConnectionId>,
     channels: ChannelPool,
+    offline_dev_servers: HashSet<DevServerId>,
 }
 
 #[derive(Default, Serialize)]
@@ -106,10 +107,15 @@ impl ConnectionPool {
             }
             PrincipalId::DevServerId(dev_server_id) => {
                 self.connected_dev_servers.remove(&dev_server_id);
+                self.offline_dev_servers.remove(&dev_server_id);
             }
         }
         self.connections.remove(&connection_id).unwrap();
         Ok(())
+    }
+
+    pub fn set_dev_server_offline(&mut self, dev_server_id: DevServerId) {
+        self.offline_dev_servers.insert(dev_server_id);
     }
 
     pub fn connections(&self) -> impl Iterator<Item = &Connection> {
@@ -137,7 +143,9 @@ impl ConnectionPool {
     }
 
     pub fn dev_server_status(&self, dev_server_id: DevServerId) -> proto::DevServerStatus {
-        if self.dev_server_connection_id(dev_server_id).is_some() {
+        if self.dev_server_connection_id(dev_server_id).is_some()
+            && !self.offline_dev_servers.contains(&dev_server_id)
+        {
             proto::DevServerStatus::Online
         } else {
             proto::DevServerStatus::Offline

@@ -291,6 +291,8 @@ impl ExtensionStore {
             if let Some(future) = reload_future {
                 future.await;
             }
+            this.update(&mut cx, |this, cx| this.auto_install_extensions(cx))
+                .ok();
             this.update(&mut cx, |this, cx| this.check_for_updates(cx))
                 .ok();
         })
@@ -478,6 +480,38 @@ impl ExtensionStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         self.fetch_extensions_from_api(&format!("/extensions/{extension_id}"), &[], cx)
+    }
+
+    /// Installs any extensions that should be included with Zed by default.
+    ///
+    /// This can be used to make certain functionality provided by extensions
+    /// available out-of-the-box.
+    pub fn auto_install_extensions(&mut self, cx: &mut ModelContext<Self>) {
+        let extension_settings = ExtensionSettings::get_global(cx);
+
+        let extensions_to_install = extension_settings
+            .auto_install_extensions
+            .keys()
+            .filter(|extension_id| extension_settings.should_auto_install(extension_id))
+            .filter(|extension_id| {
+                let is_already_installed = self
+                    .extension_index
+                    .extensions
+                    .contains_key(extension_id.as_ref());
+                !is_already_installed
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        cx.spawn(move |this, mut cx| async move {
+            for extension_id in extensions_to_install {
+                this.update(&mut cx, |this, cx| {
+                    this.install_latest_extension(extension_id.clone(), cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     pub fn check_for_updates(&mut self, cx: &mut ModelContext<Self>) {

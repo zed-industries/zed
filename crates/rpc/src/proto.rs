@@ -303,7 +303,7 @@ messages!(
     (SetRoomParticipantRole, Foreground),
     (BlameBuffer, Foreground),
     (BlameBufferResponse, Foreground),
-    (CreateRemoteProject, Foreground),
+    (CreateRemoteProject, Background),
     (CreateRemoteProjectResponse, Foreground),
     (CreateDevServer, Foreground),
     (CreateDevServerResponse, Foreground),
@@ -317,6 +317,9 @@ messages!(
     (RejoinRemoteProjectsResponse, Foreground),
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
+    (RemoteProjectsUpdate, Foreground),
+    (ValidateRemoteProjectRequest, Background),
+    (DeleteDevServer, Foreground)
 );
 
 request_messages!(
@@ -417,7 +420,9 @@ request_messages!(
     (JoinRemoteProject, JoinProjectResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
     (ReconnectDevServer, ReconnectDevServerResponse),
+    (ValidateRemoteProjectRequest, Ack),
     (MultiLspQuery, MultiLspQueryResponse),
+    (DeleteDevServer, Ack),
 );
 
 entity_messages!(

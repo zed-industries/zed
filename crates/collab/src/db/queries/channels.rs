@@ -640,15 +640,10 @@ impl Database {
             .get_hosted_projects(&channel_ids, &roles_by_channel_id, tx)
             .await?;
 
-        let dev_servers = self.get_dev_servers(&channel_ids, tx).await?;
-        let remote_projects = self.get_remote_projects(&channel_ids, tx).await?;
-
         Ok(ChannelsForUser {
             channel_memberships,
             channels,
             hosted_projects,
-            dev_servers,
-            remote_projects,
             channel_participants,
             latest_buffer_versions,
             latest_channel_messages,

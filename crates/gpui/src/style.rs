@@ -2,9 +2,9 @@ use std::{iter, mem, ops::Range};
 
 use crate::{
     black, phi, point, quad, rems, AbsoluteLength, Bounds, ContentMask, Corners, CornersRefinement,
-    CursorStyle, DefiniteLength, Edges, EdgesRefinement, ElementContext, Font, FontFeatures,
-    FontStyle, FontWeight, Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size,
-    SizeRefinement, Styled, TextRun,
+    CursorStyle, DefiniteLength, Edges, EdgesRefinement, Font, FontFeatures, FontStyle, FontWeight,
+    Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled,
+    TextRun, WindowContext,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -391,8 +391,8 @@ impl Style {
     pub fn paint(
         &self,
         bounds: Bounds<Pixels>,
-        cx: &mut ElementContext,
-        continuation: impl FnOnce(&mut ElementContext),
+        cx: &mut WindowContext,
+        continuation: impl FnOnce(&mut WindowContext),
     ) {
         #[cfg(debug_assertions)]
         if self.debug_below {

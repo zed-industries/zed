@@ -8,6 +8,7 @@ use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
+use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
     AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
@@ -16,10 +17,7 @@ use gpui::{
     UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
 use menu::{Confirm, SelectNext, SelectPrev};
-use project::{
-    repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
-    Worktree, WorktreeId,
-};
+use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -37,7 +35,7 @@ use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
-    Workspace,
+    OpenInTerminal, Workspace,
 };
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
@@ -127,7 +125,6 @@ actions!(
         CopyPath,
         CopyRelativePath,
         RevealInFinder,
-        OpenInTerminal,
         Cut,
         Paste,
         Rename,
@@ -441,9 +438,7 @@ impl ProjectPanel {
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
                             .action("Reveal in Finder", Box::new(RevealInFinder))
-                            .when(is_dir, |menu| {
-                                menu.action("Open in Terminal…", Box::new(OpenInTerminal))
-                            })
+                            .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
@@ -1131,13 +1126,20 @@ impl ProjectPanel {
 
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            let path = worktree.abs_path().join(&entry.path);
-            cx.dispatch_action(
-                workspace::OpenTerminal {
-                    working_directory: path,
+            let abs_path = worktree.abs_path().join(&entry.path);
+            let working_directory = if entry.is_dir() {
+                Some(abs_path)
+            } else {
+                if entry.is_symlink {
+                    abs_path.canonicalize().ok()
+                } else {
+                    Some(abs_path)
                 }
-                .boxed_clone(),
-            )
+                .and_then(|path| Some(path.parent()?.to_path_buf()))
+            };
+            if let Some(working_directory) = working_directory {
+                cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
+            }
         }
     }
 
@@ -1696,7 +1698,7 @@ impl ProjectPanel {
     }
 
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::default();
+        let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
         dispatch_context.add("menu");
 
@@ -1841,7 +1843,7 @@ impl Render for DraggedProjectEntryView {
         let settings = ProjectPanelSettings::get_global(cx);
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_flex()
-            .font(ui_font)
+            .font_family(ui_font)
             .bg(cx.theme().colors().background)
             .w(self.width)
             .child(
@@ -1899,8 +1901,10 @@ impl Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
-        Some(ui::IconName::FileTree)
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        ProjectPanelSettings::get_global(cx)
+            .button
+            .then(|| IconName::FileTree)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

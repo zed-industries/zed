@@ -1,15 +1,63 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
-use std::{any::Any, path::PathBuf, sync::Arc};
+use project::project_settings::{BinarySettings, ProjectSettings};
+use settings::Settings;
+use std::{any::Any, ffi::OsString, path::PathBuf, sync::Arc};
 
 pub struct RubyLanguageServer;
+
+impl RubyLanguageServer {
+    const SERVER_NAME: &'static str = "solargraph";
+
+    fn server_binary_arguments() -> Vec<OsString> {
+        vec!["stdio".into()]
+    }
+}
 
 #[async_trait(?Send)]
 impl LspAdapter for RubyLanguageServer {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName("solargraph".into())
+        LanguageServerName(Self::SERVER_NAME.into())
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let configured_binary = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .lsp
+                .get(Self::SERVER_NAME)
+                .and_then(|s| s.binary.clone())
+        });
+
+        if let Ok(Some(BinarySettings {
+            path: Some(path),
+            arguments,
+        })) = configured_binary
+        {
+            Some(LanguageServerBinary {
+                path: path.into(),
+                arguments: arguments
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|arg| arg.into())
+                    .collect(),
+                env: None,
+            })
+        } else {
+            let env = delegate.shell_env().await;
+            let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+            Some(LanguageServerBinary {
+                path,
+                arguments: Self::server_binary_arguments(),
+                env: Some(env),
+            })
+        }
     }
 
     async fn fetch_latest_server_version(
@@ -36,7 +84,7 @@ impl LspAdapter for RubyLanguageServer {
         Some(LanguageServerBinary {
             path: "solargraph".into(),
             env: None,
-            arguments: vec!["stdio".into()],
+            arguments: Self::server_binary_arguments(),
         })
     }
 

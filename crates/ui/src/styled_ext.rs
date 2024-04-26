@@ -1,9 +1,7 @@
 use gpui::{hsla, px, Styled, WindowContext};
-use settings::Settings;
-use theme::ThemeSettings;
 
 use crate::prelude::*;
-use crate::{ElevationIndex, UiTextSize};
+use crate::ElevationIndex;
 
 fn elevated<E: Styled>(this: E, cx: &mut WindowContext, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
@@ -27,66 +25,6 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `flex()`, `flex_col()`
     fn v_flex(self) -> Self {
         self.flex().flex_col()
-    }
-
-    /// Sets the text size using a [`UiTextSize`].
-    fn text_ui_size(self, size: UiTextSize) -> Self {
-        self.text_size(size.rems())
-    }
-
-    /// The large size for UI text.
-    ///
-    /// `1rem` or `16px` at the default scale of `1rem` = `16px`.
-    ///
-    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
-    ///
-    /// Use `text_ui` for regular-sized text.
-    fn text_ui_lg(self) -> Self {
-        self.text_size(UiTextSize::Large.rems())
-    }
-
-    /// The default size for UI text.
-    ///
-    /// `0.825rem` or `14px` at the default scale of `1rem` = `16px`.
-    ///
-    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
-    ///
-    /// Use `text_ui_sm` for smaller text.
-    fn text_ui(self) -> Self {
-        self.text_size(UiTextSize::default().rems())
-    }
-
-    /// The small size for UI text.
-    ///
-    /// `0.75rem` or `12px` at the default scale of `1rem` = `16px`.
-    ///
-    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
-    ///
-    /// Use `text_ui` for regular-sized text.
-    fn text_ui_sm(self) -> Self {
-        self.text_size(UiTextSize::Small.rems())
-    }
-
-    /// The extra small size for UI text.
-    ///
-    /// `0.625rem` or `10px` at the default scale of `1rem` = `16px`.
-    ///
-    /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
-    ///
-    /// Use `text_ui` for regular-sized text.
-    fn text_ui_xs(self) -> Self {
-        self.text_size(UiTextSize::XSmall.rems())
-    }
-
-    /// The font size for buffer text.
-    ///
-    /// Retrieves the default font size, or the user's custom font size if set.
-    ///
-    /// This should only be used for text that is displayed in a buffer,
-    /// or other places that text needs to match the user's buffer font size.
-    fn text_buffer(self, cx: &mut WindowContext) -> Self {
-        let settings = ThemeSettings::get_global(cx);
-        self.text_size(settings.buffer_font_size(cx))
     }
 
     /// The [`Surface`](ElevationIndex::Surface) elevation level, located above the app background, is the standard level for all elements
