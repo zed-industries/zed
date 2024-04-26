@@ -216,7 +216,7 @@ impl RemoteProjects {
 
     fn delete_dev_server(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
         let answer = cx.prompt(
-            gpui::PromptLevel::Info,
+            gpui::PromptLevel::Destructive,
             "Are you sure?",
             Some("This will delete the dev server and all of its remote projects."),
             &["Delete", "Cancel"],
