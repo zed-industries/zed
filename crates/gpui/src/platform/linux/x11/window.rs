@@ -2,10 +2,11 @@
 #![allow(unused)]
 
 use crate::{
-    platform::blade::{BladeRenderer, BladeSurfaceConfig}, size, Bounds, DevicePixels, ForegroundExecutor, Modifiers,
-    Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance,
-    WindowOptions, WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
+    platform::blade::{BladeRenderer, BladeSurfaceConfig},
+    size, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels, Platform, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
+    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams,
+    X11Client, X11ClientState, X11ClientStatePtr,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
@@ -215,7 +216,7 @@ impl X11WindowState {
                 &[atoms.WM_DELETE_WINDOW],
             )
             .unwrap();
-        let transparent = params.window_background == WindowBackgroundAppearance::Transparent;
+        let transparent = params.window_background != WindowBackgroundAppearance::Opaque;
         if transparent {
             xcb_connection
                 .change_property32(
@@ -549,19 +550,20 @@ impl PlatformWindow for X11Window {
     fn set_edited(&mut self, edited: bool) {}
 
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
-        let mut state = self.0.state.borrow_mut();
-        let transparent = background_appearance == WindowBackgroundAppearance::Transparent;
-        self.0.xcb_connection
+        let mut inner = self.0.state.borrow_mut();
+        let transparent = background_appearance != WindowBackgroundAppearance::Opaque;
+        self.0
+            .xcb_connection
             .change_property32(
                 xproto::PropMode::REPLACE,
                 self.0.x_window,
-                state.atoms._NET_WM_WINDOW_OPACITY,
+                inner.atoms._NET_WM_WINDOW_OPACITY,
                 xproto::AtomEnum::CARDINAL,
                 &[if transparent { 0 } else { !0 }],
             )
             .unwrap();
 
-        state.renderer.update_transparency(transparent);
+        inner.renderer.update_transparency(transparent);
     }
 
     // todo(linux), this corresponds to `orderFrontCharacterPalette` on macOS,

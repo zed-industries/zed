@@ -626,7 +626,7 @@ impl MacWindow {
                     native_window as *mut _,
                     native_view as *mut _,
                     window_size,
-                    window_background,
+                    window_background != WindowBackgroundAppearance::Opaque,
                 ),
                 request_frame_callback: None,
                 event_callback: None,
@@ -982,7 +982,7 @@ impl PlatformWindow for MacWindow {
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
         let mut this = self.0.as_ref().lock();
         this.renderer
-            .update_transparency(background_appearance == WindowBackgroundAppearance::Transparent);
+            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
 
         let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
             80

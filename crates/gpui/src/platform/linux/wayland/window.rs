@@ -130,7 +130,7 @@ impl WaylandWindowState {
                 height: bounds.size.height,
                 depth: 1,
             },
-            transparent: options.window_background == WindowBackgroundAppearance::Transparent,
+            transparent: options.window_background != WindowBackgroundAppearance::Opaque,
         };
 
         Self {
@@ -620,7 +620,7 @@ impl PlatformWindow for WaylandWindow {
         let mut state = self.borrow_mut();
         state
             .renderer
-            .update_transparency(background_appearance == WindowBackgroundAppearance::Transparent);
+            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
     }
 
     fn set_edited(&mut self, edited: bool) {

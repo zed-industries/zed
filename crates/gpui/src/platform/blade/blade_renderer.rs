@@ -28,7 +28,7 @@ pub unsafe fn new_renderer(
     _native_window: *mut c_void,
     native_view: *mut c_void,
     bounds: crate::Size<f32>,
-    window_background: crate::WindowBackgroundAppearance,
+    transparent: bool,
 ) -> Renderer {
     use raw_window_handle as rwh;
     struct RawWindow {
@@ -71,7 +71,7 @@ pub unsafe fn new_renderer(
                 height: bounds.height as u32,
                 depth: 1,
             },
-            transparent: window_background == crate::WindowBackgroundAppearance::Transparent,
+            transparent,
         },
     )
 }
