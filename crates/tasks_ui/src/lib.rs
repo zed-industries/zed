@@ -1,17 +1,11 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use ::settings::Settings;
-use anyhow::Context;
 use editor::{tasks::task_context, Editor};
 use gpui::{AppContext, ViewContext, WindowContext};
-use language::{BasicContextProvider, ContextProvider, Language};
+use language::Language;
 use modal::TasksModal;
-use project::{Location, TaskSourceKind, WorktreeId};
-use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables};
-use util::ResultExt;
+use project::WorktreeId;
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
 
@@ -94,9 +88,9 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
             .update(&mut cx, |workspace, cx| {
                 let (worktree, language) = active_item_selection_properties(workspace, cx);
                 let tasks = workspace.project().update(cx, |project, cx| {
-                    project.task_inventory().update(cx, |inventory, cx| {
-                        inventory.list_tasks(language, worktree, cx)
-                    })
+                    project
+                        .task_inventory()
+                        .update(cx, |inventory, _| inventory.list_tasks(language, worktree))
                 });
                 let (task_source_kind, target_task) =
                     tasks.into_iter().find(|(_, task)| task.label == name)?;

@@ -7551,7 +7551,7 @@ impl Editor {
                     .flat_map(|tag| {
                         let tag = tag.0.clone();
                         inventory
-                            .list_tasks(Some(runnable.language.clone()), worktree_id, cx)
+                            .list_tasks(Some(runnable.language.clone()), worktree_id)
                             .into_iter()
                             .filter(move |(_, template)| {
                                 template.tags.iter().any(|source_tag| source_tag == &tag)
