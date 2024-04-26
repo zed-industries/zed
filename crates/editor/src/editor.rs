@@ -10383,7 +10383,7 @@ impl Editor {
     }
 
     // TODO kb make async, consider `block_with_timeout` + need to debounce between edits (configurable?)
-    // TODO kb why fold buttons on the gutter do not work?
+    // TODO kb test: fold diff (shoud go away, including the blocks), unfold diff (should not reappear)
     // TODO kb test: client hunk toggling (merge different hunks into one dy deleting N lines in the middle),
     // TODO kb test: multibuffer (toggle hunks back and forth in excerpts)
     fn sync_expanded_diff_hunks(&mut self, buffer: &Model<Buffer>, cx: &mut ViewContext<'_, Self>) {
