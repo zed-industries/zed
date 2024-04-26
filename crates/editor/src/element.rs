@@ -3593,8 +3593,10 @@ impl Element for EditorElement {
                 let start_row = scroll_position.y as u32;
                 let height_in_lines = bounds.size.height / line_height;
                 let max_row = snapshot.max_point().row();
-                let end_row =
-                    cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
+                let end_row = cmp::min(
+                    (scroll_position.y + height_in_lines).ceil() as u32,
+                    max_row + 1,
+                );
 
                 let buffer_rows = snapshot
                     .buffer_rows(start_row)
