@@ -84,7 +84,7 @@ impl WindowsWindowInner {
                     let hwnd = NonZeroIsize::new_unchecked(self.hwnd);
                     let mut handle = rwh::Win32WindowHandle::new(hwnd);
                     let hinstance = GetWindowLongPtrW(HWND(self.hwnd), GWLP_HINSTANCE);
-                    handle.hinstance = std::num::NonZeroIsize::new(hinstance);
+                    handle.hinstance = NonZeroIsize::new(hinstance);
                     rwh::WindowHandle::borrow_raw(handle.into())
                 })
             }
