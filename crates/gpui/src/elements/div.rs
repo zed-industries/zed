@@ -1289,7 +1289,7 @@ impl Interactivity {
         cx: &mut WindowContext,
         f: impl FnOnce(Style, &mut WindowContext) -> LayoutId,
     ) -> LayoutId {
-        cx.with_element_state::<InteractiveElementState, _>(
+        cx.with_optional_element_state::<InteractiveElementState, _>(
             self.element_id.clone(),
             |element_state, cx| {
                 let mut element_state =
@@ -1355,7 +1355,7 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut WindowContext) -> R,
     ) -> R {
         self.content_size = content_size;
-        cx.with_element_state::<InteractiveElementState, _>(
+        cx.with_optional_element_state::<InteractiveElementState, _>(
             self.element_id.clone(),
             |element_state, cx| {
                 let mut element_state =
@@ -1470,7 +1470,7 @@ impl Interactivity {
         f: impl FnOnce(&Style, &mut WindowContext),
     ) {
         self.hovered = hitbox.map(|hitbox| hitbox.is_hovered(cx));
-        cx.with_element_state::<InteractiveElementState, _>(
+        cx.with_optional_element_state::<InteractiveElementState, _>(
             self.element_id.clone(),
             |element_state, cx| {
                 let mut element_state =
@@ -2075,7 +2075,7 @@ impl Interactivity {
 
     /// Compute the visual style for this element, based on the current bounds and the element's state.
     pub fn compute_style(&self, hitbox: Option<&Hitbox>, cx: &mut WindowContext) -> Style {
-        cx.with_element_state(self.element_id.clone(), |element_state, cx| {
+        cx.with_optional_element_state(self.element_id.clone(), |element_state, cx| {
             let mut element_state =
                 element_state.map(|element_state| element_state.unwrap_or_default());
             let style = self.compute_style_internal(hitbox, element_state.as_mut(), cx);

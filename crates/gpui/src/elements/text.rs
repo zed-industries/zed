@@ -458,7 +458,7 @@ impl Element for InteractiveText {
         state: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Hitbox {
-        cx.with_element_state::<InteractiveTextState, _>(
+        cx.with_optional_element_state::<InteractiveTextState, _>(
             Some(self.element_id.clone()),
             |interactive_state, cx| {
                 let interactive_state = interactive_state
@@ -488,7 +488,7 @@ impl Element for InteractiveText {
         hitbox: &mut Hitbox,
         cx: &mut WindowContext,
     ) {
-        cx.with_element_state::<InteractiveTextState, _>(
+        cx.with_optional_element_state::<InteractiveTextState, _>(
             Some(self.element_id.clone()),
             |interactive_state, cx| {
                 let mut interactive_state = interactive_state.unwrap().unwrap_or_default();

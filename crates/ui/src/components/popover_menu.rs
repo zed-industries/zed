@@ -115,7 +115,7 @@ impl<M: ManagedView> PopoverMenu<M> {
         cx: &mut WindowContext,
         f: impl FnOnce(&mut Self, &mut PopoverMenuElementState<M>, &mut WindowContext) -> R,
     ) -> R {
-        cx.with_element_state::<PopoverMenuElementState<M>, _>(
+        cx.with_optional_element_state::<PopoverMenuElementState<M>, _>(
             Some(self.id.clone()),
             |element_state, cx| {
                 let mut element_state = element_state.unwrap().unwrap_or_default();

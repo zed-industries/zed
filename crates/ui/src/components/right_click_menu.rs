@@ -41,11 +41,12 @@ impl<M: ManagedView> RightClickMenu<M> {
 
     fn with_element_state<R>(
         &mut self,
+        global_id: &GlobalElementId,
         cx: &mut WindowContext,
         f: impl FnOnce(&mut Self, &mut MenuHandleElementState<M>, &mut WindowContext) -> R,
     ) -> R {
-        cx.with_element_state::<MenuHandleElementState<M>, _>(
-            Some(self.id.clone()),
+        cx.with_optional_element_state::<MenuHandleElementState<M>, _>(
+            Some(global_id),
             |element_state, cx| {
                 let mut element_state = element_state.unwrap().unwrap_or_default();
                 let result = f(self, &mut element_state, cx);
@@ -110,10 +111,10 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        self.with_element_state(cx, |this, element_state, cx| {
+        self.with_element_state(id.unwrap(), cx, |this, element_state, cx| {
             let mut menu_layout_id = None;
 
             let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
@@ -183,13 +184,13 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
     fn paint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _bounds: Bounds<gpui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint_state: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
-        self.with_element_state(cx, |this, element_state, cx| {
+        self.with_element_state(id.unwrap(), cx, |this, element_state, cx| {
             if let Some(mut child) = request_layout.child_element.take() {
                 child.paint(cx);
             }

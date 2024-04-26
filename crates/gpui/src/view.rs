@@ -313,7 +313,7 @@ impl Element for AnyView {
     ) -> Option<AnyElement> {
         cx.set_view_id(self.entity_id());
         if self.cached_style.is_some() {
-            cx.with_element_state::<AnyViewState, _>(
+            cx.with_optional_element_state::<AnyViewState, _>(
                 Some(ElementId::View(self.entity_id())),
                 |element_state, cx| {
                     let mut element_state = element_state.unwrap();
@@ -372,7 +372,7 @@ impl Element for AnyView {
         cx: &mut WindowContext,
     ) {
         if self.cached_style.is_some() {
-            cx.with_element_state::<AnyViewState, _>(
+            cx.with_optional_element_state::<AnyViewState, _>(
                 Some(ElementId::View(self.entity_id())),
                 |element_state, cx| {
                     let mut element_state = element_state.unwrap().unwrap();

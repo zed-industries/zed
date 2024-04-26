@@ -97,7 +97,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         _id: Option<&GlobalElementId>,
         cx: &mut crate::WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
-        cx.with_element_state(Some(self.id.clone()), |state, cx| {
+        cx.with_optional_element_state(Some(self.id.clone()), |state, cx| {
             let state = state.unwrap().unwrap_or_else(|| AnimationState {
                 start: Instant::now(),
             });

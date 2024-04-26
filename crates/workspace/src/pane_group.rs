@@ -820,7 +820,7 @@ mod element {
             _state: &mut Self::RequestLayoutState,
             cx: &mut WindowContext,
         ) -> PaneAxisLayout {
-            let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
+            let dragged_handle = cx.with_optional_element_state::<Rc<RefCell<Option<usize>>>, _>(
                 Some(self.basis.into()),
                 |state, _cx| {
                     let state = state
