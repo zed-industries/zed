@@ -410,7 +410,7 @@ impl MarkdownPreviewView {
                 let Range { start, end } = block.source_range();
 
                 // Check if the cursor is between the last block and the current block
-                if last_end > cursor && cursor < start {
+                if last_end <= cursor && cursor < start {
                     block_index = Some(i.saturating_sub(1));
                     break;
                 }
