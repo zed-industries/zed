@@ -3958,7 +3958,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 vec![PathMatcher::new("*.odd").unwrap()],
-                Vec::new(),
+                Vec::new()
             )
             .unwrap(),
             cx
@@ -3978,7 +3978,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 vec![PathMatcher::new("*.rs").unwrap()],
-                Vec::new(),
+                Vec::new()
             )
             .unwrap(),
             cx
@@ -4004,7 +4004,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                     PathMatcher::new("*.ts").unwrap(),
                     PathMatcher::new("*.odd").unwrap(),
                 ],
-                Vec::new(),
+                Vec::new()
             ).unwrap(),
             cx
         )
@@ -4030,7 +4030,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                     PathMatcher::new("*.ts").unwrap(),
                     PathMatcher::new("*.odd").unwrap(),
                 ],
-                Vec::new(),
+                Vec::new()
             ).unwrap(),
             cx
         )
@@ -4313,7 +4313,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 true,
                 false,
                 vec![PathMatcher::new("worktree-a/*.rs").unwrap()],
-                Vec::new(),
+                Vec::new()
             )
             .unwrap(),
             cx
@@ -4332,7 +4332,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 true,
                 false,
                 vec![PathMatcher::new("worktree-b/*.rs").unwrap()],
-                Vec::new(),
+                Vec::new()
             )
             .unwrap(),
             cx
@@ -4352,7 +4352,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 true,
                 false,
                 vec![PathMatcher::new("*.ts").unwrap()],
-                Vec::new(),
+                Vec::new()
             )
             .unwrap(),
             cx

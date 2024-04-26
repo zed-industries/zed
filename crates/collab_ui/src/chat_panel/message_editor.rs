@@ -26,7 +26,7 @@ const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
 lazy_static! {
     static ref MENTIONS_SEARCH: SearchQuery =
-        SearchQuery::regex("@[-_\\w]+", false, false, false, Vec::new(), Vec::new(),).unwrap();
+        SearchQuery::regex("@[-_\\w]+", false, false, false, Vec::new(), Vec::new()).unwrap();
 }
 
 pub struct MessageEditor {
