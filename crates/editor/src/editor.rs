@@ -781,7 +781,7 @@ struct CompletionsMenu {
     completions: Arc<RwLock<Box<[Completion]>>>,
     language: Option<Arc<Language>>,
     match_candidates: Arc<[StringMatchCandidate]>,
-    matches: Arc<[StringMatch]>,
+    matches: Arc<RwLock<Box<[StringMatch]>>>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
     selected_completion_documentation_resolve_debounce: Arc<Mutex<DebouncedDelay>>,
@@ -799,7 +799,7 @@ impl CompletionsMenu {
         if self.selected_item > 0 {
             self.selected_item -= 1;
         } else {
-            self.selected_item = self.matches.len() - 1;
+            self.selected_item = self.matches.read().len() - 1;
         }
         self.scroll_handle.scroll_to_item(self.selected_item);
         self.attempt_resolve_selected_completion_documentation(project, cx);
@@ -807,7 +807,7 @@ impl CompletionsMenu {
     }
 
     fn select_next(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-        if self.selected_item + 1 < self.matches.len() {
+        if self.selected_item + 1 < self.matches.read().len() {
             self.selected_item += 1;
         } else {
             self.selected_item = 0;
@@ -818,17 +818,84 @@ impl CompletionsMenu {
     }
 
     fn select_last(&mut self, project: Option<&Model<Project>>, cx: &mut ViewContext<Editor>) {
-        self.selected_item = self.matches.len() - 1;
+        self.selected_item = self.matches.read().len() - 1;
         self.scroll_handle.scroll_to_item(self.selected_item);
         self.attempt_resolve_selected_completion_documentation(project, cx);
         cx.notify();
     }
 
+    async fn update_matches(
+        resolved_completion_indices: Vec<usize>,
+        completions: Arc<RwLock<Box<[Completion]>>>,
+        matches: Arc<RwLock<Box<[StringMatch]>>>,
+        query: Option<String>,
+        executor: BackgroundExecutor,
+    ) {
+        let match_candidates = {
+            let completions = completions.read();
+            resolved_completion_indices
+                .iter()
+                .map(|id| {
+                    let completion = &completions[*id];
+                    StringMatchCandidate::new(
+                        *id,
+                        completion.label.text[completion.label.filter_range.clone()].into(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let new_matches = if let Some(query) = query {
+            fuzzy::match_all_strings_in_order(
+                &match_candidates,
+                query.as_str(),
+                query.chars().any(|c| c.is_uppercase()),
+                1000,
+                &Default::default(),
+                executor,
+            )
+            .await
+        } else {
+            match_candidates
+                .iter()
+                .enumerate()
+                .map(|(candidate_id, candidate)| StringMatch {
+                    candidate_id,
+                    score: Default::default(),
+                    positions: Default::default(),
+                    string: candidate.string.clone(),
+                })
+                .collect()
+        };
+
+        let completions = completions.read();
+        let mut matches_write = matches.write();
+        let map = HashMap::from_iter(
+            matches_write
+                .iter()
+                .enumerate()
+                .map(|(i, m)| (m.candidate_id.clone(), i)),
+        );
+
+        for new_mat in new_matches {
+            let old_mat_index = map.get(&new_mat.candidate_id).unwrap().to_owned();
+            let completion = &completions[new_mat.candidate_id];
+            let old_mat = matches_write.get_mut(old_mat_index).unwrap();
+
+            old_mat.string = completion.label.text.clone();
+            old_mat.positions = new_mat.positions;
+            for position in &mut old_mat.positions {
+                *position += completion.label.filter_range.start;
+            }
+        }
+    }
+
     fn pre_resolve_completion_documentation(
         language: Option<Arc<Language>>,
         completions: Arc<RwLock<Box<[Completion]>>>,
-        matches: Arc<[StringMatch]>,
+        matches: Arc<RwLock<Box<[StringMatch]>>>,
         editor: &Editor,
+        query: Option<String>,
         cx: &mut ViewContext<Editor>,
     ) -> Task<()> {
         let settings = EditorSettings::get_global(cx);
@@ -840,15 +907,25 @@ impl CompletionsMenu {
             return Task::ready(());
         };
 
-        let resolve_task = provider.resolve_completions(
-            language,
-            matches.iter().map(|m| m.candidate_id).collect(),
-            completions.clone(),
-            cx,
-        );
+        let candidates = matches.read().iter().map(|m| m.candidate_id).collect();
+        let resolve_task =
+            provider.resolve_completions(language, candidates, completions.clone(), cx);
 
         return cx.spawn(move |this, mut cx| async move {
-            if let Some(true) = resolve_task.await.log_err() {
+            if let Some(res) = resolve_task.await.log_err() {
+                if res.is_empty() {
+                    return;
+                }
+
+                CompletionsMenu::update_matches(
+                    res,
+                    completions,
+                    matches,
+                    query,
+                    cx.background_executor().clone(),
+                )
+                .await;
+
                 this.update(&mut cx, |_, cx| cx.notify()).ok();
             }
         });
@@ -864,7 +941,7 @@ impl CompletionsMenu {
             return;
         }
 
-        let completion_index = self.matches[self.selected_item].candidate_id;
+        let completion_index = self.matches.read()[self.selected_item].candidate_id;
         let Some(project) = project else {
             return;
         };
@@ -886,15 +963,17 @@ impl CompletionsMenu {
             .lock()
             .fire_new(delay, cx, |_, cx| {
                 cx.spawn(move |this, mut cx| async move {
-                    if let Some(true) = resolve_task.await.log_err() {
-                        this.update(&mut cx, |_, cx| cx.notify()).ok();
+                    if let Some(res) = resolve_task.await.log_err() {
+                        if !res.is_empty() {
+                            this.update(&mut cx, |_, cx| cx.notify()).ok();
+                        }
                     }
                 })
             });
     }
 
     fn visible(&self) -> bool {
-        !self.matches.is_empty()
+        !self.matches.read().is_empty()
     }
 
     fn render(
@@ -907,8 +986,8 @@ impl CompletionsMenu {
         let settings = EditorSettings::get_global(cx);
         let show_completion_documentation = settings.show_completion_documentation;
 
-        let widest_completion_ix = self
-            .matches
+        let matches = self.matches.read();
+        let widest_completion_ix = matches
             .iter()
             .enumerate()
             .max_by_key(|(_, mat)| {
@@ -928,13 +1007,13 @@ impl CompletionsMenu {
             .map(|(ix, _)| ix);
 
         let completions = self.completions.clone();
-        let matches = self.matches.clone();
         let selected_item = self.selected_item;
         let style = style.clone();
 
         let multiline_docs = if show_completion_documentation {
-            let mat = &self.matches[selected_item];
-            let multiline_docs = match &self.completions.read()[mat.candidate_id].documentation {
+            let id = matches[selected_item].candidate_id.to_owned();
+
+            let multiline_docs = match &self.completions.read()[id].documentation {
                 Some(Documentation::MultiLinePlainText(text)) => {
                     Some(div().child(SharedString::from(text.clone())))
                 }
@@ -965,6 +1044,7 @@ impl CompletionsMenu {
             None
         };
 
+        let matches_lock = self.matches.clone();
         let list = uniform_list(
             cx.view().clone(),
             "completions",
@@ -973,6 +1053,7 @@ impl CompletionsMenu {
                 let start_ix = range.start;
                 let completions_guard = completions.read();
 
+                let matches = matches_lock.read();
                 matches[range]
                     .iter()
                     .enumerate()
@@ -1052,6 +1133,8 @@ impl CompletionsMenu {
         .max_h(max_height)
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix);
+
+        drop(matches);
 
         Popover::new()
             .child(list)
@@ -1161,7 +1244,7 @@ impl CompletionsMenu {
         }
         drop(completions);
 
-        self.matches = matches.into();
+        self.matches = Arc::new(RwLock::new(matches.into()));
         self.selected_item = 0;
     }
 }
@@ -3435,9 +3518,9 @@ impl Editor {
                                 )
                             })
                             .collect(),
-                        buffer: buffer,
+                        buffer,
                         completions: Arc::new(RwLock::new(completions.into())),
-                        matches: Vec::new().into(),
+                        matches: Arc::new(RwLock::new(Vec::new().into())),
                         selected_item: 0,
                         scroll_handle: UniformListScrollHandle::new(),
                         selected_completion_documentation_resolve_debounce: Arc::new(Mutex::new(
@@ -3448,7 +3531,7 @@ impl Editor {
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;
 
-                    if menu.matches.is_empty() {
+                    if menu.matches.read().is_empty() {
                         None
                     } else {
                         this.update(&mut cx, |editor, cx| {
@@ -3468,6 +3551,7 @@ impl Editor {
                                         completions,
                                         matches,
                                         editor,
+                                        query,
                                         cx,
                                     )
                                 });
@@ -3533,12 +3617,16 @@ impl Editor {
             return None;
         };
 
-        let mat = completions_menu
+        let candidate_id = completions_menu
             .matches
-            .get(action.item_ix.unwrap_or(completions_menu.selected_item))?;
+            .read()
+            .get(action.item_ix.unwrap_or(completions_menu.selected_item))?
+            .candidate_id
+            .clone();
+
         let buffer_handle = completions_menu.buffer;
         let completions = completions_menu.completions.read();
-        let completion = completions.get(mat.candidate_id)?;
+        let completion = completions.get(candidate_id)?;
         cx.stop_propagation();
 
         let snippet;
@@ -10053,7 +10141,7 @@ pub trait CompletionProvider {
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<bool>>;
+    ) -> Task<Result<Vec<usize>>>;
 
     fn apply_additional_edits_for_completion(
         &self,
@@ -10082,7 +10170,7 @@ impl CompletionProvider for Model<Project> {
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Vec<usize>>> {
         self.update(cx, |project, cx| {
             project.resolve_completions(language, completion_indices, completions, cx)
         })

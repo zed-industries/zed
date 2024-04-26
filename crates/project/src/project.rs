@@ -5479,7 +5479,7 @@ impl Project {
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<bool>> {
+    ) -> Task<Result<Vec<usize>>> {
         let client = self.client();
         let language_registry = self.languages().clone();
 
@@ -5487,7 +5487,7 @@ impl Project {
         let project_id = self.remote_id();
 
         cx.spawn(move |this, mut cx| async move {
-            let mut any_completion_resolved = false;
+            let mut completions_resolved = Vec::new();
             if is_remote {
                 let project_id =
                     project_id.ok_or_else(|| anyhow!("Remote project without remote_id"))?;
@@ -5500,7 +5500,6 @@ impl Project {
                             continue;
                         }
 
-                        any_completion_resolved = true;
                         let server_id = completion.server_id;
                         let completion = completion.lsp_completion.clone();
 
@@ -5546,7 +5545,6 @@ impl Project {
                         Err(_) => continue,
                     };
 
-                    any_completion_resolved = true;
                     let resolved = Self::resolve_completion_documentation_local(
                         server,
                         language.clone(),
@@ -5557,10 +5555,13 @@ impl Project {
                         language_registry.clone(),
                     )
                     .await;
+                    if resolved {
+                        completions_resolved.push(completion_index);
+                    }
                 }
             }
 
-            Ok(any_completion_resolved)
+            Ok(completions_resolved)
         })
     }
 
