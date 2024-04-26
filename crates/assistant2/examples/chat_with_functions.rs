@@ -1,4 +1,5 @@
-/// This example creates a basic Chat UI with a function for rolling a die.
+//! This example creates a basic Chat UI with a function for rolling a die.
+
 use anyhow::{Context as _, Result};
 use assets::Assets;
 use assistant2::AssistantPanel;
