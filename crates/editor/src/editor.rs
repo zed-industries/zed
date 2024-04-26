@@ -59,7 +59,7 @@ pub use element::{
 use futures::FutureExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::GitBlame;
-use git::diff_hunk_to_display;
+use git::{diff_hunk_to_display, DisplayDiffHunk};
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
@@ -8745,16 +8745,30 @@ impl Editor {
 
     pub fn fold_ranges<T: ToOffset + Clone>(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
+        ranges: impl IntoIterator<Item = Range<T>> + Clone,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut ranges = ranges.into_iter().peekable();
+        let mut fold_ranges = Vec::new();
+        let mut buffers_affected = HashMap::default();
+        let multi_buffer = self.buffer().read(cx);
+        for range in ranges {
+            if let Some((_, buffer, _)) = multi_buffer.excerpt_containing(range.start.clone(), cx) {
+                buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
+            };
+            fold_ranges.push(range);
+        }
+
+        let mut ranges = fold_ranges.into_iter().peekable();
         if ranges.peek().is_some() {
             self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
 
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
+            }
+
+            for buffer in buffers_affected.into_values() {
+                self.sync_expanded_diff_hunks(&buffer, cx);
             }
 
             cx.notify();
@@ -9168,45 +9182,35 @@ impl Editor {
                     .row();
             let mut retain = true;
             while let Some(hunk_to_toggle) = hunks_to_toggle.peek() {
-                let hunk_to_toggle_point_range =
-                    Point::new(hunk_to_toggle.associated_range.start, 0)
-                        ..Point::new(hunk_to_toggle.associated_range.end, 0);
-                let hunk_to_toggle_row_range = hunk_to_toggle_point_range
-                    .start
-                    .to_display_point(snapshot)
-                    .row()
-                    ..hunk_to_toggle_point_range
-                        .end
-                        .to_display_point(snapshot)
-                        .row();
-
-                if hunk_to_toggle_row_range.end < expanded_hunk_row_range.start {
-                    hunks_to_expand.push(HunkToShow {
-                        status: hunk_to_toggle.status(),
-                        multi_buffer_range: hunk_to_toggle_point_range
-                            .to_anchors(&snapshot.buffer_snapshot),
-                        diff_base_byte_range: hunk_to_toggle.diff_base_byte_range.clone(),
-                    });
-                    let _ = hunks_to_toggle.next();
-                    continue;
-                } else if hunk_to_toggle_row_range.start > expanded_hunk_row_range.end {
-                    break;
-                } else {
-                    if expanded_hunk_row_range == hunk_to_toggle_row_range {
-                        highlights_to_remove.push(expanded_hunk.hunk_range.clone());
-                        blocks_to_remove.extend(expanded_hunk.block);
-                        let _ = hunks_to_toggle.next();
-                        retain = false;
-                        break;
-                    } else {
-                        hunks_to_expand.push(HunkToShow {
-                            status: hunk_to_toggle.status(),
-                            multi_buffer_range: hunk_to_toggle_point_range
-                                .to_anchors(&snapshot.buffer_snapshot),
-                            diff_base_byte_range: hunk_to_toggle.diff_base_byte_range.clone(),
-                        });
-                        let _ = hunks_to_toggle.next();
+                match diff_hunk_to_display(hunk_to_toggle.clone(), snapshot) {
+                    DisplayDiffHunk::Folded { .. } => {
+                        hunks_to_toggle.next();
                         continue;
+                    }
+                    DisplayDiffHunk::Unfolded {
+                        diff_base_byte_range,
+                        display_row_range,
+                        multi_buffer_range,
+                        status,
+                    } => {
+                        let hunk_to_toggle_row_range = display_row_range;
+                        if hunk_to_toggle_row_range.start > expanded_hunk_row_range.end {
+                            break;
+                        } else if expanded_hunk_row_range == hunk_to_toggle_row_range {
+                            highlights_to_remove.push(expanded_hunk.hunk_range.clone());
+                            blocks_to_remove.extend(expanded_hunk.block);
+                            hunks_to_toggle.next();
+                            retain = false;
+                            break;
+                        } else {
+                            hunks_to_expand.push(HunkToShow {
+                                status,
+                                multi_buffer_range,
+                                diff_base_byte_range,
+                            });
+                            hunks_to_toggle.next();
+                            continue;
+                        }
                     }
                 }
             }
@@ -10396,33 +10400,45 @@ impl Editor {
             let mut retain = false;
             if expanded_hunk.diff_base_version == buffer.read(cx).diff_base_version() {
                 while let Some(buffer_hunk) = recalculated_hunks.peek() {
-                    let hunk_text_range = Point::new(buffer_hunk.associated_range.start, 0)
-                        ..Point::new(buffer_hunk.associated_range.end, 0);
-                    let hunk_display_range = hunk_text_range.start.to_display_point(&snapshot).row()
-                        ..hunk_text_range.end.to_display_point(&snapshot).row();
-                    let hunk_range = hunk_text_range.to_anchors(&snapshot.buffer_snapshot);
-
-                    if expanded_hunk_display_range.start > hunk_display_range.end {
-                        recalculated_hunks.next();
-                        continue;
-                    } else if expanded_hunk_display_range.end < hunk_display_range.start {
-                        break;
-                    } else {
-                        if expanded_hunk_display_range == hunk_display_range
-                            && expanded_hunk.status == buffer_hunk.status()
-                            && expanded_hunk.diff_base_byte_range
-                                == buffer_hunk.diff_base_byte_range
-                        {
+                    match diff_hunk_to_display(buffer_hunk.clone(), &snapshot) {
+                        DisplayDiffHunk::Folded { display_row } => {
                             recalculated_hunks.next();
-                            retain = true;
-                        } else {
-                            hunks_to_reexpand.push(HunkToShow {
-                                multi_buffer_range: hunk_range,
-                                status: buffer_hunk.status(),
-                                diff_base_byte_range: buffer_hunk.diff_base_byte_range.clone(),
-                            });
+                            if expanded_hunk_display_range.contains(&display_row) {
+                                break;
+                            } else {
+                                continue;
+                            }
                         }
-                        break;
+                        DisplayDiffHunk::Unfolded {
+                            diff_base_byte_range,
+                            display_row_range,
+                            multi_buffer_range,
+                            status,
+                        } => {
+                            let hunk_display_range = display_row_range;
+                            if expanded_hunk_display_range.start > hunk_display_range.end {
+                                recalculated_hunks.next();
+                                continue;
+                            } else if expanded_hunk_display_range.end < hunk_display_range.start {
+                                break;
+                            } else {
+                                if expanded_hunk_display_range == hunk_display_range
+                                    && expanded_hunk.status == buffer_hunk.status()
+                                    && expanded_hunk.diff_base_byte_range
+                                        == buffer_hunk.diff_base_byte_range
+                                {
+                                    recalculated_hunks.next();
+                                    retain = true;
+                                } else {
+                                    hunks_to_reexpand.push(HunkToShow {
+                                        status,
+                                        multi_buffer_range,
+                                        diff_base_byte_range,
+                                    });
+                                }
+                                break;
+                            }
+                        }
                     }
                 }
             }
