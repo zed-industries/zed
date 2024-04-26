@@ -68,9 +68,7 @@ pub async fn fetch_codeberg_commit_author(
         .map(|codeberg_commit| {
             if let Some(author) = codeberg_commit.author {
                 Some(GitAuthor {
-                    id: author.id,
                     avatar_url: author.avatar_url,
-                    email: codeberg_commit.commit.author.email,
                 })
             } else {
                 None

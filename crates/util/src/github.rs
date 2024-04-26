@@ -92,9 +92,7 @@ pub async fn fetch_github_commit_author(
         .map(|github_commit| {
             if let Some(author) = github_commit.author {
                 Some(GitAuthor {
-                    id: author.id,
                     avatar_url: author.avatar_url,
-                    email: github_commit.commit.author.email,
                 })
             } else {
                 None
