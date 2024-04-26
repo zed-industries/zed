@@ -1,4 +1,4 @@
-use crate::{AnyElement, Bounds, Element, ElementContext, IntoElement, LayoutId, Pixels};
+use crate::{AnyElement, Bounds, Element, IntoElement, LayoutId, Pixels, WindowContext};
 
 /// Builds a `Deferred` element, which delays the layout and paint of its child.
 pub fn deferred(child: impl IntoElement) -> Deferred {
@@ -26,19 +26,19 @@ impl Deferred {
 }
 
 impl Element for Deferred {
-    type BeforeLayout = ();
-    type AfterLayout = ();
+    type RequestLayoutState = ();
+    type PrepaintState = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, ()) {
-        let layout_id = self.child.as_mut().unwrap().before_layout(cx);
+    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, ()) {
+        let layout_id = self.child.as_mut().unwrap().request_layout(cx);
         (layout_id, ())
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
         _bounds: Bounds<Pixels>,
-        _before_layout: &mut Self::BeforeLayout,
-        cx: &mut ElementContext,
+        _request_layout: &mut Self::RequestLayoutState,
+        cx: &mut WindowContext,
     ) {
         let child = self.child.take().unwrap();
         let element_offset = cx.element_offset();
@@ -48,9 +48,9 @@ impl Element for Deferred {
     fn paint(
         &mut self,
         _bounds: Bounds<Pixels>,
-        _before_layout: &mut Self::BeforeLayout,
-        _after_layout: &mut Self::AfterLayout,
-        _cx: &mut ElementContext,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        _cx: &mut WindowContext,
     ) {
     }
 }

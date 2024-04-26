@@ -2,16 +2,14 @@ use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::c_void;
 use std::num::NonZeroU32;
+use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use blade_graphics as gpu;
-use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
 use collections::{HashMap, HashSet};
 use futures::channel::oneshot::Receiver;
-use raw_window_handle::{
-    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
-};
+use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{protocol::wl_surface, Proxy};
@@ -49,19 +47,18 @@ struct RawWindow {
     display: *mut c_void,
 }
 
-unsafe impl HasRawWindowHandle for RawWindow {
-    fn raw_window_handle(&self) -> RawWindowHandle {
-        let mut wh = blade_rwh::WaylandWindowHandle::empty();
-        wh.surface = self.window;
-        wh.into()
+impl rwh::HasWindowHandle for RawWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+        let window = NonNull::new(self.window).unwrap();
+        let handle = rwh::WaylandWindowHandle::new(window);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
-
-unsafe impl HasRawDisplayHandle for RawWindow {
-    fn raw_display_handle(&self) -> RawDisplayHandle {
-        let mut dh = blade_rwh::WaylandDisplayHandle::empty();
-        dh.display = self.display;
-        dh.into()
+impl rwh::HasDisplayHandle for RawWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+        let display = NonNull::new(self.display).unwrap();
+        let handle = rwh::WaylandDisplayHandle::new(display);
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
     }
 }
 
@@ -520,14 +517,13 @@ impl WaylandWindowStatePtr {
     }
 }
 
-impl HasWindowHandle for WaylandWindow {
-    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+impl rwh::HasWindowHandle for WaylandWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
 }
-
-impl HasDisplayHandle for WaylandWindow {
-    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+impl rwh::HasDisplayHandle for WaylandWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
 }

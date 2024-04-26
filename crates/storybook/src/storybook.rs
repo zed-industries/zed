@@ -10,7 +10,8 @@ use gpui::{
     div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowOptions,
 };
 use log::LevelFilter;
-use settings::{default_settings, KeymapFile, Settings, SettingsStore};
+use project::Project;
+use settings::{KeymapFile, Settings};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme::{ThemeRegistry, ThemeSettings};
@@ -63,12 +64,7 @@ fn main() {
     gpui::App::new().with_assets(Assets).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
 
-        let mut store = SettingsStore::default();
-        store
-            .set_default_settings(default_settings().as_ref(), cx)
-            .unwrap();
-        cx.set_global(store);
-
+        settings::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
 
         let selector = story_selector;
@@ -80,6 +76,7 @@ fn main() {
 
         language::init(cx);
         editor::init(cx);
+        Project::init_settings(cx);
         init(cx);
         load_storybook_keymap(cx);
         cx.set_menus(app_menus());
@@ -120,7 +117,7 @@ impl Render for StoryWrapper {
             .flex()
             .flex_col()
             .size_full()
-            .font("Zed Mono")
+            .font_family("Zed Mono")
             .child(self.story.clone())
     }
 }

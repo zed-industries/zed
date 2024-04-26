@@ -1108,7 +1108,7 @@ impl AssistantPanel {
                             )
                             .track_scroll(scroll_handle)
                             .into_any_element();
-                            saved_conversations.layout(
+                            saved_conversations.prepaint_as_root(
                                 bounds.origin,
                                 bounds.size.map(AvailableSpace::Definite),
                                 cx,

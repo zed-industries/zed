@@ -131,7 +131,7 @@
   (extension)
   (item_extension)
   (quoted_extension)
-  (quoted_item_extension) 
+  (quoted_item_extension)
   "%"
 ] @attribute
 

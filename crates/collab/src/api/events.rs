@@ -136,6 +136,13 @@ pub async fn post_crash(
         .get("x-zed-panicked-on")
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.parse().ok());
+
+    let installation_id = headers
+        .get("x-zed-installation-id")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+
     let mut recent_panic = None;
 
     if let Some(recent_panic_on) = recent_panic_on {
@@ -160,6 +167,7 @@ pub async fn post_crash(
         os_version = %report.header.os_version,
         bundle_id = %report.header.bundle_id,
         incident_id = %report.header.incident_id,
+        installation_id = %installation_id,
         description = %description,
         backtrace = %summary,
         "crash report");
