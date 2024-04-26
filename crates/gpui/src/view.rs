@@ -1,8 +1,8 @@
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
-    ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, IntoElement, LayoutId, Model,
-    PaintIndex, Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, ViewContext,
-    VisualContext, WeakModel, WindowContext,
+    ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, GlobalElementId, IntoElement,
+    LayoutId, Model, PaintIndex, Pixels, PrepaintStateIndex, Render, Style, StyleRefinement,
+    TextStyle, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use anyhow::{Context, Result};
 use refineable::Refineable;
@@ -93,36 +93,40 @@ impl<V: Render> Element for View<V> {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
-        cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-            let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
-            let layout_id = element.request_layout(cx);
-            (layout_id, element)
-        })
+    fn id(&self) -> Option<ElementId> {
+        Some(ElementId::View(self.entity_id()))
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut element = self.update(cx, |view, cx| view.render(cx).into_any_element());
+        let layout_id = element.request_layout(cx);
+        (layout_id, element)
     }
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         _: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) {
         cx.set_view_id(self.entity_id());
-        cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-            element.prepaint(cx)
-        })
+        element.prepaint(cx);
     }
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         _: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
-        cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-            element.paint(cx)
-        })
+        element.paint(cx);
     }
 }
 
@@ -279,23 +283,30 @@ impl Element for AnyView {
     type RequestLayoutState = Option<AnyElement>;
     type PrepaintState = Option<AnyElement>;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn id(&self) -> Option<ElementId> {
+        Some(ElementId::View(self.entity_id()))
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         if let Some(style) = self.cached_style.as_ref() {
             let mut root_style = Style::default();
             root_style.refine(style);
             let layout_id = cx.request_layout(&root_style, None);
             (layout_id, None)
         } else {
-            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                let mut element = (self.render)(self, cx);
-                let layout_id = element.request_layout(cx);
-                (layout_id, Some(element))
-            })
+            let mut element = (self.render)(self, cx);
+            let layout_id = element.request_layout(cx);
+            (layout_id, Some(element))
         }
     }
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -346,16 +357,15 @@ impl Element for AnyView {
                 },
             )
         } else {
-            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                let mut element = element.take().unwrap();
-                element.prepaint(cx);
-                Some(element)
-            })
+            let mut element = element.take().unwrap();
+            element.prepaint(cx);
+            Some(element)
         }
     }
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         _bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         element: &mut Self::PrepaintState,
@@ -382,9 +392,7 @@ impl Element for AnyView {
                 },
             )
         } else {
-            cx.with_element_id(Some(ElementId::View(self.entity_id())), |cx| {
-                element.as_mut().unwrap().paint(cx);
-            })
+            element.as_mut().unwrap().paint(cx);
         }
     }
 }

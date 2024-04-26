@@ -17,11 +17,11 @@
 
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
-    ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Global, Hitbox, HitboxId,
-    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
-    View, Visibility, WindowContext,
+    ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, TooltipId, View, Visibility, WindowContext,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1123,7 +1123,15 @@ impl Element for Div {
     type RequestLayoutState = DivFrameState;
     type PrepaintState = Option<Hitbox>;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         let mut child_layout_ids = SmallVec::new();
         let layout_id = self.interactivity.request_layout(cx, |style, cx| {
             cx.with_text_style(style.text_style().cloned(), |cx| {
@@ -1140,6 +1148,7 @@ impl Element for Div {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -1194,6 +1203,7 @@ impl Element for Div {
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
@@ -2264,27 +2274,37 @@ where
     type RequestLayoutState = E::RequestLayoutState;
     type PrepaintState = E::PrepaintState;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(cx)
+    fn id(&self) -> Option<ElementId> {
+        self.element.id()
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        self.element.request_layout(id, cx)
     }
 
     fn prepaint(
         &mut self,
+        id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> E::PrepaintState {
-        self.element.prepaint(bounds, state, cx)
+        self.element.prepaint(id, bounds, state, cx)
     }
 
     fn paint(
         &mut self,
+        id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
-        self.element.paint(bounds, request_layout, prepaint, cx)
+        self.element.paint(id, bounds, request_layout, prepaint, cx)
     }
 }
 
@@ -2347,27 +2367,37 @@ where
     type RequestLayoutState = E::RequestLayoutState;
     type PrepaintState = E::PrepaintState;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(cx)
+    fn id(&self) -> Option<ElementId> {
+        self.element.id()
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        self.element.request_layout(id, cx)
     }
 
     fn prepaint(
         &mut self,
+        id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> E::PrepaintState {
-        self.element.prepaint(bounds, state, cx)
+        self.element.prepaint(id, bounds, state, cx)
     }
 
     fn paint(
         &mut self,
+        id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
-        self.element.paint(bounds, request_layout, prepaint, cx);
+        self.element.paint(id, bounds, request_layout, prepaint, cx);
     }
 }
 

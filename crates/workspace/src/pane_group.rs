@@ -597,9 +597,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, Element, IntoElement, MouseDownEvent,
-        MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style, WeakView,
-        WindowContext,
+        px, relative, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
+        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
+        WeakView, WindowContext,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -795,8 +795,13 @@ mod element {
         type RequestLayoutState = ();
         type PrepaintState = PaneAxisLayout;
 
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
         fn request_layout(
             &mut self,
+            _id: Option<&GlobalElementId>,
             cx: &mut ui::prelude::WindowContext,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let mut style = Style::default();
@@ -810,6 +815,7 @@ mod element {
 
         fn prepaint(
             &mut self,
+            _id: Option<&GlobalElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
             cx: &mut WindowContext,
@@ -897,6 +903,7 @@ mod element {
 
         fn paint(
             &mut self,
+            _id: Option<&GlobalElementId>,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,

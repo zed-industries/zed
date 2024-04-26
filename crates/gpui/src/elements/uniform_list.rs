@@ -5,9 +5,9 @@
 //! elements with uniform height.
 
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId, Hitbox,
-    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Render, ScrollHandle, Size,
-    StyleRefinement, Styled, View, ViewContext, WindowContext,
+    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
+    GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels,
+    Render, ScrollHandle, Size, StyleRefinement, Styled, View, ViewContext, WindowContext,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -107,7 +107,15 @@ impl Element for UniformList {
     type RequestLayoutState = UniformListFrameState;
     type PrepaintState = Option<Hitbox>;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         let max_items = self.item_count;
         let item_size = self.measure_item(None, cx);
         let layout_id = self.interactivity.request_layout(cx, |style, cx| {
@@ -139,6 +147,7 @@ impl Element for UniformList {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -236,6 +245,7 @@ impl Element for UniformList {
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<crate::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,

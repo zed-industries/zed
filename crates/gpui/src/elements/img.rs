@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
-    point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element, Hitbox,
-    ImageData, InteractiveElement, Interactivity, IntoElement, LayoutId, Length, Pixels, SharedUri,
-    Size, StyleRefinement, Styled, SvgSize, UriOrPath, WindowContext,
+    point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
+    ElementId, GlobalElementId, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Length, Pixels, SharedUri, Size, StyleRefinement, Styled, SvgSize, UriOrPath,
+    WindowContext,
 };
 use futures::{AsyncReadExt, Future};
 use image::{ImageBuffer, ImageError};
@@ -232,7 +233,15 @@ impl Element for Img {
     type RequestLayoutState = ();
     type PrepaintState = Option<Hitbox>;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id = self.interactivity.request_layout(cx, |mut style, cx| {
             if let Some(data) = self.source.data(cx) {
                 let image_size = data.size();
@@ -258,6 +267,7 @@ impl Element for Img {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -268,6 +278,7 @@ impl Element for Img {
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,

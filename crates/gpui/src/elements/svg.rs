@@ -1,7 +1,7 @@
 use crate::{
-    geometry::Negate as _, point, px, radians, size, Bounds, Element, Hitbox, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size,
-    StyleRefinement, Styled, TransformationMatrix, WindowContext,
+    geometry::Negate as _, point, px, radians, size, Bounds, Element, GlobalElementId, Hitbox,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString,
+    Size, StyleRefinement, Styled, TransformationMatrix, WindowContext,
 };
 use util::ResultExt;
 
@@ -40,7 +40,15 @@ impl Element for Svg {
     type RequestLayoutState = ();
     type PrepaintState = Option<Hitbox>;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id = self
             .interactivity
             .request_layout(cx, |style, cx| cx.request_layout(&style, None));
@@ -49,6 +57,8 @@ impl Element for Svg {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
+
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -59,6 +69,8 @@ impl Element for Svg {
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
+
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,

@@ -8,8 +8,8 @@
 
 use crate::{
     point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, FocusHandle, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent, Size, Style,
-    StyleRefinement, Styled, WindowContext,
+    Element, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent,
+    Size, Style, StyleRefinement, Styled, WindowContext,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -704,8 +704,13 @@ impl Element for List {
     type RequestLayoutState = ();
     type PrepaintState = ListPrepaintState;
 
+    fn id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
     fn request_layout(
         &mut self,
+        _id: Option<&GlobalElementId>,
         cx: &mut crate::WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let layout_id = match self.sizing_behavior {
@@ -770,6 +775,7 @@ impl Element for List {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -812,6 +818,7 @@ impl Element for List {
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<crate::Pixels>,
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,

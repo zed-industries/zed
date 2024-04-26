@@ -1,11 +1,11 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, FocusHandle, Font,
-    FontStyle, FontWeight, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton,
-    MouseMoveEvent, Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle,
-    Styled, TextRun, TextStyle, UnderlineStyle, WeakView, WhiteSpace, WindowContext,
-    WindowTextSystem,
+    div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, ElementId,
+    FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle, Hitbox, Hsla,
+    InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId, Model, ModelContext,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
+    WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -544,7 +544,15 @@ impl Element for TerminalElement {
     type RequestLayoutState = ();
     type PrepaintState = LayoutState;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         self.interactivity.occlude_mouse();
         let layout_id = self.interactivity.request_layout(cx, |mut style, cx| {
             style.size.width = relative(1.).into();
@@ -558,6 +566,7 @@ impl Element for TerminalElement {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -774,6 +783,7 @@ impl Element for TerminalElement {
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,

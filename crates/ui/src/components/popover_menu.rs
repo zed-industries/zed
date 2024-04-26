@@ -2,9 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     anchored, deferred, div, point, prelude::FluentBuilder, px, AnchorCorner, AnyElement, Bounds,
-    DismissEvent, DispatchPhase, Element, ElementId, HitboxId, InteractiveElement, IntoElement,
-    LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext,
-    WindowContext,
+    DismissEvent, DispatchPhase, Element, ElementId, GlobalElementId, HitboxId, InteractiveElement,
+    IntoElement, LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View,
+    VisualContext, WindowContext,
 };
 
 use crate::prelude::*;
@@ -171,8 +171,13 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     type RequestLayoutState = PopoverMenuFrameState;
     type PrepaintState = Option<HitboxId>;
 
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
     fn request_layout(
         &mut self,
+        _id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         self.with_element_state(cx, |this, element_state, cx| {
@@ -219,6 +224,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         _bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -242,6 +248,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         _: Bounds<gpui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         child_hitbox: &mut Option<HitboxId>,

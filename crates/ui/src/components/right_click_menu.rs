@@ -2,8 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     anchored, deferred, div, AnchorCorner, AnyElement, Bounds, DismissEvent, DispatchPhase,
-    Element, ElementId, Hitbox, InteractiveElement, IntoElement, LayoutId, ManagedView,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext, WindowContext,
+    Element, ElementId, GlobalElementId, Hitbox, InteractiveElement, IntoElement, LayoutId,
+    ManagedView, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext,
+    WindowContext,
 };
 
 pub struct RightClickMenu<M: ManagedView> {
@@ -103,8 +104,13 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
     type RequestLayoutState = RequestLayoutState;
     type PrepaintState = PrepaintState;
 
+    fn id(&self) -> Option<ElementId> {
+        Some(self.id.clone())
+    }
+
     fn request_layout(
         &mut self,
+        _id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         self.with_element_state(cx, |this, element_state, cx| {
@@ -152,32 +158,32 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> PrepaintState {
-        cx.with_element_id(Some(self.id.clone()), |cx| {
-            let hitbox = cx.insert_hitbox(bounds, false);
+        let hitbox = cx.insert_hitbox(bounds, false);
 
-            if let Some(child) = request_layout.child_element.as_mut() {
-                child.prepaint(cx);
-            }
+        if let Some(child) = request_layout.child_element.as_mut() {
+            child.prepaint(cx);
+        }
 
-            if let Some(menu) = request_layout.menu_element.as_mut() {
-                menu.prepaint(cx);
-            }
+        if let Some(menu) = request_layout.menu_element.as_mut() {
+            menu.prepaint(cx);
+        }
 
-            PrepaintState {
-                hitbox,
-                child_bounds: request_layout
-                    .child_layout_id
-                    .map(|layout_id| cx.layout_bounds(layout_id)),
-            }
-        })
+        PrepaintState {
+            hitbox,
+            child_bounds: request_layout
+                .child_layout_id
+                .map(|layout_id| cx.layout_bounds(layout_id)),
+        }
     }
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         _bounds: Bounds<gpui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint_state: &mut Self::PrepaintState,
