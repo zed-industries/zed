@@ -4785,6 +4785,7 @@ pub fn join_hosted_project(
 pub fn join_remote_project(
     project_id: ProjectId,
     app_state: Arc<AppState>,
+    window_to_replace: Option<WindowHandle<Workspace>>,
     cx: &mut AppContext,
 ) -> Task<Result<WindowHandle<Workspace>>> {
     let windows = cx.windows();
@@ -4816,16 +4817,25 @@ pub fn join_remote_project(
             )
             .await?;
 
-            let window_bounds_override = window_bounds_env_override();
-            cx.update(|cx| {
-                let mut options = (app_state.build_window_options)(None, cx);
-                options.bounds = window_bounds_override;
-                cx.open_window(options, |cx| {
-                    cx.new_view(|cx| {
+            if let Some(window_to_replace) = window_to_replace {
+                cx.update_window(window_to_replace.into(), |_, cx| {
+                    cx.replace_root_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
+                    });
+                })?;
+                window_to_replace
+            } else {
+                let window_bounds_override = window_bounds_env_override();
+                cx.update(|cx| {
+                    let mut options = (app_state.build_window_options)(None, cx);
+                    options.bounds = window_bounds_override;
+                    cx.open_window(options, |cx| {
+                        cx.new_view(|cx| {
+                            Workspace::new(Default::default(), project, app_state.clone(), cx)
+                        })
                     })
-                })
-            })?
+                })?
+            }
         };
 
         workspace.update(&mut cx, |_, cx| {

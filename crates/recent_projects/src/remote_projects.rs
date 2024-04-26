@@ -386,7 +386,7 @@ impl RemoteProjects {
             .on_click(cx.listener(move |_, _, cx| {
                 if let Some(project_id) = project_id {
                     if let Some(app_state) = AppState::global(cx).upgrade() {
-                        workspace::join_remote_project(project_id, app_state, cx)
+                        workspace::join_remote_project(project_id, app_state, None, cx)
                             .detach_and_prompt_err("Could not join project", cx, |_, _| None)
                     }
                 } else {

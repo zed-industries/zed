@@ -70,6 +70,7 @@ async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppC
             workspace::join_remote_project(
                 projects[0].project_id.unwrap(),
                 client.app_state.clone(),
+                None,
                 cx,
             )
         })
@@ -205,7 +206,12 @@ async fn create_remote_project(
             let projects = store.remote_projects();
             assert_eq!(projects.len(), 1);
             assert_eq!(projects[0].path, "/remote");
-            workspace::join_remote_project(projects[0].project_id.unwrap(), client_app_state, cx)
+            workspace::join_remote_project(
+                projects[0].project_id.unwrap(),
+                client_app_state,
+                None,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -301,6 +307,7 @@ async fn test_dev_server_reconnect(
             workspace::join_remote_project(
                 projects[0].project_id.unwrap(),
                 client2.app_state.clone(),
+                None,
                 cx,
             )
         })
