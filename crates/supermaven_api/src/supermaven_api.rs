@@ -79,7 +79,7 @@ impl SupermavenAdminApi {
             .http_client
             .send(request.body(AsyncBody::default())?)
             .await
-            .with_context(|| format!("Unable to get Supermaven API Key"))?;
+            .with_context(|| "Unable to get Supermaven API Key".to_string())?;
 
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
@@ -98,7 +98,7 @@ impl SupermavenAdminApi {
 
         let body_str = std::str::from_utf8(&body)?;
         serde_json::from_str::<SupermavenUser>(body_str)
-            .with_context(|| format!("Unable to parse Supermaven API Key response"))
+            .with_context(|| "Unable to parse Supermaven API Key response".to_string())
     }
 
     pub async fn try_create_user(
@@ -115,14 +115,14 @@ impl SupermavenAdminApi {
             .http_client
             .send(request)
             .await
-            .with_context(|| format!("Unable to create Supermaven API Key"))?;
+            .with_context(|| "Unable to create Supermaven API Key".to_string())?;
 
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
 
         let body_str = std::str::from_utf8(&body)?;
         serde_json::from_str::<CreateExternalUserResponse>(body_str)
-            .with_context(|| format!("Unable to parse Supermaven API Key response"))
+            .with_context(|| "Unable to parse Supermaven API Key response".to_string())
     }
 
     pub async fn try_delete_user(&self, request: DeleteExternalUserRequest) -> Result<()> {
@@ -134,7 +134,7 @@ impl SupermavenAdminApi {
             .http_client
             .send(request.body(AsyncBody::default())?)
             .await
-            .with_context(|| format!("Unable to delete Supermaven User"))?;
+            .with_context(|| "Unable to delete Supermaven User".to_string())?;
 
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
@@ -171,7 +171,7 @@ pub async fn latest_release(
     let mut response = client
         .send(request.body(AsyncBody::default())?)
         .await
-        .with_context(|| format!("Unable to acquire Supermaven Agent"))?;
+        .with_context(|| "Unable to acquire Supermaven Agent".to_string())?;
 
     let mut body = Vec::new();
     response.body_mut().read_to_end(&mut body).await?;
@@ -183,7 +183,7 @@ pub async fn latest_release(
     }
 
     serde_json::from_slice::<SupermavenDownloadResponse>(&body)
-        .with_context(|| format!("Unable to parse Supermaven Agent response"))
+        .with_context(|| "Unable to parse Supermaven Agent response".to_string())
 }
 
 pub fn download_latest(client: Arc<dyn HttpClient>) -> impl Future<Output = Result<PathBuf>> {
@@ -207,7 +207,7 @@ pub fn download_latest(client: Arc<dyn HttpClient>) -> impl Future<Output = Resu
         let mut response = client
             .send(request.body(AsyncBody::default())?)
             .await
-            .with_context(|| format!("Unable to download Supermaven Agent"))?;
+            .with_context(|| "Unable to download Supermaven Agent".to_string())?;
 
         let version_dir = SUPERMAVEN_DIR.join(format!("sm-agent-{}", download_info.version));
         fs::create_dir_all(&version_dir)
