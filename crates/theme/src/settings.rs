@@ -38,12 +38,25 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
 #[serde(rename_all = "snake_case")]
 pub enum UiDensity {
     /// A denser UI with tigher spacing and smaller elements.
+    #[serde(alias = "compact")]
     Compact,
     #[default]
+    #[serde(alias = "default")]
     /// The default UI density.
     Default,
+    #[serde(alias = "comfortable")]
     /// A looser UI with more spacing and larger elements.
     Comfortable,
+}
+
+impl UiDensity {
+    pub fn spacing_ratio(self) -> f32 {
+        match self {
+            UiDensity::Compact => 0.75,
+            UiDensity::Default => 1.0,
+            UiDensity::Comfortable => 1.25,
+        }
+    }
 }
 
 impl From<String> for UiDensity {

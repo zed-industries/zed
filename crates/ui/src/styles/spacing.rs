@@ -54,8 +54,18 @@ impl Spacing {
     pub fn rems(self, cx: &WindowContext) -> Rems {
         rems(self.spacing_ratio(cx))
     }
+
+    pub fn px(self, cx: &WindowContext) -> Pixels {
+        let ui_font_size_f32: f32 = ThemeSettings::get_global(cx).ui_font_size.into();
+
+        px(ui_font_size_f32 * self.spacing_ratio(cx))
+    }
 }
 
 pub fn user_spacing_style(cx: &WindowContext) -> UiDensity {
     ThemeSettings::get_global(cx).ui_density
+}
+
+pub fn custom_spacing(cx: &WindowContext, size: f32) -> Rems {
+    rems(size * user_spacing_style(cx).spacing_ratio())
 }
