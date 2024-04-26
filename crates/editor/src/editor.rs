@@ -9151,81 +9151,92 @@ impl Editor {
         snapshot: &DisplaySnapshot,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut expanded_hunks = self
-            .expanded_hunks
-            .clone()
-            .into_iter()
-            .map(|hunk| hunk.hunk_range)
-            .fuse()
-            .peekable();
-        for hunk_to_toggle in hunks_to_toggle {
-            let hunk_to_toggle_point_range = Point::new(hunk_to_toggle.associated_range.start, 0)
-                ..Point::new(hunk_to_toggle.associated_range.end, 0);
-            let hunk_to_toggle_range = snapshot
-                .buffer_snapshot
-                .anchor_after(hunk_to_toggle_point_range.start)
-                ..snapshot
-                    .buffer_snapshot
-                    .anchor_before(hunk_to_toggle_point_range.end);
-
-            let show_hunk = loop {
-                let Some(expanded_hunk_range) = expanded_hunks.peek() else {
-                    break true;
-                };
-                if expanded_hunk_range
+        let mut hunks_to_toggle = hunks_to_toggle.into_iter().fuse().peekable();
+        let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.len());
+        let mut blocks_to_remove = HashSet::default();
+        let mut hunks_to_expand = Vec::new();
+        self.expanded_hunks.retain(|expanded_hunk| {
+            let expanded_hunk_row_range = expanded_hunk
+                .hunk_range
+                .start
+                .to_display_point(snapshot)
+                .row()
+                ..expanded_hunk
+                    .hunk_range
                     .end
-                    .cmp(&hunk_to_toggle_range.start, &snapshot.buffer_snapshot)
-                    .is_lt()
-                {
-                    let _ = expanded_hunks.next();
-                    continue;
-                }
-                if expanded_hunk_range
+                    .to_display_point(snapshot)
+                    .row();
+            let mut retain = true;
+            while let Some(hunk_to_toggle) = hunks_to_toggle.peek() {
+                let hunk_to_toggle_point_range =
+                    Point::new(hunk_to_toggle.associated_range.start, 0)
+                        ..Point::new(hunk_to_toggle.associated_range.end, 0);
+                let hunk_to_toggle_row_range = hunk_to_toggle_point_range
                     .start
-                    .cmp(&hunk_to_toggle_range.end, &snapshot.buffer_snapshot)
-                    .is_gt()
-                {
-                    break true;
-                }
-
-                match (
-                    expanded_hunk_range
-                        .start
-                        .cmp(&hunk_to_toggle_range.start, &snapshot.buffer_snapshot),
-                    expanded_hunk_range
+                    .to_display_point(snapshot)
+                    .row()
+                    ..hunk_to_toggle_point_range
                         .end
-                        .cmp(&hunk_to_toggle_range.end, &snapshot.buffer_snapshot),
-                ) {
-                    (Ordering::Equal, Ordering::Equal) => {
-                        let _ = expanded_hunks.next();
-                        break false;
-                    }
-                    (Ordering::Equal | Ordering::Greater, _) => break true,
-                    (Ordering::Less, _) => {
-                        let _ = expanded_hunks.next();
+                        .to_display_point(snapshot)
+                        .row();
+
+                if hunk_to_toggle_row_range.end < expanded_hunk_row_range.start {
+                    hunks_to_expand.push(HunkToShow {
+                        status: hunk_to_toggle.status(),
+                        multi_buffer_range: hunk_to_toggle_point_range
+                            .to_anchors(&snapshot.buffer_snapshot),
+                        diff_base_byte_range: hunk_to_toggle.diff_base_byte_range.clone(),
+                    });
+                    let _ = hunks_to_toggle.next();
+                    continue;
+                } else if hunk_to_toggle_row_range.start > expanded_hunk_row_range.end {
+                    break;
+                } else {
+                    if expanded_hunk_row_range == hunk_to_toggle_row_range {
+                        highlights_to_remove.push(expanded_hunk.hunk_range.clone());
+                        blocks_to_remove.extend(expanded_hunk.block);
+                        let _ = hunks_to_toggle.next();
+                        retain = false;
+                        break;
+                    } else {
+                        hunks_to_expand.push(HunkToShow {
+                            status: hunk_to_toggle.status(),
+                            multi_buffer_range: hunk_to_toggle_point_range
+                                .to_anchors(&snapshot.buffer_snapshot),
+                            diff_base_byte_range: hunk_to_toggle.diff_base_byte_range.clone(),
+                        });
+                        let _ = hunks_to_toggle.next();
                         continue;
                     }
                 }
-            };
-
-            if show_hunk {
-                self.show_git_diff_hunk(
-                    &HunkToShow {
-                        status: hunk_to_toggle.status(),
-                        multi_buffer_range: hunk_to_toggle_range,
-                        diff_base_byte_range: hunk_to_toggle.diff_base_byte_range,
-                    },
-                    cx,
-                );
-            } else {
-                self.remove_git_diff_hunk(&hunk_to_toggle, cx);
             }
+
+            retain
+        });
+        for remaining_hunk in hunks_to_toggle {
+            let remaining_hunk_point_range = Point::new(remaining_hunk.associated_range.start, 0)
+                ..Point::new(remaining_hunk.associated_range.end, 0);
+            hunks_to_expand.push(HunkToShow {
+                status: remaining_hunk.status(),
+                multi_buffer_range: remaining_hunk_point_range
+                    .to_anchors(&snapshot.buffer_snapshot),
+                diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
+            });
         }
+
+        for removed_rows in highlights_to_remove {
+            self.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
+        }
+        self.remove_blocks(blocks_to_remove, None, cx);
+        for hunk in hunks_to_expand {
+            self.expand_git_diff_hunk(&hunk, cx);
+        }
+        cx.notify();
     }
 
     // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
     // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
-    fn show_git_diff_hunk(
+    fn expand_git_diff_hunk(
         &mut self,
         hunk: &HunkToShow,
         cx: &mut ViewContext<'_, Editor>,
@@ -9310,35 +9321,6 @@ impl Editor {
         );
 
         Some(())
-    }
-
-    fn remove_git_diff_hunk(&mut self, hunk: &DiffHunk<u32>, cx: &mut ViewContext<'_, Self>) {
-        let (has_row_highlights, has_block) = match hunk.status() {
-            DiffHunkStatus::Modified => (true, true),
-            DiffHunkStatus::Added => (true, false),
-            DiffHunkStatus::Removed => (false, true),
-        };
-        let snapshot = self.snapshot(cx);
-        let buffer_range = Point::new(hunk.associated_range.start, 0)
-            ..snapshot
-                .buffer_snapshot
-                .clip_point(Point::new(hunk.associated_range.end + 1, 0), Bias::Left);
-        let multi_buffer_range = snapshot.buffer_snapshot.anchor_after(buffer_range.start)
-            ..snapshot.buffer_snapshot.anchor_before(buffer_range.end);
-
-        if has_row_highlights {
-            self.highlight_rows::<GitRowHighlight>(multi_buffer_range.clone(), None, cx);
-        }
-        if has_block {
-            if let Ok(ix) = self.expanded_hunks.binary_search_by(|probe| {
-                probe
-                    .hunk_range
-                    .start
-                    .cmp(&multi_buffer_range.start, &snapshot.buffer_snapshot)
-            }) {
-                self.expanded_hunks.remove(ix);
-            };
-        }
     }
 
     fn insert_deleted_hunk_block(
@@ -10445,9 +10427,7 @@ impl Editor {
                 }
             }
             if !retain {
-                if let Some(block_id) = expanded_hunk.block {
-                    blocks_to_remove.insert(block_id);
-                }
+                blocks_to_remove.extend(expanded_hunk.block);
                 highlights_to_remove.push(expanded_hunk.hunk_range.clone());
             }
             retain
@@ -10458,7 +10438,7 @@ impl Editor {
         }
         self.remove_blocks(blocks_to_remove, None, cx);
         for hunk in hunks_to_reexpand {
-            self.show_git_diff_hunk(&hunk, cx);
+            self.expand_git_diff_hunk(&hunk, cx);
         }
     }
 }

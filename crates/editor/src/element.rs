@@ -429,7 +429,7 @@ impl EditorElement {
         if gutter_hitbox.is_hovered(cx) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if let Some(hovered_hunk) = hovered_hunk {
-            editor.show_git_diff_hunk(hovered_hunk, cx);
+            editor.expand_git_diff_hunk(hovered_hunk, cx);
         } else if !text_hitbox.is_hovered(cx) {
             return;
         }
