@@ -71,9 +71,11 @@ impl SemanticIndex {
         let project_weak = project.downgrade();
         project.update(cx, move |_, cx| {
             cx.on_release(move |_, cx| {
-                cx.update_global::<SemanticIndex, _>(|this, _| {
-                    this.project_indices.remove(&project_weak);
-                })
+                if cx.has_global::<SemanticIndex>() {
+                    cx.update_global::<SemanticIndex, _>(|this, _| {
+                        this.project_indices.remove(&project_weak);
+                    })
+                }
             })
             .detach();
         });
