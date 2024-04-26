@@ -198,7 +198,7 @@ impl WaylandClientStatePtr {
     }
 
     pub fn get_event_serial(&self) -> u32 {
-        return self.0.upgrade().unwrap().borrow_mut().serial
+        self.0.upgrade().unwrap().borrow().serial
     }
 
     pub fn drop_window(&self, surface_id: &ObjectId) {
@@ -311,7 +311,12 @@ impl WaylandClient {
         });
 
         let seat = seat.unwrap();
-        let globals = Globals::new(globals, common.foreground_executor.clone(), qh.clone(), seat.clone());
+        let globals = Globals::new(
+            globals,
+            common.foreground_executor.clone(),
+            qh.clone(),
+            seat.clone(),
+        );
 
         let data_device = globals
             .data_device_manager
@@ -970,6 +975,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
             } => {
                 state.serial_tracker.update(SerialKind::MouseEnter, serial);
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
+                state.button_pressed = None;
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.mouse_focused_window = Some(window.clone());
@@ -998,6 +1004,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     });
                     state.mouse_focused_window = None;
                     state.mouse_location = None;
+                    state.button_pressed = None;
 
                     drop(state);
                     focused_window.handle_input(input);
