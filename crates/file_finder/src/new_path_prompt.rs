@@ -10,7 +10,7 @@ use std::{
         Arc,
     },
 };
-use ui::{highlight_ranges, prelude::*};
+use ui::{highlight_ranges, prelude::*, LabelLike, ListItemSpacing};
 use ui::{ListItem, ViewContext};
 use util::ResultExt;
 use workspace::Workspace;
@@ -193,11 +193,12 @@ pub struct NewPathDelegate {
     matches: Vec<Match>,
     last_selected_dir: Option<String>,
     cancel_flag: Arc<AtomicBool>,
+    should_dismiss: bool,
 }
 
 impl NewPathPrompt {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        if dbg!(workspace.project().read(cx).is_remote()) {
+        if workspace.project().read(cx).is_remote() {
             workspace.set_prompt_for_new_path(Box::new(|workspace, cx| {
                 let (tx, rx) = futures::channel::oneshot::channel();
                 Self::prompt_for_new_path(workspace, tx, cx);
@@ -220,6 +221,7 @@ impl NewPathPrompt {
                 matches: vec![],
                 cancel_flag: Arc::new(AtomicBool::new(false)),
                 last_selected_dir: None,
+                should_dismiss: true,
             };
 
             Picker::uniform_list(delegate, cx).width(rems(34.))
@@ -330,24 +332,27 @@ impl PickerDelegate for NewPathDelegate {
 
         let exists = m.entry(self.project.read(cx), cx).is_some();
         if exists {
+            self.should_dismiss = false;
             let answer = cx.prompt(
-                gpui::PromptLevel::Warning,
-                "File already exists.",
-                Some(&format!(
-                    "{} already exists. Do you want to overwrite it?",
-                    m.relative_path()
-                )),
-                &["Cancel", "Overwrite"],
+                gpui::PromptLevel::Critical,
+                &format!("{} already exists. Do you want to replace it?", m.relative_path()),
+                Some(
+                    "A file or folder with the same name already eixsts. Replacing it will overwrite its current contents.",
+                ),
+                &["Replace", "Cancel"],
             );
             let m = m.clone();
             cx.spawn(|picker, mut cx| async move {
-                if answer.await.ok() != Some(1) {
-                    return;
-                }
+                let answer = answer.await.ok();
                 picker
                     .update(&mut cx, |picker, cx| {
+                        picker.delegate.should_dismiss = true;
+                        if answer != Some(0) {
+                            return;
+                        }
                         if let Some(path) = m.project_path(picker.delegate.project.read(cx), cx) {
                             if let Some(tx) = picker.delegate.tx.take() {
+                                dbg!("sending");
                                 tx.send(Some(path)).ok();
                             }
                         }
@@ -367,6 +372,10 @@ impl PickerDelegate for NewPathDelegate {
         cx.emit(gpui::DismissEvent);
     }
 
+    fn should_dismiss(&self) -> bool {
+        self.should_dismiss
+    }
+
     fn dismissed(&mut self, cx: &mut ViewContext<picker::Picker<Self>>) {
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
@@ -384,9 +393,15 @@ impl PickerDelegate for NewPathDelegate {
 
         Some(
             ListItem::new(ix)
+                .spacing(ListItemSpacing::Sparse)
+                .inset(true)
                 .selected(selected)
-                .child(m.styled_text(self.project.read(cx), cx)),
+                .child(LabelLike::new().child(m.styled_text(self.project.read(cx), cx))),
         )
+    }
+
+    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+        "Type a path...".into()
     }
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {

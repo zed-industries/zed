@@ -88,6 +88,9 @@ pub trait PickerDelegate: Sized + 'static {
     /// performing some kind of action on it.
     fn confirm_input(&mut self, _secondary: bool, _: &mut ViewContext<Picker<Self>>) {}
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>);
+    fn should_dismiss(&self) -> bool {
+        true
+    }
     fn selected_as_query(&self) -> Option<String> {
         None
     }
@@ -271,8 +274,10 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        self.delegate.dismissed(cx);
-        cx.emit(DismissEvent);
+        if self.delegate.should_dismiss() {
+            self.delegate.dismissed(cx);
+            cx.emit(DismissEvent);
+        }
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
