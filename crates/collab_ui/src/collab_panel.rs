@@ -2970,6 +2970,7 @@ impl Render for DraggedChannelView {
 struct JoinChannelTooltip {
     channel_store: Model<ChannelStore>,
     channel_id: ChannelId,
+    #[allow(unused)]
     has_notes_notification: bool,
 }
 
