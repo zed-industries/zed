@@ -16,7 +16,7 @@ use gpui::{
     ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
     UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
-use menu::{Confirm, SelectNext, SelectPrev};
+use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
@@ -644,7 +644,7 @@ impl ProjectPanel {
             self.autoscroll(cx);
             cx.notify();
         } else {
-            self.select_first(cx);
+            self.select_first(&SelectFirst {}, cx);
         }
     }
 
@@ -989,11 +989,11 @@ impl ProjectPanel {
                 }
             }
         } else {
-            self.select_first(cx);
+            self.select_first(&SelectFirst {}, cx);
         }
     }
 
-    fn select_first(&mut self, cx: &mut ViewContext<Self>) {
+    fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
         let worktree = self
             .visible_entries
             .first()
@@ -1005,6 +1005,25 @@ impl ProjectPanel {
                 self.selection = Some(Selection {
                     worktree_id,
                     entry_id: root_entry.id,
+                });
+                self.autoscroll(cx);
+                cx.notify();
+            }
+        }
+    }
+
+    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+        let worktree = self
+            .visible_entries
+            .last()
+            .and_then(|(worktree_id, _)| self.project.read(cx).worktree_for_id(*worktree_id, cx));
+        if let Some(worktree) = worktree {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            if let Some(last_entry) = worktree.entries(true).last() {
+                self.selection = Some(Selection {
+                    worktree_id,
+                    entry_id: last_entry.id,
                 });
                 self.autoscroll(cx);
                 cx.notify();
@@ -1751,6 +1770,8 @@ impl Render for ProjectPanel {
                 .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
+                .on_action(cx.listener(Self::select_first))
+                .on_action(cx.listener(Self::select_last))
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
