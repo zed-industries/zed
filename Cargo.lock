@@ -3439,6 +3439,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "embed-resource"
+version = "2.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6985554d0688b687c5cb73898a34fbe3ad6c24c58c238a4d91d5e840670ee9d"
+dependencies = [
+ "cc",
+ "memchr",
+ "rustc_version",
+ "toml 0.8.10",
+ "vswhom",
+ "winreg 0.52.0",
+]
+
+[[package]]
 name = "emojis"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4536,6 +4550,7 @@ dependencies = [
  "cosmic-text",
  "ctor",
  "derive_more",
+ "embed-resource",
  "env_logger",
  "etagere",
  "filedescriptor",
@@ -5959,9 +5974,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.6.3"
+version = "2.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f232d6ef707e1956a43342693d2a31e72989554d58299d7a88738cc95b0d35c"
+checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
 
 [[package]]
 name = "memfd"
@@ -7970,7 +7985,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "winreg",
+ "winreg 0.50.0",
 ]
 
 [[package]]
@@ -9499,7 +9514,6 @@ dependencies = [
  "strum",
  "theme",
  "ui",
- "winresource",
 ]
 
 [[package]]
@@ -11134,6 +11148,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
+name = "vswhom"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be979b7f07507105799e854203b470ff7c78a1639e330a58f183b5fea574608b"
+dependencies = [
+ "libc",
+ "vswhom-sys",
+]
+
+[[package]]
+name = "vswhom-sys"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3b17ae1f6c8a2b28506cd96d412eebf83b4a0ff2cbefeeb952f2f9dfa44ba18"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "vte"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12201,6 +12235,16 @@ name = "winreg"
 version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "winreg"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
 dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
