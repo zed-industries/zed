@@ -9364,14 +9364,26 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.set_diff_base(Some(&diff_base));
     executor.run_until_parked();
     let unexpanded_hunks = vec![
-        (DiffHunkStatus::Modified, 0..1),
-        (DiffHunkStatus::Removed, 2..2),
-        (DiffHunkStatus::Modified, 4..5),
-        (DiffHunkStatus::Added, 6..7),
+        (
+            "use some::mod;\n".to_string(),
+            DiffHunkStatus::Modified,
+            0..1,
+        ),
+        (
+            "const A: u32 = 42;\n".to_string(),
+            DiffHunkStatus::Removed,
+            2..2,
+        ),
+        (
+            "    println!(\"hello\");\n".to_string(),
+            DiffHunkStatus::Modified,
+            4..5,
+        ),
+        ("".to_string(), DiffHunkStatus::Added, 6..7),
     ];
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
         assert_eq!(all_hunks, unexpanded_hunks);
     });
 
@@ -9397,21 +9409,20 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     );
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
-        let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
-        let git_additions_background_highlights = expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         assert_eq!(
-            git_additions_background_highlights,
+            expanded_hunks_background_highlights(editor, &snapshot),
             vec![1..2, 7..8, 9..10],
             "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
         );
         assert_eq!(
             all_hunks,
             vec![
-                (DiffHunkStatus::Modified, 1..2),
-                (DiffHunkStatus::Removed, 4..4),
-                (DiffHunkStatus::Modified, 7..8),
-                (DiffHunkStatus::Added, 9..10),
+                ("use some::mod;\n".to_string(), DiffHunkStatus::Modified, 1..2),
+                ("const A: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, 4..4),
+                ("    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, 7..8),
+                ("".to_string(), DiffHunkStatus::Added, 9..10),
             ],
             "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
             (from modified and removed hunks)"
@@ -9426,10 +9437,10 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         editor.cancel(&Cancel, cx);
 
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
-        let all_expanded_hunks = expanded_hunks_display_lines(editor, &snapshot.display_snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         let git_additions_background_highlights =
-            expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
+            expanded_hunks_background_highlights(editor, &snapshot);
         assert_eq!(
             git_additions_background_highlights,
             Vec::new(),
@@ -9494,14 +9505,26 @@ async fn test_toggled_diff_base_change(
     executor.run_until_parked();
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
         assert_eq!(
             all_hunks,
             vec![
-                (DiffHunkStatus::Removed, 0..0),
-                (DiffHunkStatus::Removed, 3..3),
-                (DiffHunkStatus::Modified, 5..7),
-                (DiffHunkStatus::Added, 9..11),
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    3..3
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    5..7
+                ),
+                ("".to_string(), DiffHunkStatus::Added, 9..11),
             ]
         );
     });
@@ -9528,9 +9551,9 @@ async fn test_toggled_diff_base_change(
     );
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
-        let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
-        let git_additions_background_highlights = expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        let git_additions_background_highlights = expanded_hunks_background_highlights(editor, &snapshot);
         assert_eq!(
             git_additions_background_highlights,
             vec![9..11, 13..15],
@@ -9539,10 +9562,10 @@ async fn test_toggled_diff_base_change(
         assert_eq!(
             all_hunks,
             vec![
-                (DiffHunkStatus::Removed, 1..1),
-                (DiffHunkStatus::Removed, 5..5),
-                (DiffHunkStatus::Modified, 9..11),
-                (DiffHunkStatus::Added, 13..15),
+                ("use some::mod1;\n".to_string(), DiffHunkStatus::Removed, 1..1),
+                ("const B: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, 5..5),
+                ("fn main(ˇ) {\n    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, 9..11),
+                ("".to_string(), DiffHunkStatus::Added, 13..15),
             ],
             "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
             (from modified and removed hunks)"
@@ -9558,10 +9581,10 @@ async fn test_toggled_diff_base_change(
 
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
-        let all_expanded_hunks = expanded_hunks_display_lines(editor, &snapshot.display_snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
         let git_additions_background_highlights =
-            expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
+            expanded_hunks_background_highlights(editor, &snapshot);
         assert_eq!(
             git_additions_background_highlights,
             Vec::new(),
@@ -9575,6 +9598,7 @@ async fn test_toggled_diff_base_change(
         assert_eq!(
             all_hunks,
             vec![(
+                "new diff base!".to_string(),
                 DiffHunkStatus::Modified,
                 0..snapshot.display_snapshot.max_point().row()
             )],
@@ -9629,8 +9653,11 @@ async fn test_edits_around_toggled_additions(
     executor.run_until_parked();
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot);
-        assert_eq!(all_hunks, vec![(DiffHunkStatus::Added, 4..7)]);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 4..7)]
+        );
     });
     cx.update_editor(|editor, cx| {
         editor.expand_all_git_hunk_diffs(&ExpandAllGitHunkDiffs, cx);
@@ -9677,11 +9704,14 @@ async fn test_edits_around_toggled_additions(
     );
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
-        let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         let git_additions_background_highlights =
-            expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
-        assert_eq!(all_hunks, vec![(DiffHunkStatus::Added, 4..8)]);
+            expanded_hunks_background_highlights(editor, &snapshot);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 4..8)]
+        );
         assert_eq!(
             git_additions_background_highlights,
             vec![4..8],
@@ -9717,11 +9747,14 @@ async fn test_edits_around_toggled_additions(
     );
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
-        let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         let git_additions_background_highlights =
-            expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
-        assert_eq!(all_hunks, vec![(DiffHunkStatus::Added, 4..9)]);
+            expanded_hunks_background_highlights(editor, &snapshot);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 4..9)]
+        );
         assert_eq!(
             git_additions_background_highlights,
             vec![4..9],
@@ -9756,11 +9789,14 @@ async fn test_edits_around_toggled_additions(
     );
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
-        let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         let git_additions_background_highlights =
-            expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
-        assert_eq!(all_hunks, vec![(DiffHunkStatus::Added, 4..8)]);
+            expanded_hunks_background_highlights(editor, &snapshot);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 4..8)]
+        );
         assert_eq!(
             git_additions_background_highlights,
             vec![4..8],
@@ -9799,11 +9835,14 @@ async fn test_edits_around_toggled_additions(
     );
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
-        let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         let git_additions_background_highlights =
-            expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
-        assert_eq!(all_hunks, vec![(DiffHunkStatus::Added, 5..6)]);
+            expanded_hunks_background_highlights(editor, &snapshot);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 5..6)]
+        );
         assert_eq!(git_additions_background_highlights, vec![5..6]);
         assert_eq!(all_hunks, all_expanded_hunks);
     });
@@ -9827,15 +9866,23 @@ async fn test_edits_around_toggled_additions(
     );
     cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
-        let all_hunks = hunks_display_lines(&snapshot.display_snapshot);
-        let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
         let git_additions_background_highlights =
-            expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
+            expanded_hunks_background_highlights(editor, &snapshot);
         assert_eq!(
             all_hunks,
             vec![
-                (DiffHunkStatus::Removed, 0..0),
-                (DiffHunkStatus::Removed, 1..1)
+                (
+                    "use some::mod1;\nuse some::mod2;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "const A: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    2..2
+                )
             ]
         );
         assert_eq!(
@@ -9843,11 +9890,220 @@ async fn test_edits_around_toggled_additions(
             Vec::new(),
             "Should close all stale expanded addition hunks"
         );
-        assert_eq!(all_expanded_hunks, Vec::new());
+        assert_eq!(
+            all_expanded_hunks,
+            vec![(
+                "const A: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                2..2
+            )],
+            "Should open hunks that were adjacent to the stale addition one"
+        );
     });
 }
 
-fn hunks_display_lines(snapshot: &DisplaySnapshot) -> Vec<(DiffHunkStatus, Range<u32>)> {
+#[gpui::test]
+async fn test_edits_around_toggled_deletions(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇconst B: u32 = 42;
+        const C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                3..3
+            )]
+        );
+    });
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_git_hunk_diffs(&ExpandAllGitHunkDiffs, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇconst B: u32 = 42;
+        const C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇconst C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new(),
+            "Deleted hunks do not highlight current editor's background"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                5..5
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new()
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                6..6
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("replacement", cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        replacementˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n\n".to_string(),
+                DiffHunkStatus::Modified,
+                7..8
+            )]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![7..8],
+            "Modified expanded hunks should display additions and highlight their background"
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+}
+
+fn editor_hunks(
+    editor: &Editor,
+    snapshot: &DisplaySnapshot,
+    cx: &mut ViewContext<'_, Editor>,
+) -> Vec<(String, DiffHunkStatus, Range<u32>)> {
     snapshot
         .buffer_snapshot
         .git_diff_hunks_in_range(0..snapshot.max_point().row())
@@ -9858,15 +10114,26 @@ fn hunks_display_lines(snapshot: &DisplaySnapshot) -> Vec<(DiffHunkStatus, Range
                 ..Point::new(hunk.associated_range.end, 0)
                     .to_display_point(snapshot)
                     .row();
-            (hunk.status(), display_range)
+            let (_, buffer, _) = editor
+                .buffer()
+                .read(cx)
+                .excerpt_containing(Point::new(hunk.associated_range.start, 0), cx)
+                .expect("no excerpt for expanded buffer's hunk start");
+            let diff_base = &buffer
+                .read(cx)
+                .diff_base()
+                .expect("should have a diff base for expanded hunk")
+                [hunk.diff_base_byte_range.clone()];
+            (diff_base.to_owned(), hunk.status(), display_range)
         })
         .collect()
 }
 
-fn expanded_hunks_display_lines(
+fn expanded_hunks(
     editor: &Editor,
     snapshot: &DisplaySnapshot,
-) -> Vec<(DiffHunkStatus, Range<u32>)> {
+    cx: &mut ViewContext<'_, Editor>,
+) -> Vec<(String, DiffHunkStatus, Range<u32>)> {
     editor
         .expanded_hunks
         .iter()
@@ -9881,11 +10148,21 @@ fn expanded_hunks_display_lines(
                     .end
                     .to_display_point(snapshot)
                     .row();
-            assert_eq!(
-                expanded_hunk.diff_base_version, 1,
-                "Diff base was never updated after the initial setup"
-            );
-            (expanded_hunk.status, hunk_display_range)
+            let (_, buffer, _) = editor
+                .buffer()
+                .read(cx)
+                .excerpt_containing(expanded_hunk.hunk_range.start, cx)
+                .expect("no excerpt for expanded buffer's hunk start");
+            let diff_base = &buffer
+                .read(cx)
+                .diff_base()
+                .expect("should have a diff base for expanded hunk")
+                [expanded_hunk.diff_base_byte_range.clone()];
+            (
+                diff_base.to_owned(),
+                expanded_hunk.status,
+                hunk_display_range,
+            )
         })
         .collect()
 }

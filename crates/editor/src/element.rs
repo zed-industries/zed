@@ -2449,6 +2449,7 @@ impl EditorElement {
                                 current_expanded_hunk = expanded_hunks.next();
                                 break;
                             } else {
+                                // TODO kb instead: consider incremental updates to row highlights and replace_blocks for the deletions/modifications.
                                 hunks_to_remove.push(expanded_hunk.clone());
                                 expand_current_hunk = true;
                                 current_expanded_hunk = expanded_hunks.next();
@@ -2529,13 +2530,12 @@ impl EditorElement {
                 editor.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
             }
             editor.remove_blocks(blocks_to_remove, None, cx);
-            for hunk in hunks_to_reexpand {
-                editor.show_git_diff_hunk(&hunk, cx);
-            }
-
             editor
                 .expanded_hunks
                 .retain(|hunk| !removed_expanded_hunks.contains(&hunk.id));
+            for hunk in hunks_to_reexpand {
+                editor.show_git_diff_hunk(&hunk, cx);
+            }
         });
 
         clickable_hunks
