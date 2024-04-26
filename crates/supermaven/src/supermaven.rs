@@ -45,9 +45,8 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub enum Supermaven {
-    DownloadingAgent,
     Starting,
-    Started {
+    Spawned {
         _process: Child,
         next_state_id: SupermavenCompletionStateId,
         states: BTreeMap<SupermavenCompletionStateId, SupermavenCompletionState>,
@@ -58,9 +57,13 @@ pub enum Supermaven {
 }
 
 impl Supermaven {
-    pub fn download(&mut self, _cx: &mut AppContext) {
+    pub fn download(&mut self, cx: &mut AppContext) -> Task<Result<()>> {
         // todo!(): Set up API client to download for current platform and architecture
         // https://supermaven.com/api/download-path?platform=darwin&arch=arm64
+        cx.spawn(|_cx| async {
+            // todo!(): Download supermaven binary
+            Ok(())
+        })
     }
 
     pub fn start(&mut self, cx: &mut AppContext) {
