@@ -625,7 +625,11 @@ impl WorktreeIndex {
 
                 let mut embeddings = Vec::new();
                 for embedding_batch in chunks.chunks(embedding_provider.batch_size()) {
-                    embeddings.extend(embedding_provider.embed(embedding_batch).await?);
+                    if let Some(batch_embeddings) =
+                        embedding_provider.embed(embedding_batch).await.log_err()
+                    {
+                        embeddings.extend_from_slice(&batch_embeddings);
+                    }
                 }
 
                 let mut embeddings = embeddings.into_iter();
