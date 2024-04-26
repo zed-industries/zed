@@ -191,12 +191,14 @@ pub struct NewPathDelegate {
 }
 
 impl NewPathPrompt {
-    pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.set_prompt_for_new_path(Box::new(|workspace, cx| {
-            let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_new_path(workspace, tx, cx);
-            rx
-        }));
+    pub(crate) fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+        if dbg!(workspace.project().read(cx).is_remote()) {
+            workspace.set_prompt_for_new_path(Box::new(|workspace, cx| {
+                let (tx, rx) = futures::channel::oneshot::channel();
+                Self::prompt_for_new_path(workspace, tx, cx);
+                rx
+            }));
+        }
     }
 
     fn prompt_for_new_path(

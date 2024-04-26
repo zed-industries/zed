@@ -196,7 +196,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn save_as(
         &mut self,
         _project: Model<Project>,
-        _abs_path: PathBuf,
+        path: ProjectPath,
         _cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save_as() must be implemented if can_save() returns true")
@@ -309,7 +309,7 @@ pub trait ItemHandle: 'static + Send {
     fn save_as(
         &self,
         project: Model<Project>,
-        abs_path: PathBuf,
+        path: ProjectPath,
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
@@ -647,10 +647,10 @@ impl<T: Item> ItemHandle for View<T> {
     fn save_as(
         &self,
         project: Model<Project>,
-        abs_path: PathBuf,
+        path: ProjectPath,
         cx: &mut WindowContext,
     ) -> Task<anyhow::Result<()>> {
-        self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
+        self.update(cx, |item, cx| item.save_as(project, path, cx))
     }
 
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
