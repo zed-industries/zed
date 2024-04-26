@@ -15,7 +15,7 @@ impl X11Display {
     pub(crate) fn new(xc: &XCBConnection, x_screen_index: usize) -> Option<Self> {
         let screen = xc.setup().roots.get(x_screen_index).unwrap();
         Some(Self {
-            x_screen_index: x_screen_index,
+            x_screen_index,
             bounds: Bounds {
                 origin: Default::default(),
                 size: Size {
