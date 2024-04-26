@@ -1625,6 +1625,7 @@ impl RemoteWorktree {
     pub fn save_buffer(
         &self,
         buffer_handle: Model<Buffer>,
+        new_path: Option<proto::ProjectPath>,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
@@ -1637,6 +1638,7 @@ impl RemoteWorktree {
                 .request(proto::SaveBuffer {
                     project_id,
                     buffer_id,
+                    new_path,
                     version: serialize_version(&version),
                 })
                 .await?;

@@ -1267,7 +1267,7 @@ impl Workspace {
 
                 if let Some(project_path) = project_path {
                     let (worktree, path) = project_path.await?;
-                    let worktree_id = worktree.read_with(&cx, |worktree, cx| worktree.id())?;
+                    let worktree_id = worktree.read_with(&cx, |worktree, _| worktree.id())?;
                     tx.send(Some(ProjectPath {
                         worktree_id,
                         path: path.into(),

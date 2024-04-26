@@ -371,6 +371,22 @@ pub struct ProjectPath {
     pub path: Arc<Path>,
 }
 
+impl ProjectPath {
+    pub fn from_proto(p: proto::ProjectPath) -> Self {
+        Self {
+            worktree_id: WorktreeId::from_proto(p.worktree_id),
+            path: Arc::from(PathBuf::from(p.path)),
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::ProjectPath {
+        proto::ProjectPath {
+            worktree_id: self.worktree_id.to_proto(),
+            path: self.path.to_string_lossy().to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHint {
     pub position: language::Anchor,
@@ -2190,7 +2206,7 @@ impl Project {
         let path = file.path.clone();
         worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => worktree.save_buffer(buffer, path, false, cx),
-            Worktree::Remote(worktree) => worktree.save_buffer(buffer, cx),
+            Worktree::Remote(worktree) => worktree.save_buffer(buffer, None, cx),
         })
     }
 
@@ -2218,7 +2234,9 @@ impl Project {
                     Worktree::Local(worktree) => {
                         worktree.save_buffer(buffer.clone(), path.path, true, cx)
                     }
-                    Worktree::Remote(_) => panic!("cannot remote buffers as new files"),
+                    Worktree::Remote(worktree) => {
+                        worktree.save_buffer(buffer.clone(), Some(path.to_proto()), cx)
+                    }
                 })?
                 .await?;
 
@@ -8634,8 +8652,17 @@ impl Project {
             .await?;
         let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
 
-        this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
+        if let Some(new_path) = envelope.payload.new_path {
+            let new_path = ProjectPath::from_proto(new_path);
+            this.update(&mut cx, |this, cx| {
+                this.save_buffer_as(buffer.clone(), new_path, cx)
+            })?
             .await?;
+        } else {
+            this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
+                .await?;
+        }
+
         buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),

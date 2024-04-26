@@ -26,7 +26,6 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
-    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -196,7 +195,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn save_as(
         &mut self,
         _project: Model<Project>,
-        path: ProjectPath,
+        _path: ProjectPath,
         _cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save_as() must be implemented if can_save() returns true")
@@ -1126,7 +1125,7 @@ pub mod test {
         fn save_as(
             &mut self,
             _: Model<Project>,
-            _: std::path::PathBuf,
+            _: ProjectPath,
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_as_count += 1;

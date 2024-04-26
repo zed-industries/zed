@@ -26,7 +26,7 @@ use std::{
     cmp::{self, Ordering},
     iter,
     ops::Range,
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 use text::{BufferId, Selection};
@@ -759,7 +759,10 @@ impl Item for Editor {
             .as_singleton()
             .expect("cannot call save_as on an excerpt list");
 
-        let file_extension = path.extension().map(|a| a.to_string_lossy().to_string());
+        let file_extension = path
+            .path
+            .extension()
+            .map(|a| a.to_string_lossy().to_string());
         self.report_editor_event("save", file_extension, cx);
 
         project.update(cx, |project, cx| project.save_buffer_as(buffer, path, cx))

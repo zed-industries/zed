@@ -769,6 +769,12 @@ message SaveBuffer {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
+    optional ProjectPath new_path = 4;
+}
+
+message ProjectPath {
+    uint64 worktree_id = 1;
+    string path = 2;
 }
 
 message BufferSaved {

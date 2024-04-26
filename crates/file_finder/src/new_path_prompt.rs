@@ -2,7 +2,7 @@ use futures::channel::oneshot;
 use fuzzy::PathMatch;
 use gpui::{HighlightStyle, Model, StyledText};
 use picker::{Picker, PickerDelegate};
-use project::{Entry, PathMatchCandidateSet, Project, WorktreeId};
+use project::{Entry, PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
     path::PathBuf,
     sync::{
@@ -68,14 +68,19 @@ impl Match {
         }
     }
 
-    fn absolute_path(&self, project: &Project, cx: &WindowContext) -> Option<PathBuf> {
-        let worktree = if let Some(path_match) = &self.path_match {
-            project.worktree_for_id(WorktreeId::from_usize(path_match.worktree_id), cx)?
+    fn project_path(&self, project: &Project, cx: &WindowContext) -> Option<ProjectPath> {
+        let worktree_id = if let Some(path_match) = &self.path_match {
+            WorktreeId::from_usize(path_match.worktree_id)
         } else {
-            project.worktrees().next()?
+            project.worktrees().next()?.read(cx).id()
         };
 
-        Some(worktree.read(cx).abs_path().join(self.relative_path()))
+        let path = PathBuf::from(self.relative_path());
+
+        Some(ProjectPath {
+            worktree_id,
+            path: Arc::from(path),
+        })
     }
 
     fn existing_prefix(&self, project: &Project, cx: &WindowContext) -> Option<PathBuf> {
@@ -183,7 +188,7 @@ impl Match {
 
 pub struct NewPathDelegate {
     project: Model<Project>,
-    tx: Option<oneshot::Sender<Option<PathBuf>>>,
+    tx: Option<oneshot::Sender<Option<ProjectPath>>>,
     selected_index: usize,
     matches: Vec<Match>,
     last_selected_dir: Option<String>,
@@ -203,7 +208,7 @@ impl NewPathPrompt {
 
     fn prompt_for_new_path(
         workspace: &mut Workspace,
-        tx: oneshot::Sender<Option<PathBuf>>,
+        tx: oneshot::Sender<Option<ProjectPath>>,
         cx: &mut ViewContext<Workspace>,
     ) {
         let project = workspace.project().clone();
@@ -341,7 +346,7 @@ impl PickerDelegate for NewPathDelegate {
                 }
                 picker
                     .update(&mut cx, |picker, cx| {
-                        if let Some(path) = m.absolute_path(picker.delegate.project.read(cx), cx) {
+                        if let Some(path) = m.project_path(picker.delegate.project.read(cx), cx) {
                             if let Some(tx) = picker.delegate.tx.take() {
                                 tx.send(Some(path)).ok();
                             }
@@ -354,7 +359,7 @@ impl PickerDelegate for NewPathDelegate {
             return;
         }
 
-        if let Some(path) = m.absolute_path(self.project.read(cx), cx) {
+        if let Some(path) = m.project_path(self.project.read(cx), cx) {
             if let Some(tx) = self.tx.take() {
                 tx.send(Some(path)).ok();
             }
