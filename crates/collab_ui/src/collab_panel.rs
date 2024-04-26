@@ -1,4 +1,4 @@
-mod channel_modal;
+mdod channel_modal;
 mod contact_finder;
 
 use self::channel_modal::ChannelModal;
@@ -2983,12 +2983,6 @@ impl Render for JoinChannelTooltip {
 
             container
                 .child(Label::new("Join channel"))
-                .children(self.has_notes_notification.then(|| {
-                    h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Info))
-                        .child(Label::new("Unread notes"))
-                }))
                 .children(participants.iter().map(|participant| {
                     h_flex()
                         .gap_2()
