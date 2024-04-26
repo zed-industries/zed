@@ -620,17 +620,11 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
-        clickable_hunks: Option<&ClickableHunks>,
         cx: &mut ViewContext<Editor>,
     ) {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(cx);
         editor.set_gutter_hovered(gutter_hovered, cx);
-        if let Some(clickable_hunks) = clickable_hunks {
-            if clickable_hunks.hover_changed(&event.position) {
-                cx.notify()
-            }
-        }
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(cx) {
@@ -2277,7 +2271,7 @@ impl EditorElement {
         &mut self,
         layout: &mut EditorLayout,
         cx: &mut WindowContext,
-    ) -> Option<ClickableHunks> {
+    ) -> Option<HunkToShow> {
         let line_height = layout.position_map.line_height;
 
         let scroll_position = layout.position_map.snapshot.scroll_position();
@@ -2295,14 +2289,14 @@ impl EditorElement {
             Some(GitGutterSetting::TrackedFiles)
         );
 
-        let clickable_hunks = if show_git_gutter {
-            Some(Self::paint_diff_hunks(
+        let hovered_hunk = if show_git_gutter {
+            Self::paint_diff_hunks(
                 &self.editor,
                 layout.gutter_hitbox.bounds,
                 layout,
                 &cx.mouse_position(),
                 cx,
-            ))
+            )
         } else {
             None
         };
@@ -2337,7 +2331,7 @@ impl EditorElement {
             }
         });
 
-        clickable_hunks
+        hovered_hunk
     }
 
     fn paint_diff_hunks(
@@ -2346,10 +2340,9 @@ impl EditorElement {
         layout: &EditorLayout,
         mouse_position: &gpui::Point<Pixels>,
         cx: &mut WindowContext,
-    ) -> ClickableHunks {
-        let mut clickable_hunks = ClickableHunks::default();
+    ) -> Option<HunkToShow> {
         if layout.display_hunks.is_empty() {
-            return clickable_hunks;
+            return None;
         }
 
         let display_snapshot = &layout.position_map.snapshot.display_snapshot;
@@ -2374,6 +2367,7 @@ impl EditorElement {
         });
 
         let line_height = layout.position_map.line_height;
+        let mut hovered_hunk = None;
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
             for (hunk, _) in &layout.display_hunks {
                 let (clickable_hunk, background_color, corner_radii) = match hunk {
@@ -2430,16 +2424,12 @@ impl EditorElement {
                     &hunk,
                 );
                 if let Some((multi_buffer_range, diff_base_byte_range, &status)) = clickable_hunk {
-                    clickable_hunks.all.push(hunk_bounds);
                     if hunk_bounds.contains(mouse_position) {
-                        clickable_hunks.hovered = Some((
-                            bounds,
-                            HunkToShow {
-                                multi_buffer_range: multi_buffer_range.clone(),
-                                diff_base_byte_range: diff_base_byte_range.clone(),
-                                status,
-                            },
-                        ));
+                        hovered_hunk = Some(HunkToShow {
+                            multi_buffer_range: multi_buffer_range.clone(),
+                            diff_base_byte_range: diff_base_byte_range.clone(),
+                            status,
+                        });
                     }
                 }
 
@@ -2453,7 +2443,7 @@ impl EditorElement {
             }
         });
 
-        clickable_hunks
+        hovered_hunk
     }
 
     fn diff_hunk_bounds(
@@ -3148,15 +3138,11 @@ impl EditorElement {
     fn paint_mouse_listeners(
         &mut self,
         layout: &EditorLayout,
-        clickable_hunks: Option<ClickableHunks>,
+        hovered_hunk: Option<HunkToShow>,
         cx: &mut WindowContext,
     ) {
         self.paint_scroll_wheel_listener(layout, cx);
 
-        let clickable_hunk_hovered = clickable_hunks
-            .as_ref()
-            .and_then(|hunks| hunks.hovered_hunk())
-            .cloned();
         cx.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
@@ -3170,7 +3156,7 @@ impl EditorElement {
                             Self::mouse_left_down(
                                 editor,
                                 event,
-                                clickable_hunk_hovered.as_ref(),
+                                hovered_hunk.as_ref(),
                                 &position_map,
                                 &text_hitbox,
                                 &gutter_hitbox,
@@ -3227,8 +3213,6 @@ impl EditorElement {
                             &position_map,
                             &text_hitbox,
                             &gutter_hitbox,
-                            // TODO kb order by left coordinate to improve lookup
-                            clickable_hunks.as_ref(),
                             cx,
                         )
                     });
@@ -4132,12 +4116,12 @@ impl Element for EditorElement {
         cx.with_text_style(Some(text_style), |cx| {
             cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                 self.paint_background(layout, cx);
-                let clickable_hunks = if layout.gutter_hitbox.size.width > Pixels::ZERO {
+                let hovered_hunk = if layout.gutter_hitbox.size.width > Pixels::ZERO {
                     self.paint_gutter(layout, cx)
                 } else {
                     None
                 };
-                self.paint_mouse_listeners(layout, clickable_hunks, cx);
+                self.paint_mouse_listeners(layout, hovered_hunk, cx);
                 self.paint_text(layout, cx);
 
                 if !layout.blocks.is_empty() {
@@ -5194,23 +5178,4 @@ fn compute_auto_height_layout(
         .min(line_height * max_lines as f32);
 
     Some(size(width, height))
-}
-
-#[derive(Default, Debug, Clone)]
-struct ClickableHunks {
-    hovered: Option<(Bounds<Pixels>, HunkToShow)>,
-    all: Vec<Bounds<Pixels>>,
-}
-
-impl ClickableHunks {
-    fn hovered_hunk(&self) -> Option<&HunkToShow> {
-        self.hovered.as_ref().map(|(_, hunk)| hunk)
-    }
-
-    fn hover_changed(&self, hovered_at: &gpui::Point<Pixels>) -> bool {
-        match &self.hovered {
-            Some((bounds, _)) => !bounds.contains(hovered_at),
-            None => self.all.iter().any(|bounds| bounds.contains(hovered_at)),
-        }
-    }
 }
