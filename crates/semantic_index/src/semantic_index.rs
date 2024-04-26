@@ -365,6 +365,7 @@ impl WorktreeIndex {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         worktree: Model<Worktree>,
         db_connection: heed::Env,
