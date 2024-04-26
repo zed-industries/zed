@@ -1,13 +1,11 @@
 use std::time::Duration;
 
-use collections::HashSet;
 use editor::Editor;
 use gpui::{
     percentage, rems, Animation, AnimationExt, EventEmitter, IntoElement, ParentElement, Render,
     Styled, Subscription, Transformation, View, ViewContext, WeakView,
 };
 use language::Diagnostic;
-use lsp::LanguageServerId;
 use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
@@ -18,7 +16,6 @@ pub struct DiagnosticIndicator {
     active_editor: Option<WeakView<Editor>>,
     workspace: WeakView<Workspace>,
     current_diagnostic: Option<Diagnostic>,
-    in_progress_checks: HashSet<LanguageServerId>,
     _observe_active_editor: Option<Subscription>,
 }
 
@@ -64,7 +61,20 @@ impl Render for DiagnosticIndicator {
                 .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
         };
 
-        let status = if !self.in_progress_checks.is_empty() {
+        let has_in_progress_checks = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| {
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .language_servers_running_disk_based_diagnostics()
+                    .next()
+            })
+            .is_some();
+
+        let status = if has_in_progress_checks {
             Some(
                 h_flex()
                     .gap_2()
@@ -126,15 +136,13 @@ impl DiagnosticIndicator {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let project = workspace.project();
         cx.subscribe(project, |this, project, event, cx| match event {
-            project::Event::DiskBasedDiagnosticsStarted { language_server_id } => {
-                this.in_progress_checks.insert(*language_server_id);
+            project::Event::DiskBasedDiagnosticsStarted { .. } => {
                 cx.notify();
             }
 
-            project::Event::DiskBasedDiagnosticsFinished { language_server_id }
-            | project::Event::LanguageServerRemoved(language_server_id) => {
+            project::Event::DiskBasedDiagnosticsFinished { .. }
+            | project::Event::LanguageServerRemoved(_) => {
                 this.summary = project.read(cx).diagnostic_summary(false, cx);
-                this.in_progress_checks.remove(language_server_id);
                 cx.notify();
             }
 
@@ -149,10 +157,6 @@ impl DiagnosticIndicator {
 
         Self {
             summary: project.read(cx).diagnostic_summary(false, cx),
-            in_progress_checks: project
-                .read(cx)
-                .language_servers_running_disk_based_diagnostics()
-                .collect(),
             active_editor: None,
             workspace: workspace.weak_handle(),
             current_diagnostic: None,

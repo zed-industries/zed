@@ -2,8 +2,11 @@ pub mod items;
 mod project_diagnostics_settings;
 mod toolbar_controls;
 
-use anyhow::{Context as _, Result};
-use collections::{HashMap, HashSet};
+#[cfg(test)]
+mod diagnostics_tests;
+
+use anyhow::Result;
+use collections::{BTreeSet, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, BlockStyle, RenderBlock},
@@ -11,7 +14,10 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
-use futures::future::try_join_all;
+use futures::{
+    channel::mpsc::{self, UnboundedSender},
+    StreamExt as _,
+};
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
@@ -19,8 +25,7 @@ use gpui::{
     WeakView, WindowContext,
 };
 use language::{
-    Anchor, Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection,
-    SelectionGoal,
+    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -36,7 +41,7 @@ use std::{
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{h_flex, prelude::*, Icon, IconName, Label};
-use util::TryFutureExt;
+use util::ResultExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     ItemNavHistory, Pane, ToolbarItemLocation, Workspace,
@@ -58,23 +63,17 @@ struct ProjectDiagnosticsEditor {
     summary: DiagnosticSummary,
     excerpts: Model<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: HashMap<LanguageServerId, HashSet<ProjectPath>>,
-    current_diagnostics: HashMap<LanguageServerId, HashSet<ProjectPath>>,
+    paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
     include_warnings: bool,
     context: u32,
-    _subscriptions: Vec<Subscription>,
+    update_paths_tx: UnboundedSender<(ProjectPath, Option<LanguageServerId>)>,
+    _update_excerpts_task: Task<Result<()>>,
+    _subscription: Subscription,
 }
 
 struct PathState {
     path: ProjectPath,
     diagnostic_groups: Vec<DiagnosticGroupState>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct Jump {
-    path: ProjectPath,
-    position: Point,
-    anchor: Anchor,
 }
 
 struct DiagnosticGroupState {
@@ -122,40 +121,38 @@ impl ProjectDiagnosticsEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let project_event_subscription =
-            cx.subscribe(&project_handle, |this, _, event, cx| match event {
+            cx.subscribe(&project_handle, |this, project, event, cx| match event {
+                project::Event::DiskBasedDiagnosticsStarted { .. } => {
+                    cx.notify();
+                }
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
-                    log::debug!("Disk based diagnostics finished for server {language_server_id}");
-                    this.update_excerpts(Some(*language_server_id), cx);
+                    log::debug!("disk based diagnostics finished for server {language_server_id}");
+                    this.enqueue_update_stale_excerpts(Some(*language_server_id));
                 }
                 project::Event::DiagnosticsUpdated {
                     language_server_id,
                     path,
                 } => {
-                    log::debug!("Adding path {path:?} to update for server {language_server_id}");
                     this.paths_to_update
-                        .entry(*language_server_id)
-                        .or_default()
-                        .insert(path.clone());
+                        .insert((path.clone(), *language_server_id));
+                    this.summary = project.read(cx).diagnostic_summary(false, cx);
+                    cx.emit(EditorEvent::TitleChanged);
 
-                    if this.is_dirty(cx) {
-                        return;
-                    }
-                    let selections = this.editor.read(cx).selections.all::<usize>(cx);
-                    if selections.len() < 2
-                        && selections
-                            .first()
-                            .map_or(true, |selection| selection.end == selection.start)
-                    {
-                        this.update_excerpts(Some(*language_server_id), cx);
+                    if this.editor.read(cx).is_focused(cx) || this.focus_handle.is_focused(cx) {
+                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
+                    } else {
+                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
+                        this.enqueue_update_stale_excerpts(Some(*language_server_id));
                     }
                 }
                 _ => {}
             });
 
         let focus_handle = cx.focus_handle();
-
-        let focus_in_subscription =
-            cx.on_focus_in(&focus_handle, |diagnostics, cx| diagnostics.focus_in(cx));
+        cx.on_focus_in(&focus_handle, |this, cx| this.focus_in(cx))
+            .detach();
+        cx.on_focus_out(&focus_handle, |this, cx| this.focus_out(cx))
+            .detach();
 
         let excerpts = cx.new_model(|cx| {
             MultiBuffer::new(
@@ -169,35 +166,52 @@ impl ProjectDiagnosticsEditor {
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
-        let editor_event_subscription =
-            cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
-                cx.emit(event.clone());
-                if event == &EditorEvent::Focused && this.path_states.is_empty() {
-                    cx.focus(&this.focus_handle);
+        cx.subscribe(&editor, |this, _editor, event: &EditorEvent, cx| {
+            cx.emit(event.clone());
+            match event {
+                EditorEvent::Focused => {
+                    if this.path_states.is_empty() {
+                        cx.focus(&this.focus_handle);
+                    }
                 }
-            });
+                EditorEvent::Blurred => this.enqueue_update_stale_excerpts(None),
+                _ => {}
+            }
+        })
+        .detach();
+
+        let (update_excerpts_tx, mut update_excerpts_rx) = mpsc::unbounded();
 
         let project = project_handle.read(cx);
-        let summary = project.diagnostic_summary(false, cx);
         let mut this = Self {
-            project: project_handle,
+            project: project_handle.clone(),
             context,
-            summary,
+            summary: project.diagnostic_summary(false, cx),
             workspace,
             excerpts,
             focus_handle,
             editor,
             path_states: Default::default(),
-            paths_to_update: HashMap::default(),
+            paths_to_update: Default::default(),
             include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
-            current_diagnostics: HashMap::default(),
-            _subscriptions: vec![
-                project_event_subscription,
-                editor_event_subscription,
-                focus_in_subscription,
-            ],
+            update_paths_tx: update_excerpts_tx,
+            _update_excerpts_task: cx.spawn(move |this, mut cx| async move {
+                while let Some((path, language_server_id)) = update_excerpts_rx.next().await {
+                    if let Some(buffer) = project_handle
+                        .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
+                        .await
+                        .log_err()
+                    {
+                        this.update(&mut cx, |this, cx| {
+                            this.update_excerpts(path, language_server_id, buffer, cx);
+                        })?;
+                    }
+                }
+                anyhow::Ok(())
+            }),
+            _subscription: project_event_subscription,
         };
-        this.update_excerpts(None, cx);
+        this.enqueue_update_all_excerpts(cx);
         this
     }
 
@@ -228,8 +242,7 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
-        self.paths_to_update = self.current_diagnostics.clone();
-        self.update_excerpts(None, cx);
+        self.enqueue_update_all_excerpts(cx);
         cx.notify();
     }
 
@@ -239,122 +252,65 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn update_excerpts(
-        &mut self,
-        language_server_id: Option<LanguageServerId>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        log::debug!("Updating excerpts for server {language_server_id:?}");
-        let mut paths_to_recheck = HashSet::default();
-        let mut new_summaries: HashMap<LanguageServerId, HashSet<ProjectPath>> = self
-            .project
-            .read(cx)
-            .diagnostic_summaries(false, cx)
-            .fold(HashMap::default(), |mut summaries, (path, server_id, _)| {
-                summaries.entry(server_id).or_default().insert(path);
-                summaries
-            });
-        let mut old_diagnostics = if let Some(language_server_id) = language_server_id {
-            new_summaries.retain(|server_id, _| server_id == &language_server_id);
-            self.paths_to_update.retain(|server_id, paths| {
-                if server_id == &language_server_id {
-                    paths_to_recheck.extend(paths.drain());
-                    false
-                } else {
-                    true
-                }
-            });
-            let mut old_diagnostics = HashMap::default();
-            if let Some(new_paths) = new_summaries.get(&language_server_id) {
-                if let Some(old_paths) = self
-                    .current_diagnostics
-                    .insert(language_server_id, new_paths.clone())
-                {
-                    old_diagnostics.insert(language_server_id, old_paths);
-                }
-            } else {
-                if let Some(old_paths) = self.current_diagnostics.remove(&language_server_id) {
-                    old_diagnostics.insert(language_server_id, old_paths);
-                }
-            }
-            old_diagnostics
-        } else {
-            paths_to_recheck.extend(self.paths_to_update.drain().flat_map(|(_, paths)| paths));
-            mem::replace(&mut self.current_diagnostics, new_summaries.clone())
-        };
-        for (server_id, new_paths) in new_summaries {
-            match old_diagnostics.remove(&server_id) {
-                Some(mut old_paths) => {
-                    paths_to_recheck.extend(
-                        new_paths
-                            .into_iter()
-                            .filter(|new_path| !old_paths.remove(new_path)),
-                    );
-                    paths_to_recheck.extend(old_paths);
-                }
-                None => paths_to_recheck.extend(new_paths),
-            }
+    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.focus_handle.is_focused(cx) && !self.editor.focus_handle(cx).is_focused(cx) {
+            self.enqueue_update_stale_excerpts(None);
         }
-        paths_to_recheck.extend(old_diagnostics.into_iter().flat_map(|(_, paths)| paths));
-
-        if paths_to_recheck.is_empty() {
-            log::debug!("No paths to recheck for language server {language_server_id:?}");
-            return;
-        }
-        log::debug!(
-            "Rechecking {} paths for language server {:?}",
-            paths_to_recheck.len(),
-            language_server_id
-        );
-        let project = self.project.clone();
-        cx.spawn(|this, mut cx| {
-            async move {
-                let _: Vec<()> = try_join_all(paths_to_recheck.into_iter().map(|path| {
-                    let mut cx = cx.clone();
-                    let project = project.clone();
-                    let this = this.clone();
-                    async move {
-                        let buffer = project
-                            .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
-                            .await
-                            .with_context(|| format!("opening buffer for path {path:?}"))?;
-                        this.update(&mut cx, |this, cx| {
-                            this.populate_excerpts(path, language_server_id, buffer, cx);
-                        })
-                        .context("missing project")?;
-                        anyhow::Ok(())
-                    }
-                }))
-                .await
-                .context("rechecking diagnostics for paths")?;
-
-                this.update(&mut cx, |this, cx| {
-                    this.summary = this.project.read(cx).diagnostic_summary(false, cx);
-                    cx.emit(EditorEvent::TitleChanged);
-                })?;
-                anyhow::Ok(())
-            }
-            .log_err()
-        })
-        .detach();
     }
 
-    fn populate_excerpts(
+    /// Enqueue an update of all excerpts. Updates all paths that either
+    /// currently have diagnostics or are currently present in this view.
+    fn enqueue_update_all_excerpts(&mut self, cx: &mut ViewContext<Self>) {
+        self.project.update(cx, |project, cx| {
+            let mut paths = project
+                .diagnostic_summaries(false, cx)
+                .map(|(path, _, _)| path)
+                .collect::<BTreeSet<_>>();
+            paths.extend(self.path_states.iter().map(|state| state.path.clone()));
+            for path in paths {
+                self.update_paths_tx.unbounded_send((path, None)).unwrap();
+            }
+        });
+    }
+
+    /// Enqueue an update of the excerpts for any path whose diagnostics are known
+    /// to have changed. If a language server id is passed, then only the excerpts for
+    /// that language server's diagnostics will be updated. Otherwise, all stale excerpts
+    /// will be refreshed.
+    fn enqueue_update_stale_excerpts(&mut self, language_server_id: Option<LanguageServerId>) {
+        for (path, server_id) in &self.paths_to_update {
+            if language_server_id.map_or(true, |id| id == *server_id) {
+                self.update_paths_tx
+                    .unbounded_send((path.clone(), Some(*server_id)))
+                    .unwrap();
+            }
+        }
+    }
+
+    fn update_excerpts(
         &mut self,
-        path: ProjectPath,
-        language_server_id: Option<LanguageServerId>,
+        path_to_update: ProjectPath,
+        server_to_update: Option<LanguageServerId>,
         buffer: Model<Buffer>,
         cx: &mut ViewContext<Self>,
     ) {
+        self.paths_to_update.retain(|(path, server_id)| {
+            *path != path_to_update
+                || server_to_update.map_or(false, |to_update| *server_id != to_update)
+        });
+
         let was_empty = self.path_states.is_empty();
         let snapshot = buffer.read(cx).snapshot();
-        let path_ix = match self.path_states.binary_search_by_key(&&path, |e| &e.path) {
+        let path_ix = match self
+            .path_states
+            .binary_search_by_key(&&path_to_update, |e| &e.path)
+        {
             Ok(ix) => ix,
             Err(ix) => {
                 self.path_states.insert(
                     ix,
                     PathState {
-                        path: path.clone(),
+                        path: path_to_update.clone(),
                         diagnostic_groups: Default::default(),
                     },
                 );
@@ -373,8 +329,7 @@ impl ProjectDiagnosticsEditor {
         };
 
         let path_state = &mut self.path_states[path_ix];
-        let mut groups_to_add = Vec::new();
-        let mut group_ixs_to_remove = Vec::new();
+        let mut new_group_ixs = Vec::new();
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_remove = HashSet::default();
         let mut first_excerpt_id = None;
@@ -383,10 +338,13 @@ impl ProjectDiagnosticsEditor {
         } else {
             DiagnosticSeverity::ERROR
         };
-        let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
-            let mut old_groups = path_state.diagnostic_groups.iter().enumerate().peekable();
+        let excerpts_snapshot = self.excerpts.update(cx, |excerpts, cx| {
+            let mut old_groups = mem::take(&mut path_state.diagnostic_groups)
+                .into_iter()
+                .enumerate()
+                .peekable();
             let mut new_groups = snapshot
-                .diagnostic_groups(language_server_id)
+                .diagnostic_groups(server_to_update)
                 .into_iter()
                 .filter(|(_, group)| {
                     group.entries[group.primary_ix].diagnostic.severity <= max_severity
@@ -400,19 +358,20 @@ impl ProjectDiagnosticsEditor {
                     (None, None) => break,
                     (None, Some(_)) => to_insert = new_groups.next(),
                     (Some((_, old_group)), None) => {
-                        if language_server_id.map_or(true, |id| id == old_group.language_server_id)
-                        {
+                        if server_to_update.map_or(true, |id| id == old_group.language_server_id) {
                             to_remove = old_groups.next();
                         } else {
                             to_keep = old_groups.next();
                         }
                     }
-                    (Some((_, old_group)), Some((_, new_group))) => {
+                    (Some((_, old_group)), Some((new_language_server_id, new_group))) => {
                         let old_primary = &old_group.primary_diagnostic;
                         let new_primary = &new_group.entries[new_group.primary_ix];
-                        match compare_diagnostics(old_primary, new_primary, &snapshot) {
+                        match compare_diagnostics(old_primary, new_primary, &snapshot)
+                            .then_with(|| old_group.language_server_id.cmp(new_language_server_id))
+                        {
                             Ordering::Less => {
-                                if language_server_id
+                                if server_to_update
                                     .map_or(true, |id| id == old_group.language_server_id)
                                 {
                                     to_remove = old_groups.next();
@@ -456,6 +415,7 @@ impl ProjectDiagnosticsEditor {
                                 Point::new(range.end.row + self.context, u32::MAX),
                                 Bias::Left,
                             );
+
                             let excerpt_id = excerpts
                                 .insert_excerpts_after(
                                     prev_excerpt_id,
@@ -464,7 +424,7 @@ impl ProjectDiagnosticsEditor {
                                         context: excerpt_start..excerpt_end,
                                         primary: Some(range.clone()),
                                     }],
-                                    excerpts_cx,
+                                    cx,
                                 )
                                 .pop()
                                 .unwrap();
@@ -518,18 +478,19 @@ impl ProjectDiagnosticsEditor {
                         }
                     }
 
-                    groups_to_add.push(group_state);
-                } else if let Some((group_ix, group_state)) = to_remove {
-                    excerpts.remove_excerpts(group_state.excerpts.iter().copied(), excerpts_cx);
-                    group_ixs_to_remove.push(group_ix);
+                    new_group_ixs.push(path_state.diagnostic_groups.len());
+                    path_state.diagnostic_groups.push(group_state);
+                } else if let Some((_, group_state)) = to_remove {
+                    excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx);
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
-                } else if let Some((_, group)) = to_keep {
-                    prev_excerpt_id = *group.excerpts.last().unwrap();
+                } else if let Some((_, group_state)) = to_keep {
+                    prev_excerpt_id = *group_state.excerpts.last().unwrap();
                     first_excerpt_id.get_or_insert_with(|| prev_excerpt_id);
+                    path_state.diagnostic_groups.push(group_state);
                 }
             }
 
-            excerpts.snapshot(excerpts_cx)
+            excerpts.snapshot(cx)
         });
 
         self.editor.update(cx, |editor, cx| {
@@ -550,22 +511,10 @@ impl ProjectDiagnosticsEditor {
             );
 
             let mut block_ids = block_ids.into_iter();
-            for group_state in &mut groups_to_add {
+            for ix in new_group_ixs {
+                let group_state = &mut path_state.diagnostic_groups[ix];
                 group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
             }
-        });
-
-        for ix in group_ixs_to_remove.into_iter().rev() {
-            path_state.diagnostic_groups.remove(ix);
-        }
-        path_state.diagnostic_groups.extend(groups_to_add);
-        path_state.diagnostic_groups.sort_unstable_by(|a, b| {
-            let range_a = &a.primary_diagnostic.range;
-            let range_b = &b.primary_diagnostic.range;
-            range_a
-                .start
-                .cmp(&range_b.start, &snapshot)
-                .then_with(|| range_a.end.cmp(&range_b.end, &snapshot))
         });
 
         if path_state.diagnostic_groups.is_empty() {
@@ -634,7 +583,31 @@ impl ProjectDiagnosticsEditor {
             let focus_handle = self.editor.focus_handle(cx);
             cx.focus(&focus_handle);
         }
+
+        #[cfg(test)]
+        self.check_invariants(cx);
+
         cx.notify();
+    }
+
+    #[cfg(test)]
+    fn check_invariants(&self, cx: &mut ViewContext<Self>) {
+        let mut excerpts = Vec::new();
+        for (id, buffer, _) in self.excerpts.read(cx).snapshot(cx).excerpts() {
+            if let Some(file) = buffer.file() {
+                excerpts.push((id, file.path().clone()));
+            }
+        }
+
+        let mut prev_path = None;
+        for (_, path) in &excerpts {
+            if let Some(prev_path) = prev_path {
+                if path < prev_path {
+                    panic!("excerpts are not sorted by path {:?}", excerpts);
+                }
+            }
+            prev_path = Some(path);
+        }
     }
 }
 
@@ -903,763 +876,4 @@ fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
                 .cmp(&rhs.range.end.to_offset(snapshot))
         })
         .then_with(|| lhs.diagnostic.message.cmp(&rhs.diagnostic.message))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use editor::{
-        display_map::{BlockContext, TransformBlock},
-        DisplayPoint, GutterDimensions,
-    };
-    use gpui::{px, AvailableSpace, Stateful, TestAppContext, VisualTestContext};
-    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16, Unclipped};
-    use project::FakeFs;
-    use serde_json::json;
-    use settings::SettingsStore;
-    use unindent::Unindent as _;
-
-    #[gpui::test]
-    async fn test_diagnostics(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/test",
-            json!({
-                "consts.rs": "
-                    const a: i32 = 'a';
-                    const b: i32 = c;
-                "
-                .unindent(),
-
-                "main.rs": "
-                    fn main() {
-                        let x = vec![];
-                        let y = vec![];
-                        a(x);
-                        b(y);
-                        // comment 1
-                        // comment 2
-                        c(y);
-                        d(x);
-                    }
-                "
-                .unindent(),
-            }),
-        )
-        .await;
-
-        let language_server_id = LanguageServerId(0);
-        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-        let workspace = window.root(cx).unwrap();
-
-        // Create some diagnostics
-        project.update(cx, |project, cx| {
-            project
-                .update_diagnostic_entries(
-                    language_server_id,
-                    PathBuf::from("/test/main.rs"),
-                    None,
-                    vec![
-                        DiagnosticEntry {
-                            range: Unclipped(PointUtf16::new(1, 8))..Unclipped(PointUtf16::new(1, 9)),
-                            diagnostic: Diagnostic {
-                                message:
-                                    "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait"
-                                        .to_string(),
-                                severity: DiagnosticSeverity::INFORMATION,
-                                is_primary: false,
-                                is_disk_based: true,
-                                group_id: 1,
-                                ..Default::default()
-                            },
-                        },
-                        DiagnosticEntry {
-                            range: Unclipped(PointUtf16::new(2, 8))..Unclipped(PointUtf16::new(2, 9)),
-                            diagnostic: Diagnostic {
-                                message:
-                                    "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait"
-                                        .to_string(),
-                                severity: DiagnosticSeverity::INFORMATION,
-                                is_primary: false,
-                                is_disk_based: true,
-                                group_id: 0,
-                                ..Default::default()
-                            },
-                        },
-                        DiagnosticEntry {
-                            range: Unclipped(PointUtf16::new(3, 6))..Unclipped(PointUtf16::new(3, 7)),
-                            diagnostic: Diagnostic {
-                                message: "value moved here".to_string(),
-                                severity: DiagnosticSeverity::INFORMATION,
-                                is_primary: false,
-                                is_disk_based: true,
-                                group_id: 1,
-                                ..Default::default()
-                            },
-                        },
-                        DiagnosticEntry {
-                            range: Unclipped(PointUtf16::new(4, 6))..Unclipped(PointUtf16::new(4, 7)),
-                            diagnostic: Diagnostic {
-                                message: "value moved here".to_string(),
-                                severity: DiagnosticSeverity::INFORMATION,
-                                is_primary: false,
-                                is_disk_based: true,
-                                group_id: 0,
-                                ..Default::default()
-                            },
-                        },
-                        DiagnosticEntry {
-                            range: Unclipped(PointUtf16::new(7, 6))..Unclipped(PointUtf16::new(7, 7)),
-                            diagnostic: Diagnostic {
-                                message: "use of moved value\nvalue used here after move".to_string(),
-                                severity: DiagnosticSeverity::ERROR,
-                                is_primary: true,
-                                is_disk_based: true,
-                                group_id: 0,
-                                ..Default::default()
-                            },
-                        },
-                        DiagnosticEntry {
-                            range: Unclipped(PointUtf16::new(8, 6))..Unclipped(PointUtf16::new(8, 7)),
-                            diagnostic: Diagnostic {
-                                message: "use of moved value\nvalue used here after move".to_string(),
-                                severity: DiagnosticSeverity::ERROR,
-                                is_primary: true,
-                                is_disk_based: true,
-                                group_id: 1,
-                                ..Default::default()
-                            },
-                        },
-                    ],
-                    cx,
-                )
-                .unwrap();
-        });
-
-        // Open the project diagnostics view while there are already diagnostics.
-        let view = window.build_view(cx, |cx| {
-            ProjectDiagnosticsEditor::new_with_context(
-                1,
-                project.clone(),
-                workspace.downgrade(),
-                cx,
-            )
-        });
-        let editor = view.update(cx, |view, _| view.editor.clone());
-
-        view.next_notification(cx).await;
-        assert_eq!(
-            editor_blocks(&editor, cx),
-            [
-                (0, "path header block".into()),
-                (2, "diagnostic header".into()),
-                (15, "collapsed context".into()),
-                (16, "diagnostic header".into()),
-                (25, "collapsed context".into()),
-            ]
-        );
-        assert_eq!(
-            editor.update(cx, |editor, cx| editor.display_text(cx)),
-            concat!(
-                //
-                // main.rs
-                //
-                "\n", // filename
-                "\n", // padding
-                // diagnostic group 1
-                "\n", // primary message
-                "\n", // padding
-                "    let x = vec![];\n",
-                "    let y = vec![];\n",
-                "\n", // supporting diagnostic
-                "    a(x);\n",
-                "    b(y);\n",
-                "\n", // supporting diagnostic
-                "    // comment 1\n",
-                "    // comment 2\n",
-                "    c(y);\n",
-                "\n", // supporting diagnostic
-                "    d(x);\n",
-                "\n", // context ellipsis
-                // diagnostic group 2
-                "\n", // primary message
-                "\n", // padding
-                "fn main() {\n",
-                "    let x = vec![];\n",
-                "\n", // supporting diagnostic
-                "    let y = vec![];\n",
-                "    a(x);\n",
-                "\n", // supporting diagnostic
-                "    b(y);\n",
-                "\n", // context ellipsis
-                "    c(y);\n",
-                "    d(x);\n",
-                "\n", // supporting diagnostic
-                "}"
-            )
-        );
-
-        // Cursor is at the first diagnostic
-        editor.update(cx, |editor, cx| {
-            assert_eq!(
-                editor.selections.display_ranges(cx),
-                [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
-            );
-        });
-
-        // Diagnostics are added for another earlier path.
-        project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_started(language_server_id, cx);
-            project
-                .update_diagnostic_entries(
-                    language_server_id,
-                    PathBuf::from("/test/consts.rs"),
-                    None,
-                    vec![DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(0, 15))..Unclipped(PointUtf16::new(0, 15)),
-                        diagnostic: Diagnostic {
-                            message: "mismatched types\nexpected `usize`, found `char`".to_string(),
-                            severity: DiagnosticSeverity::ERROR,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 0,
-                            ..Default::default()
-                        },
-                    }],
-                    cx,
-                )
-                .unwrap();
-            project.disk_based_diagnostics_finished(language_server_id, cx);
-        });
-
-        view.next_notification(cx).await;
-        assert_eq!(
-            editor_blocks(&editor, cx),
-            [
-                (0, "path header block".into()),
-                (2, "diagnostic header".into()),
-                (7, "path header block".into()),
-                (9, "diagnostic header".into()),
-                (22, "collapsed context".into()),
-                (23, "diagnostic header".into()),
-                (32, "collapsed context".into()),
-            ]
-        );
-
-        assert_eq!(
-            editor.update(cx, |editor, cx| editor.display_text(cx)),
-            concat!(
-                //
-                // consts.rs
-                //
-                "\n", // filename
-                "\n", // padding
-                // diagnostic group 1
-                "\n", // primary message
-                "\n", // padding
-                "const a: i32 = 'a';\n",
-                "\n", // supporting diagnostic
-                "const b: i32 = c;\n",
-                //
-                // main.rs
-                //
-                "\n", // filename
-                "\n", // padding
-                // diagnostic group 1
-                "\n", // primary message
-                "\n", // padding
-                "    let x = vec![];\n",
-                "    let y = vec![];\n",
-                "\n", // supporting diagnostic
-                "    a(x);\n",
-                "    b(y);\n",
-                "\n", // supporting diagnostic
-                "    // comment 1\n",
-                "    // comment 2\n",
-                "    c(y);\n",
-                "\n", // supporting diagnostic
-                "    d(x);\n",
-                "\n", // collapsed context
-                // diagnostic group 2
-                "\n", // primary message
-                "\n", // filename
-                "fn main() {\n",
-                "    let x = vec![];\n",
-                "\n", // supporting diagnostic
-                "    let y = vec![];\n",
-                "    a(x);\n",
-                "\n", // supporting diagnostic
-                "    b(y);\n",
-                "\n", // context ellipsis
-                "    c(y);\n",
-                "    d(x);\n",
-                "\n", // supporting diagnostic
-                "}"
-            )
-        );
-
-        // Cursor keeps its position.
-        editor.update(cx, |editor, cx| {
-            assert_eq!(
-                editor.selections.display_ranges(cx),
-                [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
-            );
-        });
-
-        // Diagnostics are added to the first path
-        project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_started(language_server_id, cx);
-            project
-                .update_diagnostic_entries(
-                    language_server_id,
-                    PathBuf::from("/test/consts.rs"),
-                    None,
-                    vec![
-                        DiagnosticEntry {
-                            range: Unclipped(PointUtf16::new(0, 15))
-                                ..Unclipped(PointUtf16::new(0, 15)),
-                            diagnostic: Diagnostic {
-                                message: "mismatched types\nexpected `usize`, found `char`"
-                                    .to_string(),
-                                severity: DiagnosticSeverity::ERROR,
-                                is_primary: true,
-                                is_disk_based: true,
-                                group_id: 0,
-                                ..Default::default()
-                            },
-                        },
-                        DiagnosticEntry {
-                            range: Unclipped(PointUtf16::new(1, 15))
-                                ..Unclipped(PointUtf16::new(1, 15)),
-                            diagnostic: Diagnostic {
-                                message: "unresolved name `c`".to_string(),
-                                severity: DiagnosticSeverity::ERROR,
-                                is_primary: true,
-                                is_disk_based: true,
-                                group_id: 1,
-                                ..Default::default()
-                            },
-                        },
-                    ],
-                    cx,
-                )
-                .unwrap();
-            project.disk_based_diagnostics_finished(language_server_id, cx);
-        });
-
-        view.next_notification(cx).await;
-        assert_eq!(
-            editor_blocks(&editor, cx),
-            [
-                (0, "path header block".into()),
-                (2, "diagnostic header".into()),
-                (7, "collapsed context".into()),
-                (8, "diagnostic header".into()),
-                (13, "path header block".into()),
-                (15, "diagnostic header".into()),
-                (28, "collapsed context".into()),
-                (29, "diagnostic header".into()),
-                (38, "collapsed context".into()),
-            ]
-        );
-
-        assert_eq!(
-            editor.update(cx, |editor, cx| editor.display_text(cx)),
-            concat!(
-                //
-                // consts.rs
-                //
-                "\n", // filename
-                "\n", // padding
-                // diagnostic group 1
-                "\n", // primary message
-                "\n", // padding
-                "const a: i32 = 'a';\n",
-                "\n", // supporting diagnostic
-                "const b: i32 = c;\n",
-                "\n", // context ellipsis
-                // diagnostic group 2
-                "\n", // primary message
-                "\n", // padding
-                "const a: i32 = 'a';\n",
-                "const b: i32 = c;\n",
-                "\n", // supporting diagnostic
-                //
-                // main.rs
-                //
-                "\n", // filename
-                "\n", // padding
-                // diagnostic group 1
-                "\n", // primary message
-                "\n", // padding
-                "    let x = vec![];\n",
-                "    let y = vec![];\n",
-                "\n", // supporting diagnostic
-                "    a(x);\n",
-                "    b(y);\n",
-                "\n", // supporting diagnostic
-                "    // comment 1\n",
-                "    // comment 2\n",
-                "    c(y);\n",
-                "\n", // supporting diagnostic
-                "    d(x);\n",
-                "\n", // context ellipsis
-                // diagnostic group 2
-                "\n", // primary message
-                "\n", // filename
-                "fn main() {\n",
-                "    let x = vec![];\n",
-                "\n", // supporting diagnostic
-                "    let y = vec![];\n",
-                "    a(x);\n",
-                "\n", // supporting diagnostic
-                "    b(y);\n",
-                "\n", // context ellipsis
-                "    c(y);\n",
-                "    d(x);\n",
-                "\n", // supporting diagnostic
-                "}"
-            )
-        );
-    }
-
-    #[gpui::test]
-    async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/test",
-            json!({
-                "main.js": "
-                    a();
-                    b();
-                    c();
-                    d();
-                    e();
-                ".unindent()
-            }),
-        )
-        .await;
-
-        let server_id_1 = LanguageServerId(100);
-        let server_id_2 = LanguageServerId(101);
-        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-        let workspace = window.root(cx).unwrap();
-
-        let view = window.build_view(cx, |cx| {
-            ProjectDiagnosticsEditor::new_with_context(
-                1,
-                project.clone(),
-                workspace.downgrade(),
-                cx,
-            )
-        });
-        let editor = view.update(cx, |view, _| view.editor.clone());
-
-        // Two language servers start updating diagnostics
-        project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_started(server_id_1, cx);
-            project.disk_based_diagnostics_started(server_id_2, cx);
-            project
-                .update_diagnostic_entries(
-                    server_id_1,
-                    PathBuf::from("/test/main.js"),
-                    None,
-                    vec![DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 1)),
-                        diagnostic: Diagnostic {
-                            message: "error 1".to_string(),
-                            severity: DiagnosticSeverity::WARNING,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 1,
-                            ..Default::default()
-                        },
-                    }],
-                    cx,
-                )
-                .unwrap();
-        });
-
-        // The first language server finishes
-        project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_finished(server_id_1, cx);
-        });
-
-        // Only the first language server's diagnostics are shown.
-        cx.executor().run_until_parked();
-        assert_eq!(
-            editor_blocks(&editor, cx),
-            [
-                (0, "path header block".into()),
-                (2, "diagnostic header".into()),
-            ]
-        );
-        assert_eq!(
-            editor.update(cx, |editor, cx| editor.display_text(cx)),
-            concat!(
-                "\n", // filename
-                "\n", // padding
-                // diagnostic group 1
-                "\n",     // primary message
-                "\n",     // padding
-                "a();\n", //
-                "b();",
-            )
-        );
-
-        // The second language server finishes
-        project.update(cx, |project, cx| {
-            project
-                .update_diagnostic_entries(
-                    server_id_2,
-                    PathBuf::from("/test/main.js"),
-                    None,
-                    vec![DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(1, 0))..Unclipped(PointUtf16::new(1, 1)),
-                        diagnostic: Diagnostic {
-                            message: "warning 1".to_string(),
-                            severity: DiagnosticSeverity::ERROR,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 2,
-                            ..Default::default()
-                        },
-                    }],
-                    cx,
-                )
-                .unwrap();
-            project.disk_based_diagnostics_finished(server_id_2, cx);
-        });
-
-        // Both language server's diagnostics are shown.
-        cx.executor().run_until_parked();
-        assert_eq!(
-            editor_blocks(&editor, cx),
-            [
-                (0, "path header block".into()),
-                (2, "diagnostic header".into()),
-                (6, "collapsed context".into()),
-                (7, "diagnostic header".into()),
-            ]
-        );
-        assert_eq!(
-            editor.update(cx, |editor, cx| editor.display_text(cx)),
-            concat!(
-                "\n", // filename
-                "\n", // padding
-                // diagnostic group 1
-                "\n",     // primary message
-                "\n",     // padding
-                "a();\n", // location
-                "b();\n", //
-                "\n",     // collapsed context
-                // diagnostic group 2
-                "\n",     // primary message
-                "\n",     // padding
-                "a();\n", // context
-                "b();\n", //
-                "c();",   // context
-            )
-        );
-
-        // Both language servers start updating diagnostics, and the first server finishes.
-        project.update(cx, |project, cx| {
-            project.disk_based_diagnostics_started(server_id_1, cx);
-            project.disk_based_diagnostics_started(server_id_2, cx);
-            project
-                .update_diagnostic_entries(
-                    server_id_1,
-                    PathBuf::from("/test/main.js"),
-                    None,
-                    vec![DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(2, 0))..Unclipped(PointUtf16::new(2, 1)),
-                        diagnostic: Diagnostic {
-                            message: "warning 2".to_string(),
-                            severity: DiagnosticSeverity::WARNING,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 1,
-                            ..Default::default()
-                        },
-                    }],
-                    cx,
-                )
-                .unwrap();
-            project
-                .update_diagnostic_entries(
-                    server_id_2,
-                    PathBuf::from("/test/main.rs"),
-                    None,
-                    vec![],
-                    cx,
-                )
-                .unwrap();
-            project.disk_based_diagnostics_finished(server_id_1, cx);
-        });
-
-        // Only the first language server's diagnostics are updated.
-        cx.executor().run_until_parked();
-        assert_eq!(
-            editor_blocks(&editor, cx),
-            [
-                (0, "path header block".into()),
-                (2, "diagnostic header".into()),
-                (7, "collapsed context".into()),
-                (8, "diagnostic header".into()),
-            ]
-        );
-        assert_eq!(
-            editor.update(cx, |editor, cx| editor.display_text(cx)),
-            concat!(
-                "\n", // filename
-                "\n", // padding
-                // diagnostic group 1
-                "\n",     // primary message
-                "\n",     // padding
-                "a();\n", // location
-                "b();\n", //
-                "c();\n", // context
-                "\n",     // collapsed context
-                // diagnostic group 2
-                "\n",     // primary message
-                "\n",     // padding
-                "b();\n", // context
-                "c();\n", //
-                "d();",   // context
-            )
-        );
-
-        // The second language server finishes.
-        project.update(cx, |project, cx| {
-            project
-                .update_diagnostic_entries(
-                    server_id_2,
-                    PathBuf::from("/test/main.js"),
-                    None,
-                    vec![DiagnosticEntry {
-                        range: Unclipped(PointUtf16::new(3, 0))..Unclipped(PointUtf16::new(3, 1)),
-                        diagnostic: Diagnostic {
-                            message: "warning 2".to_string(),
-                            severity: DiagnosticSeverity::WARNING,
-                            is_primary: true,
-                            is_disk_based: true,
-                            group_id: 1,
-                            ..Default::default()
-                        },
-                    }],
-                    cx,
-                )
-                .unwrap();
-            project.disk_based_diagnostics_finished(server_id_2, cx);
-        });
-
-        // Both language servers' diagnostics are updated.
-        cx.executor().run_until_parked();
-        assert_eq!(
-            editor_blocks(&editor, cx),
-            [
-                (0, "path header block".into()),
-                (2, "diagnostic header".into()),
-                (7, "collapsed context".into()),
-                (8, "diagnostic header".into()),
-            ]
-        );
-        assert_eq!(
-            editor.update(cx, |editor, cx| editor.display_text(cx)),
-            concat!(
-                "\n", // filename
-                "\n", // padding
-                // diagnostic group 1
-                "\n",     // primary message
-                "\n",     // padding
-                "b();\n", // location
-                "c();\n", //
-                "d();\n", // context
-                "\n",     // collapsed context
-                // diagnostic group 2
-                "\n",     // primary message
-                "\n",     // padding
-                "c();\n", // context
-                "d();\n", //
-                "e();",   // context
-            )
-        );
-    }
-
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
-            client::init_settings(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
-            crate::init(cx);
-            editor::init(cx);
-        });
-    }
-
-    fn editor_blocks(
-        editor: &View<Editor>,
-        cx: &mut VisualTestContext,
-    ) -> Vec<(u32, SharedString)> {
-        let mut blocks = Vec::new();
-        cx.draw(gpui::Point::default(), AvailableSpace::min_size(), |cx| {
-            editor.update(cx, |editor, cx| {
-                let snapshot = editor.snapshot(cx);
-                blocks.extend(
-                    snapshot
-                        .blocks_in_range(0..snapshot.max_point().row())
-                        .enumerate()
-                        .filter_map(|(ix, (row, block))| {
-                            let name: SharedString = match block {
-                                TransformBlock::Custom(block) => {
-                                    let mut element = block.render(&mut BlockContext {
-                                        context: cx,
-                                        anchor_x: px(0.),
-                                        gutter_dimensions: &GutterDimensions::default(),
-                                        line_height: px(0.),
-                                        em_width: px(0.),
-                                        max_width: px(0.),
-                                        block_id: ix,
-                                        editor_style: &editor::EditorStyle::default(),
-                                    });
-                                    let element = element.downcast_mut::<Stateful<Div>>().unwrap();
-                                    element
-                                        .interactivity()
-                                        .element_id
-                                        .clone()?
-                                        .try_into()
-                                        .ok()?
-                                }
-
-                                TransformBlock::ExcerptHeader {
-                                    starts_new_buffer, ..
-                                } => {
-                                    if *starts_new_buffer {
-                                        "path header block".into()
-                                    } else {
-                                        "collapsed context".into()
-                                    }
-                                }
-                            };
-
-                            Some((row, name))
-                        }),
-                )
-            });
-
-            div().into_any()
-        });
-        blocks
-    }
 }
