@@ -6,6 +6,9 @@ use theme::{ThemeSettings, UiDensity};
 pub enum Spacing {
     /// No spacing
     None,
+    /// Usually a one pixel spacing. Grows to 2px in comfortable density.
+    /// @16px/rem: `1px`|`1px`|`2px`
+    XXSmall,
     /// Extra small spacing - @16px/rem: `1px`|`2px`|`4px`
     ///
     /// Relative to the user's `ui_font_size` and [UiDensity] setting.
@@ -22,6 +25,8 @@ pub enum Spacing {
     ///
     /// Relative to the user's `ui_font_size` and [UiDensity] setting.
     Large,
+    XLarge,
+    XXLarge,
 }
 
 impl Spacing {
@@ -29,24 +34,33 @@ impl Spacing {
         match ThemeSettings::get_global(cx).ui_density {
             UiDensity::Compact => match self {
                 Spacing::None => 0.0,
+                Spacing::XXSmall => 1. / 16.,
                 Spacing::XSmall => 1. / 16.,
                 Spacing::Small => 2. / 16.,
                 Spacing::Medium => 3. / 16.,
                 Spacing::Large => 4. / 16.,
+                Spacing::XLarge => 8. / 16.,
+                Spacing::XXLarge => 12. / 16.,
             },
             UiDensity::Default => match self {
                 Spacing::None => 0.0,
+                Spacing::XXSmall => 1. / 16.,
                 Spacing::XSmall => 2. / 16.,
                 Spacing::Small => 4. / 16.,
                 Spacing::Medium => 6. / 16.,
                 Spacing::Large => 8. / 16.,
+                Spacing::XLarge => 12. / 16.,
+                Spacing::XXLarge => 16. / 16.,
             },
             UiDensity::Comfortable => match self {
                 Spacing::None => 0.0,
+                Spacing::XXSmall => 2. / 16.,
                 Spacing::XSmall => 3. / 16.,
                 Spacing::Small => 6. / 16.,
                 Spacing::Medium => 8. / 16.,
                 Spacing::Large => 10. / 16.,
+                Spacing::XLarge => 16. / 16.,
+                Spacing::XXLarge => 20. / 16.,
             },
         }
     }
@@ -67,5 +81,5 @@ pub fn user_spacing_style(cx: &WindowContext) -> UiDensity {
 }
 
 pub fn custom_spacing(cx: &WindowContext, size: f32) -> Rems {
-    rems(size * user_spacing_style(cx).spacing_ratio())
+    crate::rems_from_px(size * user_spacing_style(cx).spacing_ratio())
 }
