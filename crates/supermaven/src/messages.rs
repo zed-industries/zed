@@ -106,16 +106,32 @@ pub struct ActivationRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupermavenSetMessage {
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SupermavenMessage {
     Response(SupermavenResponse),
     Metadata(SupermavenMetadataMessage),
-    Apology { message: Option<String> },
+    Apology {
+        message: Option<String>,
+    },
     ActivationRequest(ActivationRequest),
     ActivationSuccess,
-    Passthrough { passthrough: Box<SupermavenMessage> },
+    Passthrough {
+        passthrough: Box<SupermavenMessage>,
+    },
     Popup(SupermavenPopupMessage),
     TaskStatus(SupermavenTaskUpdateMessage),
     ActiveRepo(SupermavenActiveRepoMessage),
-    ServiceTier { service_tier: String },
+    ServiceTier {
+        service_tier: String,
+    },
+    Set(SupermavenSetMessage),
+    #[serde(other)]
+    Unknown,
 }

@@ -17,17 +17,17 @@ use smol::{
     io::AsyncWriteExt,
     process::{Child, ChildStdin, ChildStdout, Command},
 };
-use std::{ops::Range, path::PathBuf, process::Stdio};
+use std::{ops::Range, path::PathBuf, process::Stdio, sync::Arc};
 pub use supermaven_completion_provider::*;
 use ui::prelude::*;
-use util::ResultExt;
+use util::{http::HttpClient, ResultExt};
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(client: Arc<dyn HttpClient>, cx: &mut AppContext) {
     cx.set_global(Supermaven::Starting);
 
     let mut provider = all_language_settings(None, cx).inline_completions.provider;
     if provider == language::language_settings::InlineCompletionProvider::Supermaven {
-        Supermaven::update(cx, |supermaven, cx| supermaven.start(cx));
+        Supermaven::update(cx, |supermaven, cx| supermaven.start(client.clone(), cx));
     }
 
     cx.observe_global::<SettingsStore>(move |cx| {
@@ -35,7 +35,7 @@ pub fn init(cx: &mut AppContext) {
         if new_provider != provider {
             provider = new_provider;
             if provider == language::language_settings::InlineCompletionProvider::Supermaven {
-                Supermaven::update(cx, |supermaven, cx| supermaven.start(cx));
+                Supermaven::update(cx, |supermaven, cx| supermaven.start(client.clone(), cx));
             } else {
                 Supermaven::update(cx, |supermaven, _cx| supermaven.stop());
             }
@@ -46,6 +46,9 @@ pub fn init(cx: &mut AppContext) {
 
 pub enum Supermaven {
     Starting,
+    FailedDownload {
+        error: anyhow::Error,
+    },
     Spawned {
         _process: Child,
         next_state_id: SupermavenCompletionStateId,
@@ -57,21 +60,12 @@ pub enum Supermaven {
 }
 
 impl Supermaven {
-    pub fn download(&mut self, cx: &mut AppContext) -> Task<Result<()>> {
-        // todo!(): Set up API client to download for current platform and architecture
-        // https://supermaven.com/api/download-path?platform=darwin&arch=arm64
-        cx.spawn(|_cx| async {
-            // todo!(): Download supermaven binary
-            Ok(())
-        })
-    }
-
-    pub fn start(&mut self, cx: &mut AppContext) {
+    pub fn start(&mut self, client: Arc<dyn HttpClient>, cx: &mut AppContext) {
         if let Self::Starting = self {
             cx.spawn(|cx| async move {
-                // todo!(): Download supermaven binary if not already downloaded
-                let binary_path = std::env::var("SUPERMAVEN_AGENT_BINARY")
-                    .expect("set SUPERMAVEN_AGENT_BINARY env variable");
+                // todo!(): Don't download the most up to date binary every time, check to see if a recent is downloaded
+                let binary_path = supermaven_api::download_latest(client).await?;
+
                 let mut process = Command::new(&binary_path)
                     .arg("stdio")
                     .stdin(Stdio::piped())
