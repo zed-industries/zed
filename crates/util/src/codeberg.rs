@@ -1,4 +1,4 @@
-use crate::http::HttpClient;
+use crate::{git_author::GitAuthor, http::HttpClient};
 use anyhow::{bail, Context, Result};
 use futures::AsyncReadExt;
 use isahc::{config::Configurable, AsyncBody, Request};
@@ -23,13 +23,6 @@ struct Author {
     date: String,
 }
 
-#[derive(Debug)]
-pub struct CodebergAuthor {
-    pub id: u64,
-    pub email: String,
-    pub avatar_url: String,
-}
-
 #[derive(Debug, Deserialize)]
 struct User {
     pub login: String,
@@ -42,7 +35,7 @@ pub async fn fetch_codeberg_commit_author(
     repo: &str,
     commit: &str,
     client: &Arc<dyn HttpClient>,
-) -> Result<Option<CodebergAuthor>> {
+) -> Result<Option<GitAuthor>> {
     let url = format!("https://codeberg.org/api/v1/repos/{repo_owner}/{repo}/git/commits/{commit}");
 
     let mut request = Request::get(&url)
@@ -74,7 +67,7 @@ pub async fn fetch_codeberg_commit_author(
     serde_json::from_str::<CommitDetails>(body_str)
         .map(|codeberg_commit| {
             if let Some(author) = codeberg_commit.author {
-                Some(CodebergAuthor {
+                Some(GitAuthor {
                     id: author.id,
                     avatar_url: author.avatar_url,
                     email: codeberg_commit.commit.author.email,
