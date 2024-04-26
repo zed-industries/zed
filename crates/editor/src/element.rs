@@ -1186,15 +1186,50 @@ impl EditorElement {
             .to_point(snapshot)
             .row;
 
+        let expanded_hunk_display_rows = self.editor.update(cx, |editor, _| {
+            editor
+                .expanded_hunks
+                .iter()
+                .map(|expanded_hunk| {
+                    let start_row = expanded_hunk
+                        .hunk_range
+                        .start
+                        .to_display_point(snapshot)
+                        .row();
+                    let end_row = expanded_hunk
+                        .hunk_range
+                        .end
+                        .to_display_point(snapshot)
+                        .row();
+                    (start_row, end_row)
+                })
+                .collect::<HashMap<_, _>>()
+        });
+
         buffer_snapshot
             .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
             .map(|hunk| diff_hunk_to_display(hunk, snapshot))
             .dedup()
             .map(|hunk| {
-                let hitbox = if let DisplayDiffHunk::Unfolded { .. } = &hunk {
-                    let hunk_bounds =
-                        Self::diff_hunk_bounds(&snapshot, line_height, gutter_hitbox.bounds, &hunk);
-                    Some(cx.insert_hitbox(hunk_bounds, true))
+                let hitbox = if let DisplayDiffHunk::Unfolded {
+                    display_row_range, ..
+                } = &hunk
+                {
+                    let was_expanded = expanded_hunk_display_rows
+                        .get(&display_row_range.start)
+                        .map(|expanded_end_row| expanded_end_row == &display_row_range.end)
+                        .unwrap_or(false);
+                    if was_expanded {
+                        None
+                    } else {
+                        let hunk_bounds = Self::diff_hunk_bounds(
+                            &snapshot,
+                            line_height,
+                            gutter_hitbox.bounds,
+                            &hunk,
+                        );
+                        Some(cx.insert_hitbox(hunk_bounds, true))
+                    }
                 } else {
                     None
                 };
@@ -2369,77 +2404,87 @@ impl EditorElement {
         let line_height = layout.position_map.line_height;
         let mut hovered_hunk = None;
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            for (hunk, _) in &layout.display_hunks {
-                let (clickable_hunk, background_color, corner_radii) = match hunk {
-                    DisplayDiffHunk::Folded { .. } => (
+            for (hunk, hitbox) in &layout.display_hunks {
+                let hunk_to_paint = match hunk {
+                    DisplayDiffHunk::Folded { .. } => Some((
                         None,
                         cx.theme().status().modified,
                         Corners::all(1. * line_height),
-                    ),
+                    )),
                     DisplayDiffHunk::Unfolded {
                         status,
                         diff_base_byte_range,
                         multi_buffer_range,
                         ..
                     } => {
-                        let hunk_to_expand_on_click = Some((
-                            multi_buffer_range,
-                            diff_base_byte_range,
-                            status,
-                        ))
-                        .filter(|(hunk_range, _, _)| {
-                            let Some(&already_expanded_end) = expanded_hunk_display_rows
-                                .get(&hunk_range.start.to_display_point(display_snapshot).row())
-                            else {
-                                return true;
-                            };
-                            already_expanded_end
-                                != hunk_range.end.to_display_point(display_snapshot).row()
-                        });
+                        let not_expanded = hitbox.is_some();
+                        if not_expanded {
+                            let hunk_to_expand_on_click = Some((
+                                multi_buffer_range,
+                                diff_base_byte_range,
+                                status,
+                            ))
+                            .filter(|(hunk_range, _, _)| {
+                                let Some(&already_expanded_end) = expanded_hunk_display_rows.get(
+                                    &hunk_range.start.to_display_point(display_snapshot).row(),
+                                ) else {
+                                    return true;
+                                };
+                                already_expanded_end
+                                    != hunk_range.end.to_display_point(display_snapshot).row()
+                            });
 
-                        match status {
-                            DiffHunkStatus::Added => (
-                                hunk_to_expand_on_click,
-                                cx.theme().status().created,
-                                Corners::all(0.05 * line_height),
-                            ),
-                            DiffHunkStatus::Modified => (
-                                hunk_to_expand_on_click,
-                                cx.theme().status().modified,
-                                Corners::all(0.05 * line_height),
-                            ),
-                            DiffHunkStatus::Removed => (
-                                hunk_to_expand_on_click,
-                                cx.theme().status().deleted,
-                                Corners::all(1. * line_height),
-                            ),
+                            let hunk_to_paint = match status {
+                                DiffHunkStatus::Added => (
+                                    hunk_to_expand_on_click,
+                                    cx.theme().status().created,
+                                    Corners::all(0.05 * line_height),
+                                ),
+                                DiffHunkStatus::Modified => (
+                                    hunk_to_expand_on_click,
+                                    cx.theme().status().modified,
+                                    Corners::all(0.05 * line_height),
+                                ),
+                                DiffHunkStatus::Removed => (
+                                    hunk_to_expand_on_click,
+                                    cx.theme().status().deleted,
+                                    Corners::all(1. * line_height),
+                                ),
+                            };
+                            Some(hunk_to_paint)
+                        } else {
+                            None
                         }
                     }
                 };
 
-                let hunk_bounds = Self::diff_hunk_bounds(
-                    &layout.position_map.snapshot,
-                    line_height,
-                    bounds,
-                    &hunk,
-                );
-                if let Some((multi_buffer_range, diff_base_byte_range, &status)) = clickable_hunk {
-                    if hunk_bounds.contains(mouse_position) {
-                        hovered_hunk = Some(HunkToShow {
-                            multi_buffer_range: multi_buffer_range.clone(),
-                            diff_base_byte_range: diff_base_byte_range.clone(),
-                            status,
-                        });
+                if let Some((clickable_hunk, background_color, corner_radii)) = hunk_to_paint {
+                    let hunk_bounds = Self::diff_hunk_bounds(
+                        &layout.position_map.snapshot,
+                        line_height,
+                        bounds,
+                        &hunk,
+                    );
+                    if let Some((multi_buffer_range, diff_base_byte_range, &status)) =
+                        clickable_hunk
+                    {
+                        if hunk_bounds.contains(mouse_position) {
+                            hovered_hunk = Some(HunkToShow {
+                                multi_buffer_range: multi_buffer_range.clone(),
+                                diff_base_byte_range: diff_base_byte_range.clone(),
+                                status,
+                            });
+                        }
                     }
-                }
 
-                cx.paint_quad(quad(
-                    hunk_bounds,
-                    corner_radii,
-                    background_color,
-                    Edges::default(),
-                    transparent_black(),
-                ));
+                    cx.paint_quad(quad(
+                        hunk_bounds,
+                        corner_radii,
+                        background_color,
+                        Edges::default(),
+                        transparent_black(),
+                    ));
+                }
             }
         });
 

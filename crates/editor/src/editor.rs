@@ -9483,7 +9483,7 @@ impl Editor {
         color: Option<Hsla>,
         cx: &mut ViewContext<Self>,
     ) {
-        let snapshot = self.snapshot(cx);
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
         match self.highlighted_rows.entry(TypeId::of::<T>()) {
             hash_map::Entry::Occupied(o) => {
                 let row_highlights = o.into_mut();
@@ -9491,12 +9491,8 @@ impl Editor {
                     row_highlights.binary_search_by(|(_, highlight_range, _)| {
                         highlight_range
                             .start
-                            .cmp(&rows.start, &snapshot.buffer_snapshot)
-                            .then(
-                                highlight_range
-                                    .end
-                                    .cmp(&rows.end, &snapshot.buffer_snapshot),
-                            )
+                            .cmp(&rows.start, &multi_buffer_snapshot)
+                            .then(highlight_range.end.cmp(&rows.end, &multi_buffer_snapshot))
                     });
                 match color {
                     Some(color) => {
