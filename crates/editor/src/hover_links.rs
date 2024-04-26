@@ -3,7 +3,7 @@ use crate::{
     Anchor, Editor, EditorSnapshot, FindAllReferences, GoToDefinition, GoToTypeDefinition, InlayId,
     PointForPosition, SelectPhase,
 };
-use gpui::{px, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
+use gpui::{px, AppContext, AsyncWindowContext, Model, Modifiers, Task, ViewContext};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
@@ -11,8 +11,7 @@ use project::{
     HoverBlock, HoverBlockKind, InlayHintLabelPartTooltip, InlayHintTooltip, LocationLink,
     ResolveState,
 };
-use std::{cmp, ops::Range};
-use text::Point;
+use std::ops::Range;
 use theme::ActiveTheme as _;
 use util::{maybe, ResultExt, TryFutureExt};
 
@@ -85,6 +84,25 @@ impl TriggerPoint {
     }
 }
 
+pub fn exclude_link_to_position(
+    buffer: &Model<language::Buffer>,
+    current_position: &text::Anchor,
+    location: &LocationLink,
+    cx: &AppContext,
+) -> bool {
+    // Exclude definition links that points back to cursor position.
+    // (i.e., currently cursor upon definition).
+    let snapshot = buffer.read(cx).snapshot();
+    !(buffer == &location.target.buffer
+        && current_position
+            .bias_right(&snapshot)
+            .cmp(&location.target.range.start, &snapshot)
+            .is_ge()
+        && current_position
+            .cmp(&location.target.range.end, &snapshot)
+            .is_le())
+}
+
 impl Editor {
     pub(crate) fn update_hovered_link(
         &mut self,
@@ -132,28 +150,12 @@ impl Editor {
         modifiers: Modifiers,
         cx: &mut ViewContext<Editor>,
     ) {
-        let selection_before_revealing = self.selections.newest::<Point>(cx);
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let before_revealing_head = selection_before_revealing.head();
-        let before_revealing_tail = selection_before_revealing.tail();
-        let before_revealing = match before_revealing_tail.cmp(&before_revealing_head) {
-            cmp::Ordering::Equal | cmp::Ordering::Less => {
-                multi_buffer_snapshot.anchor_after(before_revealing_head)
-                    ..multi_buffer_snapshot.anchor_before(before_revealing_tail)
-            }
-            cmp::Ordering::Greater => {
-                multi_buffer_snapshot.anchor_before(before_revealing_tail)
-                    ..multi_buffer_snapshot.anchor_after(before_revealing_head)
-            }
-        };
-        drop(multi_buffer_snapshot);
-
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, cx);
         cx.spawn(|editor, mut cx| async move {
             let definition_revealed = reveal_task.await.log_err().unwrap_or(false);
             let find_references = editor
                 .update(&mut cx, |editor, cx| {
-                    if definition_revealed && revealed_elsewhere(editor, before_revealing, cx) {
+                    if definition_revealed {
                         return None;
                     }
                     editor.find_all_references(&FindAllReferences, cx)
@@ -180,12 +182,30 @@ impl Editor {
                     cx.focus(&self.focus_handle);
                 }
 
-                return self.navigate_to_hover_links(
-                    None,
-                    hovered_link_state.links,
-                    modifiers.alt,
-                    cx,
-                );
+                // exclude links pointing back to the current anchor
+                let current_position = point
+                    .next_valid
+                    .to_point(&self.snapshot(cx).display_snapshot);
+                let Some((buffer, anchor)) = self
+                    .buffer()
+                    .read(cx)
+                    .text_anchor_for_position(current_position, cx)
+                else {
+                    return Task::ready(Ok(false));
+                };
+                let links = hovered_link_state
+                    .links
+                    .into_iter()
+                    .filter(|link| {
+                        if let HoverLink::Text(location) = link {
+                            exclude_link_to_position(&buffer, &anchor, location, cx)
+                        } else {
+                            true
+                        }
+                    })
+                    .collect();
+
+                return self.navigate_to_hover_links(None, links, modifiers.alt, cx);
             }
         }
 
@@ -210,46 +230,6 @@ impl Editor {
             Task::ready(Ok(false))
         }
     }
-}
-
-fn revealed_elsewhere(
-    editor: &mut Editor,
-    before_revealing: Range<Anchor>,
-    cx: &mut ViewContext<'_, Editor>,
-) -> bool {
-    let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-
-    let selection_after_revealing = editor.selections.newest::<Point>(cx);
-    let after_revealing_head = selection_after_revealing.head();
-    let after_revealing_tail = selection_after_revealing.tail();
-    let after_revealing = match after_revealing_tail.cmp(&after_revealing_head) {
-        cmp::Ordering::Equal | cmp::Ordering::Less => {
-            multi_buffer_snapshot.anchor_after(after_revealing_tail)
-                ..multi_buffer_snapshot.anchor_before(after_revealing_head)
-        }
-        cmp::Ordering::Greater => {
-            multi_buffer_snapshot.anchor_after(after_revealing_head)
-                ..multi_buffer_snapshot.anchor_before(after_revealing_tail)
-        }
-    };
-
-    let before_intersects_after_range = (before_revealing
-        .start
-        .cmp(&after_revealing.start, &multi_buffer_snapshot)
-        .is_ge()
-        && before_revealing
-            .start
-            .cmp(&after_revealing.end, &multi_buffer_snapshot)
-            .is_le())
-        || (before_revealing
-            .end
-            .cmp(&after_revealing.start, &multi_buffer_snapshot)
-            .is_ge()
-            && before_revealing
-                .end
-                .cmp(&after_revealing.end, &multi_buffer_snapshot)
-                .is_le());
-    !before_intersects_after_range
 }
 
 pub fn update_inlay_link_and_hover_points(

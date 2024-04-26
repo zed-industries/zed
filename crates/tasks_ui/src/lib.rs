@@ -8,7 +8,7 @@ use anyhow::Context;
 use editor::Editor;
 use gpui::{AppContext, ViewContext, WindowContext};
 use language::{BasicContextProvider, ContextProvider, Language};
-use modal::{Spawn, TasksModal};
+use modal::TasksModal;
 use project::{Location, TaskSourceKind, WorktreeId};
 use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables};
 use util::ResultExt;
@@ -16,9 +16,8 @@ use workspace::Workspace;
 
 mod modal;
 mod settings;
-mod status_indicator;
 
-pub use status_indicator::TaskStatusIndicator;
+pub use modal::Spawn;
 
 pub fn init(cx: &mut AppContext) {
     settings::TaskSettings::register(cx);
@@ -67,6 +66,8 @@ pub fn init(cx: &mut AppContext) {
                                 cx,
                             );
                         }
+                    } else {
+                        toggle_modal(workspace, cx);
                     };
                 });
         },
@@ -77,15 +78,17 @@ pub fn init(cx: &mut AppContext) {
 fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
     match &action.task_name {
         Some(name) => spawn_task_with_name(name.clone(), cx),
-        None => {
-            let inventory = workspace.project().read(cx).task_inventory().clone();
-            let workspace_handle = workspace.weak_handle();
-            let task_context = task_context(workspace, cx);
-            workspace.toggle_modal(cx, |cx| {
-                TasksModal::new(inventory, task_context, workspace_handle, cx)
-            })
-        }
+        None => toggle_modal(workspace, cx),
     }
+}
+
+fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) {
+    let inventory = workspace.project().read(cx).task_inventory().clone();
+    let workspace_handle = workspace.weak_handle();
+    let task_context = task_context(workspace, cx);
+    workspace.toggle_modal(cx, |cx| {
+        TasksModal::new(inventory, task_context, workspace_handle, cx)
+    })
 }
 
 fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
@@ -470,6 +473,7 @@ mod tests {
     pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
+            file_icons::init((), cx);
             language::init(cx);
             crate::init(cx);
             editor::init(cx);

@@ -1,7 +1,7 @@
-use gpui::{svg, IntoElement, Rems, Transformation};
+use gpui::{svg, Hsla, IntoElement, Rems, Transformation};
 use strum::EnumIter;
 
-use crate::prelude::*;
+use crate::{prelude::*, Indicator};
 
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum IconSize {
@@ -281,5 +281,65 @@ impl RenderOnce for Icon {
             .flex_none()
             .path(self.path)
             .text_color(self.color.color(cx))
+    }
+}
+
+#[derive(IntoElement)]
+pub struct IconWithIndicator {
+    icon: Icon,
+    indicator: Option<Indicator>,
+    indicator_border_color: Option<Hsla>,
+}
+
+impl IconWithIndicator {
+    pub fn new(icon: Icon, indicator: Option<Indicator>) -> Self {
+        Self {
+            icon,
+            indicator,
+            indicator_border_color: None,
+        }
+    }
+
+    pub fn indicator(mut self, indicator: Option<Indicator>) -> Self {
+        self.indicator = indicator;
+        self
+    }
+
+    pub fn indicator_color(mut self, color: Color) -> Self {
+        if let Some(indicator) = self.indicator.as_mut() {
+            indicator.color = color;
+        }
+        self
+    }
+
+    pub fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
+        self.indicator_border_color = color;
+        self
+    }
+}
+
+impl RenderOnce for IconWithIndicator {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let indicator_border_color = self
+            .indicator_border_color
+            .unwrap_or_else(|| cx.theme().colors().elevated_surface_background);
+
+        div()
+            .relative()
+            .child(self.icon)
+            .when_some(self.indicator, |this, indicator| {
+                this.child(
+                    div()
+                        .absolute()
+                        .w_2()
+                        .h_2()
+                        .border()
+                        .border_color(indicator_border_color)
+                        .rounded_full()
+                        .neg_bottom_0p5()
+                        .neg_right_1()
+                        .child(indicator),
+                )
+            })
     }
 }
