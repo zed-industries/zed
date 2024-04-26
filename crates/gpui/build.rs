@@ -9,7 +9,7 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     {
-        let manifest = std::path::Path::new("resources/windows/gpui.mainfest.xml");
+        let manifest = std::path::Path::new("resources/windows/gpui.manifest.xml");
         let rc_file = std::path::Path::new("resources/windows/gpui.rc");
         println!("cargo:rerun-if-changed={}", manifest.display());
         println!("cargo:rerun-if-changed={}", rc_file.display());
