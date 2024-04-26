@@ -120,6 +120,9 @@ xkbcommon = { version = "0.7", features = ["wayland", "x11"] }
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "2.4"
+
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
