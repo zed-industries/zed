@@ -1834,6 +1834,21 @@ impl Project {
         }
     }
 
+    pub fn leave_remote_project(&mut self) {
+        if self.is_shared() {
+            return;
+        }
+        if let Some(project_id) = self.remote_id() {
+            self.collaborators.clear();
+            self.shared_buffers.clear();
+            self.client_subscriptions.clear();
+
+            self.client
+                .send(proto::LeaveProject { project_id })
+                .log_err();
+        }
+    }
+
     pub fn disconnected_from_host(&mut self, cx: &mut ModelContext<Self>) {
         self.disconnected_from_host_internal(cx);
         cx.emit(Event::DisconnectedFromHost);
