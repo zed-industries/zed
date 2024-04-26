@@ -8,7 +8,6 @@ use std::{fmt::Display, ops::Range, path::PathBuf};
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownElement {
     Heading(ParsedMarkdownHeading),
-    /// An ordered or unordered list of items.
     ListItem(ParsedMarkdownListItem),
     Table(ParsedMarkdownTable),
     BlockQuote(ParsedMarkdownBlockQuote),
