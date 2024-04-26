@@ -110,8 +110,8 @@ pub fn change_object(vim: &mut Vim, object: Object, around: bool, cx: &mut Windo
 // Special case: "cw" and "cW" are treated like "ce" and "cE" if the cursor is
 // on a non-blank.  This is because "cw" is interpreted as change-word, and a
 // word does not include the following white space.  {Vi: "cw" when on a blank
-//     followed by other blanks changes only the first blank; this is probably a
-//     bug, because "dw" deletes all the blanks}
+// followed by other blanks changes only the first blank; this is probably a
+// bug, because "dw" deletes all the blanks}
 fn expand_changed_word_selection(
     map: &DisplaySnapshot,
     selection: &mut Selection<DisplayPoint>,
@@ -206,6 +206,7 @@ mod test {
         cx.assert("Teˇst").await;
         cx.assert("Tˇest test").await;
         cx.assert("Testˇ  test").await;
+        cx.assert("Tesˇt  test").await;
         cx.assert(indoc! {"
                 Test teˇst
                 test"})
