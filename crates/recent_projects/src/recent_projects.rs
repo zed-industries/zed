@@ -310,7 +310,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     workspace.open_workspace_for_paths(false, paths, cx)
                                 }
                             }
-                            //TODO support opening remote projects in the same window
                             SerializedWorkspaceLocation::Remote(remote_project) => {
                                 let store = ::remote_projects::Store::global(cx).read(cx);
                                 let Some(project_id) = store
