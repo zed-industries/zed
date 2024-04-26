@@ -2699,7 +2699,6 @@ impl Project {
 
                 for (_, _, server) in self.language_servers_for_worktree(worktree_id) {
                     let text = include_text(server.as_ref()).then(|| buffer.read(cx).text());
-
                     server
                         .notify::<lsp::notification::DidSaveTextDocument>(
                             lsp::DidSaveTextDocumentParams {
@@ -2710,46 +2709,8 @@ impl Project {
                         .log_err();
                 }
 
-                let language_server_ids = self.language_server_ids_for_buffer(buffer.read(cx), cx);
-                for language_server_id in language_server_ids {
-                    if let Some(LanguageServerState::Running {
-                        adapter,
-                        simulate_disk_based_diagnostics_completion,
-                        ..
-                    }) = self.language_servers.get_mut(&language_server_id)
-                    {
-                        // After saving a buffer using a language server that doesn't provide
-                        // a disk-based progress token, kick off a timer that will reset every
-                        // time the buffer is saved. If the timer eventually fires, simulate
-                        // disk-based diagnostics being finished so that other pieces of UI
-                        // (e.g., project diagnostics view, diagnostic status bar) can update.
-                        // We don't emit an event right away because the language server might take
-                        // some time to publish diagnostics.
-                        if adapter.disk_based_diagnostics_progress_token.is_none() {
-                            const DISK_BASED_DIAGNOSTICS_DEBOUNCE: Duration =
-                                Duration::from_secs(1);
-
-                            let task = cx.spawn(move |this, mut cx| async move {
-                                cx.background_executor().timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE).await;
-                                if let Some(this) = this.upgrade() {
-                                    this.update(&mut cx, |this, cx| {
-                                        this.disk_based_diagnostics_finished(
-                                            language_server_id,
-                                            cx,
-                                        );
-                                        this.enqueue_buffer_ordered_message(
-                                            BufferOrderedMessage::LanguageServerUpdate {
-                                                language_server_id,
-                                                message:proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(Default::default())
-                                            },
-                                        )
-                                        .ok();
-                                    }).ok();
-                                }
-                            });
-                            *simulate_disk_based_diagnostics_completion = Some(task);
-                        }
-                    }
+                for language_server_id in self.language_server_ids_for_buffer(buffer.read(cx), cx) {
+                    self.simulate_disk_based_diagnostics_events_if_needed(language_server_id, cx);
                 }
             }
             BufferEvent::FileHandleChanged => {
@@ -2781,6 +2742,57 @@ impl Project {
         }
 
         None
+    }
+
+    // After saving a buffer using a language server that doesn't provide a disk-based progress token,
+    // kick off a timer that will reset every time the buffer is saved. If the timer eventually fires,
+    // simulate disk-based diagnostics being finished so that other pieces of UI (e.g., project
+    // diagnostics view, diagnostic status bar) can update. We don't emit an event right away because
+    // the language server might take some time to publish diagnostics.
+    fn simulate_disk_based_diagnostics_events_if_needed(
+        &mut self,
+        language_server_id: LanguageServerId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        const DISK_BASED_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_secs(1);
+
+        let Some(LanguageServerState::Running {
+            simulate_disk_based_diagnostics_completion,
+            adapter,
+            ..
+        }) = self.language_servers.get_mut(&language_server_id)
+        else {
+            return;
+        };
+
+        if adapter.disk_based_diagnostics_progress_token.is_some() {
+            return;
+        }
+
+        let prev_task = simulate_disk_based_diagnostics_completion.replace(cx.spawn(
+            move |this, mut cx| async move {
+                cx.background_executor()
+                    .timer(DISK_BASED_DIAGNOSTICS_DEBOUNCE)
+                    .await;
+
+                this.update(&mut cx, |this, cx| {
+                    this.disk_based_diagnostics_finished(language_server_id, cx);
+
+                    if let Some(LanguageServerState::Running {
+                        simulate_disk_based_diagnostics_completion,
+                        ..
+                    }) = this.language_servers.get_mut(&language_server_id)
+                    {
+                        *simulate_disk_based_diagnostics_completion = None;
+                    }
+                })
+                .ok();
+            },
+        ));
+
+        if prev_task.is_none() {
+            self.disk_based_diagnostics_started(language_server_id, cx);
+        }
     }
 
     fn request_buffer_diff_recalculation(
@@ -4041,13 +4053,7 @@ impl Project {
         match progress {
             lsp::WorkDoneProgress::Begin(report) => {
                 if is_disk_based_diagnostics_progress {
-                    language_server_status.has_pending_diagnostic_updates = true;
                     self.disk_based_diagnostics_started(language_server_id, cx);
-                    self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
-                        language_server_id,
-                        message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(Default::default())
-                    })
-                    .ok();
                 } else {
                     self.on_lsp_work_start(
                         language_server_id,
@@ -4092,18 +4098,7 @@ impl Project {
                 language_server_status.progress_tokens.remove(&token);
 
                 if is_disk_based_diagnostics_progress {
-                    language_server_status.has_pending_diagnostic_updates = false;
                     self.disk_based_diagnostics_finished(language_server_id, cx);
-                    self.enqueue_buffer_ordered_message(
-                        BufferOrderedMessage::LanguageServerUpdate {
-                            language_server_id,
-                            message:
-                                proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                                    Default::default(),
-                                ),
-                        },
-                    )
-                    .ok();
                 } else {
                     self.on_lsp_work_end(language_server_id, token.clone(), cx);
                 }
@@ -7744,7 +7739,22 @@ impl Project {
         language_server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) {
+        if let Some(language_server_status) =
+            self.language_server_statuses.get_mut(&language_server_id)
+        {
+            language_server_status.has_pending_diagnostic_updates = true;
+        }
+
         cx.emit(Event::DiskBasedDiagnosticsStarted { language_server_id });
+        if self.is_local() {
+            self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdating(
+                    Default::default(),
+                ),
+            })
+            .ok();
+        }
     }
 
     pub fn disk_based_diagnostics_finished(
@@ -7752,7 +7762,23 @@ impl Project {
         language_server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) {
+        if let Some(language_server_status) =
+            self.language_server_statuses.get_mut(&language_server_id)
+        {
+            language_server_status.has_pending_diagnostic_updates = false;
+        }
+
         cx.emit(Event::DiskBasedDiagnosticsFinished { language_server_id });
+
+        if self.is_local() {
+            self.enqueue_buffer_ordered_message(BufferOrderedMessage::LanguageServerUpdate {
+                language_server_id,
+                message: proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
+                    Default::default(),
+                ),
+            })
+            .ok();
+        }
     }
 
     pub fn active_entry(&self) -> Option<ProjectEntryId> {

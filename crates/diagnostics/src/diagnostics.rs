@@ -122,6 +122,9 @@ impl ProjectDiagnosticsEditor {
     ) -> Self {
         let project_event_subscription =
             cx.subscribe(&project_handle, |this, project, event, cx| match event {
+                project::Event::DiskBasedDiagnosticsStarted { .. } => {
+                    cx.notify();
+                }
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     log::debug!("disk based diagnostics finished for server {language_server_id}");
                     this.enqueue_update_stale_excerpts(Some(*language_server_id));
