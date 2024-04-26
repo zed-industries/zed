@@ -1,7 +1,8 @@
-use std::{ops::Range, time::Duration};
+use std::{ops::Range, sync::OnceLock, time::Duration};
 
 use gpui::{actions, impl_actions, ViewContext};
 use language::Point;
+use regex::Regex;
 use search::{buffer_search, BufferSearchBar, SearchOptions};
 use serde_derive::Deserialize;
 use workspace::{searchable::Direction, Workspace};
@@ -58,6 +59,11 @@ impl_actions!(
     vim,
     [FindCommand, ReplaceCommand, Search, MoveToPrev, MoveToNext]
 );
+
+static RANGE_REGEX: OnceLock<Regex> = OnceLock::new();
+pub(crate) fn range_regex() -> &'static Regex {
+    RANGE_REGEX.get_or_init(|| Regex::new(r"^(\d+),(\d+)s(.*)").unwrap())
+}
 
 pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(move_to_next);
@@ -418,7 +424,7 @@ fn parse_replace_all(query: &str) -> Replacement {
     let mut chars = query.chars();
     let mut range = None;
     let maybe_line_range_and_rest: Option<(Range<usize>, &str)> =
-        crate::command::RANGE_REGEX.captures(query).map(|captures| {
+        range_regex().captures(query).map(|captures| {
             (
                 captures.get(1).unwrap().as_str().parse().unwrap()
                     ..captures.get(2).unwrap().as_str().parse().unwrap(),

@@ -1,8 +1,6 @@
 use command_palette_hooks::CommandInterceptResult;
 use editor::actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive};
 use gpui::{impl_actions, Action, AppContext, ViewContext};
-use lazy_static::lazy_static;
-use regex::Regex;
 use serde_derive::Deserialize;
 use workspace::{SaveIntent, Workspace};
 
@@ -10,7 +8,7 @@ use crate::{
     motion::{EndOfDocument, Motion, StartOfDocument},
     normal::{
         move_cursor,
-        search::{FindCommand, ReplaceCommand},
+        search::{range_regex, FindCommand, ReplaceCommand},
         JoinLines,
     },
     state::Mode,
@@ -20,10 +18,6 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct GoToLine {
     pub line: u32,
-}
-
-lazy_static! {
-    pub(crate) static ref RANGE_REGEX: Regex = Regex::new(r"^(\d+),(\d+)s(.*)").unwrap();
 }
 
 impl_actions!(vim, [GoToLine]);
@@ -346,7 +340,7 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
                 )
             } else if let Ok(line) = query.parse::<u32>() {
                 (query, GoToLine { line }.boxed_clone())
-            } else if RANGE_REGEX.is_match(query) {
+            } else if range_regex().is_match(query) {
                 (
                     query,
                     ReplaceCommand {
