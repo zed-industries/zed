@@ -9507,7 +9507,6 @@ dependencies = [
  "strum",
  "theme",
  "ui",
- "winresource",
 ]
 
 [[package]]
