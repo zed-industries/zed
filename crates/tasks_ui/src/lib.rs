@@ -88,9 +88,9 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
             .update(&mut cx, |workspace, cx| {
                 let (worktree, language) = active_item_selection_properties(workspace, cx);
                 let tasks = workspace.project().update(cx, |project, cx| {
-                    project.task_inventory().update(cx, |inventory, cx| {
-                        inventory.list_tasks(language, worktree, cx)
-                    })
+                    project
+                        .task_inventory()
+                        .update(cx, |inventory, _| inventory.list_tasks(language, worktree))
                 });
                 let (task_source_kind, target_task) =
                     tasks.into_iter().find(|(_, task)| task.label == name)?;

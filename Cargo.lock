@@ -9795,6 +9795,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "hex",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json_lenient",

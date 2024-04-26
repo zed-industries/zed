@@ -209,12 +209,11 @@ impl PickerDelegate for TasksModalDelegate {
                                 return Vec::new();
                             };
                             let (used, current) =
-                                picker.delegate.inventory.update(cx, |inventory, cx| {
+                                picker.delegate.inventory.update(cx, |inventory, _| {
                                     inventory.used_and_current_resolved_tasks(
                                         language,
                                         worktree,
                                         &picker.delegate.task_context,
-                                        cx,
                                     )
                                 });
                             picker.delegate.last_used_candidate_index = if used.is_empty() {
