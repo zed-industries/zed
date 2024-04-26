@@ -1285,7 +1285,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
         test_lines
             .into_iter()
@@ -3070,7 +3070,7 @@ fn prepaint_gutter_button(
     gutter_dimensions: &GutterDimensions,
     scroll_pixel_position: gpui::Point<Pixels>,
     gutter_hitbox: &Hitbox,
-    cx: &mut ElementContext<'_>,
+    cx: &mut WindowContext,
 ) -> AnyElement {
     let mut button = button.into_any_element();
     let available_space = size(

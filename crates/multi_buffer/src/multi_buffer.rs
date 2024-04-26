@@ -31,7 +31,6 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::{Bias, Cursor, SumTree};
-use task::RunnableTag;
 use text::{
     locator::Locator,
     subscription::{Subscription, Topic},

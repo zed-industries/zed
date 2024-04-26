@@ -249,7 +249,7 @@ impl Inventory {
             .flat_map(|source| {
                 source
                     .source
-                    .update(cx, |source, cx| source.tasks_to_schedule())
+                    .update(cx, |source, _| source.tasks_to_schedule())
                     .0
                     .into_iter()
                     .map(|task| (&source.kind, task))

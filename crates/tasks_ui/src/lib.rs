@@ -1,17 +1,11 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use ::settings::Settings;
-use anyhow::Context;
 use editor::{tasks::task_context, Editor};
 use gpui::{AppContext, ViewContext, WindowContext};
-use language::{BasicContextProvider, ContextProvider, Language};
+use language::Language;
 use modal::TasksModal;
-use project::{Location, TaskSourceKind, WorktreeId};
-use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables};
-use util::ResultExt;
+use project::WorktreeId;
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
 

@@ -1,7 +1,7 @@
 //! A source of tasks, based on a static configuration, deserialized from the tasks config file, and related infrastructure for tracking changes to the file.
 
 use futures::StreamExt;
-use gpui::{AppContext, Context, Model, ModelContext, Subscription};
+use gpui::{AppContext, Context, Model, Subscription};
 use serde::Deserialize;
 use util::ResultExt;
 

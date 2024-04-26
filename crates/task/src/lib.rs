@@ -6,7 +6,7 @@ mod task_template;
 mod vscode_format;
 
 use collections::{HashMap, HashSet};
-use gpui::{AppContext, ModelContext, SharedString};
+use gpui::SharedString;
 use serde::Serialize;
 use std::any::Any;
 use std::borrow::Cow;

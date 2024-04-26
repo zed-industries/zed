@@ -8,8 +8,7 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    ResolvedTask, RunnableTag, SpawnInTerminal, TaskContext, TaskId, VariableName,
-    ZED_VARIABLE_NAME_PREFIX,
+    ResolvedTask, SpawnInTerminal, TaskContext, TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
 };
 
 /// A template definition of a Zed task to run.
