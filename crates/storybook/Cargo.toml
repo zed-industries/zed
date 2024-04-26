@@ -35,8 +35,5 @@ strum = { version = "0.25.0", features = ["derive"] }
 theme.workspace = true
 ui = { workspace = true, features = ["stories"] }
 
-[target.'cfg(target_os = "windows")'.build-dependencies]
-winresource = "0.1"
-
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

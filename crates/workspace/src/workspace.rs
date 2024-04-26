@@ -544,6 +544,10 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
+type PromptForNewPath = Box<
+    dyn Fn(&mut Workspace, &mut ViewContext<Workspace>) -> oneshot::Receiver<Option<ProjectPath>>,
+>;
+
 /// Collects everything project-related for a certain window opened.
 /// In some way, is a counterpart of a window, as the [`WindowHandle`] could be downcast into `Workspace`.
 ///
@@ -585,6 +589,7 @@ pub struct Workspace {
     bounds: Bounds<Pixels>,
     centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
+    on_prompt_for_new_path: Option<PromptForNewPath>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -875,6 +880,7 @@ impl Workspace {
             bounds: Default::default(),
             centered_layout: false,
             bounds_save_task_queued: None,
+            on_prompt_for_new_path: None,
         }
     }
 
@@ -1221,6 +1227,59 @@ impl Workspace {
     pub fn set_titlebar_item(&mut self, item: AnyView, cx: &mut ViewContext<Self>) {
         self.titlebar_item = Some(item);
         cx.notify();
+    }
+
+    pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
+        self.on_prompt_for_new_path = Some(prompt)
+    }
+
+    pub fn prompt_for_new_path(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> oneshot::Receiver<Option<ProjectPath>> {
+        if let Some(prompt) = self.on_prompt_for_new_path.take() {
+            let rx = prompt(self, cx);
+            self.on_prompt_for_new_path = Some(prompt);
+            rx
+        } else {
+            let start_abs_path = self
+                .project
+                .update(cx, |project, cx| {
+                    let worktree = project.visible_worktrees(cx).next()?;
+                    Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                })
+                .unwrap_or_else(|| Path::new("").into());
+
+            let (tx, rx) = oneshot::channel();
+            let abs_path = cx.prompt_for_new_path(&start_abs_path);
+            cx.spawn(|this, mut cx| async move {
+                let abs_path = abs_path.await?;
+                let project_path = abs_path.and_then(|abs_path| {
+                    this.update(&mut cx, |this, cx| {
+                        this.project.update(cx, |project, cx| {
+                            project.find_or_create_local_worktree(abs_path, true, cx)
+                        })
+                    })
+                    .ok()
+                });
+
+                if let Some(project_path) = project_path {
+                    let (worktree, path) = project_path.await?;
+                    let worktree_id = worktree.read_with(&cx, |worktree, _| worktree.id())?;
+                    tx.send(Some(ProjectPath {
+                        worktree_id,
+                        path: path.into(),
+                    }))
+                    .ok();
+                } else {
+                    tx.send(None).ok();
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            rx
+        }
     }
 
     pub fn titlebar_item(&self) -> Option<AnyView> {
@@ -4785,6 +4844,7 @@ pub fn join_hosted_project(
 pub fn join_remote_project(
     project_id: ProjectId,
     app_state: Arc<AppState>,
+    window_to_replace: Option<WindowHandle<Workspace>>,
     cx: &mut AppContext,
 ) -> Task<Result<WindowHandle<Workspace>>> {
     let windows = cx.windows();
@@ -4816,16 +4876,25 @@ pub fn join_remote_project(
             )
             .await?;
 
-            let window_bounds_override = window_bounds_env_override();
-            cx.update(|cx| {
-                let mut options = (app_state.build_window_options)(None, cx);
-                options.bounds = window_bounds_override;
-                cx.open_window(options, |cx| {
-                    cx.new_view(|cx| {
+            if let Some(window_to_replace) = window_to_replace {
+                cx.update_window(window_to_replace.into(), |_, cx| {
+                    cx.replace_root_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
+                    });
+                })?;
+                window_to_replace
+            } else {
+                let window_bounds_override = window_bounds_env_override();
+                cx.update(|cx| {
+                    let mut options = (app_state.build_window_options)(None, cx);
+                    options.bounds = window_bounds_override;
+                    cx.open_window(options, |cx| {
+                        cx.new_view(|cx| {
+                            Workspace::new(Default::default(), project, app_state.clone(), cx)
+                        })
                     })
-                })
-            })?
+                })?
+            }
         };
 
         workspace.update(&mut cx, |_, cx| {

@@ -32,6 +32,7 @@ use futures::{
     stream::FuturesUnordered,
     AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
 };
+use fuzzy::CharBag;
 use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
@@ -368,6 +369,22 @@ pub struct LanguageServerProgress {
 pub struct ProjectPath {
     pub worktree_id: WorktreeId,
     pub path: Arc<Path>,
+}
+
+impl ProjectPath {
+    pub fn from_proto(p: proto::ProjectPath) -> Self {
+        Self {
+            worktree_id: WorktreeId::from_proto(p.worktree_id),
+            path: Arc::from(PathBuf::from(p.path)),
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::ProjectPath {
+        proto::ProjectPath {
+            worktree_id: self.worktree_id.to_proto(),
+            path: self.path.to_string_lossy().to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2189,33 +2206,37 @@ impl Project {
         let path = file.path.clone();
         worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => worktree.save_buffer(buffer, path, false, cx),
-            Worktree::Remote(worktree) => worktree.save_buffer(buffer, cx),
+            Worktree::Remote(worktree) => worktree.save_buffer(buffer, None, cx),
         })
     }
 
     pub fn save_buffer_as(
         &mut self,
         buffer: Model<Buffer>,
-        abs_path: PathBuf,
+        path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let worktree_task = self.find_or_create_local_worktree(&abs_path, true, cx);
         let old_file = File::from_dyn(buffer.read(cx).file())
             .filter(|f| f.is_local())
             .cloned();
+        let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("worktree does not exist")));
+        };
+
         cx.spawn(move |this, mut cx| async move {
             if let Some(old_file) = &old_file {
                 this.update(&mut cx, |this, cx| {
                     this.unregister_buffer_from_language_servers(&buffer, old_file, cx);
                 })?;
             }
-            let (worktree, path) = worktree_task.await?;
             worktree
                 .update(&mut cx, |worktree, cx| match worktree {
                     Worktree::Local(worktree) => {
-                        worktree.save_buffer(buffer.clone(), path.into(), true, cx)
+                        worktree.save_buffer(buffer.clone(), path.path, true, cx)
                     }
-                    Worktree::Remote(_) => panic!("cannot remote buffers as new files"),
+                    Worktree::Remote(worktree) => {
+                        worktree.save_buffer(buffer.clone(), Some(path.to_proto()), cx)
+                    }
                 })?
                 .await?;
 
@@ -8676,8 +8697,17 @@ impl Project {
             .await?;
         let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
 
-        this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
+        if let Some(new_path) = envelope.payload.new_path {
+            let new_path = ProjectPath::from_proto(new_path);
+            this.update(&mut cx, |this, cx| {
+                this.save_buffer_as(buffer.clone(), new_path, cx)
+            })?
             .await?;
+        } else {
+            this.update(&mut cx, |this, cx| this.save_buffer(buffer.clone(), cx))?
+                .await?;
+        }
+
         buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
@@ -10414,6 +10444,7 @@ pub struct PathMatchCandidateSet {
     pub snapshot: Snapshot,
     pub include_ignored: bool,
     pub include_root_name: bool,
+    pub directories_only: bool,
 }
 
 impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
@@ -10443,7 +10474,11 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
 
     fn candidates(&'a self, start: usize) -> Self::Candidates {
         PathMatchCandidateSetIter {
-            traversal: self.snapshot.files(self.include_ignored, start),
+            traversal: if self.directories_only {
+                self.snapshot.directories(self.include_ignored, start)
+            } else {
+                self.snapshot.files(self.include_ignored, start)
+            },
         }
     }
 }
@@ -10456,15 +10491,16 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
     type Item = fuzzy::PathMatchCandidate<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.traversal.next().map(|entry| {
-            if let EntryKind::File(char_bag) = entry.kind {
-                fuzzy::PathMatchCandidate {
-                    path: &entry.path,
-                    char_bag,
-                }
-            } else {
-                unreachable!()
-            }
+        self.traversal.next().map(|entry| match entry.kind {
+            EntryKind::Dir => fuzzy::PathMatchCandidate {
+                path: &entry.path,
+                char_bag: CharBag::from_iter(entry.path.to_string_lossy().to_lowercase().chars()),
+            },
+            EntryKind::File(char_bag) => fuzzy::PathMatchCandidate {
+                path: &entry.path,
+                char_bag,
+            },
+            EntryKind::UnloadedDir | EntryKind::PendingDir => unreachable!(),
         })
     }
 }

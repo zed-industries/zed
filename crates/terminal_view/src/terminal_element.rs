@@ -578,7 +578,8 @@ impl Element for TerminalElement {
 
                 let font_features = terminal_settings
                     .font_features
-                    .unwrap_or(settings.buffer_font.features);
+                    .clone()
+                    .unwrap_or(settings.buffer_font.features.clone());
 
                 let line_height = terminal_settings.line_height.value();
                 let font_size = terminal_settings.font_size;

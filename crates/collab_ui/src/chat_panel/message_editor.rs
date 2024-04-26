@@ -522,7 +522,7 @@ impl Render for MessageEditor {
                 cx.theme().colors().text
             },
             font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
+            font_features: settings.ui_font.features.clone(),
             font_size: TextSize::Small.rems(cx).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
