@@ -6113,7 +6113,6 @@ dependencies = [
  "settings",
  "smallvec",
  "sum_tree",
- "task",
  "text",
  "theme",
  "util",
@@ -9808,7 +9807,6 @@ dependencies = [
 name = "tasks_ui"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "editor",
  "file_icons",
  "fuzzy",
