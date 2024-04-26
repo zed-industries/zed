@@ -40,7 +40,7 @@ pub fn change_motion(vim: &mut Vim, motion: Motion, times: Option<usize>, cx: &m
                                 times,
                                 ignore_punctuation,
                                 &text_layout_details,
-                                motion == Motion::NextWordStart { ignore_punctuation },
+                                motion == Motion::NextSubwordStart { ignore_punctuation },
                             )
                         }
                         _ => {
