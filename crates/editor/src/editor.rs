@@ -10340,7 +10340,7 @@ impl Render for Editor {
             EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.ui_font.family.clone(),
-                font_features: settings.ui_font.features,
+                font_features: settings.ui_font.features.clone(),
                 font_size: rems(0.875).into(),
                 font_weight: FontWeight::NORMAL,
                 font_style: FontStyle::Normal,
@@ -10353,7 +10353,7 @@ impl Render for Editor {
             EditorMode::Full => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
-                font_features: settings.buffer_font.features,
+                font_features: settings.buffer_font.features.clone(),
                 font_size: settings.buffer_font_size(cx).into(),
                 font_weight: FontWeight::NORMAL,
                 font_style: FontStyle::Normal,
@@ -10778,7 +10778,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
         let theme_settings = ThemeSettings::get_global(cx);
         text_style.font_family = theme_settings.buffer_font.family.clone();
         text_style.font_style = theme_settings.buffer_font.style;
-        text_style.font_features = theme_settings.buffer_font.features;
+        text_style.font_features = theme_settings.buffer_font.features.clone();
         text_style.font_weight = theme_settings.buffer_font.weight;
 
         let multi_line_diagnostic = diagnostic.message.contains('\n');
