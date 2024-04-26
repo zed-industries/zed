@@ -11,8 +11,7 @@ use gpui::{AppContext, Context, Model, ModelContext};
 use itertools::{Either, Itertools};
 use language::Language;
 use task::{
-    static_source::StaticSource, ResolvedTask, RunnableTag, TaskContext, TaskId, TaskTemplate,
-    VariableName,
+    static_source::StaticSource, ResolvedTask, TaskContext, TaskId, TaskTemplate, VariableName,
 };
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
