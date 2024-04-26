@@ -32,8 +32,6 @@ impl<T: PartialEq + 'static> TrackedFile<T> {
             cx.spawn(|tracked_file, mut cx| async move {
                 while let Some(new_contents) = tracker.next().await {
                     if !new_contents.trim().is_empty() {
-                        // String -> T (ZedTaskFormat)
-                        // String -> U (VsCodeFormat) -> Into::into T
                         let Some(new_contents) =
                             serde_json_lenient::from_str(&new_contents).log_err()
                         else {

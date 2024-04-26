@@ -231,36 +231,35 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         })
     });
 
+    let tasks = serde_json::to_string(&TaskTemplates(vec![TaskTemplate {
+        label: "cargo check".to_string(),
+        command: "cargo".to_string(),
+        args: vec![
+            "check".to_string(),
+            "--all".to_string(),
+            "--all-targets".to_string(),
+        ],
+        env: HashMap::from_iter(Some((
+            "RUSTFLAGS".to_string(),
+            "-Zunstable-options".to_string(),
+        ))),
+        ..TaskTemplate::default()
+    }]))
+    .unwrap();
+    let (tx, rx) = futures::channel::mpsc::unbounded();
+
+    let templates = cx.update(|cx| TrackedFile::new(rx, cx));
+    tx.unbounded_send(tasks).unwrap();
+
+    let source = cx.update(|cx| StaticSource::new(templates, cx));
+    cx.run_until_parked();
+
     cx.update(|cx| {
         let all_tasks = project
             .update(cx, |project, cx| {
                 project.task_inventory().update(cx, |inventory, cx| {
                     inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
-                    inventory.add_source(
-                        global_task_source_kind.clone(),
-                        |cx| {
-                            cx.new_model(|_| {
-                                let source = TestTaskSource {
-                                    tasks: TaskTemplates(vec![TaskTemplate {
-                                        label: "cargo check".to_string(),
-                                        command: "cargo".to_string(),
-                                        args: vec![
-                                            "check".to_string(),
-                                            "--all".to_string(),
-                                            "--all-targets".to_string(),
-                                        ],
-                                        env: HashMap::from_iter(Some((
-                                            "RUSTFLAGS".to_string(),
-                                            "-Zunstable-options".to_string(),
-                                        ))),
-                                        ..TaskTemplate::default()
-                                    }]),
-                                };
-                                Box::new(source) as Box<_>
-                            })
-                        },
-                        cx,
-                    );
+                    inventory.add_source(global_task_source_kind.clone(), |cx| source, cx);
                     let (mut old, new) = inventory.used_and_current_resolved_tasks(
                         None,
                         Some(workree_id),
@@ -315,20 +314,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             ]
         );
     });
-}
-
-struct TestTaskSource {
-    tasks: TaskTemplates,
-}
-
-impl TaskSource for TestTaskSource {
-    fn as_any(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn tasks_to_schedule(&self) -> TaskTemplates {
-        self.tasks.clone()
-    }
 }
 
 #[gpui::test]
