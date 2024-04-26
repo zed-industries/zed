@@ -3070,7 +3070,7 @@ fn prepaint_gutter_button(
     gutter_dimensions: &GutterDimensions,
     scroll_pixel_position: gpui::Point<Pixels>,
     gutter_hitbox: &Hitbox,
-    cx: &mut WindowContext,
+    cx: &mut WindowContext<'_>,
 ) -> AnyElement {
     let mut button = button.into_any_element();
     let available_space = size(
