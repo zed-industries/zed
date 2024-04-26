@@ -9605,7 +9605,7 @@ async fn test_edits_around_toggled_additions(
         }
         "#
     .unindent();
-
+    executor.run_until_parked();
     cx.set_state(
         &r#"
         use some::mod1;
@@ -9655,6 +9655,7 @@ async fn test_edits_around_toggled_additions(
     );
 
     cx.update_editor(|editor, cx| editor.handle_input("const D: u32 = 42;\n", cx));
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::mod1;
@@ -9693,6 +9694,7 @@ async fn test_edits_around_toggled_additions(
     });
 
     cx.update_editor(|editor, cx| editor.handle_input("const E: u32 = 42;\n", cx));
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::mod1;
@@ -9732,6 +9734,7 @@ async fn test_edits_around_toggled_additions(
         editor.move_up(&MoveUp, cx);
         editor.delete_line(&DeleteLine, cx);
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::mod1;
@@ -9777,6 +9780,7 @@ async fn test_edits_around_toggled_additions(
         editor.move_up(&MoveUp, cx);
         editor.delete_line(&DeleteLine, cx);
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::mod1;
@@ -9799,20 +9803,18 @@ async fn test_edits_around_toggled_additions(
         let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
         let git_additions_background_highlights =
             expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
-        assert_eq!(all_hunks, vec![(DiffHunkStatus::Added, 4..5)]);
-        assert_eq!(git_additions_background_highlights, vec![4..5]);
+        assert_eq!(all_hunks, vec![(DiffHunkStatus::Added, 5..6)]);
+        assert_eq!(git_additions_background_highlights, vec![5..6]);
         assert_eq!(all_hunks, all_expanded_hunks);
     });
 
     cx.update_editor(|editor, cx| {
-        editor.move_up(&MoveUp, cx);
+        editor.select_up_by_lines(&SelectUpByLines { lines: 5 }, cx);
         editor.delete_line(&DeleteLine, cx);
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
-        use some::mod1;
-        use some::mod2;
-
         ˇ
 
         fn main() {
@@ -9829,9 +9831,19 @@ async fn test_edits_around_toggled_additions(
         let all_expanded_hunks = expanded_hunks_display_lines(&editor, &snapshot.display_snapshot);
         let git_additions_background_highlights =
             expanded_hunks_background_highlights(editor, &snapshot.display_snapshot);
-        assert_eq!(all_hunks, vec![(DiffHunkStatus::Removed, 4..4)]);
-        assert_eq!(git_additions_background_highlights, Vec::new());
-        assert_eq!(all_hunks, all_expanded_hunks);
+        assert_eq!(
+            all_hunks,
+            vec![
+                (DiffHunkStatus::Removed, 0..0),
+                (DiffHunkStatus::Removed, 1..1)
+            ]
+        );
+        assert_eq!(
+            git_additions_background_highlights,
+            Vec::new(),
+            "Should close all stale expanded addition hunks"
+        );
+        assert_eq!(all_expanded_hunks, Vec::new());
     });
 }
 

@@ -9228,7 +9228,6 @@ impl Editor {
 
     // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
     // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
-    // TODO kb is possible to simplify the code and unite hitboxes with the HunkToShow?
     fn show_git_diff_hunk(
         &mut self,
         hunk: &HunkToShow,

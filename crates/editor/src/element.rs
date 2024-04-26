@@ -1,5 +1,4 @@
 use crate::{
-    added_hunk_color,
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     display_map::{
         BlockContext, BlockStyle, DisplaySnapshot, FoldStatus, HighlightedChunk, ToDisplayPoint,
@@ -2390,30 +2389,24 @@ impl EditorElement {
 
         let line_height = layout.position_map.line_height;
         let mut hunks_to_reexpand = Vec::with_capacity(layout.display_hunks.len());
-        let mut added_row_highlights = Vec::with_capacity(layout.display_hunks.len());
-        let mut removed_row_highlights = Vec::with_capacity(layout.display_hunks.len());
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
             let mut current_expanded_hunk = expanded_hunks.next();
             for (hunk, _) in &layout.display_hunks {
                 let (clickable_hunk, background_color, corner_radii) = match hunk {
                     DisplayDiffHunk::Folded { display_row } => {
-                        loop {
-                            if let Some((
-                                expanded_hunk_row_start,
-                                (expanded_hunk_row_end, expanded_hunk),
-                            )) = &current_expanded_hunk
-                            {
-                                if expanded_hunk_row_end < display_row {
-                                    current_expanded_hunk = expanded_hunks.next();
-                                } else if expanded_hunk_row_start > display_row {
-                                    break;
-                                } else {
-                                    hunks_to_remove.push(expanded_hunk.clone());
-                                    current_expanded_hunk = expanded_hunks.next();
-                                    break;
-                                }
-                            } else {
+                        while let Some((
+                            expanded_hunk_row_start,
+                            (expanded_hunk_row_end, expanded_hunk),
+                        )) = &current_expanded_hunk
+                        {
+                            if expanded_hunk_row_end < display_row {
+                                hunks_to_remove.push(expanded_hunk.clone());
+                                current_expanded_hunk = expanded_hunks.next();
+                            } else if expanded_hunk_row_start > display_row {
                                 break;
+                            } else {
+                                hunks_to_remove.push(expanded_hunk.clone());
+                                current_expanded_hunk = expanded_hunks.next();
                             }
                         }
 
@@ -2423,168 +2416,67 @@ impl EditorElement {
                             Corners::all(1. * line_height),
                         )
                     }
-                    // TODO kb revert (cmd-z) is not always properly updated
-                    // TODO kb does not properly handle added -> deleted hunk transformation yet
-                    // TODO kb nearby hunks badly react on changes and expands?
+                    // TODO kb revert (cmd-z) is not updating the expanded hunks
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
                         diff_base_byte_range,
                         multi_buffer_range,
                     } => {
-                        let mut new_hunk_to_expand =
+                        let mut hunk_to_expand_on_click =
                             Some((multi_buffer_range, diff_base_byte_range, status));
-                        loop {
-                            if let Some((
-                                expanded_hunk_row_start,
-                                (expanded_hunk_row_end, expanded_hunk),
-                            )) = &current_expanded_hunk
-                            {
-                                let expanded_hunk_row_start = *expanded_hunk_row_start;
-                                let expanded_hunk_row_end = *expanded_hunk_row_end;
-                                if expanded_hunk_row_end < display_row_range.start {
-                                    current_expanded_hunk = expanded_hunks.next();
-                                } else if expanded_hunk_row_start > display_row_range.end {
-                                    break;
-                                } else if &(expanded_hunk_row_start..expanded_hunk_row_end)
-                                    == display_row_range
-                                {
-                                    if matches!(expanded_hunk.status, DiffHunkStatus::Removed) {
-                                        if &expanded_hunk.diff_base_byte_range
-                                            != diff_base_byte_range
-                                        {
-                                            hunks_to_reexpand.push(new_hunk_to_expand);
-                                        } else {
-                                            new_hunk_to_expand = None;
-                                        }
-                                        current_expanded_hunk = expanded_hunks.next();
-                                    } else {
-                                        new_hunk_to_expand = None;
-                                        current_expanded_hunk = expanded_hunks.next();
-                                    }
-                                    break;
-                                } else {
-                                    let hunk_rows = display_row_range;
-                                    let expanded_hunk_rows = expanded_hunk
-                                        .hunk_range
-                                        .start
-                                        .to_display_point(display_snapshot)
-                                        .row()
-                                        ..expanded_hunk
-                                            .hunk_range
-                                            .end
-                                            .to_display_point(display_snapshot)
-                                            .row();
-                                    match expanded_hunk_rows.start.cmp(&hunk_rows.start) {
-                                        Ordering::Less => {
-                                            let removed_rows =
-                                                hunk_rows.start - expanded_hunk_rows.start;
-                                            let new_range_start = expanded_hunk_rows.start + 1;
-                                            let start_anchor =
-                                                display_snapshot.buffer_snapshot.anchor_at(
-                                                    DisplayPoint::new(new_range_start, 0)
-                                                        .to_point(display_snapshot),
-                                                    Bias::Right,
-                                                );
-                                            let end_anchor =
-                                                display_snapshot.buffer_snapshot.anchor_at(
-                                                    DisplayPoint::new(
-                                                        new_range_start + removed_rows,
-                                                        0,
-                                                    )
-                                                    .to_point(display_snapshot),
-                                                    Bias::Left,
-                                                );
-                                            removed_row_highlights.push(start_anchor..end_anchor);
-                                        }
-                                        Ordering::Greater => {
-                                            let added_rows =
-                                                expanded_hunk_rows.start - hunk_rows.start;
-                                            let new_range_start = hunk_rows.start + 1;
-                                            let start_anchor =
-                                                display_snapshot.buffer_snapshot.anchor_at(
-                                                    DisplayPoint::new(new_range_start, 0)
-                                                        .to_point(display_snapshot),
-                                                    Bias::Right,
-                                                );
-                                            let end_anchor =
-                                                display_snapshot.buffer_snapshot.anchor_at(
-                                                    DisplayPoint::new(
-                                                        new_range_start + added_rows,
-                                                        0,
-                                                    )
-                                                    .to_point(display_snapshot),
-                                                    Bias::Left,
-                                                );
-                                            added_row_highlights.push(start_anchor..end_anchor);
-                                        }
-                                        Ordering::Equal => {}
-                                    }
-                                    match expanded_hunk_rows.end.cmp(&hunk_rows.end) {
-                                        Ordering::Less => {
-                                            let added_rows =
-                                                hunk_rows.end - expanded_hunk_rows.end - 1;
-                                            let new_range_start = expanded_hunk_rows.end;
-                                            let start_anchor =
-                                                display_snapshot.buffer_snapshot.anchor_at(
-                                                    DisplayPoint::new(new_range_start, 0)
-                                                        .to_point(display_snapshot),
-                                                    Bias::Right,
-                                                );
-                                            let end_anchor =
-                                                display_snapshot.buffer_snapshot.anchor_at(
-                                                    DisplayPoint::new(
-                                                        new_range_start + added_rows,
-                                                        0,
-                                                    )
-                                                    .to_point(display_snapshot),
-                                                    Bias::Left,
-                                                );
-                                            added_row_highlights.push(start_anchor..end_anchor);
-                                        }
-                                        Ordering::Greater => {
-                                            let removed_rows =
-                                                expanded_hunk_rows.end - hunk_rows.end;
-                                            let new_range_start = hunk_rows.end + 1;
-                                            let start_anchor =
-                                                display_snapshot.buffer_snapshot.anchor_at(
-                                                    DisplayPoint::new(new_range_start, 0)
-                                                        .to_point(display_snapshot),
-                                                    Bias::Right,
-                                                );
-                                            let end_anchor =
-                                                display_snapshot.buffer_snapshot.anchor_at(
-                                                    DisplayPoint::new(
-                                                        new_range_start + removed_rows,
-                                                        0,
-                                                    )
-                                                    .to_point(display_snapshot),
-                                                    Bias::Left,
-                                                );
-                                            removed_row_highlights.push(start_anchor..end_anchor);
-                                        }
-                                        Ordering::Equal => {}
-                                    }
-                                    break;
-                                }
-                            } else {
+                        let mut expand_current_hunk = false;
+                        let hunk_row_range = display_row_range;
+                        while let Some((
+                            expanded_hunk_row_start,
+                            (expanded_hunk_row_end, expanded_hunk),
+                        )) = &current_expanded_hunk
+                        {
+                            let expanded_hunk_row_start = *expanded_hunk_row_start;
+                            let expanded_hunk_row_end = *expanded_hunk_row_end;
+                            if expanded_hunk_row_end < hunk_row_range.start {
+                                hunks_to_remove.push(expanded_hunk.clone());
+                                current_expanded_hunk = expanded_hunks.next();
+                            } else if expanded_hunk_row_start > hunk_row_range.end {
                                 break;
+                            } else if (
+                                &expanded_hunk.status,
+                                &expanded_hunk.diff_base_byte_range,
+                                &(expanded_hunk_row_start..expanded_hunk_row_end),
+                            ) == (status, diff_base_byte_range, hunk_row_range)
+                            {
+                                hunk_to_expand_on_click = None;
+                                current_expanded_hunk = expanded_hunks.next();
+                                break;
+                            } else {
+                                hunks_to_remove.push(expanded_hunk.clone());
+                                expand_current_hunk = true;
+                                current_expanded_hunk = expanded_hunks.next();
                             }
+                        }
+
+                        if expand_current_hunk {
+                            hunks_to_reexpand.push(HunkToShow {
+                                status: *status,
+                                multi_buffer_range: multi_buffer_range.clone(),
+                                diff_base_byte_range: diff_base_byte_range.clone(),
+                            });
+                            hunk_to_expand_on_click = None;
                         }
 
                         match status {
                             DiffHunkStatus::Added => (
-                                new_hunk_to_expand,
+                                hunk_to_expand_on_click,
                                 cx.theme().status().created,
                                 Corners::all(0.05 * line_height),
                             ),
                             DiffHunkStatus::Modified => (
-                                new_hunk_to_expand,
+                                hunk_to_expand_on_click,
                                 cx.theme().status().modified,
                                 Corners::all(0.05 * line_height),
                             ),
                             DiffHunkStatus::Removed => (
-                                new_hunk_to_expand,
+                                hunk_to_expand_on_click,
                                 cx.theme().status().deleted,
                                 Corners::all(1. * line_height),
                             ),
@@ -2622,29 +2514,25 @@ impl EditorElement {
             }
         });
 
-        // TODO kb process `hunks_to_reexpand`
         let mut removed_expanded_hunks = HashSet::default();
+        let mut removed_row_highlights = Vec::with_capacity(hunks_to_remove.len());
         let blocks_to_remove = hunks_to_remove
             .into_iter()
-            .map(|hunk| {
+            .flat_map(|hunk| {
                 removed_expanded_hunks.insert(hunk.id);
                 removed_row_highlights.push(hunk.hunk_range);
                 hunk.block
             })
-            .flatten()
             .collect();
         editor.update(cx, |editor, cx| {
-            for added_rows in added_row_highlights {
-                editor.highlight_rows::<GitRowHighlight>(
-                    added_rows,
-                    Some(added_hunk_color(cx)),
-                    cx,
-                );
-            }
             for removed_rows in removed_row_highlights {
                 editor.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
             }
             editor.remove_blocks(blocks_to_remove, None, cx);
+            for hunk in hunks_to_reexpand {
+                editor.show_git_diff_hunk(&hunk, cx);
+            }
+
             editor
                 .expanded_hunks
                 .retain(|hunk| !removed_expanded_hunks.contains(&hunk.id));
