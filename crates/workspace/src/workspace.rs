@@ -1254,16 +1254,14 @@ impl Workspace {
             let abs_path = cx.prompt_for_new_path(&start_abs_path);
             cx.spawn(|this, mut cx| async move {
                 let abs_path = abs_path.await?;
-                let project_path = abs_path
-                    .map(|abs_path| {
-                        this.update(&mut cx, |this, cx| {
-                            this.project.update(cx, |project, cx| {
-                                project.find_or_create_local_worktree(abs_path, true, cx)
-                            })
+                let project_path = abs_path.and_then(|abs_path| {
+                    this.update(&mut cx, |this, cx| {
+                        this.project.update(cx, |project, cx| {
+                            project.find_or_create_local_worktree(abs_path, true, cx)
                         })
-                        .ok()
                     })
-                    .flatten();
+                    .ok()
+                });
 
                 if let Some(project_path) = project_path {
                     let (worktree, path) = project_path.await?;

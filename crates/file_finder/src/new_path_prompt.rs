@@ -352,7 +352,6 @@ impl PickerDelegate for NewPathDelegate {
                         }
                         if let Some(path) = m.project_path(picker.delegate.project.read(cx), cx) {
                             if let Some(tx) = picker.delegate.tx.take() {
-                                dbg!("sending");
                                 tx.send(Some(path)).ok();
                             }
                         }
