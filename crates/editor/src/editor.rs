@@ -1178,7 +1178,7 @@ struct CodeActionContents {
 
 impl CodeActionContents {
     fn len(&self) -> usize {
-        match (self.tasks, self.actions) {
+        match (&self.tasks, &self.actions) {
             (Some(tasks), Some(actions)) => actions.len() + tasks.templates.len(),
             (Some(tasks), None) => tasks.templates.len(),
             (None, Some(actions)) => actions.len(),
@@ -1187,7 +1187,7 @@ impl CodeActionContents {
     }
 
     fn is_empty(&self) -> bool {
-        match (self.tasks, self.actions) {
+        match (&self.tasks, &self.actions) {
             (Some(tasks), Some(actions)) => actions.is_empty() && tasks.templates.is_empty(),
             (Some(tasks), None) => tasks.templates.is_empty(),
             (None, Some(actions)) => actions.is_empty(),
@@ -1195,43 +1195,71 @@ impl CodeActionContents {
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = CodeActionsItem> {
+    fn iter<'a>(&'a self) -> impl Iterator<Item = CodeActionsItem> + 'a {
         self.tasks
             .iter()
             .flat_map(|tasks| {
                 tasks
                     .templates
                     .iter()
-                    .map(|template| CodeActionsItem::Task(template))
+                    .map(|template| CodeActionsItem::Task(template.clone()))
             })
             .chain(self.actions.iter().flat_map(|actions| {
                 actions
                     .iter()
-                    .map(|action| CodeActionsItem::CodeAction(action))
+                    .map(|action| CodeActionsItem::CodeAction(action.clone()))
             }))
+    }
+    fn get(&self, index: usize) -> Option<CodeActionsItem> {
+        match (&self.tasks, &self.actions) {
+            (Some(tasks), Some(actions)) => {
+                if index < tasks.templates.len() {
+                    tasks
+                        .templates
+                        .get(index)
+                        .cloned()
+                        .map(CodeActionsItem::Task)
+                } else {
+                    actions
+                        .get(index - tasks.templates.len())
+                        .cloned()
+                        .map(CodeActionsItem::CodeAction)
+                }
+            }
+            (Some(tasks), None) => tasks
+                .templates
+                .get(index)
+                .cloned()
+                .map(CodeActionsItem::Task),
+            (None, Some(actions)) => actions.get(index).cloned().map(CodeActionsItem::CodeAction),
+            (None, None) => None,
+        }
     }
 }
 
+#[derive(Clone)]
 enum CodeActionsItem {
     Task(TaskTemplate),
     CodeAction(CodeAction),
 }
 
-impl Index<usize> for CodeActionContents {
-    type Output = CodeActionsItem;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        match (self.tasks, self.actions) {
-            (Some(tasks), Some(actions)) => {
-                if index < tasks.templates.len() {
-                    &CodeActionsItem::Task(tasks.templates[index])
-                } else {
-                    &CodeActionsItem::CodeAction(actions[index])
-                }
-            }
-            (Some(tasks), None) => &CodeActionsItem::Task(tasks.templates[index]),
-            (None, Some(actions)) => &CodeActionsItem::CodeAction(actions[index]),
-            (None, None) => panic!("Attempted to index a CodeActionContents of 0 length"),
+impl CodeActionsItem {
+    fn as_task(&self) -> Option<&TaskTemplate> {
+        let Self::Task(task) = self else {
+            return None;
+        };
+        Some(task)
+    }
+    fn as_code_action(&self) -> Option<&CodeAction> {
+        let Self::CodeAction(action) = self else {
+            return None;
+        };
+        Some(action)
+    }
+    fn label(&self) -> String {
+        match self {
+            Self::CodeAction(action) => action.lsp_action.title.clone(),
+            Self::Task(task) => task.label.clone(),
         }
     }
 }
@@ -1296,8 +1324,10 @@ impl CodeActionsMenu {
             "code_actions_menu",
             self.actions.len(),
             move |_this, range, cx| {
-                actions[range.clone()]
+                actions
                     .iter()
+                    .skip(range.start)
+                    .take(range.end - range.start)
                     .enumerate()
                     .map(|(ix, action)| {
                         let item_ix = range.start + ix;
@@ -1316,23 +1346,34 @@ impl CodeActionsMenu {
                                     .bg(colors.element_hover)
                                     .text_color(colors.text_accent)
                             })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |editor, _, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(task) = editor.confirm_code_action(
-                                        &ConfirmCodeAction {
-                                            item_ix: Some(item_ix),
-                                        },
-                                        cx,
-                                    ) {
-                                        task.detach_and_log_err(cx)
-                                    }
-                                }),
-                            )
                             .whitespace_nowrap()
-                            // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
-                            .child(SharedString::from(action.lsp_action.title.clone()))
+                            .when_some(action.as_code_action(), |this, action| {
+                                this.on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |editor, _, cx| {
+                                        cx.stop_propagation();
+                                        if let Some(task) = editor.confirm_code_action(
+                                            &ConfirmCodeAction {
+                                                item_ix: Some(item_ix),
+                                            },
+                                            cx,
+                                        ) {
+                                            task.detach_and_log_err(cx)
+                                        }
+                                    }),
+                                )
+                                // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
+                                .child(SharedString::from(action.lsp_action.title.clone()))
+                            })
+                            .when_some(action.as_task(), |this, task| {
+                                this.on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |_, _, cx| {
+                                        cx.stop_propagation();
+                                    }),
+                                )
+                                .child(SharedString::from(task.label.clone()))
+                            })
                     })
                     .collect()
             },
@@ -1347,7 +1388,10 @@ impl CodeActionsMenu {
             self.actions
                 .iter()
                 .enumerate()
-                .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
+                .max_by_key(|(_, action)| match action {
+                    CodeActionsItem::Task(task) => task.label.chars().count(),
+                    CodeActionsItem::CodeAction(action) => action.lsp_action.title.chars().count(),
+                })
                 .map(|(ix, _)| ix),
         )
         .into_any_element();
@@ -3751,7 +3795,10 @@ impl Editor {
                         *this.context_menu.write() =
                             Some(ContextMenu::CodeActions(CodeActionsMenu {
                                 buffer,
-                                actions,
+                                actions: CodeActionContents {
+                                    tasks: None,
+                                    actions: Some(actions),
+                                },
                                 selected_item: Default::default(),
                                 scroll_handle: UniformListScrollHandle::default(),
                                 deployed_from_indicator,
@@ -3777,18 +3824,20 @@ impl Editor {
             return None;
         };
         let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
-        let action = actions_menu.actions.get(action_ix)?.clone();
-        let title = action.lsp_action.title.clone();
+        let action = actions_menu.actions.get(action_ix)?;
+        let title = action.label();
         let buffer = actions_menu.buffer;
         let workspace = self.workspace()?;
 
-        let apply_code_actions = workspace
-            .read(cx)
-            .project()
-            .clone()
-            .update(cx, |project, cx| {
-                project.apply_code_action(buffer, action, true, cx)
-            });
+        let apply_code_actions =
+            workspace
+                .read(cx)
+                .project()
+                .clone()
+                .update(cx, |project, cx| {
+                    let action = action.as_code_action()?.clone();
+                    Some(project.apply_code_action(buffer, action, true, cx))
+                })?; //todo: this is wrong, as we should take care of task dispatch too.
         let workspace = workspace.downgrade();
         Some(cx.spawn(|editor, cx| async move {
             let project_transaction = apply_code_actions.await?;
