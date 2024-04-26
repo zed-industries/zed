@@ -14,6 +14,7 @@ use gpui::{
 };
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
+use postage::watch;
 use project::{Entry, Project, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
@@ -101,7 +102,7 @@ enum WorktreeIndexHandle {
     },
     Loaded {
         index: Model<WorktreeIndex>,
-        _subscription: Subscription,
+        _maintain_status: Task<()>,
     },
 }
 
@@ -170,14 +171,24 @@ impl ProjectIndex {
                 );
 
                 let load_worktree = cx.spawn(|this, mut cx| async move {
-                    if let Some(index) = worktree_index.await.log_err() {
+                    if let Some((worktree_index, mut worktree_status)) =
+                        worktree_index.await.log_err()
+                    {
                         this.update(&mut cx, |this, cx| {
                             this.worktree_indices.insert(
                                 worktree_id,
                                 WorktreeIndexHandle::Loaded {
-                                    _subscription: cx
-                                        .observe(&index, |this, _, cx| this.update_status(cx)),
-                                    index,
+                                    index: worktree_index,
+                                    _maintain_status: cx.spawn(|this, mut cx| async move {
+                                        while worktree_status.next().await.is_some() {
+                                            if this
+                                                .update(&mut cx, |this, cx| this.update_status(cx))
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                    }),
                                 },
                             );
                         })?;
@@ -204,13 +215,21 @@ impl ProjectIndex {
         for index in self.worktree_indices.values() {
             match index {
                 WorktreeIndexHandle::Loading { .. } => {
-                    status = Status::Scanning;
+                    status = Status::Scanning { remaining_count: 0 };
                     break;
                 }
                 WorktreeIndexHandle::Loaded { index, .. } => {
-                    if index.read(cx).status == Status::Scanning {
-                        status = Status::Scanning;
-                        break;
+                    if let Status::Scanning { remaining_count } = *index.read(cx).status.borrow() {
+                        match &mut status {
+                            Status::Idle => {
+                                status = Status::Scanning { remaining_count };
+                            }
+                            Status::Scanning {
+                                remaining_count: project_remaining_count,
+                            } => {
+                                *project_remaining_count += remaining_count;
+                            }
+                        }
                     }
                 }
             }
@@ -260,7 +279,7 @@ pub struct SearchResult {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Status {
     Idle,
-    Scanning,
+    Scanning { remaining_count: usize },
 }
 
 impl EventEmitter<Status> for ProjectIndex {}
@@ -272,7 +291,7 @@ struct WorktreeIndex {
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
-    status: Status,
+    status: watch::Sender<Status>,
     _index_entries: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -285,7 +304,7 @@ impl WorktreeIndex {
         fs: Arc<dyn Fs>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
         cx: &mut AppContext,
-    ) -> Task<Result<Model<Self>>> {
+    ) -> Task<Result<(Model<Self>, watch::Receiver<Status>)>> {
         let worktree_abs_path = worktree.read(cx).abs_path();
         cx.spawn(|mut cx| async move {
             let db = cx
@@ -301,17 +320,20 @@ impl WorktreeIndex {
                     }
                 })
                 .await?;
-            cx.new_model(|cx| {
+            let (status_tx, status_rx) = watch::channel_with(Status::Idle);
+            let worktree_index = cx.new_model(|cx| {
                 Self::new(
                     worktree,
                     db_connection,
                     db,
+                    status_tx,
                     language_registry,
                     fs,
                     embedding_provider,
                     cx,
                 )
-            })
+            })?;
+            Ok((worktree_index, status_rx))
         })
     }
 
@@ -319,6 +341,7 @@ impl WorktreeIndex {
         worktree: Model<Worktree>,
         db_connection: heed::Env,
         db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
+        status: watch::Sender<Status>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -338,7 +361,7 @@ impl WorktreeIndex {
             language_registry,
             fs,
             embedding_provider,
-            status: Status::Idle,
+            status,
             _index_entries: cx.spawn(|this, cx| Self::index_entries(this, updated_entries_rx, cx)),
             _subscription,
         }
@@ -350,27 +373,19 @@ impl WorktreeIndex {
         mut cx: AsyncAppContext,
     ) -> Result<()> {
         let index = this.update(&mut cx, |this, cx| {
-            cx.notify();
-            this.status = Status::Scanning;
+            *this.status.borrow_mut() = Status::Scanning { remaining_count: 0 };
             this.index_entries_changed_on_disk(cx)
         })?;
         index.await.log_err();
-        this.update(&mut cx, |this, cx| {
-            this.status = Status::Idle;
-            cx.notify();
-        })?;
+        this.update(&mut cx, |this, _| *this.status.borrow_mut() = Status::Idle)?;
 
         while let Ok(updated_entries) = updated_entries.recv().await {
             let index = this.update(&mut cx, |this, cx| {
-                cx.notify();
-                this.status = Status::Scanning;
+                *this.status.borrow_mut() = Status::Scanning { remaining_count: 0 };
                 this.index_updated_entries(updated_entries, cx)
             })?;
             index.await.log_err();
-            this.update(&mut cx, |this, cx| {
-                this.status = Status::Idle;
-                cx.notify();
-            })?;
+            this.update(&mut cx, |this, _| *this.status.borrow_mut() = Status::Idle)?;
         }
 
         Ok(())
