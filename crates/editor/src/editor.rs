@@ -460,7 +460,6 @@ pub struct Editor {
     active_inline_completion: Option<Inlay>,
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
-    next_expanded_hunk_id: usize,
     expanded_hunks: Vec<ExpandedGitHunk>,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -489,7 +488,6 @@ pub struct Editor {
 
 #[derive(Debug, Clone)]
 struct ExpandedGitHunk {
-    id: usize,
     block: Option<BlockId>,
     hunk_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
@@ -1513,7 +1511,6 @@ impl Editor {
             inline_completion_provider: None,
             active_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
-            next_expanded_hunk_id: 0,
             expanded_hunks: Vec::new(),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
@@ -9135,7 +9132,7 @@ impl Editor {
         let hunks = snapshot
             .display_snapshot
             .buffer_snapshot
-            .git_diff_hunks_in_range(0..snapshot.display_snapshot.max_point().row())
+            .git_diff_hunks_in_range(0..u32::MAX)
             .filter(|hunk| {
                 let hunk_display_row_range = Point::new(hunk.associated_range.start, 0)
                     .to_display_point(&snapshot.display_snapshot)
@@ -9304,7 +9301,6 @@ impl Editor {
         self.expanded_hunks.insert(
             block_insert_index,
             ExpandedGitHunk {
-                id: post_inc(&mut self.next_expanded_hunk_id),
                 block,
                 hunk_range: hunk_start..hunk_end,
                 diff_base_version,
@@ -9948,6 +9944,10 @@ impl Editor {
                 cx.emit(EditorEvent::DiffBaseChanged);
                 cx.notify();
             }
+            multi_buffer::Event::DiffUpdated { buffer } => {
+                self.sync_expanded_diff_hunks(buffer, cx);
+                cx.notify();
+            }
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
@@ -10384,6 +10384,94 @@ impl Editor {
             })
         }));
         self
+    }
+
+    // TODO kb highlights for additions are with one extra row in many cases
+    // TODO kb revert (cmd-z) is not updating the expanded hunks
+    // TODO kb make async, consider `block_with_timeout`
+    // TODO kb why fold buttons on the gutter do not work?
+    // TODO kb certain updates do not work properly still, write more tests? Randomized tests?
+    fn sync_expanded_diff_hunks(&mut self, buffer: &Model<Buffer>, cx: &mut ViewContext<'_, Self>) {
+        let snapshot = self.snapshot(cx);
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let mut recalculated_hunks = buffer_snapshot
+            .git_diff_hunks_in_row_range(0..u32::MAX)
+            .fuse()
+            .peekable();
+        let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.len());
+        let mut blocks_to_remove = HashSet::default();
+        let mut hunks_to_reexpand = Vec::with_capacity(self.expanded_hunks.len());
+        self.expanded_hunks.retain(|expanded_hunk| {
+            if expanded_hunk.hunk_range.start.buffer_id != Some(buffer_snapshot.remote_id()) {
+                return true;
+            }
+
+            let mut retain = false;
+            if expanded_hunk.diff_base_version == buffer.read(cx).diff_base_version() {
+                while let Some(buffer_hunk) = recalculated_hunks.peek() {
+                    let hunk_text_range = Point::new(buffer_hunk.associated_range.start, 0)
+                        ..Point::new(buffer_hunk.associated_range.end + 1, 0);
+                    let hunk_range = hunk_text_range.to_anchors(&snapshot.buffer_snapshot);
+                    if expanded_hunk
+                        .hunk_range
+                        .start
+                        .cmp(&hunk_range.end, &snapshot.buffer_snapshot)
+                        .is_gt()
+                    {
+                        recalculated_hunks.next();
+                        continue;
+                    } else if expanded_hunk
+                        .hunk_range
+                        .end
+                        .cmp(&hunk_range.start, &snapshot.buffer_snapshot)
+                        .is_lt()
+                    {
+                        break;
+                    } else {
+                        let ranges_match = expanded_hunk
+                            .hunk_range
+                            .start
+                            .cmp(&hunk_range.end, &snapshot.buffer_snapshot)
+                            .is_eq()
+                            && expanded_hunk
+                                .hunk_range
+                                .start
+                                .cmp(&hunk_range.end, &snapshot.buffer_snapshot)
+                                .is_eq();
+                        if ranges_match
+                            && expanded_hunk.status == buffer_hunk.status()
+                            && expanded_hunk.diff_base_byte_range
+                                == buffer_hunk.diff_base_byte_range
+                        {
+                            recalculated_hunks.next();
+                            retain = true;
+                        } else {
+                            hunks_to_reexpand.push(HunkToShow {
+                                multi_buffer_range: hunk_range,
+                                status: buffer_hunk.status(),
+                                diff_base_byte_range: buffer_hunk.diff_base_byte_range.clone(),
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
+            if !retain {
+                if let Some(block_id) = expanded_hunk.block {
+                    blocks_to_remove.insert(block_id);
+                }
+                highlights_to_remove.push(expanded_hunk.hunk_range.clone());
+            }
+            retain
+        });
+
+        for removed_rows in highlights_to_remove {
+            self.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
+        }
+        self.remove_blocks(blocks_to_remove, None, cx);
+        for hunk in hunks_to_reexpand {
+            self.show_git_diff_hunk(&hunk, cx);
+        }
     }
 }
 

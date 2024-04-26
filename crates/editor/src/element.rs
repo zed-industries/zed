@@ -13,9 +13,9 @@ use crate::{
     mouse_context_menu::{self, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GitRowHighlight, GutterDimensions,
-    HalfPageDown, HalfPageUp, HoveredCursor, HunkToShow, LineDown, LineUp, OpenExcerpts, PageDown,
-    PageUp, Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GutterDimensions, HalfPageDown,
+    HalfPageUp, HoveredCursor, HunkToShow, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
+    SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use client::ParticipantIndex;
@@ -2340,7 +2340,6 @@ impl EditorElement {
         clickable_hunks
     }
 
-    // TODO kb split into functions
     fn paint_diff_hunks(
         editor: &View<Editor>,
         bounds: Bounds<Pixels>,
@@ -2354,13 +2353,11 @@ impl EditorElement {
         }
 
         let display_snapshot = &layout.position_map.snapshot.display_snapshot;
-        let mut hunks_to_remove = Vec::with_capacity(layout.display_hunks.len());
-        let mut expanded_hunks = editor.update(cx, |editor, cx| {
+        let expanded_hunk_display_rows = editor.update(cx, |editor, _| {
             editor
                 .expanded_hunks
                 .iter()
-                .peekable()
-                .filter_map(|expanded_hunk| {
+                .map(|expanded_hunk| {
                     let start_row = expanded_hunk
                         .hunk_range
                         .start
@@ -2371,99 +2368,40 @@ impl EditorElement {
                         .end
                         .to_display_point(display_snapshot)
                         .row();
-                    let (_, buffer, _) = editor.buffer.read(cx).excerpt_containing(
-                        DisplayPoint::new(start_row, 0).to_point(display_snapshot),
-                        cx,
-                    )?;
-                    let diff_base_version = buffer.read(cx).diff_base_version();
-                    if diff_base_version != expanded_hunk.diff_base_version {
-                        hunks_to_remove.push(expanded_hunk.clone());
-                        None
-                    } else {
-                        Some((start_row, (end_row, expanded_hunk.clone())))
-                    }
+                    (start_row, end_row)
                 })
-                .sorted_by_key(|(hunk_row, _)| *hunk_row)
-                .fuse()
+                .collect::<HashMap<_, _>>()
         });
 
         let line_height = layout.position_map.line_height;
-        let mut hunks_to_reexpand = Vec::with_capacity(layout.display_hunks.len());
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            let mut current_expanded_hunk = expanded_hunks.next();
             for (hunk, _) in &layout.display_hunks {
                 let (clickable_hunk, background_color, corner_radii) = match hunk {
-                    DisplayDiffHunk::Folded { display_row } => {
-                        while let Some((
-                            expanded_hunk_row_start,
-                            (expanded_hunk_row_end, expanded_hunk),
-                        )) = &current_expanded_hunk
-                        {
-                            if expanded_hunk_row_end < display_row {
-                                hunks_to_remove.push(expanded_hunk.clone());
-                                current_expanded_hunk = expanded_hunks.next();
-                            } else if expanded_hunk_row_start > display_row {
-                                break;
-                            } else {
-                                hunks_to_remove.push(expanded_hunk.clone());
-                                current_expanded_hunk = expanded_hunks.next();
-                            }
-                        }
-
-                        (
-                            None,
-                            cx.theme().status().modified,
-                            Corners::all(1. * line_height),
-                        )
-                    }
-                    // TODO kb revert (cmd-z) is not updating the expanded hunks
+                    DisplayDiffHunk::Folded { .. } => (
+                        None,
+                        cx.theme().status().modified,
+                        Corners::all(1. * line_height),
+                    ),
                     DisplayDiffHunk::Unfolded {
                         status,
-                        display_row_range,
                         diff_base_byte_range,
                         multi_buffer_range,
+                        ..
                     } => {
-                        let mut hunk_to_expand_on_click =
-                            Some((multi_buffer_range, diff_base_byte_range, status));
-                        let mut expand_current_hunk = false;
-                        let hunk_row_range = display_row_range;
-                        while let Some((
-                            expanded_hunk_row_start,
-                            (expanded_hunk_row_end, expanded_hunk),
-                        )) = &current_expanded_hunk
-                        {
-                            let expanded_hunk_row_start = *expanded_hunk_row_start;
-                            let expanded_hunk_row_end = *expanded_hunk_row_end;
-                            if expanded_hunk_row_end < hunk_row_range.start {
-                                hunks_to_remove.push(expanded_hunk.clone());
-                                current_expanded_hunk = expanded_hunks.next();
-                            } else if expanded_hunk_row_start > hunk_row_range.end {
-                                break;
-                            } else if (
-                                &expanded_hunk.status,
-                                &expanded_hunk.diff_base_byte_range,
-                                &(expanded_hunk_row_start..expanded_hunk_row_end),
-                            ) == (status, diff_base_byte_range, hunk_row_range)
-                            {
-                                hunk_to_expand_on_click = None;
-                                current_expanded_hunk = expanded_hunks.next();
-                                break;
-                            } else {
-                                // TODO kb instead: consider incremental updates to row highlights and replace_blocks for the deletions/modifications.
-                                hunks_to_remove.push(expanded_hunk.clone());
-                                expand_current_hunk = true;
-                                current_expanded_hunk = expanded_hunks.next();
-                            }
-                        }
-
-                        if expand_current_hunk {
-                            hunks_to_reexpand.push(HunkToShow {
-                                status: *status,
-                                multi_buffer_range: multi_buffer_range.clone(),
-                                diff_base_byte_range: diff_base_byte_range.clone(),
-                            });
-                            hunk_to_expand_on_click = None;
-                        }
+                        let hunk_to_expand_on_click = Some((
+                            multi_buffer_range,
+                            diff_base_byte_range,
+                            status,
+                        ))
+                        .filter(|(hunk_range, _, _)| {
+                            let Some(&already_expanded_end) = expanded_hunk_display_rows
+                                .get(&hunk_range.start.to_display_point(display_snapshot).row())
+                            else {
+                                return true;
+                            };
+                            already_expanded_end
+                                != hunk_range.end.to_display_point(display_snapshot).row()
+                        });
 
                         match status {
                             DiffHunkStatus::Added => (
@@ -2512,29 +2450,6 @@ impl EditorElement {
                     Edges::default(),
                     transparent_black(),
                 ));
-            }
-        });
-
-        let mut removed_expanded_hunks = HashSet::default();
-        let mut removed_row_highlights = Vec::with_capacity(hunks_to_remove.len());
-        let blocks_to_remove = hunks_to_remove
-            .into_iter()
-            .flat_map(|hunk| {
-                removed_expanded_hunks.insert(hunk.id);
-                removed_row_highlights.push(hunk.hunk_range);
-                hunk.block
-            })
-            .collect();
-        editor.update(cx, |editor, cx| {
-            for removed_rows in removed_row_highlights {
-                editor.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
-            }
-            editor.remove_blocks(blocks_to_remove, None, cx);
-            editor
-                .expanded_hunks
-                .retain(|hunk| !removed_expanded_hunks.contains(&hunk.id));
-            for hunk in hunks_to_reexpand {
-                editor.show_git_diff_hunk(&hunk, cx);
             }
         });
 

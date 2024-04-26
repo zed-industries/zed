@@ -305,6 +305,8 @@ pub enum Event {
     Reloaded,
     /// The buffer's diff_base changed.
     DiffBaseChanged,
+    /// Buffer's excerpts for a certain diff base were recalculated.
+    DiffUpdated,
     /// The buffer's language was changed.
     LanguageChanged,
     /// The buffer's syntax trees were updated.
@@ -906,9 +908,10 @@ impl Buffer {
 
         Some(cx.spawn(|this, mut cx| async move {
             let buffer_diff = diff.await;
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, cx| {
                 this.git_diff = buffer_diff;
                 this.git_diff_update_count += 1;
+                cx.emit(Event::DiffUpdated);
             })
             .ok();
         }))

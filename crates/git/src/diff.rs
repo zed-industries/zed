@@ -195,7 +195,8 @@ impl BufferDiff {
         })
     }
 
-    pub fn clear(&mut self, buffer: &text::BufferSnapshot) {
+    #[cfg(test)]
+    fn clear(&mut self, buffer: &text::BufferSnapshot) {
         self.last_buffer_version = Some(buffer.version().clone());
         self.tree = SumTree::new();
     }
