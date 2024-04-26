@@ -1313,12 +1313,6 @@ impl Workspace {
         quitting: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
-        self.project().update(cx, |project, _| {
-            if project.remote_project_id().is_some() {
-                project.leave_remote_project();
-            }
-        });
-
         let active_call = self.active_call().cloned();
         let window = cx.window_handle();
 
