@@ -1,4 +1,4 @@
-mdod channel_modal;
+mod channel_modal;
 mod contact_finder;
 
 use self::channel_modal::ChannelModal;
