@@ -8200,9 +8200,13 @@ impl Editor {
                                 cursor_offset_in_rename_range_end..cursor_offset_in_rename_range
                             }
                         };
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                            s.select_ranges([rename_selection_range]);
-                        });
+                        if rename_selection_range.end > old_name.len() {
+                            editor.select_all(&SelectAll, cx);
+                        } else {
+                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                                s.select_ranges([rename_selection_range]);
+                            });
+                        }
                         editor
                     });
 
