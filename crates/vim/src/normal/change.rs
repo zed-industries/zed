@@ -120,7 +120,7 @@ fn expand_changed_word_selection(
     text_layout_details: &TextLayoutDetails,
     use_subword: bool,
 ) -> bool {
-    let is_not_in_word = || {
+    let is_in_word = || {
         let scope = map
             .buffer_snapshot
             .language_scope_at(selection.start.to_point(map));
@@ -129,10 +129,9 @@ fn expand_changed_word_selection(
             .next()
             .map(|(c, _)| char_kind(&scope, c) != CharKind::Whitespace)
             .unwrap_or_default();
-        return !in_word;
+        return in_word;
     };
-
-    if times.is_none() || times.unwrap() == 1 || is_not_in_word() {
+    if (times.is_none() || times.unwrap() == 1) && is_in_word() {
         let next_char = map
             .buffer_chars_at(
                 motion::next_char(map, selection.end, false).to_offset(map, Bias::Left),
