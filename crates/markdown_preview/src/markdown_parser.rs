@@ -580,6 +580,9 @@ impl<'a> MarkdownParser<'a> {
                         let source_range = source_ranges
                             .remove(&depth)
                             .unwrap_or(start_item_range.clone());
+
+                        // We need to remove the last character of the source range, because it includes the newline character
+                        let source_range = source_range.start..source_range.end - 1;
                         let item = ParsedMarkdownElement::ListItem(ParsedMarkdownListItem {
                             source_range,
                             content,
@@ -932,9 +935,9 @@ Some other content
         assert_eq!(
             parsed.children,
             vec![
-                list_item(0..9, 1, Unordered, vec![p("Item 1", 2..8)]),
-                list_item(9..18, 1, Unordered, vec![p("Item 2", 11..17)]),
-                list_item(18..27, 1, Unordered, vec![p("Item 3", 20..26)]),
+                list_item(0..8, 1, Unordered, vec![p("Item 1", 2..8)]),
+                list_item(9..17, 1, Unordered, vec![p("Item 2", 11..17)]),
+                list_item(18..26, 1, Unordered, vec![p("Item 3", 20..26)]),
             ],
         );
     }
@@ -952,8 +955,8 @@ Some other content
         assert_eq!(
             parsed.children,
             vec![
-                list_item(0..11, 1, Task(false, 2..5), vec![p("TODO", 6..10)]),
-                list_item(11..25, 1, Task(true, 13..16), vec![p("Checked", 17..24)]),
+                list_item(0..10, 1, Task(false, 2..5), vec![p("TODO", 6..10)]),
+                list_item(11..24, 1, Task(true, 13..16), vec![p("Checked", 17..24)]),
             ],
         );
     }
@@ -972,8 +975,8 @@ Some other content
         assert_eq!(
             parsed.children,
             vec![
-                list_item(0..14, 1, Task(false, 2..5), vec![p("Task 1", 6..12)]),
-                list_item(14..27, 1, Task(true, 16..19), vec![p("Task 2", 20..26)]),
+                list_item(0..13, 1, Task(false, 2..5), vec![p("Task 1", 6..12)]),
+                list_item(14..26, 1, Task(true, 16..19), vec![p("Task 2", 20..26)]),
             ],
         );
     }
@@ -1006,21 +1009,21 @@ Some other content
         assert_eq!(
             parsed.children,
             vec![
-                list_item(0..9, 1, Unordered, vec![p("Item 1", 2..8)]),
-                list_item(9..18, 1, Unordered, vec![p("Item 2", 11..17)]),
-                list_item(18..28, 1, Unordered, vec![p("Item 3", 20..26)]),
-                list_item(28..37, 1, Ordered(1), vec![p("Hello", 31..36)]),
-                list_item(37..47, 1, Ordered(2), vec![p("Two", 40..43),]),
-                list_item(47..56, 2, Ordered(1), vec![p("Three", 50..55)]),
-                list_item(56..64, 1, Ordered(3), vec![p("Four", 59..63)]),
-                list_item(64..73, 1, Ordered(4), vec![p("Five", 67..71)]),
-                list_item(73..83, 1, Unordered, vec![p("First", 75..80)]),
-                list_item(83..97, 2, Ordered(1), vec![p("Hello", 86..91)]),
-                list_item(97..117, 3, Ordered(1), vec![p("Goodbyte", 100..108)]),
-                list_item(117..125, 4, Unordered, vec![p("Inner", 119..124)]),
-                list_item(133..141, 4, Unordered, vec![p("Inner", 135..140)]),
-                list_item(143..155, 2, Ordered(2), vec![p("Goodbyte", 146..154)]),
-                list_item(155..162, 1, Unordered, vec![p("Last", 157..161)]),
+                list_item(0..8, 1, Unordered, vec![p("Item 1", 2..8)]),
+                list_item(9..17, 1, Unordered, vec![p("Item 2", 11..17)]),
+                list_item(18..27, 1, Unordered, vec![p("Item 3", 20..26)]),
+                list_item(28..36, 1, Ordered(1), vec![p("Hello", 31..36)]),
+                list_item(37..46, 1, Ordered(2), vec![p("Two", 40..43),]),
+                list_item(47..55, 2, Ordered(1), vec![p("Three", 50..55)]),
+                list_item(56..63, 1, Ordered(3), vec![p("Four", 59..63)]),
+                list_item(64..72, 1, Ordered(4), vec![p("Five", 67..71)]),
+                list_item(73..82, 1, Unordered, vec![p("First", 75..80)]),
+                list_item(83..96, 2, Ordered(1), vec![p("Hello", 86..91)]),
+                list_item(97..116, 3, Ordered(1), vec![p("Goodbyte", 100..108)]),
+                list_item(117..124, 4, Unordered, vec![p("Inner", 119..124)]),
+                list_item(133..140, 4, Unordered, vec![p("Inner", 135..140)]),
+                list_item(143..154, 2, Ordered(2), vec![p("Goodbyte", 146..154)]),
+                list_item(155..161, 1, Unordered, vec![p("Last", 157..161)]),
             ]
         );
     }
@@ -1031,7 +1034,8 @@ Some other content
             "\
 *   This is a list item with two paragraphs.
 
-    This is the second paragraph in the list item.",
+    This is the second paragraph in the list item.
+",
         )
         .await;
 
@@ -1043,7 +1047,7 @@ Some other content
                 Unordered,
                 vec![
                     p("This is a list item with two paragraphs.", 4..44),
-                    p("This is the second paragraph in the list item.", 50..96)
+                    p("This is the second paragraph in the list item.", 50..97)
                 ],
             ),],
         );
@@ -1059,16 +1063,17 @@ Some other content
 
     text
 
-    1. d",
+    1. d
+",
         )
         .await;
 
         assert_eq!(
             parsed.children,
             vec![
-                list_item(0..8, 1, Ordered(1), vec![p("a", 3..4)],),
-                list_item(8..21, 2, Ordered(1), vec![p("b", 12..13),],),
-                list_item(21..28, 3, Ordered(1), vec![p("c", 25..26),],),
+                list_item(0..7, 1, Ordered(1), vec![p("a", 3..4)],),
+                list_item(8..20, 2, Ordered(1), vec![p("b", 12..13),],),
+                list_item(21..27, 3, Ordered(1), vec![p("c", 25..26),],),
                 p("text", 32..37),
                 list_item(41..46, 2, Ordered(1), vec![p("d", 45..46),],),
             ],
@@ -1089,9 +1094,9 @@ Some other content
         assert_eq!(
             parsed.children,
             vec![
-                list_item(0..9, 1, Unordered, vec![p("code", 2..8)]),
-                list_item(9..20, 1, Unordered, vec![p("bold", 11..19)]),
-                list_item(20..50, 1, Unordered, vec![p("link", 22..49)],)
+                list_item(0..8, 1, Unordered, vec![p("code", 2..8)]),
+                list_item(9..19, 1, Unordered, vec![p("bold", 11..19)]),
+                list_item(20..49, 1, Unordered, vec![p("link", 22..49)],)
             ],
         );
     }
