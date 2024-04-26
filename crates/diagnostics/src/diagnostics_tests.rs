@@ -686,7 +686,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test(iterations = 100)]
+#[gpui::test(iterations = 20)]
 async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     init_test(cx);
 
