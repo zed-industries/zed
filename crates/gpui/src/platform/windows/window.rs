@@ -25,7 +25,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
-        System::{Com::*, Ole::*, SystemServices::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{
             Controls::*,
             HiDpi::*,
@@ -82,7 +82,9 @@ impl WindowsWindowInner {
             fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
                 Ok(unsafe {
                     let hwnd = NonZeroIsize::new_unchecked(self.hwnd);
-                    let handle = rwh::Win32WindowHandle::new(hwnd);
+                    let mut handle = rwh::Win32WindowHandle::new(hwnd);
+                    let hinstance = get_window_long(HWND(self.hwnd), GWLP_HINSTANCE);
+                    handle.hinstance = NonZeroIsize::new(hinstance);
                     rwh::WindowHandle::borrow_raw(handle.into())
                 })
             }
@@ -1269,7 +1271,7 @@ impl WindowsWindow {
         let nheight = options.bounds.size.height.0;
         let hwndparent = HWND::default();
         let hmenu = HMENU::default();
-        let hinstance = HINSTANCE::default();
+        let hinstance = get_module_handle();
         let mut context = WindowCreateContext {
             inner: None,
             platform_inner: platform_inner.clone(),
@@ -1767,6 +1769,7 @@ fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
             hIcon: icon_handle,
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,
+            hInstance: get_module_handle().into(),
             ..Default::default()
         };
         unsafe { RegisterClassW(&wc) };
@@ -1905,6 +1908,20 @@ struct StyleAndBounds {
     y: i32,
     cx: i32,
     cy: i32,
+}
+
+fn get_module_handle() -> HMODULE {
+    unsafe {
+        let mut h_module = std::mem::zeroed();
+        GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            windows::core::w!("ZedModule"),
+            &mut h_module,
+        )
+        .expect("Unable to get module handle"); // this should never fail
+
+        h_module
+    }
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
