@@ -12,7 +12,7 @@ use collections::HashMap;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
 #[cfg(target_os = "macos")]
-use std::ffi::c_void;
+use std::{ffi::c_void, ptr::NonNull};
 
 use blade_graphics as gpu;
 use std::{mem, sync::Arc};
@@ -25,35 +25,32 @@ pub type Renderer = BladeRenderer;
 #[cfg(target_os = "macos")]
 pub unsafe fn new_renderer(
     _context: self::Context,
-    native_window: *mut c_void,
+    _native_window: *mut c_void,
     native_view: *mut c_void,
     bounds: crate::Size<f32>,
 ) -> Renderer {
+    use raw_window_handle as rwh;
     struct RawWindow {
-        window: *mut c_void,
         view: *mut c_void,
     }
 
-    unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
-        fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
-            let mut wh = blade_rwh::AppKitWindowHandle::empty();
-            wh.ns_window = self.window;
-            wh.ns_view = self.view;
-            wh.into()
+    impl rwh::HasWindowHandle for RawWindow {
+        fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
+            let view = NonNull::new(self.view).unwrap();
+            let handle = rwh::AppKitWindowHandle::new(view);
+            Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
         }
     }
-
-    unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
-        fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
-            let dh = blade_rwh::AppKitDisplayHandle::empty();
-            dh.into()
+    impl rwh::HasDisplayHandle for RawWindow {
+        fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
+            let handle = rwh::AppKitDisplayHandle::new();
+            Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
         }
     }
 
     let gpu = Arc::new(
         gpu::Context::init_windowed(
             &RawWindow {
-                window: native_window as *mut _,
                 view: native_view as *mut _,
             },
             gpu::ContextDesc {
@@ -184,7 +181,7 @@ struct BladePipelines {
 }
 
 impl BladePipelines {
-    fn new(gpu: &gpu::Context, surface_format: gpu::TextureFormat) -> Self {
+    fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo) -> Self {
         use gpu::ShaderData as _;
 
         let shader = gpu.create_shader(gpu::ShaderDesc {
@@ -216,7 +213,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: shader.at("fs_quad"),
                 color_targets: &[gpu::ColorTargetState {
-                    format: surface_format,
+                    format: surface_info.format,
                     blend: Some(gpu::BlendState::ALPHA_BLENDING),
                     write_mask: gpu::ColorWrites::default(),
                 }],
@@ -233,7 +230,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: shader.at("fs_shadow"),
                 color_targets: &[gpu::ColorTargetState {
-                    format: surface_format,
+                    format: surface_info.format,
                     blend: Some(gpu::BlendState::ALPHA_BLENDING),
                     write_mask: gpu::ColorWrites::default(),
                 }],
@@ -267,7 +264,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: shader.at("fs_path"),
                 color_targets: &[gpu::ColorTargetState {
-                    format: surface_format,
+                    format: surface_info.format,
                     blend: Some(gpu::BlendState::ALPHA_BLENDING),
                     write_mask: gpu::ColorWrites::default(),
                 }],
@@ -284,7 +281,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: shader.at("fs_underline"),
                 color_targets: &[gpu::ColorTargetState {
-                    format: surface_format,
+                    format: surface_info.format,
                     blend: Some(gpu::BlendState::ALPHA_BLENDING),
                     write_mask: gpu::ColorWrites::default(),
                 }],
@@ -301,7 +298,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: shader.at("fs_mono_sprite"),
                 color_targets: &[gpu::ColorTargetState {
-                    format: surface_format,
+                    format: surface_info.format,
                     blend: Some(gpu::BlendState::ALPHA_BLENDING),
                     write_mask: gpu::ColorWrites::default(),
                 }],
@@ -318,7 +315,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: shader.at("fs_poly_sprite"),
                 color_targets: &[gpu::ColorTargetState {
-                    format: surface_format,
+                    format: surface_info.format,
                     blend: Some(gpu::BlendState::ALPHA_BLENDING),
                     write_mask: gpu::ColorWrites::default(),
                 }],
@@ -335,7 +332,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: shader.at("fs_surface"),
                 color_targets: &[gpu::ColorTargetState {
-                    format: surface_format,
+                    format: surface_info.format,
                     blend: Some(gpu::BlendState::ALPHA_BLENDING),
                     write_mask: gpu::ColorWrites::default(),
                 }],
@@ -367,16 +364,18 @@ impl BladeRenderer {
             //Note: this matches the original logic of the Metal backend,
             // but ultimaterly we need to switch to `Linear`.
             color_space: gpu::ColorSpace::Srgb,
+            allow_exclusive_full_screen: false,
+            transparent: false,
         }
     }
 
     pub fn new(gpu: Arc<gpu::Context>, size: gpu::Extent) -> Self {
-        let surface_format = gpu.resize(Self::make_surface_config(size));
+        let surface_info = gpu.resize(Self::make_surface_config(size));
         let command_encoder = gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
             buffer_count: 2,
         });
-        let pipelines = BladePipelines::new(&gpu, surface_format);
+        let pipelines = BladePipelines::new(&gpu, surface_info);
         let instance_belt = BladeBelt::new(BladeBeltDescriptor {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,

@@ -123,6 +123,8 @@ impl ZedDotDevCompletionProvider {
                 .collect(),
             stop: request.stop,
             temperature: request.temperature,
+            tools: Vec::new(),
+            tool_choice: None,
         };
 
         self.client

@@ -46,6 +46,8 @@ struct LanguageRegistryState {
     available_languages: Vec<AvailableLanguage>,
     grammars: HashMap<Arc<str>, AvailableGrammar>,
     lsp_adapters: HashMap<Arc<str>, Vec<Arc<CachedLspAdapter>>>,
+    available_lsp_adapters:
+        HashMap<LanguageServerName, Arc<dyn Fn() -> Arc<CachedLspAdapter> + 'static + Send + Sync>>,
     loading_languages: HashMap<LanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
     subscription: (watch::Sender<()>, watch::Receiver<()>),
     theme: Option<Arc<Theme>>,
@@ -153,6 +155,7 @@ impl LanguageRegistry {
                 language_settings: Default::default(),
                 loading_languages: Default::default(),
                 lsp_adapters: Default::default(),
+                available_lsp_adapters: HashMap::default(),
                 subscription: watch::channel(),
                 theme: Default::default(),
                 version: 0,
@@ -211,6 +214,38 @@ impl LanguageRegistry {
             config.matcher.clone(),
             move || Ok((config.clone(), Default::default(), None)),
         )
+    }
+
+    /// Registers an available language server adapter.
+    ///
+    /// The language server is registered under the language server name, but
+    /// not bound to a particular language.
+    ///
+    /// When a language wants to load this particular language server, it will
+    /// invoke the `load` function.
+    pub fn register_available_lsp_adapter(
+        &self,
+        name: LanguageServerName,
+        load: impl Fn() -> Arc<dyn LspAdapter> + 'static + Send + Sync,
+    ) {
+        self.state.write().available_lsp_adapters.insert(
+            name,
+            Arc::new(move || {
+                let lsp_adapter = load();
+                CachedLspAdapter::new(lsp_adapter, true)
+            }),
+        );
+    }
+
+    /// Loads the language server adapter for the language server with the given name.
+    pub fn load_available_lsp_adapter(
+        &self,
+        name: &LanguageServerName,
+    ) -> Option<Arc<CachedLspAdapter>> {
+        let state = self.state.read();
+        let load_lsp_adapter = state.available_lsp_adapters.get(name)?;
+
+        Some(load_lsp_adapter())
     }
 
     pub fn register_lsp_adapter(&self, language_name: Arc<str>, adapter: Arc<dyn LspAdapter>) {

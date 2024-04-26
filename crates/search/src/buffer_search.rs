@@ -188,7 +188,7 @@ impl Render for BufferSearchBar {
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
-        let mut key_context = KeyContext::default();
+        let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
         if in_replace {
             key_context.add("in_replace");

@@ -3,7 +3,6 @@
 use std::{
     any::Any,
     cell::{Cell, RefCell},
-    ffi::c_void,
     iter::once,
     num::NonZeroIsize,
     path::PathBuf,
@@ -18,7 +17,7 @@ use anyhow::Context;
 use blade_graphics as gpu;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::result::Result;
 use windows::{
@@ -77,20 +76,24 @@ impl WindowsWindowInner {
         let scale_factor = Cell::new(monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32);
         let input_handler = Cell::new(None);
         struct RawWindow {
-            hwnd: *mut c_void,
+            hwnd: isize,
         }
-        unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
-            fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
-                let mut handle = blade_rwh::Win32WindowHandle::empty();
-                handle.hwnd = self.hwnd;
-                handle.into()
+        impl rwh::HasWindowHandle for RawWindow {
+            fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+                Ok(unsafe {
+                    let hwnd = NonZeroIsize::new_unchecked(self.hwnd);
+                    let handle = rwh::Win32WindowHandle::new(hwnd);
+                    rwh::WindowHandle::borrow_raw(handle.into())
+                })
             }
         }
-        unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
-            fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
-                blade_rwh::WindowsDisplayHandle::empty().into()
+        impl rwh::HasDisplayHandle for RawWindow {
+            fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+                let handle = rwh::WindowsDisplayHandle::new();
+                Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
             }
         }
+
         let raw = RawWindow { hwnd: hwnd.0 as _ };
         let gpu = Arc::new(
             unsafe {
@@ -698,12 +701,13 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
             let y = lparam.signed_hiword() as f32;
+            let click_count = self.click_state.borrow().current_count;
             let scale_factor = self.scale_factor.get();
             let event = MouseUpEvent {
                 button,
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count: 1,
+                click_count,
             };
             if callback(PlatformInput::MouseUp(event)).default_prevented {
                 return Some(0);
@@ -1316,23 +1320,18 @@ impl WindowsWindow {
     }
 }
 
-impl HasWindowHandle for WindowsWindow {
-    fn window_handle(
-        &self,
-    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
-        let raw = raw_window_handle::Win32WindowHandle::new(unsafe {
-            NonZeroIsize::new_unchecked(self.inner.hwnd.0)
-        })
-        .into();
-        Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(raw) })
+impl rwh::HasWindowHandle for WindowsWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+        let raw =
+            rwh::Win32WindowHandle::new(unsafe { NonZeroIsize::new_unchecked(self.inner.hwnd.0) })
+                .into();
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(raw) })
     }
 }
 
 // todo(windows)
-impl HasDisplayHandle for WindowsWindow {
-    fn display_handle(
-        &self,
-    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+impl rwh::HasDisplayHandle for WindowsWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
 }
