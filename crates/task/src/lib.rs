@@ -40,6 +40,8 @@ pub struct SpawnInTerminal {
     pub cwd: Option<PathBuf>,
     /// Env overrides for the command, will be appended to the terminal's environment from the settings.
     pub env: HashMap<String, String>,
+    /// Whether to reevaluate context when rerunning the task.
+    pub reevaluate_context: bool,
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
     pub use_new_terminal: bool,
     /// Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish.

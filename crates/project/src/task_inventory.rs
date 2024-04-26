@@ -294,6 +294,7 @@ impl Inventory {
                         let (previous_task, _) = o.get();
                         let new_template = task.original_task();
                         if new_template.ignore_previously_resolved
+                            || new_template.reevaluate_context
                             || new_template != previous_task.original_task()
                         {
                             o.insert((task, lru_score));

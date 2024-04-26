@@ -31,8 +31,11 @@ pub fn init(cx: &mut AppContext) {
                             project.task_inventory().read(cx).last_scheduled_task()
                         })
                     {
-                        if action.reevaluate_context {
-                            let mut original_task = last_scheduled_task.original_task().clone();
+                        let mut original_task = last_scheduled_task.original_task().clone();
+                        if let Some(reevaluate_context) = action.reevaluate_context {
+                            original_task.reevaluate_context = reevaluate_context;
+                        }
+                        if original_task.reevaluate_context {
                             if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
                                 original_task.allow_concurrent_runs = allow_concurrent_runs;
                             }

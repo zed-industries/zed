@@ -33,6 +33,11 @@ pub struct TaskTemplate {
     /// Current working directory to spawn the command into, defaults to current project root.
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Controls whether the task context is reevaluated prior to execution of a task.
+    /// If it is not, environment variables such as ZED_COLUMN, ZED_FILE will be the same as in the last execution of a task
+    /// If it is, these variables will be updated to reflect current state of editor at the time task::Rerun is executed.
+    #[serde(default)]
+    pub reevaluate_context: bool,
     /// Whether to use a new terminal tab or reuse the existing one to spawn the process.
     #[serde(default)]
     pub use_new_terminal: bool,
@@ -198,6 +203,7 @@ impl TaskTemplate {
                 command,
                 args: self.args.clone(),
                 env,
+                reevaluate_context: self.reevaluate_context,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
                 reveal: self.reveal,
