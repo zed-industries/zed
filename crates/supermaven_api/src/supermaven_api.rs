@@ -1,13 +1,11 @@
 use anyhow::{anyhow, Context, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
+use futures::AsyncReadExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
 use smol::fs::unix::PermissionsExt as _;
 use smol::fs::{self, File};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::{convert::TryFrom, future::Future};
-use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use util::http::{AsyncBody, HttpClient, Request as HttpRequest};
 use util::paths::SUPERMAVEN_DIR;
 
 #[derive(Serialize)]
@@ -48,7 +46,7 @@ pub struct SupermavenDownloadResponse {
 }
 
 #[derive(Deserialize)]
-enum SupermavenUser {
+pub enum SupermavenUser {
     NotFound,
     Found {
         id: String,

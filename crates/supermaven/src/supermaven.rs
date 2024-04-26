@@ -96,7 +96,7 @@ impl Supermaven {
                             outgoing_tx
                                 .unbounded_send(OutboundMessage::UseFreeVersion)
                                 .unwrap();
-                            *this = Self::Started {
+                            *this = Self::Spawned {
                                 _process: process,
                                 next_state_id: SupermavenCompletionStateId::default(),
                                 states: BTreeMap::default(),
@@ -120,7 +120,7 @@ impl Supermaven {
     }
 
     pub fn is_enabled(&self) -> bool {
-        matches!(self, Self::Started { .. })
+        matches!(self, Self::Spawned { .. })
     }
 
     pub fn complete(
@@ -129,7 +129,7 @@ impl Supermaven {
         cursor_position: Anchor,
         cx: &AppContext,
     ) -> Option<SupermavenCompletion> {
-        if let Self::Started {
+        if let Self::Spawned {
             next_state_id,
             states,
             outgoing_tx,
@@ -186,7 +186,7 @@ impl Supermaven {
         &self,
         id: SupermavenCompletionStateId,
     ) -> Option<&SupermavenCompletionState> {
-        if let Self::Started { states, .. } = self {
+        if let Self::Spawned { states, .. } = self {
             states.get(&id)
         } else {
             None
@@ -251,7 +251,7 @@ impl Supermaven {
                 );
             }
             SupermavenMessage::Response(response) => {
-                if let Self::Started { states, .. } = self {
+                if let Self::Spawned { states, .. } = self {
                     let state_id = SupermavenCompletionStateId(response.state_id.parse().unwrap());
                     if let Some(state) = states.get_mut(&state_id) {
                         for item in &response.items {
