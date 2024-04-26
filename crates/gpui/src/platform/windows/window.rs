@@ -701,12 +701,13 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
             let y = lparam.signed_hiword() as f32;
+            let click_count = self.click_state.borrow().current_count;
             let scale_factor = self.scale_factor.get();
             let event = MouseUpEvent {
                 button,
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count: 1,
+                click_count,
             };
             if callback(PlatformInput::MouseUp(event)).default_prevented {
                 return Some(0);

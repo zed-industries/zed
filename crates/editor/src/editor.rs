@@ -7745,7 +7745,13 @@ impl Editor {
                 .update(&mut cx, |editor, cx| {
                     editor.navigate_to_hover_links(
                         Some(kind),
-                        definitions.into_iter().map(HoverLink::Text).collect(),
+                        definitions
+                            .into_iter()
+                            .filter(|location| {
+                                hover_links::exclude_link_to_position(&buffer, &head, location, cx)
+                            })
+                            .map(HoverLink::Text)
+                            .collect::<Vec<_>>(),
                         split,
                         cx,
                     )
@@ -8200,9 +8206,13 @@ impl Editor {
                                 cursor_offset_in_rename_range_end..cursor_offset_in_rename_range
                             }
                         };
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                            s.select_ranges([rename_selection_range]);
-                        });
+                        if rename_selection_range.end > old_name.len() {
+                            editor.select_all(&SelectAll, cx);
+                        } else {
+                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                                s.select_ranges([rename_selection_range]);
+                            });
+                        }
                         editor
                     });
 
@@ -8981,6 +8991,10 @@ impl Editor {
             let Some(buffer) = self.buffer().read(cx).as_singleton() else {
                 return;
             };
+
+            if buffer.read(cx).file().is_none() {
+                return;
+            }
 
             let project = project.clone();
             let blame = cx.new_model(|cx| GitBlame::new(buffer, project, user_triggered, cx));

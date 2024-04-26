@@ -212,7 +212,8 @@
     "context": "AssistantChat > Editor", // Used in the assistant2 crate
     "bindings": {
       "enter": ["assistant2::Submit", "Simple"],
-      "cmd-enter": ["assistant2::Submit", "Codebase"]
+      "cmd-enter": ["assistant2::Submit", "Codebase"],
+      "escape": "assistant2::Cancel"
     }
   },
   {

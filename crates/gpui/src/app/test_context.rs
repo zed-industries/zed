@@ -1,10 +1,11 @@
 use crate::{
-    Action, AnyElement, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext,
-    AvailableSpace, BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, Empty,
-    Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model, ModelContext,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform, TestWindow,
-    TextSystem, View, ViewContext, VisualContext, WindowContext, WindowHandle, WindowOptions,
+    Action, AnyView, AnyWindowHandle, AppCell, AppContext, AsyncAppContext, AvailableSpace,
+    BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, Context, DrawPhase, Drawable,
+    Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
+    ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
+    TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext, WindowContext,
+    WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -725,21 +726,28 @@ impl VisualTestContext {
     }
 
     /// Draw an element to the window. Useful for simulating events or actions
-    pub fn draw(
+    pub fn draw<E>(
         &mut self,
         origin: Point<Pixels>,
-        space: Size<AvailableSpace>,
-        f: impl FnOnce(&mut WindowContext) -> AnyElement,
-    ) {
+        space: impl Into<Size<AvailableSpace>>,
+        f: impl FnOnce(&mut WindowContext) -> E,
+    ) -> (E::RequestLayoutState, E::PrepaintState)
+    where
+        E: Element,
+    {
         self.update(|cx| {
-            cx.with_element_context(|cx| {
-                let mut element = f(cx);
-                element.layout_as_root(space, cx);
-                cx.with_absolute_element_offset(origin, |cx| element.prepaint(cx));
-                element.paint(cx);
-            });
+            cx.window.draw_phase = DrawPhase::Prepaint;
+            let mut element = Drawable::new(f(cx));
+            element.layout_as_root(space.into(), cx);
+            cx.with_absolute_element_offset(origin, |cx| element.prepaint(cx));
 
+            cx.window.draw_phase = DrawPhase::Paint;
+            let (request_layout_state, prepaint_state) = element.paint(cx);
+
+            cx.window.draw_phase = DrawPhase::None;
             cx.refresh();
+
+            (request_layout_state, prepaint_state)
         })
     }
 

@@ -2,9 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     anchored, deferred, div, point, prelude::FluentBuilder, px, AnchorCorner, AnyElement, Bounds,
-    DismissEvent, DispatchPhase, Element, ElementContext, ElementId, HitboxId, InteractiveElement,
-    IntoElement, LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View,
-    VisualContext, WindowContext,
+    DismissEvent, DispatchPhase, Element, ElementId, HitboxId, InteractiveElement, IntoElement,
+    LayoutId, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, View, VisualContext,
+    WindowContext,
 };
 
 use crate::prelude::*;
@@ -112,8 +112,8 @@ impl<M: ManagedView> PopoverMenu<M> {
 
     fn with_element_state<R>(
         &mut self,
-        cx: &mut ElementContext,
-        f: impl FnOnce(&mut Self, &mut PopoverMenuElementState<M>, &mut ElementContext) -> R,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&mut Self, &mut PopoverMenuElementState<M>, &mut WindowContext) -> R,
     ) -> R {
         cx.with_element_state::<PopoverMenuElementState<M>, _>(
             Some(self.id.clone()),
@@ -173,7 +173,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
 
     fn request_layout(
         &mut self,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         self.with_element_state(cx, |this, element_state, cx| {
             let mut menu_layout_id = None;
@@ -221,7 +221,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         &mut self,
         _bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Option<HitboxId> {
         self.with_element_state(cx, |_this, element_state, cx| {
             if let Some(child) = request_layout.child_element.as_mut() {
@@ -245,7 +245,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         _: Bounds<gpui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         child_hitbox: &mut Option<HitboxId>,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         self.with_element_state(cx, |_this, _element_state, cx| {
             if let Some(mut child) = request_layout.child_element.take() {
