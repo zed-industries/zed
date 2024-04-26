@@ -1,9 +1,9 @@
 use anyhow::Result;
 use assistant_tooling::LanguageModelTool;
-use gpui::{prelude::*, AppContext, Model, Task};
+use gpui::{prelude::*, AnyView, AppContext, Model, Task};
 use project::Fs;
 use schemars::JsonSchema;
-use semantic_index::ProjectIndex;
+use semantic_index::{ProjectIndex, Status};
 use serde::Deserialize;
 use std::sync::Arc;
 use ui::{
@@ -114,6 +114,8 @@ pub struct ProjectIndexTool {
 
 impl ProjectIndexTool {
     pub fn new(project_index: Model<ProjectIndex>, fs: Arc<dyn Fs>) -> Self {
+        // Listen for project index status and update the ProjectIndexTool directly
+
         // TODO: setup a better description based on the user's current codebase.
         Self { project_index, fs }
     }
@@ -184,13 +186,20 @@ impl LanguageModelTool for ProjectIndexTool {
         })
     }
 
-    fn new_view(
+    fn output_view(
         _tool_call_id: String,
         input: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,
     ) -> gpui::View<Self::View> {
         cx.new_view(|_cx| ProjectIndexView { input, output })
+    }
+
+    fn status_view(&self, cx: &mut WindowContext) -> Option<AnyView> {
+        Some(
+            cx.new_view(|cx| ProjectIndexStatusView::new(self.project_index.clone(), cx))
+                .into(),
+        )
     }
 
     fn format(_input: &Self::Input, output: &Result<Self::Output>) -> String {
@@ -216,5 +225,33 @@ impl LanguageModelTool for ProjectIndexTool {
             }
             Err(err) => format!("Error: {}", err),
         }
+    }
+}
+
+struct ProjectIndexStatusView {
+    project_index: Model<ProjectIndex>,
+}
+
+impl ProjectIndexStatusView {
+    pub fn new(project_index: Model<ProjectIndex>, cx: &mut ViewContext<Self>) -> Self {
+        cx.subscribe(&project_index, |_this, _, _status: &Status, cx| {
+            cx.notify();
+        })
+        .detach();
+        Self { project_index }
+    }
+}
+
+impl Render for ProjectIndexStatusView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let status = self.project_index.read(cx).status();
+
+        h_flex().gap_2().map(|element| match status {
+            Status::Idle => element.child(Icon::new(IconName::FolderOpen)),
+            Status::Loading => element.child(Icon::new(IconName::ArrowCircle)),
+            Status::Scanning { remaining_count } => element
+                .child(Icon::new(IconName::Folder))
+                .child(Label::new(remaining_count.to_string()).size(LabelSize::Small)),
+        })
     }
 }

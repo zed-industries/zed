@@ -3,7 +3,7 @@ mod embedding;
 
 use anyhow::{anyhow, Context as _, Result};
 use chunking::{chunk_text, Chunk};
-use collections::{Bound, HashMap};
+use collections::{Bound, HashMap, HashSet};
 pub use embedding::*;
 use fs::Fs;
 use futures::stream::StreamExt;
@@ -14,16 +14,17 @@ use gpui::{
 };
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
-use postage::watch;
-use project::{Entry, Project, UpdatedEntriesSet, Worktree};
+use parking_lot::Mutex;
+use project::{Entry, Project, ProjectEntryId, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
 use std::{
     cmp::Ordering,
     future::Future,
+    num::NonZeroUsize,
     ops::Range,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Weak},
     time::{Duration, SystemTime},
 };
 use util::ResultExt;
@@ -91,7 +92,7 @@ pub struct ProjectIndex {
     worktree_indices: HashMap<EntityId, WorktreeIndexHandle>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
-    pub last_status: Status,
+    last_status: Status,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     _subscription: Subscription,
 }
@@ -127,6 +128,10 @@ impl ProjectIndex {
         };
         this.update_worktree_indices(cx);
         this
+    }
+
+    pub fn status(&self) -> Status {
+        self.last_status
     }
 
     fn handle_project_event(
@@ -211,29 +216,28 @@ impl ProjectIndex {
     }
 
     fn update_status(&mut self, cx: &mut ModelContext<Self>) {
-        let mut status = Status::Idle;
-        for index in self.worktree_indices.values() {
+        let mut indexing_count = 0;
+        let mut any_loading = false;
+
+        for index in self.worktree_indices.values_mut() {
             match index {
                 WorktreeIndexHandle::Loading { .. } => {
-                    status = Status::Scanning { remaining_count: 0 };
+                    any_loading = true;
                     break;
                 }
                 WorktreeIndexHandle::Loaded { index, .. } => {
-                    if let Status::Scanning { remaining_count } = *index.read(cx).status.borrow() {
-                        match &mut status {
-                            Status::Idle => {
-                                status = Status::Scanning { remaining_count };
-                            }
-                            Status::Scanning {
-                                remaining_count: project_remaining_count,
-                            } => {
-                                *project_remaining_count += remaining_count;
-                            }
-                        }
-                    }
+                    indexing_count += index.read(cx).entry_ids_being_indexed.len();
                 }
             }
         }
+
+        let status = if any_loading {
+            Status::Loading
+        } else if let Some(remaining_count) = NonZeroUsize::new(indexing_count) {
+            Status::Scanning { remaining_count }
+        } else {
+            Status::Idle
+        };
 
         if status != self.last_status {
             self.last_status = status;
@@ -279,7 +283,8 @@ pub struct SearchResult {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Status {
     Idle,
-    Scanning { remaining_count: usize },
+    Loading,
+    Scanning { remaining_count: NonZeroUsize },
 }
 
 impl EventEmitter<Status> for ProjectIndex {}
@@ -291,7 +296,7 @@ struct WorktreeIndex {
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
-    status: watch::Sender<Status>,
+    entry_ids_being_indexed: Arc<IndexingEntrySet>,
     _index_entries: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -304,7 +309,7 @@ impl WorktreeIndex {
         fs: Arc<dyn Fs>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
         cx: &mut AppContext,
-    ) -> Task<Result<(Model<Self>, watch::Receiver<Status>)>> {
+    ) -> Task<Result<(Model<Self>, channel::Receiver<()>)>> {
         let worktree_abs_path = worktree.read(cx).abs_path();
         cx.spawn(|mut cx| async move {
             let db = cx
@@ -320,7 +325,7 @@ impl WorktreeIndex {
                     }
                 })
                 .await?;
-            let (status_tx, status_rx) = watch::channel_with(Status::Idle);
+            let (status_tx, status_rx) = channel::unbounded();
             let worktree_index = cx.new_model(|cx| {
                 Self::new(
                     worktree,
@@ -341,7 +346,7 @@ impl WorktreeIndex {
         worktree: Model<Worktree>,
         db_connection: heed::Env,
         db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
-        status: watch::Sender<Status>,
+        status: channel::Sender<()>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -361,7 +366,7 @@ impl WorktreeIndex {
             language_registry,
             fs,
             embedding_provider,
-            status,
+            entry_ids_being_indexed: Arc::new(IndexingEntrySet::new(status)),
             _index_entries: cx.spawn(|this, cx| Self::index_entries(this, updated_entries_rx, cx)),
             _subscription,
         }
@@ -372,20 +377,14 @@ impl WorktreeIndex {
         updated_entries: channel::Receiver<UpdatedEntriesSet>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let index = this.update(&mut cx, |this, cx| {
-            *this.status.borrow_mut() = Status::Scanning { remaining_count: 0 };
-            this.index_entries_changed_on_disk(cx)
-        })?;
+        let index = this.update(&mut cx, |this, cx| this.index_entries_changed_on_disk(cx))?;
         index.await.log_err();
-        this.update(&mut cx, |this, _| *this.status.borrow_mut() = Status::Idle)?;
 
         while let Ok(updated_entries) = updated_entries.recv().await {
             let index = this.update(&mut cx, |this, cx| {
-                *this.status.borrow_mut() = Status::Scanning { remaining_count: 0 };
                 this.index_updated_entries(updated_entries, cx)
             })?;
             index.await.log_err();
-            this.update(&mut cx, |this, _| *this.status.borrow_mut() = Status::Idle)?;
         }
 
         Ok(())
@@ -426,6 +425,7 @@ impl WorktreeIndex {
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
         let db_connection = self.db_connection.clone();
         let db = self.db;
+        let entries_being_indexed = self.entry_ids_being_indexed.clone();
         let task = cx.background_executor().spawn(async move {
             let txn = db_connection
                 .read_txn()
@@ -476,7 +476,8 @@ impl WorktreeIndex {
                 }
 
                 if entry.mtime != saved_mtime {
-                    updated_entries_tx.send(entry.clone()).await?;
+                    let handle = entries_being_indexed.insert(&entry);
+                    updated_entries_tx.send((entry.clone(), handle)).await?;
                 }
             }
 
@@ -505,6 +506,7 @@ impl WorktreeIndex {
     ) -> ScanEntries {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
+        let entries_being_indexed = self.entry_ids_being_indexed.clone();
         let task = cx.background_executor().spawn(async move {
             for (path, entry_id, status) in updated_entries.iter() {
                 match status {
@@ -513,7 +515,8 @@ impl WorktreeIndex {
                     | project::PathChange::AddedOrUpdated => {
                         if let Some(entry) = worktree.entry_for_id(*entry_id) {
                             if entry.is_file() {
-                                updated_entries_tx.send(entry.clone()).await?;
+                                let handle = entries_being_indexed.insert(&entry);
+                                updated_entries_tx.send((entry.clone(), handle)).await?;
                             }
                         }
                     }
@@ -542,7 +545,7 @@ impl WorktreeIndex {
     fn chunk_files(
         &self,
         worktree_abs_path: Arc<Path>,
-        entries: channel::Receiver<Entry>,
+        entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
         cx: &AppContext,
     ) -> ChunkFiles {
         let language_registry = self.language_registry.clone();
@@ -553,7 +556,7 @@ impl WorktreeIndex {
                 .scoped(|cx| {
                     for _ in 0..cx.num_cpus() {
                         cx.spawn(async {
-                            while let Ok(entry) = entries.recv().await {
+                            while let Ok((entry, handle)) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.path);
                                 let Some(text) = fs
                                     .load(&entry_abs_path)
@@ -572,8 +575,8 @@ impl WorktreeIndex {
                                 let grammar =
                                     language.as_ref().and_then(|language| language.grammar());
                                 let chunked_file = ChunkedFile {
-                                    worktree_root: worktree_abs_path.clone(),
                                     chunks: chunk_text(&text, grammar),
+                                    handle,
                                     entry,
                                     text,
                                 };
@@ -643,7 +646,9 @@ impl WorktreeIndex {
                         chunks: embedded_chunks,
                     };
 
-                    embedded_files_tx.send(embedded_file).await?;
+                    embedded_files_tx
+                        .send((embedded_file, chunked_file.handle))
+                        .await?;
                 }
             }
             Ok(())
@@ -658,7 +663,7 @@ impl WorktreeIndex {
     fn persist_embeddings(
         &self,
         mut deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
-        embedded_files: channel::Receiver<EmbeddedFile>,
+        embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
@@ -676,10 +681,11 @@ impl WorktreeIndex {
             let mut embedded_files = embedded_files.chunks_timeout(4096, Duration::from_secs(2));
             while let Some(embedded_files) = embedded_files.next().await {
                 let mut txn = db_connection.write_txn()?;
-                for file in embedded_files {
+                for (file, handle) in embedded_files {
                     log::debug!("saving embedding for file {:?}", file.path);
                     let key = db_key_for_path(&file.path);
                     db.put(&mut txn, &key, &file)?;
+                    drop(handle);
                 }
                 txn.commit()?;
                 log::debug!("committed");
@@ -792,7 +798,7 @@ impl WorktreeIndex {
 }
 
 struct ScanEntries {
-    updated_entries: channel::Receiver<Entry>,
+    updated_entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
     deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
     task: Task<Result<()>>,
 }
@@ -803,15 +809,14 @@ struct ChunkFiles {
 }
 
 struct ChunkedFile {
-    #[allow(dead_code)]
-    pub worktree_root: Arc<Path>,
     pub entry: Entry,
+    pub handle: IndexingEntryHandle,
     pub text: String,
     pub chunks: Vec<Chunk>,
 }
 
 struct EmbedFiles {
-    files: channel::Receiver<EmbeddedFile>,
+    files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
     task: Task<Result<()>>,
 }
 
@@ -826,6 +831,47 @@ struct EmbeddedFile {
 struct EmbeddedChunk {
     chunk: Chunk,
     embedding: Embedding,
+}
+
+struct IndexingEntrySet {
+    entry_ids: Mutex<HashSet<ProjectEntryId>>,
+    tx: channel::Sender<()>,
+}
+
+struct IndexingEntryHandle {
+    entry_id: ProjectEntryId,
+    set: Weak<IndexingEntrySet>,
+}
+
+impl IndexingEntrySet {
+    fn new(tx: channel::Sender<()>) -> Self {
+        Self {
+            entry_ids: Default::default(),
+            tx,
+        }
+    }
+
+    fn insert(self: &Arc<Self>, entry: &project::Entry) -> IndexingEntryHandle {
+        self.entry_ids.lock().insert(entry.id);
+        self.tx.send_blocking(()).ok();
+        IndexingEntryHandle {
+            entry_id: entry.id,
+            set: Arc::downgrade(self),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.entry_ids.lock().len()
+    }
+}
+
+impl Drop for IndexingEntryHandle {
+    fn drop(&mut self) {
+        if let Some(set) = self.set.upgrade() {
+            set.tx.send_blocking(()).ok();
+            set.entry_ids.lock().remove(&self.entry_id);
+        }
+    }
 }
 
 fn db_key_for_path(path: &Arc<Path>) -> String {
