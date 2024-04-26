@@ -1044,6 +1044,7 @@ impl EditorElement {
         bounds: Bounds<Pixels>,
         scroll_position: gpui::Point<f32>,
         rows_per_page: f32,
+        non_visible_cursors: bool,
         cx: &mut WindowContext,
     ) -> Option<ScrollbarLayout> {
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
@@ -1062,6 +1063,9 @@ impl EditorElement {
                     ||
                     // Diagnostics
                     (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
+                    ||
+                    // Cursors out of sight
+                    non_visible_cursors
                     ||
                     // Scrollmanager
                     editor.scroll_manager.scrollbars_visible()
@@ -3589,10 +3593,8 @@ impl Element for EditorElement {
                 let start_row = scroll_position.y as u32;
                 let height_in_lines = bounds.size.height / line_height;
                 let max_row = snapshot.max_point().row();
-
-                // Add 1 to ensure selections bleed off screen
                 let end_row =
-                    1 + cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
+                    cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
 
                 let buffer_rows = snapshot
                     .buffer_rows(start_row)
@@ -3763,8 +3765,14 @@ impl Element for EditorElement {
                     cx,
                 );
 
-                let scrollbar_layout =
-                    self.layout_scrollbar(&snapshot, bounds, scroll_position, height_in_lines, cx);
+                let scrollbar_layout = self.layout_scrollbar(
+                    &snapshot,
+                    bounds,
+                    scroll_position,
+                    height_in_lines,
+                    cursors.len() > visible_cursors.len(),
+                    cx,
+                );
 
                 let folds = cx.with_element_id(Some("folds"), |cx| {
                     self.layout_folds(
