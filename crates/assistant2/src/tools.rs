@@ -257,11 +257,11 @@ impl Render for ProjectIndexStatusView {
         let status = self.project_index.read(cx).status();
 
         h_flex().gap_2().map(|element| match status {
-            Status::Idle => element.child(Icon::new(IconName::FolderOpen)),
-            Status::Loading => element.child(Icon::new(IconName::ArrowCircle)),
-            Status::Scanning { remaining_count } => element
-                .child(Icon::new(IconName::Folder))
-                .child(Label::new(remaining_count.to_string()).size(LabelSize::Small)),
+            Status::Idle => element.child(Label::new("Project index ready")),
+            Status::Loading => element.child(Label::new("Project index loading...")),
+            Status::Scanning { remaining_count } => element.child(Label::new(format!(
+                "Project index scanning: {remaining_count} remaining..."
+            ))),
         })
     }
 }

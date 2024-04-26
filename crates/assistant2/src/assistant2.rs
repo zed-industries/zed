@@ -705,6 +705,7 @@ impl Render for AssistantChat {
             .child(list(self.list_state.clone()).flex_1())
             .child(
                 h_flex()
+                    .mt_2()
                     .gap_2()
                     .children(self.tool_registry.status_views().iter().cloned()),
             )
