@@ -1455,7 +1455,7 @@ impl PlatformWindow for WindowsWindow {
                             title = windows::core::w!("Warning");
                             main_icon = TD_WARNING_ICON;
                         }
-                        crate::PromptLevel::Critical => {
+                        crate::PromptLevel::Critical | crate::PromptLevel::Destructive => {
                             title = windows::core::w!("Critical");
                             main_icon = TD_ERROR_ICON;
                         }

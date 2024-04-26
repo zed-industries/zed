@@ -628,6 +628,13 @@ impl From<&TextStyle> for HighlightStyle {
 }
 
 impl HighlightStyle {
+    /// Create a highlight style with just a color
+    pub fn color(color: Hsla) -> Self {
+        Self {
+            color: Some(color),
+            ..Default::default()
+        }
+    }
     /// Blend this highlight style with another.
     /// Non-continuous properties, like font_weight and font_style, are overwritten.
     pub fn highlight(&mut self, other: HighlightStyle) {

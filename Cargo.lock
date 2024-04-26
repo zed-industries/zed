@@ -3815,6 +3815,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
+ "futures 0.3.28",
  "fuzzy",
  "gpui",
  "itertools 0.11.0",

@@ -26,7 +26,7 @@ use std::{
     any::Any,
     cmp, fmt, mem,
     ops::ControlFlow,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -1322,14 +1322,10 @@ impl Pane {
                 pane.update(cx, |_, cx| item.save(should_format, project, cx))?
                     .await?;
             } else if can_save_as {
-                let start_abs_path = project
-                    .update(cx, |project, cx| {
-                        let worktree = project.visible_worktrees(cx).next()?;
-                        Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
-                    })?
-                    .unwrap_or_else(|| Path::new("").into());
-
-                let abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path))?;
+                let abs_path = pane.update(cx, |pane, cx| {
+                    pane.workspace
+                        .update(cx, |workspace, cx| workspace.prompt_for_new_path(cx))
+                })??;
                 if let Some(abs_path) = abs_path.await.ok().flatten() {
                     pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
                         .await?;

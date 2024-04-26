@@ -36,7 +36,6 @@ use std::{
     cmp::Ordering,
     mem,
     ops::Range,
-    path::PathBuf,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
@@ -740,7 +739,7 @@ impl Item for ProjectDiagnosticsEditor {
     fn save_as(
         &mut self,
         _: Model<Project>,
-        _: PathBuf,
+        _: ProjectPath,
         _: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unreachable!()

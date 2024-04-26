@@ -13,7 +13,10 @@ use project::FakeFs;
 use rand::{rngs::StdRng, seq::IteratorRandom as _, Rng};
 use serde_json::json;
 use settings::SettingsStore;
-use std::{env, path::Path};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 use unindent::Unindent as _;
 use util::{post_inc, RandomCharIter};
 
