@@ -2,10 +2,13 @@ use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use smol::fs::unix::PermissionsExt as _;
+use smol::fs::{self, File};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::{convert::TryFrom, future::Future};
-use util::http::HttpClient;
 use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use util::paths::SUPERMAVEN_DIR;
 
 #[derive(Serialize)]
 pub struct GetApiKeyRequest {
@@ -35,6 +38,13 @@ pub struct SupermavenAdminApi {
     admin_api_key: String,
     api_url: String,
     http_client: Arc<dyn HttpClient>,
+}
+
+#[derive(Deserialize)]
+pub struct SupermavenDownloadResponse {
+    pub download_url: String,
+    pub version: u64,
+    pub sha256_hash: String,
 }
 
 #[derive(Deserialize)]
@@ -71,8 +81,15 @@ impl SupermavenAdminApi {
         response.body_mut().read_to_end(&mut body).await?;
 
         if response.status().is_client_error() {
-            // todo!(): Double check that the response body is "User not found".
-            return Ok(SupermavenUser::NotFound);
+            let error: SupermavenApiError = serde_json::from_slice(&body)?;
+            if error.message == "User not found" {
+                return Ok(SupermavenUser::NotFound);
+            } else {
+                return Err(anyhow!("Supermaven API error: {}", error.message));
+            }
+        } else if response.status().is_server_error() {
+            let error: SupermavenApiError = serde_json::from_slice(&body)?;
+            return Err(anyhow!("Supermaven API server error").context(error.message));
         }
 
         let body_str = std::str::from_utf8(&body)?;
@@ -103,23 +120,64 @@ impl SupermavenAdminApi {
         serde_json::from_str::<CreateApiKeyResponse>(body_str)
             .with_context(|| format!("Unable to parse Supermaven API Key response"))
     }
-}
 
-pub fn download_binary(
-    http_client: Arc<dyn HttpClient>,
-    platform: String,
-    arch: String,
-) -> impl Future<Output = Result<BoxStream<'static, Result<Vec<u8>>>>> {
-    let uri = format!(
-        "https://supermaven.com/api/download-path?platform={}&arch={}",
-        platform, arch
-    );
+    pub async fn agent_binary_info(
+        &self,
+        platform: String,
+        arch: String,
+    ) -> Result<SupermavenDownloadResponse> {
+        let uri = format!(
+            "https://supermaven.com/api/download-path?platform={}&arch={}",
+            platform, arch
+        );
 
-    let mut response = http
-        .get(url, Default::default(), true)
-        .await
-        .context("error downloading copilot release")?;
-    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-    let archive = Archive::new(decompressed_bytes);
-    archive.unpack(dist_dir).await?;
+        // Download is not authenticated
+        let request = HttpRequest::get(&uri);
+
+        let mut response = self
+            .http_client
+            .send(request.body(AsyncBody::default())?)
+            .await
+            .with_context(|| format!("Unable to acquire Supermaven Agent"))?;
+
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+
+        let body_str = std::str::from_utf8(&body)?;
+        serde_json::from_str::<SupermavenDownloadResponse>(body_str)
+            .with_context(|| format!("Unable to parse Supermaven Agent response"))
+    }
+
+    pub async fn download_binary(&self, platform: String, arch: String) -> Result<PathBuf> {
+        let download_info = self.agent_binary_info(platform, arch).await?;
+
+        let request = HttpRequest::get(&download_info.download_url);
+
+        let mut response = self
+            .http_client
+            .send(request.body(AsyncBody::default())?)
+            .await
+            .with_context(|| format!("Unable to download Supermaven Agent"))?;
+
+        let version_dir = SUPERMAVEN_DIR.join(format!("sm-agent-{}", download_info.version));
+        fs::create_dir_all(&version_dir)
+            .await
+            .with_context(|| format!("Could not create version directory at {:?}", version_dir))?;
+
+        let binary_path = version_dir.join("sm-agent");
+
+        let mut file = File::create(&binary_path)
+            .await
+            .with_context(|| format!("Unable to create file at {:?}", binary_path))?;
+
+        smol::io::copy(response.body_mut(), &mut file)
+            .await
+            .with_context(|| format!("Unable to write binary to file at {:?}", binary_path))?;
+
+        let mut permissions = file.metadata().await?.permissions();
+        permissions.set_mode(0o755);
+        file.set_permissions(permissions).await?;
+
+        Ok(binary_path)
+    }
 }
