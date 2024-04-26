@@ -18,6 +18,7 @@ use crate::{
     SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
+use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::{
@@ -45,7 +46,7 @@ use std::{
     cmp::{self, max, Ordering},
     fmt::Write,
     iter, mem,
-    ops::Range,
+    ops::{Deref, Range},
     sync::Arc,
 };
 use sum_tree::Bias;
@@ -770,13 +771,7 @@ impl EditorElement {
                 collaboration_hub.as_ref(),
                 cx,
             ) {
-                let selection_style = if let Some(participant_index) = selection.participant_index {
-                    cx.theme()
-                        .players()
-                        .color_for_participant(participant_index.0)
-                } else {
-                    cx.theme().players().absent()
-                };
+                let selection_style = Self::get_participant_color(selection.participant_index, cx);
 
                 // Don't re-render the leader's selections, since the local selections
                 // match theirs.
@@ -875,8 +870,42 @@ impl EditorElement {
             .collect()
     }
 
+    fn collect_cursors(
+        &self,
+        snapshot: &EditorSnapshot,
+        cx: &mut WindowContext,
+    ) -> Vec<(Anchor, Hsla)> {
+        let editor = self.editor.read(cx);
+        let mut cursors = Vec::<(Anchor, Hsla)>::new();
+        let mut skip_local = false;
+        // Remote cursors
+        if let Some(collaboration_hub) = &editor.collaboration_hub {
+            for remote_selection in snapshot.remote_selections_in_range(
+                &(Anchor::min()..Anchor::max()),
+                collaboration_hub.deref(),
+                cx,
+            ) {
+                let color = Self::get_participant_color(remote_selection.participant_index, cx);
+                cursors.push((remote_selection.selection.head(), color.cursor));
+                if Some(remote_selection.peer_id) == editor.leader_peer_id {
+                    skip_local = true;
+                }
+            }
+        }
+        // Local cursors
+        if !skip_local {
+            editor.selections.disjoint.iter().for_each(|selection| {
+                cursors.push((selection.head(), cx.theme().players().local().cursor));
+            });
+            if let Some(ref selection) = editor.selections.pending_anchor() {
+                cursors.push((selection.head(), cx.theme().players().local().cursor));
+            }
+        }
+        cursors
+    }
+
     #[allow(clippy::too_many_arguments)]
-    fn layout_cursors(
+    fn layout_visible_cursors(
         &self,
         snapshot: &EditorSnapshot,
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
@@ -1015,6 +1044,7 @@ impl EditorElement {
         bounds: Bounds<Pixels>,
         scroll_position: gpui::Point<f32>,
         rows_per_page: f32,
+        non_visible_cursors: bool,
         cx: &mut WindowContext,
     ) -> Option<ScrollbarLayout> {
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
@@ -1033,6 +1063,9 @@ impl EditorElement {
                     ||
                     // Diagnostics
                     (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
+                    ||
+                    // Cursors out of sight
+                    non_visible_cursors
                     ||
                     // Scrollmanager
                     editor.scroll_manager.scrollbars_visible()
@@ -1321,6 +1354,17 @@ impl EditorElement {
 
         button.prepaint_as_root(gutter_hitbox.origin + point(x, y), available_space, cx);
         Some(button)
+    }
+
+    fn get_participant_color(
+        participant_index: Option<ParticipantIndex>,
+        cx: &WindowContext,
+    ) -> PlayerColor {
+        if let Some(index) = participant_index {
+            cx.theme().players().color_for_participant(index.0)
+        } else {
+            cx.theme().players().absent()
+        }
     }
 
     fn calculate_relative_line_numbers(
@@ -2478,7 +2522,7 @@ impl EditorElement {
     }
 
     fn paint_cursors(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
-        for cursor in &mut layout.cursors {
+        for cursor in &mut layout.visible_cursors {
             cursor.paint(layout.content_origin, cx);
         }
     }
@@ -2504,11 +2548,13 @@ impl EditorElement {
                     cx.theme().colors().scrollbar_track_border,
                 ));
 
-                // Refresh scrollbar markers in the background. Below, we paint whatever markers have already been computed.
-                self.refresh_scrollbar_markers(layout, scrollbar_layout, cx);
+                let fast_markers =
+                    self.collect_fast_scrollbar_markers(layout, scrollbar_layout, cx);
+                // Refresh slow scrollbar markers in the background. Below, we paint whatever markers have already been computed.
+                self.refresh_slow_scrollbar_markers(layout, scrollbar_layout, cx);
 
                 let markers = self.editor.read(cx).scrollbar_marker_state.markers.clone();
-                for marker in markers.iter() {
+                for marker in markers.iter().chain(&fast_markers) {
                     let mut marker = marker.clone();
                     marker.bounds.origin += scrollbar_layout.hitbox.origin;
                     cx.paint_quad(marker);
@@ -2615,7 +2661,34 @@ impl EditorElement {
         }
     }
 
-    fn refresh_scrollbar_markers(
+    fn collect_fast_scrollbar_markers(
+        &self,
+        layout: &EditorLayout,
+        scrollbar_layout: &ScrollbarLayout,
+        cx: &mut WindowContext,
+    ) -> Vec<PaintQuad> {
+        const LIMIT: usize = 100;
+        if !EditorSettings::get_global(cx).scrollbar.cursors || layout.cursors.len() > LIMIT {
+            return vec![];
+        }
+        let cursor_ranges = layout
+            .cursors
+            .iter()
+            .map(|cursor| {
+                let point = cursor
+                    .0
+                    .to_display_point(&layout.position_map.snapshot.display_snapshot);
+                ColoredRange {
+                    start: point.row(),
+                    end: point.row(),
+                    color: cursor.1,
+                }
+            })
+            .collect_vec();
+        scrollbar_layout.marker_quads_for_ranges(cursor_ranges, None)
+    }
+
+    fn refresh_slow_scrollbar_markers(
         &self,
         layout: &EditorLayout,
         scrollbar_layout: &ScrollbarLayout,
@@ -2675,7 +2748,8 @@ impl EditorElement {
                                     });
 
                                 marker_quads.extend(
-                                    scrollbar_layout.marker_quads_for_ranges(marker_row_ranges, 0),
+                                    scrollbar_layout
+                                        .marker_quads_for_ranges(marker_row_ranges, Some(0)),
                                 );
                             }
 
@@ -2691,6 +2765,10 @@ impl EditorElement {
                                 if (is_search_highlights && scrollbar_settings.search_results)
                                     || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
                                 {
+                                    let mut color = theme.status().info;
+                                    if is_symbol_occurrences {
+                                        color.fade_out(0.5);
+                                    }
                                     let marker_row_ranges =
                                         background_ranges.into_iter().map(|range| {
                                             let display_start = range
@@ -2702,12 +2780,12 @@ impl EditorElement {
                                             ColoredRange {
                                                 start: display_start.row(),
                                                 end: display_end.row(),
-                                                color: theme.status().info,
+                                                color,
                                             }
                                         });
                                     marker_quads.extend(
                                         scrollbar_layout
-                                            .marker_quads_for_ranges(marker_row_ranges, 1),
+                                            .marker_quads_for_ranges(marker_row_ranges, Some(1)),
                                     );
                                 }
                             }
@@ -2749,7 +2827,8 @@ impl EditorElement {
                                     }
                                 });
                                 marker_quads.extend(
-                                    scrollbar_layout.marker_quads_for_ranges(marker_row_ranges, 2),
+                                    scrollbar_layout
+                                        .marker_quads_for_ranges(marker_row_ranges, Some(2)),
                                 );
                             }
 
@@ -3514,10 +3593,10 @@ impl Element for EditorElement {
                 let start_row = scroll_position.y as u32;
                 let height_in_lines = bounds.size.height / line_height;
                 let max_row = snapshot.max_point().row();
-
-                // Add 1 to ensure selections bleed off screen
-                let end_row =
-                    1 + cmp::min((scroll_position.y + height_in_lines).ceil() as u32, max_row);
+                let end_row = cmp::min(
+                    (scroll_position.y + height_in_lines).ceil() as u32,
+                    max_row + 1,
+                );
 
                 let buffer_rows = snapshot
                     .buffer_rows(start_row)
@@ -3671,7 +3750,9 @@ impl Element for EditorElement {
                     );
                 });
 
-                let cursors = self.layout_cursors(
+                let cursors = self.collect_cursors(&snapshot, cx);
+
+                let visible_cursors = self.layout_visible_cursors(
                     &snapshot,
                     &selections,
                     start_row..end_row,
@@ -3686,8 +3767,14 @@ impl Element for EditorElement {
                     cx,
                 );
 
-                let scrollbar_layout =
-                    self.layout_scrollbar(&snapshot, bounds, scroll_position, height_in_lines, cx);
+                let scrollbar_layout = self.layout_scrollbar(
+                    &snapshot,
+                    bounds,
+                    scroll_position,
+                    height_in_lines,
+                    cursors.len() > visible_cursors.len(),
+                    cx,
+                );
 
                 let folds = cx.with_element_id(Some("folds"), |cx| {
                     self.layout_folds(
@@ -3829,6 +3916,7 @@ impl Element for EditorElement {
                     folds,
                     blocks,
                     cursors,
+                    visible_cursors,
                     selections,
                     mouse_context_menu,
                     code_actions_indicator,
@@ -3917,7 +4005,8 @@ pub struct EditorLayout {
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
-    cursors: Vec<CursorLayout>,
+    cursors: Vec<(Anchor, Hsla)>,
+    visible_cursors: Vec<CursorLayout>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     max_row: u32,
     code_actions_indicator: Option<AnyElement>,
@@ -3950,7 +4039,8 @@ struct ScrollbarLayout {
 
 impl ScrollbarLayout {
     const BORDER_WIDTH: Pixels = px(1.0);
-    const MIN_MARKER_HEIGHT: Pixels = px(2.0);
+    const LINE_MARKER_HEIGHT: Pixels = px(2.0);
+    const MIN_MARKER_HEIGHT: Pixels = px(5.0);
     const MIN_THUMB_HEIGHT: Pixels = px(20.0);
 
     fn thumb_bounds(&self) -> Bounds<Pixels> {
@@ -3969,19 +4059,43 @@ impl ScrollbarLayout {
     fn marker_quads_for_ranges(
         &self,
         row_ranges: impl IntoIterator<Item = ColoredRange<u32>>,
-        column: usize,
+        column: Option<usize>,
     ) -> Vec<PaintQuad> {
-        let column_width =
-            px(((self.hitbox.size.width - ScrollbarLayout::BORDER_WIDTH).0 / 3.0).floor());
+        struct MinMax {
+            min: Pixels,
+            max: Pixels,
+        }
+        let (x_range, height_limit) = if let Some(column) = column {
+            let column_width = px(((self.hitbox.size.width - Self::BORDER_WIDTH).0 / 3.0).floor());
+            let start = Self::BORDER_WIDTH + (column as f32 * column_width);
+            let end = start + column_width;
+            (
+                Range { start, end },
+                MinMax {
+                    min: Self::MIN_MARKER_HEIGHT,
+                    max: px(f32::MAX),
+                },
+            )
+        } else {
+            (
+                Range {
+                    start: Self::BORDER_WIDTH,
+                    end: self.hitbox.size.width,
+                },
+                MinMax {
+                    min: Self::LINE_MARKER_HEIGHT,
+                    max: Self::LINE_MARKER_HEIGHT,
+                },
+            )
+        };
 
-        let left_x = ScrollbarLayout::BORDER_WIDTH + (column as f32 * column_width);
-        let right_x = left_x + column_width;
-
-        let mut background_pixel_ranges = row_ranges
+        let row_to_y = |row: u32| row as f32 * self.row_height;
+        let mut pixel_ranges = row_ranges
             .into_iter()
             .map(|range| {
-                let start_y = range.start as f32 * self.row_height;
-                let end_y = (range.end + 1) as f32 * self.row_height;
+                let start_y = row_to_y(range.start);
+                let end_y = row_to_y(range.end)
+                    + self.row_height.max(height_limit.min).min(height_limit.max);
                 ColoredRange {
                     start: start_y,
                     end: end_y,
@@ -3991,24 +4105,21 @@ impl ScrollbarLayout {
             .peekable();
 
         let mut quads = Vec::new();
-        while let Some(mut pixel_range) = background_pixel_ranges.next() {
-            pixel_range.end = pixel_range
-                .end
-                .max(pixel_range.start + Self::MIN_MARKER_HEIGHT);
-            while let Some(next_pixel_range) = background_pixel_ranges.peek() {
-                if pixel_range.end >= next_pixel_range.start
+        while let Some(mut pixel_range) = pixel_ranges.next() {
+            while let Some(next_pixel_range) = pixel_ranges.peek() {
+                if pixel_range.end >= next_pixel_range.start - px(1.0)
                     && pixel_range.color == next_pixel_range.color
                 {
                     pixel_range.end = next_pixel_range.end.max(pixel_range.end);
-                    background_pixel_ranges.next();
+                    pixel_ranges.next();
                 } else {
                     break;
                 }
             }
 
             let bounds = Bounds::from_corners(
-                point(left_x, pixel_range.start),
-                point(right_x, pixel_range.end),
+                point(x_range.start, pixel_range.start),
+                point(x_range.end, pixel_range.end),
             );
             quads.push(quad(
                 bounds,
