@@ -338,8 +338,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     })
                                 };
                                 if let Some(app_state) = AppState::global(cx).upgrade() {
+                                    let window_to_replace = if replace_current_window {
+                                       cx.window_handle().downcast::<Workspace>()
+                                    } else {
+                                        None
+                                    };
+
                                     let task =
-                                        workspace::join_remote_project(project_id, app_state, cx);
+                                        workspace::join_remote_project(project_id, app_state, window_to_replace, cx);
                                     cx.spawn(|_, _| async move {
                                         task.await?;
                                         Ok(())
