@@ -714,6 +714,15 @@ impl FakeFs {
         Ok(())
     }
 
+    pub fn read_file_sync(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
+        let path = path.as_ref();
+        let path = normalize_path(path);
+        let state = self.state.lock();
+        let entry = state.read_path(&path)?;
+        let entry = entry.lock();
+        entry.file_content(&path).cloned()
+    }
+
     async fn load_internal(&self, path: impl AsRef<Path>) -> Result<Vec<u8>> {
         let path = path.as_ref();
         let path = normalize_path(path);

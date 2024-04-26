@@ -3,22 +3,16 @@ use gpui::{AppContext, BorrowAppContext};
 pub use language::*;
 use node_runtime::NodeRuntime;
 use rust_embed::RustEmbed;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use smol::stream::StreamExt;
 use std::{str, sync::Arc};
 use util::{asset_str, ResultExt};
 
-use crate::{
-    bash::bash_task_context, elixir::elixir_task_context, python::python_task_context,
-    rust::RustContextProvider,
-};
-
-use self::elixir::ElixirSettings;
+use crate::{bash::bash_task_context, python::python_task_context, rust::RustContextProvider};
 
 mod bash;
 mod c;
 mod css;
-mod elixir;
 mod go;
 mod json;
 mod python;
@@ -27,15 +21,6 @@ mod rust;
 mod tailwind;
 mod typescript;
 mod yaml;
-
-// 1. Add tree-sitter-{language} parser to zed crate
-// 2. Create a language directory in zed/crates/zed/src/languages and add the language to init function below
-// 3. Add config.toml to the newly created language directory using existing languages as a template
-// 4. Copy highlights from tree sitter repo for the language into a highlights.scm file.
-//      Note: github highlights take the last match while zed takes the first
-// 5. Add indents.scm, outline.scm, and brackets.scm to implement indent on newline, outline/breadcrumbs,
-//    and autoclosing brackets respectively
-// 6. If the language has injections add an injections.scm query file
 
 #[derive(RustEmbed)]
 #[folder = "src/"]
@@ -47,14 +32,11 @@ pub fn init(
     node_runtime: Arc<dyn NodeRuntime>,
     cx: &mut AppContext,
 ) {
-    ElixirSettings::register(cx);
-
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::language()),
         ("c", tree_sitter_c::language()),
         ("cpp", tree_sitter_cpp::language()),
         ("css", tree_sitter_css::language()),
-        ("elixir", tree_sitter_elixir::language()),
         (
             "embedded_template",
             tree_sitter_embedded_template::language(),
@@ -62,7 +44,6 @@ pub fn init(
         ("go", tree_sitter_go::language()),
         ("gomod", tree_sitter_gomod::language()),
         ("gowork", tree_sitter_gowork::language()),
-        ("heex", tree_sitter_heex::language()),
         ("jsdoc", tree_sitter_jsdoc::language()),
         ("json", tree_sitter_json::language()),
         ("markdown", tree_sitter_markdown::language()),
@@ -126,51 +107,11 @@ pub fn init(
     language!("cpp", vec![Arc::new(c::CLspAdapter)]);
     language!(
         "css",
-        vec![
-            Arc::new(css::CssLspAdapter::new(node_runtime.clone())),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
+        vec![Arc::new(css::CssLspAdapter::new(node_runtime.clone())),]
     );
-
-    match &ElixirSettings::get(None, cx).lsp {
-        elixir::ElixirLspSetting::ElixirLs => {
-            language!(
-                "elixir",
-                vec![
-                    Arc::new(elixir::ElixirLspAdapter),
-                    Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-                ],
-                elixir_task_context()
-            );
-        }
-        elixir::ElixirLspSetting::NextLs => {
-            language!(
-                "elixir",
-                vec![Arc::new(elixir::NextLspAdapter)],
-                elixir_task_context()
-            );
-        }
-        elixir::ElixirLspSetting::Local { path, arguments } => {
-            language!(
-                "elixir",
-                vec![Arc::new(elixir::LocalLspAdapter {
-                    path: path.clone(),
-                    arguments: arguments.clone(),
-                })],
-                elixir_task_context()
-            );
-        }
-    }
     language!("go", vec![Arc::new(go::GoLspAdapter)]);
     language!("gomod");
     language!("gowork");
-    language!(
-        "heex",
-        vec![
-            Arc::new(elixir::ElixirLspAdapter),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
     language!(
         "json",
         vec![Arc::new(json::JsonLspAdapter::new(
@@ -216,13 +157,7 @@ pub fn init(
         ))]
     );
     language!("ruby", vec![Arc::new(ruby::RubyLanguageServer)]);
-    language!(
-        "erb",
-        vec![
-            Arc::new(ruby::RubyLanguageServer),
-            Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone())),
-        ]
-    );
+    language!("erb", vec![Arc::new(ruby::RubyLanguageServer),]);
     language!("regex");
     language!(
         "yaml",
@@ -230,13 +165,42 @@ pub fn init(
     );
     language!("proto");
 
+    // Register Tailwind globally as an available language server.
+    //
+    // This will allow users to add Tailwind support for a given language via
+    // the `language_servers` setting:
+    //
+    // ```json
+    // {
+    //   "languages": {
+    //     "My Language": {
+    //       "language_servers": ["tailwindcss-language-server", "..."]
+    //     }
+    //   }
+    // }
+    // ```
+    languages.register_available_lsp_adapter(
+        LanguageServerName("tailwindcss-language-server".into()),
+        {
+            let node_runtime = node_runtime.clone();
+            move || Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone()))
+        },
+    );
+
+    // Register Tailwind for the existing languages that should have it by default.
+    //
+    // This can be driven by the `language_servers` setting once we have a way for
+    // extensions to provide their own default value for that setting.
     let tailwind_languages = [
         "Astro",
+        "CSS",
+        "ERB",
+        "HEEX",
         "HTML",
+        "JavaScript",
         "PHP",
         "Svelte",
         "TSX",
-        "JavaScript",
         "Vue.js",
     ];
 

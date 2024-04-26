@@ -145,6 +145,13 @@ fn init_headless(dev_server_token: DevServerToken) {
         );
         handle_settings_file_changes(user_settings_file_rx, cx);
 
+        let (installation_id, _) = cx
+            .background_executor()
+            .block(installation_id())
+            .ok()
+            .unzip();
+        upload_panics_and_crashes(client.http_client(), installation_id, cx);
+
         headless::init(
             client.clone(),
             headless::AppState {
@@ -323,7 +330,7 @@ fn init_ui(args: Args) {
         .detach();
 
         let telemetry = client.telemetry();
-        telemetry.start(installation_id, session_id, cx);
+        telemetry.start(installation_id.clone(), session_id, cx);
         telemetry.report_setting_event("theme", cx.theme().name.to_string());
         telemetry.report_setting_event("keymap", BaseKeymap::get_global(cx).to_string());
         telemetry.report_app_event(
@@ -378,8 +385,7 @@ fn init_ui(args: Args) {
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), cx);
 
-        // todo(linux): unblock this
-        upload_panics_and_crashes(client.http_client(), cx);
+        upload_panics_and_crashes(client.http_client(), installation_id, cx);
 
         cx.activate(true);
 
@@ -824,7 +830,11 @@ fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: Strin
     }));
 }
 
-fn upload_panics_and_crashes(http: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
+fn upload_panics_and_crashes(
+    http: Arc<HttpClientWithUrl>,
+    installation_id: Option<String>,
+    cx: &mut AppContext,
+) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()
         .spawn(async move {
@@ -832,7 +842,7 @@ fn upload_panics_and_crashes(http: Arc<HttpClientWithUrl>, cx: &mut AppContext) 
                 .await
                 .log_err()
                 .flatten();
-            upload_previous_crashes(http, most_recent_panic, telemetry_settings)
+            upload_previous_crashes(http, most_recent_panic, installation_id, telemetry_settings)
                 .await
                 .log_err()
         })
@@ -915,6 +925,7 @@ static LAST_CRASH_UPLOADED: &'static str = "LAST_CRASH_UPLOADED";
 async fn upload_previous_crashes(
     http: Arc<HttpClientWithUrl>,
     most_recent_panic: Option<(i64, String)>,
+    installation_id: Option<String>,
     telemetry_settings: client::TelemetrySettings,
 ) -> Result<()> {
     if !telemetry_settings.diagnostics {
@@ -963,6 +974,9 @@ async fn upload_previous_crashes(
                 request = request
                     .header("x-zed-panicked-on", format!("{}", panicked_on))
                     .header("x-zed-panic", payload)
+            }
+            if let Some(installation_id) = installation_id.as_ref() {
+                request = request.header("x-zed-installation-id", installation_id);
             }
 
             let request = request.body(body.into())?;

@@ -382,6 +382,7 @@ dependencies = [
  "editor",
  "env_logger",
  "feature_flags",
+ "fs",
  "futures 0.3.28",
  "gpui",
  "language",
@@ -3181,13 +3182,17 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "ctor",
  "editor",
+ "env_logger",
  "futures 0.3.28",
  "gpui",
  "language",
  "log",
  "lsp",
+ "pretty_assertions",
  "project",
+ "rand 0.8.5",
  "schemars",
  "serde",
  "serde_json",
@@ -5546,12 +5551,9 @@ dependencies = [
  "regex",
  "rope",
  "rust-embed",
- "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
- "shellexpand",
  "smol",
  "task",
  "text",
@@ -5562,12 +5564,10 @@ dependencies = [
  "tree-sitter-c",
  "tree-sitter-cpp",
  "tree-sitter-css",
- "tree-sitter-elixir",
  "tree-sitter-embedded-template",
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
- "tree-sitter-heex",
  "tree-sitter-jsdoc",
  "tree-sitter-json 0.20.0",
  "tree-sitter-markdown",
@@ -10513,7 +10513,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.100"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=7f21c3b98c0749ac192da67a0d65dfe3eabc4a63#7f21c3b98c0749ac192da67a0d65dfe3eabc4a63"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=528bcd2274814ca53711a57d71d1e3cf7abd73fe#528bcd2274814ca53711a57d71d1e3cf7abd73fe"
 dependencies = [
  "cc",
  "regex",
@@ -10625,7 +10625,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-jsdoc"
 version = "0.20.0"
-source = "git+https://github.com/tree-sitter/tree-sitter-jsdoc#6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55"
+source = "git+https://github.com/tree-sitter/tree-sitter-jsdoc?rev=6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55#6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -12725,6 +12725,13 @@ dependencies = [
 
 [[package]]
 name = "zed_deno"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "zed_elixir"
 version = "0.0.1"
 dependencies = [
  "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",

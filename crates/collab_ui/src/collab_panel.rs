@@ -2970,6 +2970,7 @@ impl Render for DraggedChannelView {
 struct JoinChannelTooltip {
     channel_store: Model<ChannelStore>,
     channel_id: ChannelId,
+    #[allow(unused)]
     has_notes_notification: bool,
 }
 
@@ -2983,12 +2984,6 @@ impl Render for JoinChannelTooltip {
 
             container
                 .child(Label::new("Join channel"))
-                .children(self.has_notes_notification.then(|| {
-                    h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Info))
-                        .child(Label::new("Unread notes"))
-                }))
                 .children(participants.iter().map(|participant| {
                     h_flex()
                         .gap_2()

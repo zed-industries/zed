@@ -1,10 +1,10 @@
 use anyhow::Result;
 use assistant_tooling::LanguageModelTool;
-use gpui::{prelude::*, AnyElement, AppContext, Model, Task};
+use gpui::{prelude::*, AppContext, Model, Task};
 use project::Fs;
 use schemars::JsonSchema;
 use semantic_index::ProjectIndex;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 use ui::{
     div, prelude::*, CollapsibleContainer, Color, Icon, IconName, Label, SharedString,
@@ -14,11 +14,13 @@ use util::ResultExt as _;
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
 
-#[derive(Serialize, Clone)]
+#[derive(Clone)]
 pub struct CodebaseExcerpt {
     path: SharedString,
     text: SharedString,
     score: f32,
+    element_id: ElementId,
+    expanded: bool,
 }
 
 // Note: Comments on a `LanguageModelTool::Input` become descriptions on the generated JSON schema as shown to the language model.
@@ -30,6 +32,79 @@ pub struct CodebaseQuery {
     query: String,
     /// Maximum number of results to return, defaults to 20
     limit: Option<usize>,
+}
+
+pub struct ProjectIndexView {
+    input: CodebaseQuery,
+    output: Result<Vec<CodebaseExcerpt>>,
+}
+
+impl ProjectIndexView {
+    fn toggle_expanded(&mut self, element_id: ElementId, cx: &mut ViewContext<Self>) {
+        if let Ok(excerpts) = &mut self.output {
+            if let Some(excerpt) = excerpts
+                .iter_mut()
+                .find(|excerpt| excerpt.element_id == element_id)
+            {
+                excerpt.expanded = !excerpt.expanded;
+                cx.notify();
+            }
+        }
+    }
+}
+
+impl Render for ProjectIndexView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let query = self.input.query.clone();
+
+        let result = &self.output;
+
+        let excerpts = match result {
+            Err(err) => {
+                return div().child(Label::new(format!("Error: {}", err)).color(Color::Error));
+            }
+            Ok(excerpts) => excerpts,
+        };
+
+        div()
+            .v_flex()
+            .gap_2()
+            .child(
+                div()
+                    .p_2()
+                    .rounded_md()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        h_flex()
+                            .child(Label::new("Query: ").color(Color::Modified))
+                            .child(Label::new(query).color(Color::Muted)),
+                    ),
+            )
+            .children(excerpts.iter().map(|excerpt| {
+                let element_id = excerpt.element_id.clone();
+                let expanded = excerpt.expanded;
+
+                CollapsibleContainer::new(element_id.clone(), expanded)
+                    .start_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(Icon::new(IconName::File).color(Color::Muted))
+                            .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
+                    )
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.toggle_expanded(element_id.clone(), cx);
+                    }))
+                    .child(
+                        div()
+                            .p_2()
+                            .rounded_md()
+                            .bg(cx.theme().colors().editor_background)
+                            .child(
+                                excerpt.text.clone(), // todo!(): Show as an editor block
+                            ),
+                    )
+            }))
+    }
 }
 
 pub struct ProjectIndexTool {
@@ -47,6 +122,7 @@ impl ProjectIndexTool {
 impl LanguageModelTool for ProjectIndexTool {
     type Input = CodebaseQuery;
     type Output = Vec<CodebaseExcerpt>;
+    type View = ProjectIndexView;
 
     fn name(&self) -> String {
         "query_codebase".to_string()
@@ -90,6 +166,8 @@ impl LanguageModelTool for ProjectIndexTool {
                     }
 
                     anyhow::Ok(CodebaseExcerpt {
+                        element_id: ElementId::Name(nanoid::nanoid!().into()),
+                        expanded: false,
                         path: path.to_string_lossy().to_string().into(),
                         text: SharedString::from(text[start..end].to_string()),
                         score: result.score,
@@ -106,71 +184,37 @@ impl LanguageModelTool for ProjectIndexTool {
         })
     }
 
-    fn render(
-        _tool_call_id: &str,
-        input: &Self::Input,
-        excerpts: &Self::Output,
+    fn new_view(
+        _tool_call_id: String,
+        input: Self::Input,
+        output: Result<Self::Output>,
         cx: &mut WindowContext,
-    ) -> AnyElement {
-        let query = input.query.clone();
-
-        div()
-            .v_flex()
-            .gap_2()
-            .child(
-                div()
-                    .p_2()
-                    .rounded_md()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(
-                        h_flex()
-                            .child(Label::new("Query: ").color(Color::Modified))
-                            .child(Label::new(query).color(Color::Muted)),
-                    ),
-            )
-            .children(excerpts.iter().map(|excerpt| {
-                // This render doesn't have state/model, so we can't use the listener
-                // let expanded = excerpt.expanded;
-                // let element_id = excerpt.element_id.clone();
-                let element_id = ElementId::Name(nanoid::nanoid!().into());
-                let expanded = false;
-
-                CollapsibleContainer::new(element_id.clone(), expanded)
-                    .start_slot(
-                        h_flex()
-                            .gap_1()
-                            .child(Icon::new(IconName::File).color(Color::Muted))
-                            .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
-                    )
-                    // .on_click(cx.listener(move |this, _, cx| {
-                    //     this.toggle_expanded(element_id.clone(), cx);
-                    // }))
-                    .child(
-                        div()
-                            .p_2()
-                            .rounded_md()
-                            .bg(cx.theme().colors().editor_background)
-                            .child(
-                                excerpt.text.clone(), // todo!(): Show as an editor block
-                            ),
-                    )
-            }))
-            .into_any_element()
+    ) -> gpui::View<Self::View> {
+        cx.new_view(|_cx| ProjectIndexView { input, output })
     }
 
-    fn format(_input: &Self::Input, excerpts: &Self::Output) -> String {
-        let mut body = "Semantic search results:\n".to_string();
+    fn format(_input: &Self::Input, output: &Result<Self::Output>) -> String {
+        match &output {
+            Ok(excerpts) => {
+                if excerpts.len() == 0 {
+                    return "No results found".to_string();
+                }
 
-        for excerpt in excerpts {
-            body.push_str("Excerpt from ");
-            body.push_str(excerpt.path.as_ref());
-            body.push_str(", score ");
-            body.push_str(&excerpt.score.to_string());
-            body.push_str(":\n");
-            body.push_str("~~~\n");
-            body.push_str(excerpt.text.as_ref());
-            body.push_str("~~~\n");
+                let mut body = "Semantic search results:\n".to_string();
+
+                for excerpt in excerpts {
+                    body.push_str("Excerpt from ");
+                    body.push_str(excerpt.path.as_ref());
+                    body.push_str(", score ");
+                    body.push_str(&excerpt.score.to_string());
+                    body.push_str(":\n");
+                    body.push_str("~~~\n");
+                    body.push_str(excerpt.text.as_ref());
+                    body.push_str("~~~\n");
+                }
+                body
+            }
+            Err(err) => format!("Error: {}", err),
         }
-        body
     }
 }
