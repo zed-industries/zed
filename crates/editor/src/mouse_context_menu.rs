@@ -79,7 +79,7 @@ pub fn deploy_context_menu(
                 .action(
                     "Code Actions",
                     Box::new(ToggleCodeActions {
-                        deployed_from_indicator: false,
+                        deployed_from_indicator: None,
                     }),
                 )
                 .separator()

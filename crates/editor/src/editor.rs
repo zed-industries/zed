@@ -110,7 +110,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
-use std::ops::Not as _;
+use std::ops::{Index, Not as _};
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -393,7 +393,7 @@ impl Default for ScrollbarMarkerState {
 }
 
 struct RunnableTasks {
-    templates: SmallVec<[TaskTemplate; 1]>,
+    pub templates: SmallVec<[TaskTemplate; 1]>,
     match_range: Range<usize>, // The equivalent of the newest selection,
     language: Arc<Language>,   // For getting a context provider
     worktree: Option<WorktreeId>,
@@ -490,6 +490,7 @@ pub struct Editor {
     >,
     last_bounds: Option<Bounds<Pixels>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
+    tasks: HashMap<u32, RunnableTasks>,
 }
 
 #[derive(Clone)]
@@ -1170,12 +1171,77 @@ impl CompletionsMenu {
 }
 
 #[derive(Clone)]
+struct CodeActionContents {
+    tasks: Option<Arc<RunnableTasks>>,
+    actions: Option<Arc<[CodeAction]>>,
+}
+
+impl CodeActionContents {
+    fn len(&self) -> usize {
+        match (self.tasks, self.actions) {
+            (Some(tasks), Some(actions)) => actions.len() + tasks.templates.len(),
+            (Some(tasks), None) => tasks.templates.len(),
+            (None, Some(actions)) => actions.len(),
+            (None, None) => 0,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match (self.tasks, self.actions) {
+            (Some(tasks), Some(actions)) => actions.is_empty() && tasks.templates.is_empty(),
+            (Some(tasks), None) => tasks.templates.is_empty(),
+            (None, Some(actions)) => actions.is_empty(),
+            (None, None) => true,
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = CodeActionsItem> {
+        self.tasks
+            .iter()
+            .flat_map(|tasks| {
+                tasks
+                    .templates
+                    .iter()
+                    .map(|template| CodeActionsItem::Task(template))
+            })
+            .chain(self.actions.iter().flat_map(|actions| {
+                actions
+                    .iter()
+                    .map(|action| CodeActionsItem::CodeAction(action))
+            }))
+    }
+}
+
+enum CodeActionsItem {
+    Task(TaskTemplate),
+    CodeAction(CodeAction),
+}
+
+impl Index<usize> for CodeActionContents {
+    type Output = CodeActionsItem;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match (self.tasks, self.actions) {
+            (Some(tasks), Some(actions)) => {
+                if index < tasks.templates.len() {
+                    &CodeActionsItem::Task(tasks.templates[index])
+                } else {
+                    &CodeActionsItem::CodeAction(actions[index])
+                }
+            }
+            (Some(tasks), None) => &CodeActionsItem::Task(tasks.templates[index]),
+            (None, Some(actions)) => &CodeActionsItem::CodeAction(actions[index]),
+            (None, None) => panic!("Attempted to index a CodeActionContents of 0 length"),
+        }
+    }
+}
+
 struct CodeActionsMenu {
-    actions: Arc<[CodeAction]>,
+    actions: CodeActionContents,
     buffer: Model<Buffer>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
-    deployed_from_indicator: bool,
+    deployed_from_indicator: Option<u32>,
 }
 
 impl CodeActionsMenu {
@@ -1286,7 +1352,7 @@ impl CodeActionsMenu {
         )
         .into_any_element();
 
-        if self.deployed_from_indicator {
+        if self.deployed_from_indicator.is_some() {
             *cursor_position.column_mut() = 0;
         }
 
@@ -1520,6 +1586,7 @@ impl Editor {
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             blame: None,
             blame_subscription: None,
+            tasks: Default::default(),
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe(&buffer, Self::on_buffer_event),
@@ -3650,13 +3717,24 @@ impl Editor {
 
     pub fn toggle_code_actions(&mut self, action: &ToggleCodeActions, cx: &mut ViewContext<Self>) {
         let mut context_menu = self.context_menu.write();
-        if matches!(context_menu.as_ref(), Some(ContextMenu::CodeActions(_))) {
-            *context_menu = None;
-            cx.notify();
-            return;
+        if let Some(ContextMenu::CodeActions(code_actions)) = context_menu.as_ref() {
+            if code_actions.deployed_from_indicator == action.deployed_from_indicator {
+                // Toggle if we're selecting the same one
+                *context_menu = None;
+                cx.notify();
+                return;
+            } else {
+                // Otherwise, clear it and start a new one
+                *context_menu = None;
+                cx.notify();
+            }
         }
         drop(context_menu);
 
+        // TODO:
+        // 1. Grab the tasks available, if possible.
+        //  2. if so, show the menu immediately, pop-in the code actions
+        //  3. If not, do as below
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
         cx.spawn(|this, mut cx| async move {
@@ -3686,47 +3764,6 @@ impl Editor {
             Ok::<_, anyhow::Error>(())
         })
         .detach_and_log_err(cx);
-    }
-
-    pub fn toggle_test_runner(&mut self, action: &ToggleTestRunner, cx: &mut ViewContext<Self>) {
-        unimplemented!()
-        // let mut context_menu = self.context_menu.write();
-        // if matches!(context_menu.as_ref(), Some(ContextMenu::CodeActions(_))) {
-        //     *context_menu = None;
-        //     cx.notify();
-        //     return;
-        // }
-        // drop(context_menu);
-
-        // let deployed_from_indicator = action.deployed_from_indicator;
-        // let mut task = self.code_actions_task.take();
-        // cx.spawn(|this, mut cx| async move {
-        //     while let Some(prev_task) = task {
-        //         prev_task.await;
-        //         task = this.update(&mut cx, |this, _| this.code_actions_task.take())?;
-        //     }
-
-        //     this.update(&mut cx, |this, cx| {
-        //         if this.focus_handle.is_focused(cx) {
-        //             if let Some((buffer, actions)) = this.available_code_actions.clone() {
-        //                 this.completion_tasks.clear();
-        //                 this.discard_inline_completion(cx);
-        //                 *this.context_menu.write() =
-        //                     Some(ContextMenu::CodeActions(CodeActionsMenu {
-        //                         buffer,
-        //                         actions,
-        //                         selected_item: Default::default(),
-        //                         scroll_handle: UniformListScrollHandle::default(),
-        //                         deployed_from_indicator,
-        //                     }));
-        //                 cx.notify();
-        //             }
-        //         }
-        //     })?;
-
-        //     Ok::<_, anyhow::Error>(())
-        // })
-        // .detach_and_log_err(cx);
     }
 
     pub fn confirm_code_action(
@@ -4224,9 +4261,10 @@ impl Editor {
         Some(self.inline_completion_provider.as_ref()?.provider.clone())
     }
 
-    pub fn render_code_actions_indicator(
+    fn render_code_actions_indicator(
         &self,
         _style: &EditorStyle,
+        row: u32,
         is_active: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<IconButton> {
@@ -4237,10 +4275,10 @@ impl Editor {
                     .size(ui::ButtonSize::None)
                     .icon_color(Color::Muted)
                     .selected(is_active)
-                    .on_click(cx.listener(|editor, _e, cx| {
+                    .on_click(cx.listener(move |editor, _e, cx| {
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
-                                deployed_from_indicator: true,
+                                deployed_from_indicator: Some(row),
                             },
                             cx,
                         );
@@ -4251,11 +4289,22 @@ impl Editor {
         }
     }
 
-    pub fn render_test_run_indicator(
+    fn clear_tasks(&mut self) {
+        self.tasks.clear()
+    }
+
+    fn insert_tasks(&mut self, row: u32, tasks: RunnableTasks) {
+        self.tasks.insert(row, tasks).map(|_| {
+            // This case should hopefully be rare, but just in case...
+            log::error!("multiple different run targets found on a single line, only the last target will be rendered")
+        });
+    }
+
+    fn render_run_indicator(
         &self,
         _style: &EditorStyle,
         is_active: bool,
-        indicator: u32,
+        row: u32,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
         IconButton::new("code_actions_indicator", ui::IconName::Play)
@@ -4264,9 +4313,9 @@ impl Editor {
             .icon_color(Color::Muted)
             .selected(is_active)
             .on_click(cx.listener(move |editor, _e, cx| {
-                editor.toggle_test_runner(
-                    &ToggleTestRunner {
-                        deployed_from_indicator: Some(indicator),
+                editor.toggle_code_actions(
+                    &ToggleCodeActions {
+                        deployed_from_indicator: Some(row),
                     },
                     cx,
                 );

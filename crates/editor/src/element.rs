@@ -1278,35 +1278,38 @@ impl EditorElement {
         Some(shaped_lines)
     }
 
-    fn layout_test_run_indicators(
+    fn layout_run_indicators(
         &self,
-        test_lines: Vec<(u32, RunnableTasks)>,
+        task_lines: Vec<(u32, RunnableTasks)>,
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Vec<AnyElement> {
-        test_lines
-            .into_iter()
-            .filter_map(|(line, tags)| {
-                let button = self.editor.update(cx, |editor, cx| {
-                    // active = todo check if the run menu is open or something
-                    editor.render_test_run_indicator(&self.style, false, line, cx)
-                });
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_tasks();
 
-                let button = prepaint_gutter_button(
-                    button,
-                    line,
-                    line_height,
-                    gutter_dimensions,
-                    scroll_pixel_position,
-                    gutter_hitbox,
-                    cx,
-                );
-                Some(button)
-            })
-            .collect_vec()
+            task_lines
+                .into_iter()
+                .filter_map(|(row, tasks)| {
+                    editor.insert_tasks(row, tasks);
+                    // active = todo check if the run menu is open or something
+                    let button = editor.render_run_indicator(&self.style, false, row, cx);
+
+                    let button = prepaint_gutter_button(
+                        button,
+                        row,
+                        line_height,
+                        gutter_dimensions,
+                        scroll_pixel_position,
+                        gutter_hitbox,
+                        cx,
+                    );
+                    Some(button)
+                })
+                .collect_vec()
+        })
     }
 
     fn layout_code_actions_indicator(
@@ -1320,17 +1323,18 @@ impl EditorElement {
     ) -> Option<AnyElement> {
         let mut active = false;
         let mut button = None;
+        let row = newest_selection_head.row();
         self.editor.update(cx, |editor, cx| {
             active = matches!(
                 editor.context_menu.read().as_ref(),
                 Some(crate::ContextMenu::CodeActions(_))
             );
-            button = editor.render_code_actions_indicator(&self.style, active, cx);
+            button = editor.render_code_actions_indicator(&self.style, row, active, cx);
         });
 
         let button = prepaint_gutter_button(
             button?,
-            newest_selection_head.row(),
+            row,
             line_height,
             gutter_dimensions,
             scroll_pixel_position,
@@ -3070,7 +3074,7 @@ fn prepaint_gutter_button(
     gutter_dimensions: &GutterDimensions,
     scroll_pixel_position: gpui::Point<Pixels>,
     gutter_hitbox: &Hitbox,
-    cx: &mut ElementContext<'_>,
+    cx: &mut WindowContext<'_>,
 ) -> AnyElement {
     let mut button = button.into_any_element();
     let available_space = size(
@@ -3801,7 +3805,7 @@ impl Element for EditorElement {
                 }
 
                 let test_indicators = cx.with_element_id(Some("test-run"), |cx| {
-                    self.layout_test_run_indicators(
+                    self.layout_run_indicators(
                         test_lines,
                         line_height,
                         scroll_pixel_position,
