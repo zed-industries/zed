@@ -10386,7 +10386,6 @@ impl Editor {
         self
     }
 
-    // TODO kb highlights for additions are with one extra row in many cases
     // TODO kb revert (cmd-z) is not updating the expanded hunks
     // TODO kb make async, consider `block_with_timeout`
     // TODO kb why fold buttons on the gutter do not work?
@@ -10410,8 +10409,22 @@ impl Editor {
             if expanded_hunk.diff_base_version == buffer.read(cx).diff_base_version() {
                 while let Some(buffer_hunk) = recalculated_hunks.peek() {
                     let hunk_text_range = Point::new(buffer_hunk.associated_range.start, 0)
-                        ..Point::new(buffer_hunk.associated_range.end + 1, 0);
-                    let hunk_range = hunk_text_range.to_anchors(&snapshot.buffer_snapshot);
+                        ..Point::new(buffer_hunk.associated_range.end, 0);
+                    let hunk_range = hunk_text_range
+                        .clone()
+                        .to_anchors(&snapshot.buffer_snapshot);
+
+                    // TODO kb need to fix the tests with it?
+                    let mut extra_hunk_text_range = hunk_text_range.clone();
+                    extra_hunk_text_range.start.row =
+                        extra_hunk_text_range.start.row.saturating_sub(1);
+                    extra_hunk_text_range.end.row += 1;
+                    extra_hunk_text_range.end = snapshot
+                        .buffer_snapshot
+                        .clip_point(extra_hunk_text_range.end, Bias::Left);
+                    let extra_hunk_range =
+                        extra_hunk_text_range.to_anchors(&snapshot.buffer_snapshot);
+
                     if expanded_hunk
                         .hunk_range
                         .start
