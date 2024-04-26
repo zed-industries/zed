@@ -338,18 +338,38 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     })
                                 };
                                 if let Some(app_state) = AppState::global(cx).upgrade() {
-                                    let window_to_replace = if replace_current_window {
-                                       cx.window_handle().downcast::<Workspace>()
+                                    let handle = if replace_current_window {
+                                        cx.window_handle().downcast::<Workspace>()
                                     } else {
                                         None
                                     };
 
-                                    let task =
-                                        workspace::join_remote_project(project_id, app_state, window_to_replace, cx);
-                                    cx.spawn(|_, _| async move {
-                                        task.await?;
-                                        Ok(())
-                                    })
+                                    if let Some(handle) = handle {
+                                            cx.spawn(move |workspace, mut cx| async move {
+                                                let continue_replacing = workspace
+                                                    .update(&mut cx, |workspace, cx| {
+                                                        workspace.
+                                                            prepare_to_close(true, cx)
+                                                    })?
+                                                    .await?;
+                                                if continue_replacing {
+                                                    workspace
+                                                        .update(&mut cx, |_workspace, cx| {
+                                                            workspace::join_remote_project(project_id, app_state, Some(handle), cx)
+                                                        })?
+                                                        .await?;
+                                                }
+                                                Ok(())
+                                            })
+                                        }
+                                    else {
+                                        let task =
+                                            workspace::join_remote_project(project_id, app_state, None, cx);
+                                        cx.spawn(|_, _| async move {
+                                            task.await?;
+                                            Ok(())
+                                        })
+                                    }
                                 } else {
                                     Task::ready(Err(anyhow::anyhow!("App state not found")))
                                 }
