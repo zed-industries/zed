@@ -306,56 +306,51 @@ impl Element for AnyView {
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         cx.set_view_id(self.entity_id());
         if self.cached_style.is_some() {
-            cx.with_optional_element_state::<AnyViewState, _>(
-                Some(ElementId::View(self.entity_id())),
-                |element_state, cx| {
-                    let mut element_state = element_state.unwrap();
+            cx.with_element_state::<AnyViewState, _>(global_id.unwrap(), |element_state, cx| {
+                let content_mask = cx.content_mask();
+                let text_style = cx.text_style();
 
-                    let content_mask = cx.content_mask();
-                    let text_style = cx.text_style();
-
-                    if let Some(mut element_state) = element_state {
-                        if element_state.cache_key.bounds == bounds
-                            && element_state.cache_key.content_mask == content_mask
-                            && element_state.cache_key.text_style == text_style
-                            && !cx.window.dirty_views.contains(&self.entity_id())
-                            && !cx.window.refreshing
-                        {
-                            let prepaint_start = cx.prepaint_index();
-                            cx.reuse_prepaint(element_state.prepaint_range.clone());
-                            let prepaint_end = cx.prepaint_index();
-                            element_state.prepaint_range = prepaint_start..prepaint_end;
-                            return (None, Some(element_state));
-                        }
+                if let Some(mut element_state) = element_state {
+                    if element_state.cache_key.bounds == bounds
+                        && element_state.cache_key.content_mask == content_mask
+                        && element_state.cache_key.text_style == text_style
+                        && !cx.window.dirty_views.contains(&self.entity_id())
+                        && !cx.window.refreshing
+                    {
+                        let prepaint_start = cx.prepaint_index();
+                        cx.reuse_prepaint(element_state.prepaint_range.clone());
+                        let prepaint_end = cx.prepaint_index();
+                        element_state.prepaint_range = prepaint_start..prepaint_end;
+                        return (None, element_state);
                     }
+                }
 
-                    let prepaint_start = cx.prepaint_index();
-                    let mut element = (self.render)(self, cx);
-                    element.layout_as_root(bounds.size.into(), cx);
-                    element.prepaint_at(bounds.origin, cx);
-                    let prepaint_end = cx.prepaint_index();
+                let prepaint_start = cx.prepaint_index();
+                let mut element = (self.render)(self, cx);
+                element.layout_as_root(bounds.size.into(), cx);
+                element.prepaint_at(bounds.origin, cx);
+                let prepaint_end = cx.prepaint_index();
 
-                    (
-                        Some(element),
-                        Some(AnyViewState {
-                            prepaint_range: prepaint_start..prepaint_end,
-                            paint_range: PaintIndex::default()..PaintIndex::default(),
-                            cache_key: ViewCacheKey {
-                                bounds,
-                                content_mask,
-                                text_style,
-                            },
-                        }),
-                    )
-                },
-            )
+                (
+                    Some(element),
+                    AnyViewState {
+                        prepaint_range: prepaint_start..prepaint_end,
+                        paint_range: PaintIndex::default()..PaintIndex::default(),
+                        cache_key: ViewCacheKey {
+                            bounds,
+                            content_mask,
+                            text_style,
+                        },
+                    },
+                )
+            })
         } else {
             let mut element = element.take().unwrap();
             element.prepaint(cx);
@@ -365,32 +360,29 @@ impl Element for AnyView {
 
     fn paint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         _bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         element: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
         if self.cached_style.is_some() {
-            cx.with_optional_element_state::<AnyViewState, _>(
-                Some(ElementId::View(self.entity_id())),
-                |element_state, cx| {
-                    let mut element_state = element_state.unwrap().unwrap();
+            cx.with_element_state::<AnyViewState, _>(global_id.unwrap(), |element_state, cx| {
+                let mut element_state = element_state.unwrap();
 
-                    let paint_start = cx.paint_index();
+                let paint_start = cx.paint_index();
 
-                    if let Some(element) = element {
-                        element.paint(cx);
-                    } else {
-                        cx.reuse_paint(element_state.paint_range.clone());
-                    }
+                if let Some(element) = element {
+                    element.paint(cx);
+                } else {
+                    cx.reuse_paint(element_state.paint_range.clone());
+                }
 
-                    let paint_end = cx.paint_index();
-                    element_state.paint_range = paint_start..paint_end;
+                let paint_end = cx.paint_index();
+                element_state.paint_range = paint_start..paint_end;
 
-                    ((), Some(element_state))
-                },
-            )
+                ((), element_state)
+            })
         } else {
             element.as_mut().unwrap().paint(cx);
         }

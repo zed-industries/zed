@@ -796,12 +796,12 @@ mod element {
         type PrepaintState = PaneAxisLayout;
 
         fn id(&self) -> Option<ElementId> {
-            None
+            Some(self.basis.into())
         }
 
         fn request_layout(
             &mut self,
-            _id: Option<&GlobalElementId>,
+            _global_id: Option<&GlobalElementId>,
             cx: &mut ui::prelude::WindowContext,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let mut style = Style::default();
@@ -815,18 +815,16 @@ mod element {
 
         fn prepaint(
             &mut self,
-            _id: Option<&GlobalElementId>,
+            global_id: Option<&GlobalElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
             cx: &mut WindowContext,
         ) -> PaneAxisLayout {
-            let dragged_handle = cx.with_optional_element_state::<Rc<RefCell<Option<usize>>>, _>(
-                Some(self.basis.into()),
+            let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
+                global_id.unwrap(),
                 |state, _cx| {
-                    let state = state
-                        .unwrap()
-                        .unwrap_or_else(|| Rc::new(RefCell::new(None)));
-                    (state.clone(), Some(state))
+                    let state = state.unwrap_or_else(|| Rc::new(RefCell::new(None)));
+                    (state.clone(), state)
                 },
             );
             let flexes = self.flexes.lock().clone();

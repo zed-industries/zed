@@ -3374,7 +3374,7 @@ impl Element for EditorElement {
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        _: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, ()) {
         self.editor.update(cx, |editor, cx| {
@@ -3420,7 +3420,7 @@ impl Element for EditorElement {
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        _: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -3852,7 +3852,7 @@ impl Element for EditorElement {
 
     fn paint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        _: Option<&GlobalElementId>,
         bounds: Bounds<gpui::Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,

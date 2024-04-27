@@ -52,7 +52,11 @@ pub trait Element: 'static + IntoElement {
     /// provided to [`Element::paint`].
     type PrepaintState: 'static;
 
-    /// todo!()
+    /// If this element has a unique identifier, return it here. This is used to track elements across frames, and
+    /// will cause a GlobalElementId to be passed to the request_layout, prepaint, and paint methods.
+    ///
+    /// The global id can in turn be used to access state that's connected to an element with the same id across
+    /// frames. This id must be unique among children of the first containing element with an id.
     fn id(&self) -> Option<ElementId>;
 
     /// Before an element can be painted, we need to know where it's going to be and how big it is.

@@ -1888,6 +1888,10 @@ impl<'a> WindowContext<'a> {
         result
     }
 
+    /// Updates or initializes state for an element with the given id that lives across multiple
+    /// frames. If an element with this ID existed in the rendered frame, its state will be passed
+    /// to the given closure. The state returned by the closure will be stored so it can be referenced
+    /// when drawing the next frame. This method should only be called as part of element drawing.
     pub fn with_element_state<S, R>(
         &mut self,
         global_id: &GlobalElementId,
@@ -1973,10 +1977,9 @@ impl<'a> WindowContext<'a> {
         }
     }
 
-    /// Updates or initializes state for an element with the given id that lives across multiple
-    /// frames. If an element with this ID existed in the rendered frame, its state will be passed
-    /// to the given closure. The state returned by the closure will be stored so it can be referenced
-    /// when drawing the next frame. This method should only be called as part of element drawing.
+    /// A variant of `with_element_state` that allows the element's id to be optional. This is a convenience
+    /// method for elements where the element id may or may not be assigned. Prefer using `with_element_state`
+    /// when the element is guaranteed to have an id.
     pub fn with_optional_element_state<S, R>(
         &mut self,
         global_id: Option<&GlobalElementId>,

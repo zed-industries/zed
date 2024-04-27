@@ -440,7 +440,7 @@ impl Element for InteractiveText {
     type PrepaintState = Hitbox;
 
     fn id(&self) -> Option<ElementId> {
-        None
+        Some(self.element_id.clone())
     }
 
     fn request_layout(
@@ -453,13 +453,13 @@ impl Element for InteractiveText {
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Hitbox {
         cx.with_optional_element_state::<InteractiveTextState, _>(
-            Some(self.element_id.clone()),
+            global_id,
             |interactive_state, cx| {
                 let interactive_state = interactive_state
                     .map(|interactive_state| interactive_state.unwrap_or_default());
@@ -482,16 +482,16 @@ impl Element for InteractiveText {
 
     fn paint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         text_state: &mut Self::RequestLayoutState,
         hitbox: &mut Hitbox,
         cx: &mut WindowContext,
     ) {
-        cx.with_optional_element_state::<InteractiveTextState, _>(
-            Some(self.element_id.clone()),
+        cx.with_element_state::<InteractiveTextState, _>(
+            global_id.unwrap(),
             |interactive_state, cx| {
-                let mut interactive_state = interactive_state.unwrap().unwrap_or_default();
+                let mut interactive_state = interactive_state.unwrap_or_default();
                 if let Some(click_listener) = self.click_listener.take() {
                     let mouse_position = cx.mouse_position();
                     if let Some(ix) = text_state.index_for_position(bounds, mouse_position) {
@@ -623,7 +623,7 @@ impl Element for InteractiveText {
 
                 self.text.paint(None, bounds, text_state, &mut (), cx);
 
-                ((), Some(interactive_state))
+                ((), interactive_state)
             },
         );
     }

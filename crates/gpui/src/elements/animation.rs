@@ -89,16 +89,16 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> {
-        None
+        Some(self.id.clone())
     }
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         cx: &mut crate::WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
-        cx.with_optional_element_state(Some(self.id.clone()), |state, cx| {
-            let state = state.unwrap().unwrap_or_else(|| AnimationState {
+        cx.with_element_state(global_id.unwrap(), |state, cx| {
+            let state = state.unwrap_or_else(|| AnimationState {
                 start: Instant::now(),
             });
             let mut delta =
@@ -134,7 +134,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                 })
             }
 
-            ((element.request_layout(cx), element), Some(state))
+            ((element.request_layout(cx), element), state)
         })
     }
 

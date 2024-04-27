@@ -545,34 +545,36 @@ impl Element for TerminalElement {
     type PrepaintState = LayoutState;
 
     fn id(&self) -> Option<ElementId> {
-        None
+        self.interactivity.element_id.clone()
     }
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
         self.interactivity.occlude_mouse();
-        let layout_id = self.interactivity.request_layout(cx, |mut style, cx| {
-            style.size.width = relative(1.).into();
-            style.size.height = relative(1.).into();
-            let layout_id = cx.request_layout(&style, None);
+        let layout_id = self
+            .interactivity
+            .request_layout(global_id, cx, |mut style, cx| {
+                style.size.width = relative(1.).into();
+                style.size.height = relative(1.).into();
+                let layout_id = cx.request_layout(&style, None);
 
-            layout_id
-        });
+                layout_id
+            });
         (layout_id, ())
     }
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Self::PrepaintState {
         self.interactivity
-            .prepaint(bounds, bounds.size, cx, |_, _, hitbox, cx| {
+            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
                 let hitbox = hitbox.unwrap();
                 let settings = ThemeSettings::get_global(cx).clone();
 
@@ -783,7 +785,7 @@ impl Element for TerminalElement {
 
     fn paint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
@@ -811,7 +813,7 @@ impl Element for TerminalElement {
         let cursor = layout.cursor.take();
         let hyperlink_tooltip = layout.hyperlink_tooltip.take();
         self.interactivity
-            .paint(bounds, Some(&layout.hitbox), cx, |_, cx| {
+            .paint(global_id, bounds, Some(&layout.hitbox), cx, |_, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
 
                 cx.on_key_event({
