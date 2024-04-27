@@ -4,8 +4,8 @@
 use crate::{
     platform::blade::BladeRenderer, size, Bounds, DevicePixels, ForegroundExecutor, Modifiers,
     Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOpenStatus, 
-    WindowOptions, WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
+    PlatformWindow, Point, PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance,
+    WindowOpenStatus, WindowOptions, WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
@@ -418,9 +418,9 @@ impl PlatformWindow for X11Window {
     }
 
     // todo(linux)
-    fn restore_status(&self) -> WindowOpenStatus {
+    fn window_bounds(&self) -> WindowOpenStatus {
         let state = self.state.borrow();
-        WindowOpenStatus::Windowed(Some(state.bounds.map(|p| DevicePixels(p))))
+        WindowOpenStatus::Windowed(state.bounds.map(|p| DevicePixels(p)))
     }
 
     fn content_size(&self) -> Size<Pixels> {
