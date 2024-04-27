@@ -526,9 +526,9 @@ impl PlatformWindow for X11Window {
     }
 
     // todo(linux)
-    fn restore_status(&self) -> WindowOpenStatus {
+    fn window_bounds(&self) -> WindowOpenStatus {
         let state = self.state.borrow();
-        WindowOpenStatus::Windowed(Some(state.bounds.map(|p| DevicePixels(p))))
+        WindowOpenStatus::Windowed(state.bounds.map(|p| DevicePixels(p)))
     }
 
     fn content_size(&self) -> Size<Pixels> {
