@@ -60,15 +60,15 @@ impl sqlez::bindable::Column for SerializedAxis {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
-pub(crate) struct SerializedWindowOpenStatus(pub(crate) WindowBounds);
+pub(crate) struct SerializedWindowBounds(pub(crate) WindowBounds);
 
-impl StaticColumnCount for SerializedWindowOpenStatus {
+impl StaticColumnCount for SerializedWindowBounds {
     fn column_count() -> usize {
         5
     }
 }
 
-impl Bind for SerializedWindowOpenStatus {
+impl Bind for SerializedWindowBounds {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         match self.0 {
             WindowBounds::Windowed(bounds) => {
@@ -111,7 +111,7 @@ impl Bind for SerializedWindowOpenStatus {
     }
 }
 
-impl Column for SerializedWindowOpenStatus {
+impl Column for SerializedWindowBounds {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (window_state, next_index) = String::column(statement, start_index)?;
         let status = match window_state.as_str() {
@@ -121,7 +121,7 @@ impl Column for SerializedWindowOpenStatus {
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowOpenStatus(WindowBounds::Windowed(Bounds {
+                SerializedWindowBounds(WindowBounds::Windowed(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
                 }))
@@ -132,7 +132,7 @@ impl Column for SerializedWindowOpenStatus {
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowOpenStatus(WindowBounds::Maximized(Bounds {
+                SerializedWindowBounds(WindowBounds::Maximized(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
                 }))
@@ -143,7 +143,7 @@ impl Column for SerializedWindowOpenStatus {
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowOpenStatus(WindowBounds::Fullscreen(Bounds {
+                SerializedWindowBounds(WindowBounds::Fullscreen(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
                 }))
@@ -385,7 +385,7 @@ impl WorkspaceDb {
             WorkspaceId,
             Option<LocalPaths>,
             Option<u64>,
-            Option<SerializedWindowOpenStatus>,
+            Option<SerializedWindowBounds>,
             Option<Uuid>,
             Option<bool>,
             DockStructure,
@@ -444,7 +444,7 @@ impl WorkspaceDb {
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
                 .log_err()?,
-            open_status,
+            window_bounds: open_status,
             centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
@@ -594,26 +594,19 @@ impl WorkspaceDb {
 
     pub(crate) fn last_window(
         &self,
-    ) -> anyhow::Result<(
-        Option<Uuid>,
-        Option<SerializedWindowOpenStatus>,
-        Option<bool>,
-    )> {
-        let mut prepared_query = self.select::<(
-            Option<Uuid>,
-            Option<SerializedWindowOpenStatus>,
-            Option<bool>,
-        )>(sql!(
-            SELECT
-            display,
-            window_state, window_x, window_y, window_width, window_height,
-            fullscreen
-            FROM workspaces
-            WHERE local_paths
-            IS NOT NULL
-            ORDER BY timestamp DESC
-            LIMIT 1
-        ))?;
+    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowBounds>, Option<bool>)> {
+        let mut prepared_query =
+            self.select::<(Option<Uuid>, Option<SerializedWindowBounds>, Option<bool>)>(sql!(
+                SELECT
+                display,
+                window_state, window_x, window_y, window_width, window_height,
+                fullscreen
+                FROM workspaces
+                WHERE local_paths
+                IS NOT NULL
+                ORDER BY timestamp DESC
+                LIMIT 1
+            ))?;
         let result = prepared_query()?;
         Ok(result
             .into_iter()
@@ -881,7 +874,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub(crate) async fn set_window_open_status(workspace_id: WorkspaceId, bounds: SerializedWindowOpenStatus, display: Uuid) -> Result<()> {
+        pub(crate) async fn set_window_open_status(workspace_id: WorkspaceId, bounds: SerializedWindowBounds, display: Uuid) -> Result<()> {
             UPDATE workspaces
             SET window_state = ?2,
                 window_x = ?3,
@@ -982,7 +975,7 @@ mod tests {
             id: WorkspaceId(1),
             location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
-            open_status: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -992,7 +985,7 @@ mod tests {
             id: WorkspaceId(2),
             location: LocalPaths::new(["/tmp"]).into(),
             center_group: Default::default(),
-            open_status: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1091,7 +1084,7 @@ mod tests {
             id: WorkspaceId(5),
             location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group,
-            open_status: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1120,7 +1113,7 @@ mod tests {
             id: WorkspaceId(1),
             location: LocalPaths::new(["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
-            open_status: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1130,7 +1123,7 @@ mod tests {
             id: WorkspaceId(2),
             location: LocalPaths::new(["/tmp"]).into(),
             center_group: Default::default(),
-            open_status: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1167,7 +1160,7 @@ mod tests {
             id: WorkspaceId(3),
             location: LocalPaths::new(&["/tmp", "/tmp2"]).into(),
             center_group: Default::default(),
-            open_status: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1201,7 +1194,7 @@ mod tests {
             id: WorkspaceId(4),
             location: LocalPaths::new(workspace_id).into(),
             center_group: center_group.clone(),
-            open_status: Default::default(),
+            window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,

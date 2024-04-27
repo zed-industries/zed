@@ -46,7 +46,7 @@ use node_runtime::NodeRuntime;
 use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
 pub use pane::*;
 pub use pane_group::*;
-use persistence::{model::SerializedWorkspace, SerializedWindowOpenStatus, DB};
+use persistence::{model::SerializedWorkspace, SerializedWindowBounds, DB};
 pub use persistence::{
     model::{ItemId, LocalPaths, SerializedDevServerProject, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
@@ -790,7 +790,7 @@ impl Workspace {
                                 cx.background_executor()
                                     .spawn(DB.set_window_open_status(
                                         workspace_id,
-                                        SerializedWindowOpenStatus(restore_bounds),
+                                        SerializedWindowBounds(restore_bounds),
                                         display_uuid,
                                     ))
                                     .detach_and_log_err(cx);
@@ -938,7 +938,7 @@ impl Workspace {
                 } else {
                     let restorable_bounds = serialized_workspace
                         .as_ref()
-                        .and_then(|workspace| Some((workspace.display?, workspace.open_status?)))
+                        .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
                         .or_else(|| {
                             let (display, window_bounds, _) = DB.last_window().log_err()?;
                             Some((display?, window_bounds?))
@@ -3650,12 +3650,12 @@ impl Workspace {
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
-            let open_status = Some(SerializedWindowOpenStatus(cx.restore_status()));
+            let open_status = Some(SerializedWindowBounds(cx.restore_status()));
             let serialized_workspace = SerializedWorkspace {
                 id: self.database_id,
                 location,
                 center_group,
-                open_status,
+                window_bounds: open_status,
                 display: Default::default(),
                 docks,
                 centered_layout: self.centered_layout,
