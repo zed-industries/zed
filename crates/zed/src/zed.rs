@@ -96,7 +96,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             appears_transparent: true,
             traffic_light_position: Some(point(px(9.0), px(9.0))),
         }),
-        window_bounds: WindowBounds::Windowed(None),
+        window_bounds: None,
         focus: false,
         show: false,
         kind: WindowKind::Normal,
