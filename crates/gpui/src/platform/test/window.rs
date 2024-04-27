@@ -112,7 +112,7 @@ impl PlatformWindow for TestWindow {
         self.0.lock().bounds
     }
 
-    fn restore_status(&self) -> WindowBounds {
+    fn window_bounds(&self) -> WindowBounds {
         WindowBounds::Windowed(self.bounds())
     }
 

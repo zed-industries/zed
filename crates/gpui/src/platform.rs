@@ -184,7 +184,7 @@ unsafe impl Send for DisplayId {}
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<DevicePixels>;
     fn is_maximized(&self) -> bool;
-    fn restore_status(&self) -> WindowBounds;
+    fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;

@@ -109,7 +109,7 @@ impl WindowsWindowState {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
-    fn restore_status(&self) -> WindowBounds {
+    fn window_bounds(&self) -> WindowBounds {
         self.restore_size.get()
     }
 
@@ -356,12 +356,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().is_maximized()
     }
 
-    fn is_minimized(&self) -> bool {
-        self.0.is_minimized()
-    }
-
-    fn restore_status(&self) -> WindowBounds {
-        self.inner.restore_status()
+    fn window_bounds(&self) -> WindowBounds {
+        self.inner.window_bounds()
     }
 
     /// get the logical size of the app's drawable area.
