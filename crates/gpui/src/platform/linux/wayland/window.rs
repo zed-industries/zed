@@ -64,6 +64,7 @@ impl rwh::HasDisplayHandle for RawWindow {
 
 pub struct WaylandWindowState {
     xdg_surface: xdg_surface::XdgSurface,
+    acknowledged_first_configure: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     toplevel: xdg_toplevel::XdgToplevel,
@@ -131,6 +132,7 @@ impl WaylandWindowState {
 
         Self {
             xdg_surface,
+            acknowledged_first_configure: false,
             surface,
             decoration,
             toplevel,
@@ -268,10 +270,12 @@ impl WaylandWindowStatePtr {
     pub fn handle_xdg_surface_event(&self, event: xdg_surface::Event) {
         match event {
             xdg_surface::Event::Configure { serial } => {
-                let state = self.state.borrow();
+                let mut state = self.state.borrow_mut();
                 state.xdg_surface.ack_configure(serial);
+                let request_frame_callback = !state.acknowledged_first_configure;
+                state.acknowledged_first_configure |= !state.acknowledged_first_configure;
                 drop(state);
-                self.frame(true);
+                self.frame(request_frame_callback);
             }
             _ => {}
         }
