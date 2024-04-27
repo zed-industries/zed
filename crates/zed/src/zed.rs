@@ -10,7 +10,7 @@ use collections::VecDeque;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, PromptLevel,
-    TitlebarOptions, View, ViewContext, VisualContext, WindowBounds, WindowKind, WindowOptions,
+    TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
 };
 pub use only_instance::*;
 pub use open_listener::*;
