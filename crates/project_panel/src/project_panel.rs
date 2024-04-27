@@ -134,6 +134,7 @@ actions!(
         NewSearchInDirectory,
         UnfoldDirectory,
         FoldDirectory,
+        SelectParent,
     ]
 );
 
@@ -993,6 +994,23 @@ impl ProjectPanel {
         }
     }
 
+    fn select_parent(&mut self, _: &SelectParent, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            if let Some(parent) = entry.path.parent() {
+                if let Some(parent_entry) = worktree.entry_for_path(parent) {
+                    self.selection = Some(Selection {
+                        worktree_id: worktree.id(),
+                        entry_id: parent_entry.id,
+                    });
+                    self.autoscroll(cx);
+                    cx.notify();
+                }
+            }
+        } else {
+            self.select_first(&SelectFirst {}, cx);
+        }
+    }
+
     fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
         let worktree = self
             .visible_entries
@@ -1772,6 +1790,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::select_prev))
                 .on_action(cx.listener(Self::select_first))
                 .on_action(cx.listener(Self::select_last))
+                .on_action(cx.listener(Self::select_parent))
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
