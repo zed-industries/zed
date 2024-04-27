@@ -64,7 +64,7 @@ pub struct X11ClientState {
     pub(crate) focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
 
-    pub(crate) scroll_class_datas: Vec<xinput::DeviceClassDataScroll>,
+    pub(crate) scroll_class_data: Vec<xinput::DeviceClassDataScroll>,
     pub(crate) scroll_x: Option<f32>,
     pub(crate) scroll_y: Option<f32>,
 
@@ -134,7 +134,7 @@ impl X11Client {
             .unwrap()
             .reply()
             .unwrap();
-        let scroll_class_datas = master_device_query
+        let scroll_class_data = master_device_query
             .infos
             .iter()
             .find(|info| info.type_ == xinput::DeviceType::MASTER_POINTER)
@@ -142,7 +142,7 @@ impl X11Client {
             .classes
             .iter()
             .filter_map(|class| class.data.as_scroll())
-            .map(|class| class.clone())
+            .map(|class| *class)
             .collect::<Vec<_>>();
 
         let atoms = XcbAtoms::new(&xcb_connection).unwrap();
@@ -219,7 +219,7 @@ impl X11Client {
             focused_window: None,
             xkb: xkb_state,
 
-            scroll_class_datas,
+            scroll_class_data,
             scroll_x: None,
             scroll_y: None,
 
@@ -404,8 +404,8 @@ impl X11Client {
                     .map(|axisvalue| fp3232_to_f32(*axisvalue))
                     .collect::<Vec<_>>();
 
-                let scroll_class_datas = self.0.borrow().scroll_class_datas.clone();
-                for scroll_class in scroll_class_datas {
+                let scroll_class_data = self.0.borrow().scroll_class_data.clone();
+                for scroll_class in scroll_class_data {
                     let valuator_mask = 2_u32.pow(scroll_class.number as u32);
 
                     if scroll_class.scroll_type == xinput::ScrollType::HORIZONTAL
