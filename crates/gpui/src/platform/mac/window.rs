@@ -4,7 +4,7 @@ use crate::{
     DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowKind, WindowOpenStatus,
+    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind,
     WindowParams,
 };
 use block::ConcreteBlock;
@@ -495,13 +495,13 @@ impl MacWindowState {
         }
     }
 
-    fn restore_status(&self) -> WindowOpenStatus {
+    fn window_bounds(&self) -> WindowBounds {
         if self.is_fullscreen() {
-            WindowOpenStatus::Fullscreen(self.fullscreen_restore_bounds)
+            WindowBoundss::Fullscreen(self.fullscreen_restore_bounds)
         } else if self.is_maximized() {
-            WindowOpenStatus::Maximized(self.maximized_restore_bounds)
+            WindowBoundss::Maximized(self.maximized_restore_bounds)
         } else {
-            WindowOpenStatus::Windowed(Some(self.bounds()))
+            WindowBoundss::Windowed(self.bounds())
         }
     }
 }
@@ -788,8 +788,8 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().bounds()
     }
 
-    fn restore_status(&self) -> WindowOpenStatus {
-        self.0.as_ref().lock().restore_status()
+    fn window_bounds(&self) -> WindowOpenStatus {
+        self.0.as_ref().lock().window_bounds()
     }
 
     fn is_maximized(&self) -> bool {
