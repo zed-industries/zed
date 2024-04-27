@@ -685,7 +685,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
                     .globals
                     .cursor_shape_manager
                     .as_ref()
-                    .map(|cursor_shape_device| cursor_shape_device.get_pointer(&pointer, qh, ()));
+                    .map(|cursor_shape_manager| cursor_shape_manager.get_pointer(&pointer, qh, ()));
                 state.wl_pointer = Some(pointer);
             }
         }
