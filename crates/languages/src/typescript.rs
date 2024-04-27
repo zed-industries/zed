@@ -5,15 +5,18 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use lazy_static::lazy_static;
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use project::project_settings::ProjectSettings;
+use regex::Regex;
 use rope::Rope;
 use serde_json::{json, Value};
 use settings::Settings;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
+    borrow::Cow,
     ffi::OsString,
     ops::Range,
     path::{Path, PathBuf},
@@ -177,7 +180,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         let runs = language.highlight_text(&source, 0..label.len());
 
         let text = match import {
-            Some(import) => format!("{} \"{}\"", label, import),
+            Some(import) => format!("{} {}", label, import),
             None => label,
         };
         Some(language::CodeLabel {
@@ -436,12 +439,13 @@ async fn get_cached_eslint_server_binary(
 fn get_details_for_completion(
     completion: &lsp::CompletionItem,
 ) -> Option<(String, Range<usize>, Option<String>)> {
+    println!("completion: {:?}\n", completion);
     let kind = completion.kind?;
     let mut scan = completion.detail.as_ref()?.as_str();
     let import_text = "Auto import from '";
     let import = if scan.starts_with(import_text) {
         let slice = &scan[import_text.len()..];
-        let import_end = slice.find("'");
+        let import_end = slice.find('\'');
         let import = match import_end {
             Some(end) => Some(slice[..end].to_string()),
             None => return None,
@@ -465,103 +469,213 @@ fn get_details_for_completion(
     }
 
     let interface = "interface ";
-    match kind {
+    let constant = "const ";
+    let type_keyword = "type ";
+    let (label, range) = match kind {
         lsp::CompletionItemKind::CLASS => {
+            let class = "class ";
             let ctor = "constructor ";
-            let typee = "type ";
             if scan.starts_with(ctor) {
-                let name_end = scan[ctor.len()..].find("(")?;
-                Some((scan.to_string(), ctor.len() + 1..name_end, import))
-            } else if scan.starts_with(typee) {
-                let name_end = scan[typee.len()..].find(" ")?;
-                Some((scan.to_string(), typee.len() + 1..name_end, import))
+                scan = &scan[ctor.len()..];
+                let name_end = scan.find(|c| (c == '(') || (c == '<'))? + 4;
+                Some((Cow::from(format!("new {}", &scan)), 4..name_end))
+            } else if scan.starts_with(type_keyword) {
+                let name_end = scan[type_keyword.len()..].find(|c| (c == ' ') || (c == '<'))?
+                    + type_keyword.len();
+                Some((Cow::from(scan), type_keyword.len()..name_end))
+            } else if scan.starts_with(class) {
+                let name_end =
+                    scan[class.len()..].find(|c| (c == '\n') || (c == '<'))? + class.len();
+                let label = scan[name_end..]
+                    .find('\n')
+                    .map(|i| i + name_end)
+                    .map(|label_end| &scan[..label_end])
+                    .unwrap_or(scan);
+                Some((Cow::from(label), class.len()..name_end))
             } else {
                 None
             }
         }
-        lsp::CompletionItemKind::METHOD => None,
+        lsp::CompletionItemKind::METHOD => {
+            let method = "(method) ";
+            if !scan.starts_with(method) {
+                return None;
+            }
+            scan = &scan[method.len()..];
+            scan = &scan[scan.find('.')? + 1..];
+            let name_end = scan.find(|c| (c == '(') || (c == '<'))?;
+            Some((Cow::from(scan), 0..name_end))
+        }
         lsp::CompletionItemKind::FUNCTION => {
             let func = "function ";
             if scan.starts_with(interface) {
-                return None;
+                None
+            } else if scan.starts_with(func) {
+                scan = &scan[func.len()..];
+                let name_end = scan.find(|c| (c == '(') || (c == '<'))?;
+                Some((Cow::from(scan), 0..name_end))
+            } else {
+                None
             }
-            let name_end = scan[func.len()..].find("(")?;
-            Some((scan.to_string(), func.len() + 1..name_end, import))
         }
         lsp::CompletionItemKind::VARIABLE => {
             let var = "var ";
-            if scan.starts_with(interface) {
-                return None;
+            let let_keyword = "let ";
+            let alias = "(alias) ";
+            let new = "new ";
+
+            if scan.starts_with(alias) {
+                scan = &scan[alias.len()..];
             }
-            let name_end = scan[var.len()..].find(":")?;
-            Some((scan.to_string(), var.len() + 1..name_end, import))
+
+            if scan.starts_with(interface) {
+                let name_end =
+                    scan[interface.len()..].find(|c| (c == ' ') || (c == '<'))? + interface.len();
+                let label = scan[name_end..]
+                    .rfind('}')
+                    .map(|i| i + name_end)
+                    .map(|label_end| &scan[..label_end])
+                    .unwrap_or(scan);
+                Some((Cow::from(label), 0..name_end))
+            } else if scan.starts_with(type_keyword) {
+                let name_end = scan[type_keyword.len()..].find(|c| (c == ' ') || (c == '<'))?
+                    + type_keyword.len();
+                let label = scan[name_end..]
+                    .rfind('}')
+                    .map(|i| i + name_end + 1)
+                    .map(|label_end| &scan[..label_end])
+                    .unwrap_or(scan);
+                Some((Cow::from(label), type_keyword.len()..name_end))
+            } else if scan.starts_with(new) {
+                let name_end = scan[new.len()..].find(|c| (c == '(') || (c == '<'))? + new.len();
+                let label = scan[name_end..]
+                    .find('\n')
+                    .map(|i| i + name_end)
+                    .map(|label_end| &scan[..label_end])
+                    .unwrap_or(scan);
+                Some((Cow::from(label), new.len()..name_end))
+            } else if scan.starts_with(constant) {
+                let name_end = scan[constant.len()..].find(':')? + constant.len();
+                Some((Cow::from(scan), 0..name_end))
+            } else if scan.starts_with(var) {
+                let name_end = scan[var.len()..].find(':')? + var.len();
+                Some((Cow::from(scan), 0..name_end))
+            } else if scan.starts_with(let_keyword) {
+                let name_end = scan[let_keyword.len()..].find(':')? + let_keyword.len();
+                Some((Cow::from(scan), 0..name_end))
+            } else {
+                None
+            }
         }
         lsp::CompletionItemKind::CONSTANT => {
-            let constant = "const ";
-            let name_end = scan[constant.len()..].find(":")?;
-            Some((scan.to_string(), constant.len() + 1..name_end, import))
+            scan = &scan[constant.len()..];
+            let name_end = scan.find(':')?;
+            Some((Cow::from(scan), 0..name_end))
         }
-        lsp::CompletionItemKind::PROPERTY => None,
-        lsp::CompletionItemKind::FIELD => None,
+        lsp::CompletionItemKind::PROPERTY => {
+            let property = "(property) ";
+            if !scan.starts_with(property) {
+                return None;
+            }
+            scan = &scan[property.len()..];
+            scan = &scan[scan.find('.')? + 1..];
+            let name_end = scan.find(':')?;
+            Some((Cow::from(scan), 0..name_end))
+        }
+        lsp::CompletionItemKind::FIELD => {
+            let property = "(property) ";
+            if !scan.starts_with(property) {
+                return None;
+            }
+            scan = &scan[property.len()..];
+            scan = &scan[scan.find('.')? + 1..];
+            let name_end = scan.find(':')?;
+            Some((Cow::from(scan), 0..name_end))
+        }
         lsp::CompletionItemKind::CONSTRUCTOR => None,
-        lsp::CompletionItemKind::INTERFACE | lsp::CompletionItemKind::ENUM => {
-            let keyword = match kind {
-                lsp::CompletionItemKind::INTERFACE => "interface ",
-                lsp::CompletionItemKind::ENUM => "enum ",
-                _ => unreachable!(),
-            };
-            let name_end = scan[keyword.len()..].find(" ")?;
-            // TODO format long strings? esp. those with newlines
-            Some((scan.to_string(), keyword.len() + 1..name_end, import))
+        lsp::CompletionItemKind::INTERFACE => {
+            if scan.starts_with(interface) {
+                let name_end =
+                    scan[interface.len()..].find(|c| (c == ' ') || (c == '<'))? + interface.len();
+                let label = scan[name_end..]
+                    .rfind('}')
+                    .map(|i| i + name_end + 1)
+                    .map(|label_end| &scan[..label_end])
+                    .unwrap_or(scan);
+                Some((Cow::from(label), interface.len()..name_end))
+            } else {
+                None
+            }
+        }
+        lsp::CompletionItemKind::ENUM => {
+            let enum_text = "enum ";
+            if scan.starts_with(enum_text) {
+                scan = &scan[enum_text.len()..];
+                let name_end = scan.find(' ')?;
+                Some((Cow::from(scan), 0..name_end))
+            } else {
+                None
+            }
         }
         _ => None,
+    }?;
+
+    lazy_static! {
+        static ref REGEX: Regex = Regex::new(r"(\s*\n)+\s*").unwrap();
     }
+    Some((
+        REGEX.replace_all(label.as_ref(), " ").into_owned(),
+        range,
+        import,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::typescript::get_details_for_completion;
     use gpui::{Context, TestAppContext};
+    use lsp::{CompletionItem, CompletionItemKind};
     use unindent::Unindent;
 
     #[gpui::test]
     fn test_get_completion_details() {
-        let completion = lsp::CompletionItem {
+        let completion = CompletionItem {
             label: "foo".to_string(),
             detail: Some("var foo: string".to_string()),
-            kind: Some(lsp::CompletionItemKind::VARIABLE),
+            kind: Some(CompletionItemKind::VARIABLE),
             ..Default::default()
         };
         let (label, range, import) = get_details_for_completion(&completion).unwrap();
-        assert_eq!(label, "var foo: string");
-        assert_eq!(range, 4..7);
+        assert_eq!(label, "foo: string");
+        assert_eq!(range, 0..3);
         assert_eq!(import, None);
 
-        let completion = lsp::CompletionItem {
+        let completion = CompletionItem {
             label: "foo".to_string(),
             detail: Some("let foo: string".to_string()),
-            kind: Some(lsp::CompletionItemKind::VARIABLE),
+            kind: Some(CompletionItemKind::VARIABLE),
             ..Default::default()
         };
         let (label, range, import) = get_details_for_completion(&completion).unwrap();
-        assert_eq!(label, "let foo: string");
-        assert_eq!(range, 4..7);
+        assert_eq!(label, "foo: string");
+        assert_eq!(range, 0..3);
         assert_eq!(import, None);
 
-        let completion = lsp::CompletionItem {
+        let completion = CompletionItem {
             label: "foo".to_string(),
             detail: Some("function foo()".to_string()),
-            kind: Some(lsp::CompletionItemKind::FUNCTION),
+            kind: Some(CompletionItemKind::FUNCTION),
             ..Default::default()
         };
         let (label, range, import) = get_details_for_completion(&completion).unwrap();
-        assert_eq!(label, "function foo()");
-        assert_eq!(range, 9..12);
+        assert_eq!(label, "foo()");
+        assert_eq!(range, 0..3);
         assert_eq!(import, None);
 
-        let completion = lsp::CompletionItem {
+        let completion = CompletionItem {
             label: "Foo".to_string(),
             detail: Some("interface Foo {}".to_string()),
-            kind: Some(lsp::CompletionItemKind::INTERFACE),
+            kind: Some(CompletionItemKind::INTERFACE),
             ..Default::default()
         };
         let (label, range, import) = get_details_for_completion(&completion).unwrap();
@@ -569,83 +683,179 @@ mod tests {
         assert_eq!(range, 10..13);
         assert_eq!(import, None);
 
-        let completion = lsp::CompletionItem {
+        let completion = CompletionItem {
             label: "Foo".to_string(),
             detail: Some("enum Foo {}".to_string()),
-            kind: Some(lsp::CompletionItemKind::ENUM),
+            kind: Some(CompletionItemKind::ENUM),
             ..Default::default()
         };
         let (label, range, import) = get_details_for_completion(&completion).unwrap();
-        assert_eq!(label, "enum Foo {}");
-        assert_eq!(range, 5..8);
+        assert_eq!(label, "Foo {}");
+        assert_eq!(range, 0..3);
         assert_eq!(import, None);
 
-        let completion = lsp::CompletionItem {
+        let completion = CompletionItem {
             label: "foo".to_string(),
             detail: Some("const foo: string".to_string()),
-            kind: Some(lsp::CompletionItemKind::CONSTANT),
+            kind: Some(CompletionItemKind::CONSTANT),
             ..Default::default()
         };
         let (label, range, import) = get_details_for_completion(&completion).unwrap();
-        assert_eq!(label, "const foo: string");
-        assert_eq!(range, 6..9);
+        assert_eq!(label, "foo: string");
+        assert_eq!(range, 0..3);
         assert_eq!(import, None);
 
-        let completion = lsp::CompletionItem {
+        let completion = CompletionItem {
             label: "Hello".to_string(),
-            detail: Some("constructor Hello()".to_string()),
-            kind: Some(lsp::CompletionItemKind::CLASS),
+            detail: Some("constructor Hello(): Hello".to_string()),
+            kind: Some(CompletionItemKind::CLASS),
             ..Default::default()
         };
         let (label, range, import) = get_details_for_completion(&completion).unwrap();
-        assert_eq!(label, "constructor Hello()");
-        assert_eq!(range, 12..17);
+        assert_eq!(label, "new Hello(): Hello");
+        assert_eq!(range, 4..9);
         assert_eq!(import, None);
 
-        let completion = lsp::CompletionItem {
+        let completion = CompletionItem {
             label: "lchmodSync".to_string(),
             detail: Some(
                 "Auto import from 'fs'\nfunction lchmodSync(path: PathLike, mode: Mode): void"
                     .to_string(),
             ),
-            kind: Some(lsp::CompletionItemKind::FUNCTION),
+            kind: Some(CompletionItemKind::FUNCTION),
             ..Default::default()
         };
         let (label, range, import) = get_details_for_completion(&completion).unwrap();
-        assert_eq!(
-            label,
-            "function lchmodSync(path: PathLike, mode: Mode): void"
-        );
-        assert_eq!(range, 9..19);
+        assert_eq!(label, "lchmodSync(path: PathLike, mode: Mode): void");
+        assert_eq!(range, 0..10);
         assert_eq!(import, Some("fs".to_string()));
 
-        let completion = lsp::CompletionItem {
+        let completion = CompletionItem {
           label: "moduleFunctionDocs".to_string(),
           detail:Some(        "Auto import from 'function-module'\nfunction moduleFunctionDocs(param1: string, param2: number, param3: ModuleClass): [string, number]".to_string()),
-            kind: Some(lsp::CompletionItemKind::FUNCTION),
+            kind: Some(CompletionItemKind::FUNCTION),
             ..Default::default()
         };
         let (label, range, import) = get_details_for_completion(&completion).unwrap();
         assert_eq!(
             label,
-            "function moduleFunctionDocs(param1: string, param2: number, param3: ModuleClass): [string, number]"
+            "moduleFunctionDocs(param1: string, param2: number, param3: ModuleClass): [string, number]"
         );
-        assert_eq!(range, 9..27);
+        assert_eq!(range, 0..18);
         assert_eq!(import, Some("function-module".to_string()));
 
-        // let completion = lsp::CompletionItem {
-        //   label: "WritableStreamDefaultWriter".to_string(),
-        //   kind: Some(lsp::CompletionItemKind::FUNCTION),
-        //   detail: Some("interface WritableStreamDefaultWriter<W = any>\nvar WritableStreamDefaultWriter: {\n    new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;\n    prototype: WritableStreamDefaultWriter<any>;\n}".to_string()),
-        //   tags: None , ..Default::default()
-        // };
-        // let (label, range, import) = get_details_for_completion(&completion).unwrap();
-        // assert_eq!(
-        //     label,
-        //     "function moduleFunctionDocs(param1: string, param2: number, param3: ModuleClass): [string, number]"
-        // );
-        // assert_eq!(range, 9..27);
-        // assert_eq!(import, Some("function-module".to_string()));
+        let completion = CompletionItem {
+            label: "localConst".to_string(),
+            detail: Some("const localConst: \"\"".to_string()),
+            kind: Some(CompletionItemKind::VARIABLE),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "localConst: \"\"");
+        assert_eq!(range, 0..10);
+        assert_eq!(import, None);
+
+        let completion = CompletionItem {
+            label: "ModuleGenericClass".to_string(),
+            kind: Some(CompletionItemKind::CLASS),
+            detail: Some("Auto import from 'class-module'\nconstructor ModuleGenericClass<T = any>(hi: T): ModuleGenericClass<T>".to_string()),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(
+            label,
+            "new ModuleGenericClass<T = any>(hi: T): ModuleGenericClass<T>"
+        );
+        assert_eq!(range, 4..22);
+        assert_eq!(import, Some("class-module".to_string()));
+
+        let completion = CompletionItem {
+            label: "ModuleClass".to_string(),
+            kind: Some(CompletionItemKind::VARIABLE),
+            detail: Some(
+                "(alias) new ModuleClass(hi: string): ModuleClass\nimport ModuleClass".to_string(),
+            ),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "new ModuleClass(hi: string): ModuleClass");
+        assert_eq!(range, 4..15);
+        assert_eq!(import, None);
+
+        let completion = CompletionItem {
+          label: "Mock".to_string(),
+          kind: Some(CompletionItemKind::VARIABLE),
+          detail: Some("Auto import from 'node:test'\n(alias) type Mock<F extends Function> = F & {\n    mock: MockFunctionContext<F>;\n}\nexport Mock".to_string()),
+          ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(
+            label,
+            "type Mock<F extends Function> = F & { mock: MockFunctionContext<F>; }"
+        );
+        assert_eq!(range, 5..9);
+        assert_eq!(import, Some("node:test".to_string()));
+
+        let completion = CompletionItem {
+              label: "ModuleGenericClass".to_string(),
+              kind: Some(CompletionItemKind::CLASS),
+              detail: Some("Auto import from 'class-module'\nconstructor ModuleGenericClass<T = any>(hi: T): ModuleGenericClass<T>".to_string()),
+              ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(
+            label,
+            "new ModuleGenericClass<T = any>(hi: T): ModuleGenericClass<T>"
+        );
+        assert_eq!(range, 4..22);
+        assert_eq!(import, Some("class-module".to_string()));
+
+        let completion = CompletionItem {
+            label: "member".to_string(),
+            kind: Some(CompletionItemKind::FIELD),
+            detail: Some("(property) ModuleClass.member: string".to_string()),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "member: string");
+        assert_eq!(range, 0..6);
+        assert_eq!(import, None);
+
+        let completion = CompletionItem {
+            label: "method".to_string(),
+            kind: Some(CompletionItemKind::METHOD),
+            detail: Some("(method) ModuleClass.method(hi: string): void".to_string()),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "method(hi: string): void");
+        assert_eq!(range, 0..6);
+        assert_eq!(import, None);
+
+        let completion = CompletionItem {
+            label: "Module".to_string(),
+            kind: Some(CompletionItemKind::CLASS),
+            detail: Some(
+                "Auto import from 'module'\nclass Module\ninterface Module\nnamespace Module"
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "class Module");
+        assert_eq!(range, 6..12);
+        assert_eq!(import, Some("module".to_string()));
+
+        let completion = CompletionItem {
+          label: "ModuleGenericType".to_string(),
+          kind: Some(CompletionItemKind::CLASS),
+          detail: Some("Auto import from 'type-module'\ntype ModuleGenericType<T = string> = {\n    hi: T;\n}".to_string()),
+          ..Default::default()
+        };
+        let (label, range, import) = get_details_for_completion(&completion).unwrap();
+        assert_eq!(label, "type ModuleGenericType<T = string> = { hi: T; }");
+        assert_eq!(range, 5..22);
+        assert_eq!(import, Some("type-module".to_string()));
     }
 
     #[gpui::test]
