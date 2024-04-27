@@ -61,13 +61,13 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::blame::GitBlame;
 use git::diff_hunk_to_display;
 use gpui::{
-    div, impl_actions, point, prelude::*, px, relative, rems, size, uniform_list, Action,
-    AnyElement, AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds,
-    ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView,
-    FontId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model,
-    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle,
-    Styled, StyledText, Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle,
-    View, ViewContext, ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
+    div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
+    AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClipboardItem,
+    Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusableView, FontId, FontStyle,
+    FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, MouseButton, PaintQuad,
+    ParentElement, Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText,
+    Subscription, Task, TextStyle, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    ViewInputHandler, VisualContext, WeakView, WhiteSpace, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -7745,7 +7745,13 @@ impl Editor {
                 .update(&mut cx, |editor, cx| {
                     editor.navigate_to_hover_links(
                         Some(kind),
-                        definitions.into_iter().map(HoverLink::Text).collect(),
+                        definitions
+                            .into_iter()
+                            .filter(|location| {
+                                hover_links::exclude_link_to_position(&buffer, &head, location, cx)
+                            })
+                            .map(HoverLink::Text)
+                            .collect::<Vec<_>>(),
                         split,
                         cx,
                     )
@@ -8200,9 +8206,13 @@ impl Editor {
                                 cursor_offset_in_rename_range_end..cursor_offset_in_rename_range
                             }
                         };
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                            s.select_ranges([rename_selection_range]);
-                        });
+                        if rename_selection_range.end > old_name.len() {
+                            editor.select_all(&SelectAll, cx);
+                        } else {
+                            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                                s.select_ranges([rename_selection_range]);
+                            });
+                        }
                         editor
                     });
 
@@ -8885,7 +8895,6 @@ impl Editor {
         self.style = Some(style);
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn style(&self) -> Option<&EditorStyle> {
         self.style.as_ref()
     }
@@ -8982,6 +8991,10 @@ impl Editor {
             let Some(buffer) = self.buffer().read(cx).as_singleton() else {
                 return;
             };
+
+            if buffer.read(cx).file().is_none() {
+                return;
+            }
 
             let project = project.clone();
             let blame = cx.new_model(|cx| GitBlame::new(buffer, project, user_triggered, cx));
@@ -10322,11 +10335,12 @@ impl FocusableView for Editor {
 impl Render for Editor {
     fn render<'a>(&mut self, cx: &mut ViewContext<'a, Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
+
         let text_style = match self.mode {
             EditorMode::SingleLine | EditorMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.ui_font.family.clone(),
-                font_features: settings.ui_font.features,
+                font_features: settings.ui_font.features.clone(),
                 font_size: rems(0.875).into(),
                 font_weight: FontWeight::NORMAL,
                 font_style: FontStyle::Normal,
@@ -10336,11 +10350,10 @@ impl Render for Editor {
                 strikethrough: None,
                 white_space: WhiteSpace::Normal,
             },
-
             EditorMode::Full => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.buffer_font.family.clone(),
-                font_features: settings.buffer_font.features,
+                font_features: settings.buffer_font.features.clone(),
                 font_size: settings.buffer_font_size(cx).into(),
                 font_weight: FontWeight::NORMAL,
                 font_style: FontStyle::Normal,
@@ -10765,7 +10778,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
         let theme_settings = ThemeSettings::get_global(cx);
         text_style.font_family = theme_settings.buffer_font.family.clone();
         text_style.font_style = theme_settings.buffer_font.style;
-        text_style.font_features = theme_settings.buffer_font.features;
+        text_style.font_features = theme_settings.buffer_font.features.clone();
         text_style.font_weight = theme_settings.buffer_font.weight;
 
         let multi_line_diagnostic = diagnostic.message.contains('\n');
@@ -10801,7 +10814,7 @@ pub fn diagnostic_block_renderer(diagnostic: Diagnostic, _is_valid: bool) -> Ren
 
         let icon_size = buttons(&diagnostic, cx.block_id)
             .into_any_element()
-            .measure(AvailableSpace::min_size(), cx);
+            .layout_as_root(AvailableSpace::min_size(), cx);
 
         h_flex()
             .id(cx.block_id)

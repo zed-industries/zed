@@ -9,10 +9,5 @@ fn main() {
         {
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
-
-        let manifest = std::path::Path::new("../zed/resources/windows/manifest.xml");
-        println!("cargo:rerun-if-changed={}", manifest.display());
-        embed_manifest::embed_manifest(embed_manifest::new_manifest(manifest.to_str().unwrap()))
-            .unwrap();
     }
 }

@@ -31,10 +31,7 @@ use objc::{
     sel, sel_impl,
 };
 use parking_lot::Mutex;
-use raw_window_handle::{
-    AppKitDisplayHandle, AppKitWindowHandle, DisplayHandle, HasDisplayHandle, HasWindowHandle,
-    RawWindowHandle, WindowHandle,
-};
+use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
     any::Any,
@@ -340,7 +337,6 @@ struct MacWindowState {
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
-    kind: WindowKind,
     request_frame_callback: Option<Box<dyn FnMut()>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
@@ -633,7 +629,6 @@ impl MacWindow {
                     native_view as *mut _,
                     window_size,
                 ),
-                kind,
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
@@ -909,7 +904,7 @@ impl PlatformWindow for MacWindow {
             let alert_style = match level {
                 PromptLevel::Info => 1,
                 PromptLevel::Warning => 0,
-                PromptLevel::Critical => 2,
+                PromptLevel::Critical | PromptLevel::Destructive => 2,
             };
             let _: () = msg_send![alert, setAlertStyle: alert_style];
             let _: () = msg_send![alert, setMessageText: ns_string(msg)];
@@ -924,10 +919,17 @@ impl PlatformWindow for MacWindow {
             {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
+                if level == PromptLevel::Destructive && answer != &"Cancel" {
+                    let _: () = msg_send![button, setHasDestructiveAction: YES];
+                }
             }
             if let Some((ix, answer)) = latest_non_cancel_label {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
+                let _: () = msg_send![button, setHasDestructiveAction: YES];
+                if level == PromptLevel::Destructive {
+                    let _: () = msg_send![button, setHasDestructiveAction: YES];
+                }
             }
 
             let (done_tx, done_rx) = oneshot::channel();
@@ -1143,25 +1145,25 @@ impl PlatformWindow for MacWindow {
     }
 }
 
-impl HasWindowHandle for MacWindow {
-    fn window_handle(
-        &self,
-    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+impl rwh::HasWindowHandle for MacWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
         // SAFETY: The AppKitWindowHandle is a wrapper around a pointer to an NSView
         unsafe {
-            Ok(WindowHandle::borrow_raw(RawWindowHandle::AppKit(
-                AppKitWindowHandle::new(self.0.lock().native_view.cast()),
+            Ok(rwh::WindowHandle::borrow_raw(rwh::RawWindowHandle::AppKit(
+                rwh::AppKitWindowHandle::new(self.0.lock().native_view.cast()),
             )))
         }
     }
 }
 
-impl HasDisplayHandle for MacWindow {
-    fn display_handle(
-        &self,
-    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+impl rwh::HasDisplayHandle for MacWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         // SAFETY: This is a no-op on macOS
-        unsafe { Ok(DisplayHandle::borrow_raw(AppKitDisplayHandle::new().into())) }
+        unsafe {
+            Ok(rwh::DisplayHandle::borrow_raw(
+                rwh::AppKitDisplayHandle::new().into(),
+            ))
+        }
     }
 }
 
@@ -1343,7 +1345,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
     let window_state = unsafe { get_window_state(this) };
     let weak_window_state = Arc::downgrade(&window_state);
     let mut lock = window_state.as_ref().lock();
-    let is_active = unsafe { lock.native_window.isKeyWindow() == YES };
     let window_height = lock.content_size().height;
     let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
@@ -1428,8 +1429,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                         .detach();
                 }
             }
-
-            PlatformInput::MouseMove(_) if !(is_active || lock.kind == WindowKind::PopUp) => return,
 
             PlatformInput::MouseUp(MouseUpEvent { .. }) => {
                 lock.synthetic_drag_counter += 1;

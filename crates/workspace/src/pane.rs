@@ -5,7 +5,7 @@ use crate::{
     },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
+    NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
     SplitDirection, ToggleZoom, Workspace,
 };
 use anyhow::Result;
@@ -26,7 +26,7 @@ use std::{
     any::Any,
     cmp, fmt, mem,
     ops::ControlFlow,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -193,7 +193,7 @@ pub struct Pane {
     last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
-    new_item_menu: Option<View<ContextMenu>>,
+    pub new_item_menu: Option<View<ContextMenu>>,
     split_item_menu: Option<View<ContextMenu>>,
     //     tab_context_menu: View<ContextMenu>,
     pub(crate) workspace: WeakView<Workspace>,
@@ -879,8 +879,6 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
-            // Close the window when there's no active items to close.
-            cx.dispatch_action(Box::new(CloseWindow));
             return None;
         }
         let active_item_id = self.items[self.active_item_index].item_id();
@@ -1324,14 +1322,10 @@ impl Pane {
                 pane.update(cx, |_, cx| item.save(should_format, project, cx))?
                     .await?;
             } else if can_save_as {
-                let start_abs_path = project
-                    .update(cx, |project, cx| {
-                        let worktree = project.visible_worktrees(cx).next()?;
-                        Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
-                    })?
-                    .unwrap_or_else(|| Path::new("").into());
-
-                let abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path))?;
+                let abs_path = pane.update(cx, |pane, cx| {
+                    pane.workspace
+                        .update(cx, |workspace, cx| workspace.prompt_for_new_path(cx))
+                })??;
                 if let Some(abs_path) = abs_path.await.ok().flatten() {
                     pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
                         .await?;
@@ -1747,7 +1741,7 @@ impl Pane {
             )
     }
 
-    fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
+    pub fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
         div().absolute().bottom_0().right_0().size_0().child(
             deferred(
                 anchored()
@@ -2928,6 +2922,6 @@ impl Render for DraggedTab {
             .selected(self.is_active)
             .child(label)
             .render(cx)
-            .font(ui_font)
+            .font_family(ui_font)
     }
 }

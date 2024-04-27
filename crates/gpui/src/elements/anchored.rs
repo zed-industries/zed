@@ -2,8 +2,8 @@ use smallvec::SmallVec;
 use taffy::style::{Display, Position};
 
 use crate::{
-    point, AnyElement, Bounds, Element, ElementContext, IntoElement, LayoutId, ParentElement,
-    Pixels, Point, Size, Style,
+    point, AnyElement, Bounds, Element, IntoElement, LayoutId, ParentElement, Pixels, Point, Size,
+    Style, WindowContext,
 };
 
 /// The state that the anchored element element uses to track its children.
@@ -69,14 +69,17 @@ impl ParentElement for Anchored {
 }
 
 impl Element for Anchored {
-    type BeforeLayout = AnchoredState;
-    type AfterLayout = ();
+    type RequestLayoutState = AnchoredState;
+    type PrepaintState = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (crate::LayoutId, Self::BeforeLayout) {
+    fn request_layout(
+        &mut self,
+        cx: &mut WindowContext,
+    ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let child_layout_ids = self
             .children
             .iter_mut()
-            .map(|child| child.before_layout(cx))
+            .map(|child| child.request_layout(cx))
             .collect::<SmallVec<_>>();
 
         let anchored_style = Style {
@@ -90,19 +93,19 @@ impl Element for Anchored {
         (layout_id, AnchoredState { child_layout_ids })
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        before_layout: &mut Self::BeforeLayout,
-        cx: &mut ElementContext,
+        request_layout: &mut Self::RequestLayoutState,
+        cx: &mut WindowContext,
     ) {
-        if before_layout.child_layout_ids.is_empty() {
+        if request_layout.child_layout_ids.is_empty() {
             return;
         }
 
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
-        for child_layout_id in &before_layout.child_layout_ids {
+        for child_layout_id in &request_layout.child_layout_ids {
             let child_bounds = cx.layout_bounds(*child_layout_id);
             child_min = child_min.min(&child_bounds.origin);
             child_max = child_max.max(&child_bounds.lower_right());
@@ -167,7 +170,7 @@ impl Element for Anchored {
 
         cx.with_element_offset(offset, |cx| {
             for child in &mut self.children {
-                child.after_layout(cx);
+                child.prepaint(cx);
             }
         })
     }
@@ -175,9 +178,9 @@ impl Element for Anchored {
     fn paint(
         &mut self,
         _bounds: crate::Bounds<crate::Pixels>,
-        _before_layout: &mut Self::BeforeLayout,
-        _after_layout: &mut Self::AfterLayout,
-        cx: &mut ElementContext,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        cx: &mut WindowContext,
     ) {
         for child in &mut self.children {
             child.paint(cx);

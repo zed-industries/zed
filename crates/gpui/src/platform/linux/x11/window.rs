@@ -2,10 +2,10 @@
 #![allow(unused)]
 
 use crate::{
-    platform::blade::BladeRenderer, size, Bounds, DevicePixels, Modifiers, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams,
-    X11Client, X11ClientState,
+    platform::blade::BladeRenderer, size, Bounds, DevicePixels, ForegroundExecutor, Modifiers,
+    Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance,
+    WindowOptions, WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
@@ -77,8 +77,10 @@ pub struct Callbacks {
 }
 
 pub(crate) struct X11WindowState {
-    raw: RawWindow,
+    client: X11ClientStatePtr,
+    executor: ForegroundExecutor,
     atoms: XcbAtoms,
+    raw: RawWindow,
     bounds: Bounds<i32>,
     scale_factor: f32,
     renderer: BladeRenderer,
@@ -88,7 +90,7 @@ pub(crate) struct X11WindowState {
 }
 
 #[derive(Clone)]
-pub(crate) struct X11Window {
+pub(crate) struct X11WindowStatePtr {
     pub(crate) state: Rc<RefCell<X11WindowState>>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb_connection: Rc<XCBConnection>,
@@ -96,45 +98,36 @@ pub(crate) struct X11Window {
 }
 
 // todo(linux): Remove other RawWindowHandle implementation
-unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
-    fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
-        let mut wh = blade_rwh::XcbWindowHandle::empty();
-        wh.window = self.window_id;
-        wh.visual_id = self.visual_id;
-        wh.into()
+impl rwh::HasWindowHandle for RawWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
+        let non_zero = NonZeroU32::new(self.window_id).unwrap();
+        let handle = rwh::XcbWindowHandle::new(non_zero);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
-unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
-    fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
-        let mut dh = blade_rwh::XcbDisplayHandle::empty();
-        dh.connection = self.connection;
-        dh.screen = self.screen_id as i32;
-        dh.into()
+impl rwh::HasDisplayHandle for RawWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
+        let non_zero = NonNull::new(self.connection).unwrap();
+        let handle = rwh::XcbDisplayHandle::new(Some(non_zero), self.screen_id as i32);
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
     }
 }
 
 impl rwh::HasWindowHandle for X11Window {
     fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
-        Ok(unsafe {
-            let non_zero = NonZeroU32::new(self.state.borrow().raw.window_id).unwrap();
-            let handle = rwh::XcbWindowHandle::new(non_zero);
-            rwh::WindowHandle::borrow_raw(handle.into())
-        })
+        unimplemented!()
     }
 }
 impl rwh::HasDisplayHandle for X11Window {
     fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
-        Ok(unsafe {
-            let this = self.state.borrow();
-            let non_zero = NonNull::new(this.raw.connection).unwrap();
-            let handle = rwh::XcbDisplayHandle::new(Some(non_zero), this.raw.screen_id as i32);
-            rwh::DisplayHandle::borrow_raw(handle.into())
-        })
+        unimplemented!()
     }
 }
 
 impl X11WindowState {
     pub fn new(
+        client: X11ClientStatePtr,
+        executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
         x_main_screen_index: usize,
@@ -235,6 +228,8 @@ impl X11WindowState {
         let gpu_extent = query_render_extent(xcb_connection, x_window);
 
         Self {
+            client,
+            executor,
             display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
             raw,
             bounds: params.bounds.map(|v| v.0),
@@ -255,16 +250,47 @@ impl X11WindowState {
     }
 }
 
+pub(crate) struct X11Window(pub X11WindowStatePtr);
+
+impl Drop for X11Window {
+    fn drop(&mut self) {
+        let mut state = self.0.state.borrow_mut();
+        state.renderer.destroy();
+
+        self.0.xcb_connection.unmap_window(self.0.x_window).unwrap();
+        self.0
+            .xcb_connection
+            .destroy_window(self.0.x_window)
+            .unwrap();
+        self.0.xcb_connection.flush().unwrap();
+
+        let this_ptr = self.0.clone();
+        let client_ptr = state.client.clone();
+        state
+            .executor
+            .spawn(async move {
+                this_ptr.close();
+                client_ptr.drop_window(this_ptr.x_window);
+            })
+            .detach();
+        drop(state);
+    }
+}
+
 impl X11Window {
     pub fn new(
+        client: X11ClientStatePtr,
+        executor: ForegroundExecutor,
         params: WindowParams,
         xcb_connection: &Rc<XCBConnection>,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
     ) -> Self {
-        X11Window {
+        Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
+                client,
+                executor,
                 params,
                 xcb_connection,
                 x_main_screen_index,
@@ -274,20 +300,27 @@ impl X11Window {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
             x_window,
+        })
+    }
+}
+
+impl X11WindowStatePtr {
+    pub fn should_close(&self) -> bool {
+        let mut cb = self.callbacks.borrow_mut();
+        if let Some(mut should_close) = cb.should_close.take() {
+            let result = (should_close)();
+            cb.should_close = Some(should_close);
+            result
+        } else {
+            true
         }
     }
 
-    pub fn destroy(&self) {
-        let mut state = self.state.borrow_mut();
-        state.renderer.destroy();
-        drop(state);
-
-        self.xcb_connection.unmap_window(self.x_window).unwrap();
-        self.xcb_connection.destroy_window(self.x_window).unwrap();
-        if let Some(fun) = self.callbacks.borrow_mut().close.take() {
-            fun();
+    pub fn close(&self) {
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(fun) = callbacks.close.take() {
+            fun()
         }
-        self.xcb_connection.flush().unwrap();
     }
 
     pub fn refresh(&self) {
@@ -356,7 +389,7 @@ impl X11Window {
 
 impl PlatformWindow for X11Window {
     fn bounds(&self) -> Bounds<DevicePixels> {
-        self.state.borrow_mut().bounds.map(|v| v.into())
+        self.0.state.borrow_mut().bounds.map(|v| v.into())
     }
 
     // todo(linux)
@@ -370,11 +403,11 @@ impl PlatformWindow for X11Window {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.state.borrow_mut().content_size()
+        self.0.state.borrow_mut().content_size()
     }
 
     fn scale_factor(&self) -> f32 {
-        self.state.borrow_mut().scale_factor
+        self.0.state.borrow_mut().scale_factor
     }
 
     // todo(linux)
@@ -383,13 +416,14 @@ impl PlatformWindow for X11Window {
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
-        self.state.borrow().display.clone()
+        self.0.state.borrow().display.clone()
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
         let reply = self
+            .0
             .xcb_connection
-            .query_pointer(self.x_window)
+            .query_pointer(self.0.x_window)
             .unwrap()
             .reply()
             .unwrap();
@@ -406,11 +440,11 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.state.borrow_mut().input_handler = Some(input_handler);
+        self.0.state.borrow_mut().input_handler = Some(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
-        self.state.borrow_mut().input_handler.take()
+        self.0.state.borrow_mut().input_handler.take()
     }
 
     fn prompt(
@@ -425,8 +459,9 @@ impl PlatformWindow for X11Window {
 
     fn activate(&self) {
         let win_aux = xproto::ConfigureWindowAux::new().stack_mode(xproto::StackMode::ABOVE);
-        self.xcb_connection
-            .configure_window(self.x_window, &win_aux)
+        self.0
+            .xcb_connection
+            .configure_window(self.0.x_window, &win_aux)
             .log_err();
     }
 
@@ -436,22 +471,24 @@ impl PlatformWindow for X11Window {
     }
 
     fn set_title(&mut self, title: &str) {
-        self.xcb_connection
+        self.0
+            .xcb_connection
             .change_property8(
                 xproto::PropMode::REPLACE,
-                self.x_window,
+                self.0.x_window,
                 xproto::AtomEnum::WM_NAME,
                 xproto::AtomEnum::STRING,
                 title.as_bytes(),
             )
             .unwrap();
 
-        self.xcb_connection
+        self.0
+            .xcb_connection
             .change_property8(
                 xproto::PropMode::REPLACE,
-                self.x_window,
-                self.state.borrow().atoms._NET_WM_NAME,
-                self.state.borrow().atoms.UTF8_STRING,
+                self.0.x_window,
+                self.0.state.borrow().atoms._NET_WM_NAME,
+                self.0.state.borrow().atoms.UTF8_STRING,
                 title.as_bytes(),
             )
             .unwrap();
@@ -495,39 +532,39 @@ impl PlatformWindow for X11Window {
     }
 
     fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
-        self.callbacks.borrow_mut().request_frame = Some(callback);
+        self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>) {
-        self.callbacks.borrow_mut().input = Some(callback);
+        self.0.callbacks.borrow_mut().input = Some(callback);
     }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
-        self.callbacks.borrow_mut().active_status_change = Some(callback);
+        self.0.callbacks.borrow_mut().active_status_change = Some(callback);
     }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
-        self.callbacks.borrow_mut().resize = Some(callback);
+        self.0.callbacks.borrow_mut().resize = Some(callback);
     }
 
     fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.callbacks.borrow_mut().fullscreen = Some(callback);
+        self.0.callbacks.borrow_mut().fullscreen = Some(callback);
     }
 
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
-        self.callbacks.borrow_mut().moved = Some(callback);
+        self.0.callbacks.borrow_mut().moved = Some(callback);
     }
 
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.callbacks.borrow_mut().should_close = Some(callback);
+        self.0.callbacks.borrow_mut().should_close = Some(callback);
     }
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
-        self.callbacks.borrow_mut().close = Some(callback);
+        self.0.callbacks.borrow_mut().close = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        self.callbacks.borrow_mut().appearance_changed = Some(callback);
+        self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
     // todo(linux)
@@ -536,12 +573,12 @@ impl PlatformWindow for X11Window {
     }
 
     fn draw(&self, scene: &Scene) {
-        let mut inner = self.state.borrow_mut();
+        let mut inner = self.0.state.borrow_mut();
         inner.renderer.draw(scene);
     }
 
     fn sprite_atlas(&self) -> sync::Arc<dyn PlatformAtlas> {
-        let inner = self.state.borrow();
+        let inner = self.0.state.borrow();
         inner.renderer.sprite_atlas().clone()
     }
 }
