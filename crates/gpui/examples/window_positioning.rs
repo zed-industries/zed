@@ -43,7 +43,7 @@ fn main() {
 
                 WindowOptions {
                     // Set the bounds of the window in screen coordinates
-                    window_bounds: WindowBounds::Windowed(Some(bounds)),
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
                     // Specify the display_id to ensure the window is created on the correct screen
                     display_id: Some(screen.id()),
 

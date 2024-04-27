@@ -63,7 +63,7 @@ fn main() {
         .with_assets(Assets {})
         .run(|cx: &mut AppContext| {
             let options = WindowOptions {
-                window_bounds: WindowBounds::Windowed(Some(Bounds::centered(
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
                     size(px(300.), px(300.)),
                     cx,
