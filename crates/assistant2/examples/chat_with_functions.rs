@@ -135,7 +135,7 @@ impl LanguageModelTool for RollDiceTool {
         return Task::ready(Ok(DiceRoll { rolls }));
     }
 
-    fn new_view(
+    fn output_view(
         _tool_call_id: String,
         _input: Self::Input,
         result: Result<Self::Output>,
@@ -194,20 +194,20 @@ fn main() {
 
         cx.spawn(|cx| async move {
             cx.update(|cx| {
-                let mut tool_registry = ToolRegistry::new();
-                tool_registry
-                    .register(RollDiceTool::new())
-                    .context("failed to register DummyTool")
-                    .log_err();
-
-                let tool_registry = Arc::new(tool_registry);
-
-                println!("Tools registered");
-                for definition in tool_registry.definitions() {
-                    println!("{}", definition);
-                }
-
                 cx.open_window(WindowOptions::default(), |cx| {
+                    let mut tool_registry = ToolRegistry::new();
+                    tool_registry
+                        .register(RollDiceTool::new(), cx)
+                        .context("failed to register DummyTool")
+                        .log_err();
+
+                    let tool_registry = Arc::new(tool_registry);
+
+                    println!("Tools registered");
+                    for definition in tool_registry.definitions() {
+                        println!("{}", definition);
+                    }
+
                     cx.new_view(|cx| Example::new(language_registry, tool_registry, cx))
                 });
                 cx.activate(true);

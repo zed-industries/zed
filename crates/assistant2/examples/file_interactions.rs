@@ -115,7 +115,7 @@ impl LanguageModelTool for FileBrowserTool {
         })
     }
 
-    fn new_view(
+    fn output_view(
         _tool_call_id: String,
         _input: Self::Input,
         result: Result<Self::Output>,
@@ -174,20 +174,20 @@ fn main() {
                 let fs = Arc::new(fs::RealFs::new(None));
                 let cwd = std::env::current_dir().expect("Failed to get current working directory");
 
-                let mut tool_registry = ToolRegistry::new();
-                tool_registry
-                    .register(FileBrowserTool::new(fs, cwd))
-                    .context("failed to register FileBrowserTool")
-                    .log_err();
-
-                let tool_registry = Arc::new(tool_registry);
-
-                println!("Tools registered");
-                for definition in tool_registry.definitions() {
-                    println!("{}", definition);
-                }
-
                 cx.open_window(WindowOptions::default(), |cx| {
+                    let mut tool_registry = ToolRegistry::new();
+                    tool_registry
+                        .register(FileBrowserTool::new(fs, cwd), cx)
+                        .context("failed to register FileBrowserTool")
+                        .log_err();
+
+                    let tool_registry = Arc::new(tool_registry);
+
+                    println!("Tools registered");
+                    for definition in tool_registry.definitions() {
+                        println!("{}", definition);
+                    }
+
                     cx.new_view(|cx| Example::new(language_registry, tool_registry, cx))
                 });
                 cx.activate(true);
