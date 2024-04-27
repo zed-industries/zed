@@ -8,6 +8,7 @@ use file_icons::FileIcons;
 
 use anyhow::{anyhow, Result};
 use collections::{hash_map, HashMap};
+use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AppContext,
     AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, EventEmitter, FocusHandle,
@@ -15,11 +16,8 @@ use gpui::{
     ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task,
     UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext,
 };
-use menu::{Confirm, SelectNext, SelectPrev};
-use project::{
-    repository::GitFileStatus, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath,
-    Worktree, WorktreeId,
-};
+use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use project::{Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId};
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -37,7 +35,7 @@ use util::{maybe, NumericPrefixWithSuffix, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
-    Workspace,
+    OpenInTerminal, Workspace,
 };
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
@@ -113,7 +111,13 @@ pub struct Delete {
     pub skip_prompt: bool,
 }
 
-impl_actions!(project_panel, [Delete]);
+#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+pub struct Trash {
+    #[serde(default)]
+    pub skip_prompt: bool,
+}
+
+impl_actions!(project_panel, [Delete, Trash]);
 
 actions!(
     project_panel,
@@ -127,7 +131,6 @@ actions!(
         CopyPath,
         CopyRelativePath,
         RevealInFinder,
-        OpenInTerminal,
         Cut,
         Paste,
         Rename,
@@ -137,6 +140,7 @@ actions!(
         NewSearchInDirectory,
         UnfoldDirectory,
         FoldDirectory,
+        SelectParent,
     ]
 );
 
@@ -441,9 +445,7 @@ impl ProjectPanel {
                             .action("New Folder", Box::new(NewDirectory))
                             .separator()
                             .action("Reveal in Finder", Box::new(RevealInFinder))
-                            .when(is_dir, |menu| {
-                                menu.action("Open in Terminal…", Box::new(OpenInTerminal))
-                            })
+                            .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
@@ -599,7 +601,10 @@ impl ProjectPanel {
     }
 
     pub fn collapse_all_entries(&mut self, _: &CollapseAllEntries, cx: &mut ViewContext<Self>) {
-        self.expanded_dir_ids.clear();
+        // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
+        // (which is it's default behaviour when there's no entry for a worktree in expanded_dir_ids).
+        self.expanded_dir_ids
+            .retain(|_, expanded_entries| expanded_entries.is_empty());
         self.update_visible_entries(None, cx);
         cx.notify();
     }
@@ -646,7 +651,7 @@ impl ProjectPanel {
             self.autoscroll(cx);
             cx.notify();
         } else {
-            self.select_first(cx);
+            self.select_first(&SelectFirst {}, cx);
         }
     }
 
@@ -881,16 +886,25 @@ impl ProjectPanel {
         }
     }
 
+    fn trash(&mut self, action: &Trash, cx: &mut ViewContext<Self>) {
+        self.remove(true, action.skip_prompt, cx);
+    }
+
     fn delete(&mut self, action: &Delete, cx: &mut ViewContext<Self>) {
+        self.remove(false, action.skip_prompt, cx);
+    }
+
+    fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
             let Selection { entry_id, .. } = self.selection?;
             let path = self.project.read(cx).path_for_entry(entry_id, cx)?.path;
             let file_name = path.file_name()?;
 
-            let answer = (!action.skip_prompt).then(|| {
+            let operation = if trash { "Trash" } else { "Delete" };
+            let answer = (!skip_prompt).then(|| {
                 cx.prompt(
-                    PromptLevel::Info,
-                    &format!("Delete {file_name:?}?"),
+                    PromptLevel::Destructive,
+                    &format!("{operation:?} {file_name:?}?",),
                     None,
                     &["Delete", "Cancel"],
                 )
@@ -904,7 +918,7 @@ impl ProjectPanel {
                 }
                 this.update(&mut cx, |this, cx| {
                     this.project
-                        .update(cx, |project, cx| project.delete_entry(entry_id, cx))
+                        .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
                         .ok_or_else(|| anyhow!("no such entry"))
                 })??
                 .await
@@ -991,11 +1005,28 @@ impl ProjectPanel {
                 }
             }
         } else {
-            self.select_first(cx);
+            self.select_first(&SelectFirst {}, cx);
         }
     }
 
-    fn select_first(&mut self, cx: &mut ViewContext<Self>) {
+    fn select_parent(&mut self, _: &SelectParent, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            if let Some(parent) = entry.path.parent() {
+                if let Some(parent_entry) = worktree.entry_for_path(parent) {
+                    self.selection = Some(Selection {
+                        worktree_id: worktree.id(),
+                        entry_id: parent_entry.id,
+                    });
+                    self.autoscroll(cx);
+                    cx.notify();
+                }
+            }
+        } else {
+            self.select_first(&SelectFirst {}, cx);
+        }
+    }
+
+    fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
         let worktree = self
             .visible_entries
             .first()
@@ -1007,6 +1038,25 @@ impl ProjectPanel {
                 self.selection = Some(Selection {
                     worktree_id,
                     entry_id: root_entry.id,
+                });
+                self.autoscroll(cx);
+                cx.notify();
+            }
+        }
+    }
+
+    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+        let worktree = self
+            .visible_entries
+            .last()
+            .and_then(|(worktree_id, _)| self.project.read(cx).worktree_for_id(*worktree_id, cx));
+        if let Some(worktree) = worktree {
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            if let Some(last_entry) = worktree.entries(true).last() {
+                self.selection = Some(Selection {
+                    worktree_id,
+                    entry_id: last_entry.id,
                 });
                 self.autoscroll(cx);
                 cx.notify();
@@ -1128,13 +1178,20 @@ impl ProjectPanel {
 
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            let path = worktree.abs_path().join(&entry.path);
-            cx.dispatch_action(
-                workspace::OpenTerminal {
-                    working_directory: path,
+            let abs_path = worktree.abs_path().join(&entry.path);
+            let working_directory = if entry.is_dir() {
+                Some(abs_path)
+            } else {
+                if entry.is_symlink {
+                    abs_path.canonicalize().ok()
+                } else {
+                    Some(abs_path)
                 }
-                .boxed_clone(),
-            )
+                .and_then(|path| Some(path.parent()?.to_path_buf()))
+            };
+            if let Some(working_directory) = working_directory {
+                cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
+            }
         }
     }
 
@@ -1642,7 +1699,10 @@ impl ProjectPanel {
                     .child(if let Some(icon) = &icon {
                         h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
                     } else {
-                        h_flex().size(IconSize::default().rems()).invisible()
+                        h_flex()
+                            .size(IconSize::default().rems())
+                            .invisible()
+                            .flex_none()
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
@@ -1690,7 +1750,7 @@ impl ProjectPanel {
     }
 
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
-        let mut dispatch_context = KeyContext::default();
+        let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
         dispatch_context.add("menu");
 
@@ -1743,6 +1803,9 @@ impl Render for ProjectPanel {
                 .key_context(self.dispatch_context(cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_prev))
+                .on_action(cx.listener(Self::select_first))
+                .on_action(cx.listener(Self::select_last))
+                .on_action(cx.listener(Self::select_parent))
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
@@ -1760,6 +1823,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
                         .on_action(cx.listener(Self::delete))
+                        .on_action(cx.listener(Self::trash))
                         .on_action(cx.listener(Self::cut))
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))
@@ -1835,7 +1899,7 @@ impl Render for DraggedProjectEntryView {
         let settings = ProjectPanelSettings::get_global(cx);
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_flex()
-            .font(ui_font)
+            .font_family(ui_font)
             .bg(cx.theme().colors().background)
             .w(self.width)
             .child(
@@ -1893,8 +1957,10 @@ impl Panel for ProjectPanel {
         cx.notify();
     }
 
-    fn icon(&self, _: &WindowContext) -> Option<ui::IconName> {
-        Some(ui::IconName::FileTree)
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        ProjectPanelSettings::get_global(cx)
+            .button
+            .then(|| IconName::FileTree)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

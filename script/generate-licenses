@@ -7,9 +7,10 @@ OUTPUT_FILE="${1:-$(pwd)/assets/licenses.md}"
 > $OUTPUT_FILE
 
 echo -e "# ###### THEME LICENSES ######\n" >> $OUTPUT_FILE
-
-echo "Generating theme licenses"
 cat assets/themes/LICENSES >> $OUTPUT_FILE
+
+echo -e "# ###### ICON LICENSES ######\n" >> $OUTPUT_FILE
+cat assets/icons/LICENSES >> $OUTPUT_FILE
 
 echo -e "# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
 

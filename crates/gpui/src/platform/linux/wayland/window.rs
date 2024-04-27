@@ -2,16 +2,14 @@ use std::any::Any;
 use std::cell::{Ref, RefCell, RefMut};
 use std::ffi::c_void;
 use std::num::NonZeroU32;
+use std::ptr::NonNull;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
 use blade_graphics as gpu;
-use blade_rwh::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
 use collections::{HashMap, HashSet};
 use futures::channel::oneshot::Receiver;
-use raw_window_handle::{
-    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
-};
+use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{protocol::wl_surface, Proxy};
@@ -49,25 +47,25 @@ struct RawWindow {
     display: *mut c_void,
 }
 
-unsafe impl HasRawWindowHandle for RawWindow {
-    fn raw_window_handle(&self) -> RawWindowHandle {
-        let mut wh = blade_rwh::WaylandWindowHandle::empty();
-        wh.surface = self.window;
-        wh.into()
+impl rwh::HasWindowHandle for RawWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+        let window = NonNull::new(self.window).unwrap();
+        let handle = rwh::WaylandWindowHandle::new(window);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
-
-unsafe impl HasRawDisplayHandle for RawWindow {
-    fn raw_display_handle(&self) -> RawDisplayHandle {
-        let mut dh = blade_rwh::WaylandDisplayHandle::empty();
-        dh.display = self.display;
-        dh.into()
+impl rwh::HasDisplayHandle for RawWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+        let display = NonNull::new(self.display).unwrap();
+        let handle = rwh::WaylandDisplayHandle::new(display);
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
     }
 }
 
 pub struct WaylandWindowState {
     xdg_surface: xdg_surface::XdgSurface,
     pub surface: wl_surface::WlSurface,
+    decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashSet<ObjectId>,
@@ -90,11 +88,13 @@ pub struct WaylandWindowStatePtr {
 }
 
 impl WaylandWindowState {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         surface: wl_surface::WlSurface,
         xdg_surface: xdg_surface::XdgSurface,
-        viewport: Option<wp_viewport::WpViewport>,
         toplevel: xdg_toplevel::XdgToplevel,
+        decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+        viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
         options: WindowParams,
@@ -132,6 +132,7 @@ impl WaylandWindowState {
         Self {
             xdg_surface,
             surface,
+            decoration,
             toplevel,
             viewport,
             globals,
@@ -158,16 +159,27 @@ impl Drop for WaylandWindow {
         let mut state = self.0.state.borrow_mut();
         let surface_id = state.surface.id();
         let client = state.client.clone();
+
         state.renderer.destroy();
+        if let Some(decoration) = &state.decoration {
+            decoration.destroy();
+        }
         state.toplevel.destroy();
+        if let Some(viewport) = &state.viewport {
+            viewport.destroy();
+        }
         state.xdg_surface.destroy();
         state.surface.destroy();
 
         let state_ptr = self.0.clone();
-        state.globals.executor.spawn(async move {
-            state_ptr.close();
-            client.drop_window(&surface_id)
-        });
+        state
+            .globals
+            .executor
+            .spawn(async move {
+                state_ptr.close();
+                client.drop_window(&surface_id)
+            })
+            .detach();
         drop(state);
     }
 }
@@ -197,13 +209,18 @@ impl WaylandWindow {
         }
 
         // Attempt to set up window decorations based on the requested configuration
-        if let Some(decoration_manager) = globals.decoration_manager.as_ref() {
-            let decoration =
-                decoration_manager.get_toplevel_decoration(&toplevel, &globals.qh, surface.id());
-
-            // Request client side decorations if possible
-            decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ClientSide);
-        }
+        let decoration = globals
+            .decoration_manager
+            .as_ref()
+            .map(|decoration_manager| {
+                let decoration = decoration_manager.get_toplevel_decoration(
+                    &toplevel,
+                    &globals.qh,
+                    surface.id(),
+                );
+                decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ClientSide);
+                decoration
+            });
 
         let viewport = globals
             .viewporter
@@ -216,8 +233,9 @@ impl WaylandWindow {
             state: Rc::new(RefCell::new(WaylandWindowState::new(
                 surface.clone(),
                 xdg_surface,
-                viewport,
                 toplevel,
+                decoration,
+                viewport,
                 client,
                 globals,
                 params,
@@ -304,7 +322,7 @@ impl WaylandWindowStatePtr {
                 self.resize(width, height);
                 self.set_fullscreen(fullscreen);
                 let mut state = self.state.borrow_mut();
-                state.maximized = true;
+                state.maximized = maximized;
 
                 false
             }
@@ -319,7 +337,7 @@ impl WaylandWindowStatePtr {
                     }
                     result
                 } else {
-                    false
+                    true
                 }
             }
             _ => false,
@@ -481,13 +499,12 @@ impl WaylandWindowStatePtr {
             }
         }
         if let PlatformInput::KeyDown(event) = input {
-            let mut state = self.state.borrow_mut();
-            if let Some(mut input_handler) = state.input_handler.take() {
-                if let Some(ime_key) = &event.keystroke.ime_key {
+            if let Some(ime_key) = &event.keystroke.ime_key {
+                let mut state = self.state.borrow_mut();
+                if let Some(mut input_handler) = state.input_handler.take() {
                     drop(state);
                     input_handler.replace_text_in_range(None, ime_key);
-                    let mut state = self.state.borrow_mut();
-                    state.input_handler = Some(input_handler);
+                    self.state.borrow_mut().input_handler = Some(input_handler);
                 }
             }
         }
@@ -500,14 +517,13 @@ impl WaylandWindowStatePtr {
     }
 }
 
-impl HasWindowHandle for WaylandWindow {
-    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+impl rwh::HasWindowHandle for WaylandWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
 }
-
-impl HasDisplayHandle for WaylandWindow {
-    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+impl rwh::HasDisplayHandle for WaylandWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
 }

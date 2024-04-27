@@ -29,14 +29,14 @@ pub enum ComponentStory {
     ListHeader,
     ListItem,
     OverflowScroll,
+    Picker,
     Scroll,
     Tab,
     TabBar,
+    Text,
     TitleBar,
     ToggleButton,
-    Text,
     ViewportUnits,
-    Picker,
 }
 
 impl ComponentStory {

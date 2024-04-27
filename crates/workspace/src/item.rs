@@ -26,7 +26,6 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
-    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -196,7 +195,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn save_as(
         &mut self,
         _project: Model<Project>,
-        _abs_path: PathBuf,
+        _path: ProjectPath,
         _cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save_as() must be implemented if can_save() returns true")
@@ -309,7 +308,7 @@ pub trait ItemHandle: 'static + Send {
     fn save_as(
         &self,
         project: Model<Project>,
-        abs_path: PathBuf,
+        path: ProjectPath,
         cx: &mut WindowContext,
     ) -> Task<Result<()>>;
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>>;
@@ -513,8 +512,9 @@ impl<T: Item> ItemHandle for View<T> {
                 }));
             }
 
-            let mut event_subscription =
-                Some(cx.subscribe(self, move |workspace, item, event, cx| {
+            let mut event_subscription = Some(cx.subscribe(
+                self,
+                move |workspace, item: View<T>, event, cx| {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item
                         .get(&item.item_id())
@@ -575,7 +575,8 @@ impl<T: Item> ItemHandle for View<T> {
 
                         _ => {}
                     });
-                }));
+                },
+            ));
 
             cx.on_blur(&self.focus_handle(cx), move |workspace, cx| {
                 if WorkspaceSettings::get_global(cx).autosave == AutosaveSetting::OnFocusChange {
@@ -645,10 +646,10 @@ impl<T: Item> ItemHandle for View<T> {
     fn save_as(
         &self,
         project: Model<Project>,
-        abs_path: PathBuf,
+        path: ProjectPath,
         cx: &mut WindowContext,
     ) -> Task<anyhow::Result<()>> {
-        self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
+        self.update(cx, |item, cx| item.save_as(project, path, cx))
     }
 
     fn reload(&self, project: Model<Project>, cx: &mut WindowContext) -> Task<Result<()>> {
@@ -1124,7 +1125,7 @@ pub mod test {
         fn save_as(
             &mut self,
             _: Model<Project>,
-            _: std::path::PathBuf,
+            _: ProjectPath,
             _: &mut ViewContext<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_as_count += 1;

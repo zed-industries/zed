@@ -45,6 +45,7 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
+remote_projects.workspace = true
 task.workspace = true
 schemars.workspace = true
 serde.workspace = true

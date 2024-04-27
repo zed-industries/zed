@@ -5,8 +5,8 @@ use crate::{
 use anyhow::Result;
 use client::Client;
 use clock::FakeSystemClock;
-use fs::{repository::GitFileStatus, FakeFs, Fs, RealFs, RemoveOptions};
-use git::GITIGNORE;
+use fs::{FakeFs, Fs, RealFs, RemoveOptions};
+use git::{repository::GitFileStatus, GITIGNORE};
 use gpui::{BorrowAppContext, ModelContext, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
@@ -1764,7 +1764,7 @@ fn randomly_mutate_worktree(
     match rng.gen_range(0_u32..100) {
         0..=33 if entry.path.as_ref() != Path::new("") => {
             log::info!("deleting entry {:?} ({})", entry.path, entry.id.0);
-            worktree.delete_entry(entry.id, cx).unwrap()
+            worktree.delete_entry(entry.id, false, cx).unwrap()
         }
         ..=66 if entry.path.as_ref() != Path::new("") => {
             let other_entry = snapshot.entries(false).choose(rng).unwrap();

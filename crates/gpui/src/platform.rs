@@ -151,7 +151,9 @@ pub(crate) trait Platform: 'static {
     fn set_cursor_style(&self, style: CursorStyle);
     fn should_auto_hide_scrollbars(&self) -> bool;
 
+    fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
+    fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
@@ -691,7 +693,7 @@ pub struct PathPromptOptions {
 }
 
 /// What kind of prompt styling to show
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PromptLevel {
     /// A prompt that is shown when the user should be notified of something
     Info,
@@ -701,6 +703,10 @@ pub enum PromptLevel {
 
     /// A prompt that is shown when a critical problem has occurred
     Critical,
+
+    /// A prompt that is shown when asking the user to confirm a potentially destructive action
+    /// (overwriting a file for example)
+    Destructive,
 }
 
 /// The style of the cursor (pointer)

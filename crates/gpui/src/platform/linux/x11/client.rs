@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::ops::Deref;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 use calloop::{EventLoop, LoopHandle};
@@ -24,10 +24,10 @@ use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers, ModifiersChangedEvent, Pixels,
-    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams,
+    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
-use super::{super::SCROLL_LINES, X11Display, X11Window, XcbAtoms};
+use super::{super::SCROLL_LINES, X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{button_of_key, modifiers_from_state};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
@@ -37,12 +37,12 @@ use calloop::{
 };
 
 pub(crate) struct WindowRef {
-    window: X11Window,
+    window: X11WindowStatePtr,
     refresh_event_token: RegistrationToken,
 }
 
 impl Deref for WindowRef {
-    type Target = X11Window;
+    type Target = X11WindowStatePtr;
 
     fn deref(&self) -> &Self::Target {
         &self.window
@@ -71,6 +71,24 @@ pub struct X11ClientState {
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: X11ClipboardContext<Clipboard>,
     pub(crate) primary: X11ClipboardContext<Primary>,
+}
+
+#[derive(Clone)]
+pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
+
+impl X11ClientStatePtr {
+    pub fn drop_window(&self, x_window: u32) {
+        let client = X11Client(self.0.upgrade().expect("client already dropped"));
+        let mut state = client.0.borrow_mut();
+
+        if let Some(window_ref) = state.windows.remove(&x_window) {
+            state.loop_handle.remove(window_ref.refresh_event_token);
+        }
+
+        if state.windows.is_empty() {
+            state.common.signal.stop();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -210,7 +228,7 @@ impl X11Client {
         })))
     }
 
-    fn get_window(&self, win: xproto::Window) -> Option<X11Window> {
+    fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
         let state = self.0.borrow();
         state
             .windows
@@ -221,18 +239,16 @@ impl X11Client {
     fn handle_event(&self, event: Event) -> Option<()> {
         match event {
             Event::ClientMessage(event) => {
+                let window = self.get_window(event.window)?;
                 let [atom, ..] = event.data.as_data32();
                 let mut state = self.0.borrow_mut();
 
                 if atom == state.atoms.WM_DELETE_WINDOW {
-                    // window "x" button clicked by user, we gracefully exit
-                    let window_ref = state.windows.remove(&event.window)?;
-
-                    state.loop_handle.remove(window_ref.refresh_event_token);
-                    window_ref.window.destroy();
-
-                    if state.windows.is_empty() {
-                        state.common.signal.stop();
+                    // window "x" button clicked by user
+                    if window.should_close() {
+                        let window_ref = state.windows.remove(&event.window)?;
+                        state.loop_handle.remove(window_ref.refresh_event_token);
+                        // Rest of the close logic is handled in drop_window()
                     }
                 }
             }
@@ -520,6 +536,8 @@ impl LinuxClient for X11Client {
         let x_window = state.xcb_connection.generate_id().unwrap();
 
         let window = X11Window::new(
+            X11ClientStatePtr(Rc::downgrade(&self.0)),
+            state.common.foreground_executor.clone(),
             params,
             &state.xcb_connection,
             state.x_root_index,
@@ -588,7 +606,7 @@ impl LinuxClient for X11Client {
             .expect("Failed to initialize refresh timer");
 
         let window_ref = WindowRef {
-            window: window.clone(),
+            window: window.0.clone(),
             refresh_event_token,
         };
 
@@ -599,8 +617,24 @@ impl LinuxClient for X11Client {
     //todo(linux)
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
+    fn write_to_primary(&self, item: crate::ClipboardItem) {
+        self.0.borrow_mut().primary.set_contents(item.text);
+    }
+
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
         self.0.borrow_mut().clipboard.set_contents(item.text);
+    }
+
+    fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
+        self.0
+            .borrow_mut()
+            .primary
+            .get_contents()
+            .ok()
+            .map(|text| crate::ClipboardItem {
+                text,
+                metadata: None,
+            })
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {

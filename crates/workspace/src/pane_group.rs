@@ -759,7 +759,7 @@ mod element {
         fn layout_handle(
             axis: Axis,
             pane_bounds: Bounds<Pixels>,
-            cx: &mut ElementContext,
+            cx: &mut WindowContext,
         ) -> PaneAxisHandleLayout {
             let handle_bounds = Bounds {
                 origin: pane_bounds.origin.apply_along(axis, |origin| {
@@ -792,13 +792,13 @@ mod element {
     }
 
     impl Element for PaneAxisElement {
-        type BeforeLayout = ();
-        type AfterLayout = PaneAxisLayout;
+        type RequestLayoutState = ();
+        type PrepaintState = PaneAxisLayout;
 
-        fn before_layout(
+        fn request_layout(
             &mut self,
-            cx: &mut ui::prelude::ElementContext,
-        ) -> (gpui::LayoutId, Self::BeforeLayout) {
+            cx: &mut ui::prelude::WindowContext,
+        ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let mut style = Style::default();
             style.flex_grow = 1.;
             style.flex_shrink = 1.;
@@ -808,11 +808,11 @@ mod element {
             (cx.request_layout(&style, None), ())
         }
 
-        fn after_layout(
+        fn prepaint(
             &mut self,
             bounds: Bounds<Pixels>,
-            _state: &mut Self::BeforeLayout,
-            cx: &mut ElementContext,
+            _state: &mut Self::RequestLayoutState,
+            cx: &mut WindowContext,
         ) -> PaneAxisLayout {
             let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
                 Some(self.basis.into()),
@@ -872,7 +872,8 @@ mod element {
                     size: child_size,
                 };
                 bounding_boxes.push(Some(child_bounds));
-                child.layout(origin, child_size.into(), cx);
+                child.layout_as_root(child_size.into(), cx);
+                child.prepaint_at(origin, cx);
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
                 layout.children.push(PaneAxisChildLayout {
@@ -897,9 +898,9 @@ mod element {
         fn paint(
             &mut self,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
-            _: &mut Self::BeforeLayout,
-            layout: &mut Self::AfterLayout,
-            cx: &mut ui::prelude::ElementContext,
+            _: &mut Self::RequestLayoutState,
+            layout: &mut Self::PrepaintState,
+            cx: &mut ui::prelude::WindowContext,
         ) {
             for child in &mut layout.children {
                 child.element.paint(cx);

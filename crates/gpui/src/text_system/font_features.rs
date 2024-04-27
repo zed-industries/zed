@@ -1,3 +1,7 @@
+#[cfg(target_os = "windows")]
+use crate::SharedString;
+#[cfg(target_os = "windows")]
+use itertools::Itertools;
 use schemars::{
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec},
     JsonSchema,
@@ -7,10 +11,14 @@ macro_rules! create_definitions {
     ($($(#[$meta:meta])* ($name:ident, $idx:expr)),* $(,)?) => {
 
         /// The OpenType features that can be configured for a given font.
-        #[derive(Default, Copy, Clone, Eq, PartialEq, Hash)]
+        #[derive(Default, Clone, Eq, PartialEq, Hash)]
         pub struct FontFeatures {
             enabled: u64,
             disabled: u64,
+            #[cfg(target_os = "windows")]
+            other_enabled: SharedString,
+            #[cfg(target_os = "windows")]
+            other_disabled: SharedString,
         }
 
         impl FontFeatures {
@@ -26,6 +34,37 @@ macro_rules! create_definitions {
                     }
                 }
             )*
+
+            /// Get the tag name list of the font OpenType features
+            /// only enabled or disabled features are returned
+            #[cfg(target_os = "windows")]
+            pub fn tag_value_list(&self) -> Vec<(String, bool)> {
+                let mut result = Vec::new();
+                $(
+                    {
+                        let value = if (self.enabled & (1 << $idx)) != 0 {
+                            Some(true)
+                        } else if (self.disabled & (1 << $idx)) != 0 {
+                            Some(false)
+                        } else {
+                            None
+                        };
+                        if let Some(enable) = value {
+                            let tag_name = stringify!($name).to_owned();
+                            result.push((tag_name, enable));
+                        }
+                    }
+                )*
+                {
+                    for name in self.other_enabled.as_ref().chars().chunks(4).into_iter() {
+                        result.push((name.collect::<String>(), true));
+                    }
+                    for name in self.other_disabled.as_ref().chars().chunks(4).into_iter() {
+                        result.push((name.collect::<String>(), false));
+                    }
+                }
+                result
+            }
         }
 
         impl std::fmt::Debug for FontFeatures {
@@ -36,6 +75,15 @@ macro_rules! create_definitions {
                         debug.field(stringify!($name), &value);
                     };
                 )*
+                #[cfg(target_os = "windows")]
+                {
+                    for name in self.other_enabled.as_ref().chars().chunks(4).into_iter() {
+                        debug.field(name.collect::<String>().as_str(), &true);
+                    }
+                    for name in self.other_disabled.as_ref().chars().chunks(4).into_iter() {
+                        debug.field(name.collect::<String>().as_str(), &false);
+                    }
+                }
                 debug.finish()
             }
         }
@@ -57,6 +105,7 @@ macro_rules! create_definitions {
                         formatter.write_str("a map of font features")
                     }
 
+                    #[cfg(not(target_os = "windows"))]
                     fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
                     where
                         M: MapAccess<'de>,
@@ -77,6 +126,54 @@ macro_rules! create_definitions {
                         }
                         Ok(FontFeatures { enabled, disabled })
                     }
+
+                    #[cfg(target_os = "windows")]
+                    fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+                    where
+                        M: MapAccess<'de>,
+                    {
+                        let mut enabled: u64 = 0;
+                        let mut disabled: u64 = 0;
+                        let mut other_enabled = "".to_owned();
+                        let mut other_disabled = "".to_owned();
+
+                        while let Some((key, value)) = access.next_entry::<String, Option<bool>>()? {
+                            let idx = match key.as_str() {
+                                $(stringify!($name) => Some($idx),)*
+                                other_feature => {
+                                    if other_feature.len() != 4 || !other_feature.is_ascii() {
+                                        log::error!("Incorrect feature name: {}", other_feature);
+                                        continue;
+                                    }
+                                    None
+                                },
+                            };
+                            if let Some(idx) = idx {
+                                match value {
+                                    Some(true) => enabled |= 1 << idx,
+                                    Some(false) => disabled |= 1 << idx,
+                                    None => {}
+                                };
+                            } else {
+                                match value {
+                                    Some(true) => other_enabled.push_str(key.as_str()),
+                                    Some(false) => other_disabled.push_str(key.as_str()),
+                                    None => {}
+                                };
+                            }
+                        }
+                        let other_enabled = if other_enabled.is_empty() {
+                            "".into()
+                        } else {
+                            other_enabled.into()
+                        };
+                        let other_disabled = if other_disabled.is_empty() {
+                            "".into()
+                        } else {
+                            other_disabled.into()
+                        };
+                        Ok(FontFeatures { enabled, disabled, other_enabled, other_disabled })
+                    }
                 }
 
                 let features = deserializer.deserialize_map(FontFeaturesVisitor)?;
@@ -94,11 +191,23 @@ macro_rules! create_definitions {
                 let mut map = serializer.serialize_map(None)?;
 
                 $(
-                    let feature = stringify!($name);
-                    if let Some(value) = self.$name() {
-                        map.serialize_entry(feature, &value)?;
+                    {
+                        let feature = stringify!($name);
+                        if let Some(value) = self.$name() {
+                            map.serialize_entry(feature, &value)?;
+                        }
                     }
                 )*
+
+                #[cfg(target_os = "windows")]
+                {
+                    for name in self.other_enabled.as_ref().chars().chunks(4).into_iter() {
+                        map.serialize_entry(name.collect::<String>().as_str(), &true)?;
+                    }
+                    for name in self.other_disabled.as_ref().chars().chunks(4).into_iter() {
+                        map.serialize_entry(name.collect::<String>().as_str(), &false)?;
+                    }
+                }
 
                 map.end()
             }
@@ -161,5 +270,5 @@ create_definitions!(
     (swsh, 30),
     (titl, 31),
     (tnum, 32),
-    (zero, 33)
+    (zero, 33),
 );
