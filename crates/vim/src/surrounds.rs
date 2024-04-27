@@ -1,4 +1,4 @@
-use crate::{motion::next_char, motion::Motion, object::Object, state::Mode, Vim};
+use crate::{motion::Motion, object::Object, state::Mode, Vim};
 use editor::{movement, scroll::Autoscroll, Bias};
 use gpui::WindowContext;
 use language::BracketPair;
