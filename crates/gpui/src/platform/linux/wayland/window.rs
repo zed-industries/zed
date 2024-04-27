@@ -273,7 +273,7 @@ impl WaylandWindowStatePtr {
                 let mut state = self.state.borrow_mut();
                 state.xdg_surface.ack_configure(serial);
                 let request_frame_callback = !state.acknowledged_first_configure;
-                state.acknowledged_first_configure |= !state.acknowledged_first_configure;
+                state.acknowledged_first_configure = true;
                 drop(state);
                 self.frame(request_frame_callback);
             }
