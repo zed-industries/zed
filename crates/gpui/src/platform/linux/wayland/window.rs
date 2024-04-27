@@ -328,9 +328,9 @@ impl WaylandWindowStatePtr {
                 let fullscreen = states.contains(&(xdg_toplevel::State::Fullscreen as u8));
                 let maximized = states.contains(&(xdg_toplevel::State::Maximized as u8));
                 let mut state = self.state.borrow_mut();
-                state.maximized = true;
+                state.maximized = maximized;
                 state.fullscreen = fullscreen;
-                if fullscreen || state.maximized {
+                if fullscreen || maximized {
                     state.restore_bounds = state.bounds.map(|p| DevicePixels(p as i32));
                 }
                 self.resize(width, height);
