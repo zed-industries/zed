@@ -247,7 +247,7 @@ impl Fs for RealFs {
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
         use cocoa::{
             base::{id, nil},
-            foundation::{NSAutoreleasePool, NSString, NSURL},
+            foundation::{NSAutoreleasePool, NSString},
         };
         use objc::{class, msg_send, sel, sel_impl};
 
@@ -257,14 +257,17 @@ impl Fs for RealFs {
             }
 
             let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
-            let url = url.autorelease();
             let array: id = msg_send![class!(NSArray), arrayWithObject: url];
-            let array = array.autorelease();
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
 
-            msg_send![workspace, recycleURLs: array completionHandler: nil]
+            let _: id = msg_send![workspace, recycleURLs: array completionHandler: nil];
         }
         Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.trash_file(path, options).await
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {

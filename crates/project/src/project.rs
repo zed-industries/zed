@@ -1483,6 +1483,7 @@ impl Project {
     pub fn delete_entry(
         &mut self,
         entry_id: ProjectEntryId,
+        trash: bool,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
@@ -1491,7 +1492,10 @@ impl Project {
 
         if self.is_local() {
             worktree.update(cx, |worktree, cx| {
-                worktree.as_local_mut().unwrap().delete_entry(entry_id, cx)
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .delete_entry(entry_id, trash, cx)
             })
         } else {
             let client = self.client.clone();
@@ -1501,6 +1505,7 @@ impl Project {
                     .request(proto::DeleteProjectEntry {
                         project_id,
                         entry_id: entry_id.to_proto(),
+                        use_trash: trash,
                     })
                     .await?;
                 worktree
@@ -8216,6 +8221,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let trash = envelope.payload.use_trash;
 
         this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)))?;
 
@@ -8229,7 +8235,7 @@ impl Project {
                 worktree
                     .as_local_mut()
                     .unwrap()
-                    .delete_entry(entry_id, cx)
+                    .delete_entry(entry_id, trash, cx)
                     .ok_or_else(|| anyhow!("invalid entry"))
             })??
             .await?;
