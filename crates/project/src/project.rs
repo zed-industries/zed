@@ -30,7 +30,7 @@ use futures::{
     future::{join_all, try_join_all, Shared},
     select,
     stream::FuturesUnordered,
-    AsyncWriteExt, Future, FutureExt, StreamExt, TryFutureExt,
+    AsyncWriteExt, Future, FutureExt, SinkExt, StreamExt, TryFutureExt,
 };
 use git::{blame::Blame, repository::GitRepository};
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -653,6 +653,9 @@ impl Project {
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_multi_lsp_query);
+        client.add_model_request_handler(Self::handle_create_terminal);
+        client.add_model_message_handler(Self::handle_update_terminal);
+        client.add_model_message_handler(Self::handle_input_terminal);
     }
 
     pub fn local(
@@ -716,6 +719,8 @@ impl Project {
                 nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
                     local_handles: Vec::new(),
+                    remote_handles: HashMap::default(),
+                    headless_handles: Vec::new(),
                 },
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
@@ -872,6 +877,8 @@ impl Project {
                 nonce: StdRng::from_entropy().gen(),
                 terminals: Terminals {
                     local_handles: Vec::new(),
+                    remote_handles: HashMap::default(),
+                    headless_handles: Vec::new(),
                 },
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
@@ -8059,6 +8066,19 @@ impl Project {
         }
     }
 
+    async fn handle_create_terminal(
+        this: Model<Self>,
+        _: TypedEnvelope<proto::CreateRemoteTerminal>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::CreateRemoteTerminalResponse> {
+        this.update(&mut cx, |project, cx| project.create_headless_terminal(cx))??;
+        // let terminal = Terminal::new_remote(&this, cx.clone());
+        // this.terminals.push(terminal.clone());
+        // cx.emit(Event::TerminalCreated(terminal));
+        Ok(proto::CreateRemoteTerminalResponse { terminal_id: 0 })
+    }
+
     async fn handle_unshare_project(
         this: Model<Self>,
         _: TypedEnvelope<proto::UnshareProject>,
@@ -8620,6 +8640,44 @@ impl Project {
             }
             Ok(())
         })?
+    }
+
+    async fn handle_update_terminal(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::UpdateRemoteTerminal>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let terminal_id = envelope.payload.terminal_id;
+        let sender = this.update(&mut cx, |this, _| {
+            this.terminals
+                .remote_handles
+                .get(&terminal_id)
+                .map(|s| s.to_owned())
+        })?;
+        if let Some(mut sender) = sender {
+            sender.send(envelope.payload.data).await?;
+        }
+        Ok(())
+    }
+
+    async fn handle_input_terminal(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::InputRemoteTerminal>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let terminal_id = envelope.payload.terminal_id;
+        let sender = this.update(&mut cx, |this, _| {
+            this.terminals
+                .remote_handles
+                .get(&terminal_id)
+                .map(|s| s.to_owned())
+        })?;
+        if let Some(mut sender) = sender {
+            sender.send(envelope.payload.data).await?;
+        }
+        Ok(())
     }
 
     async fn handle_update_buffer_file(

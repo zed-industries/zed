@@ -237,6 +237,11 @@ message Envelope {
         RemoteProjectsUpdate remote_projects_update = 193;
         ValidateRemoteProjectRequest validate_remote_project_request = 194; // Current max
         DeleteDevServer delete_dev_server = 195;
+
+        CreateRemoteTerminal create_remote_terminal = 196;
+        CreateRemoteTerminalResponse create_remote_terminal_response = 197;
+        UpdateRemoteTerminal update_remote_terminal = 198;
+        InputRemoteTerminal input_remote_terminal = 199;
     }
 
     reserved 158 to 161;
@@ -502,6 +507,26 @@ message ReconnectDevServer {
 
 message ReconnectDevServerResponse {
     repeated ResharedProject reshared_projects = 1;
+}
+
+message CreateRemoteTerminal {
+    uint64 project_id = 1;
+}
+
+message CreateRemoteTerminalResponse {
+    uint64 terminal_id = 1;
+}
+
+message UpdateRemoteTerminal {
+    uint64 project_id = 1;
+    uint64 terminal_id = 2;
+    bytes data = 3;
+}
+
+message InputRemoteTerminal {
+    uint64 project_id = 1;
+    uint64 terminal_id = 2;
+    bytes data = 3;
 }
 
 message DevServerInstructions {

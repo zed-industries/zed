@@ -458,6 +458,27 @@ impl Database {
         .await
     }
 
+    pub async fn update_remote_terminal(
+        &self,
+        update: &proto::UpdateRemoteTerminal,
+        connection: ConnectionId,
+    ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
+        let project_id = ProjectId::from_proto(update.project_id);
+        self.project_transaction(project_id, |tx| async move {
+            // Ensure the update comes from the host.
+            let project = project::Entity::find_by_id(project_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+            if project.host_connection()? != connection {
+                return Err(anyhow!("can't update a project hosted by someone else"))?;
+            }
+            let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
+            Ok(connection_ids)
+        })
+        .await
+    }
+
     /// Starts the language server for the given connection.
     pub async fn start_language_server(
         &self,

@@ -32,6 +32,8 @@ smol.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 util.workspace = true
+polling = "3.7.0"
+portable-pty = "0.8.1"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

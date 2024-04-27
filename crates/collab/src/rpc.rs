@@ -424,6 +424,13 @@ impl Server {
             .add_message_handler(update_diagnostic_summary)
             .add_message_handler(update_worktree_settings)
             .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::CreateRemoteTerminal>,
+            ))
+            .add_request_handler(user_handler(
+                forward_read_only_project_request::<proto::InputRemoteTerminal>,
+            ))
+            .add_message_handler(update_remote_terminal)
+            .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetHover>,
             ))
             .add_request_handler(user_handler(
@@ -2557,6 +2564,30 @@ async fn update_diagnostic_summary(
         .db()
         .await
         .update_diagnostic_summary(&message, session.connection_id)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, message.clone())
+        },
+    );
+
+    Ok(())
+}
+
+/// Updates other participants with changes to the diagnostics
+async fn update_remote_terminal(
+    message: proto::UpdateRemoteTerminal,
+    session: Session,
+) -> Result<()> {
+    let guest_connection_ids = session
+        .db()
+        .await
+        .update_remote_terminal(&message, session.connection_id)
         .await?;
 
     broadcast(

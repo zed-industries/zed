@@ -319,7 +319,11 @@ messages!(
     (MultiLspQueryResponse, Background),
     (RemoteProjectsUpdate, Foreground),
     (ValidateRemoteProjectRequest, Background),
-    (DeleteDevServer, Foreground)
+    (DeleteDevServer, Foreground),
+    (CreateRemoteTerminal, Foreground),
+    (CreateRemoteTerminalResponse, Foreground),
+    (UpdateRemoteTerminal, Foreground),
+    (InputRemoteTerminal, Foreground),
 );
 
 request_messages!(
@@ -423,6 +427,9 @@ request_messages!(
     (ValidateRemoteProjectRequest, Ack),
     (MultiLspQuery, MultiLspQueryResponse),
     (DeleteDevServer, Ack),
+    (CreateRemoteTerminal, CreateRemoteTerminalResponse),
+    (UpdateRemoteTerminal, Ack),
+    (InputRemoteTerminal, Ack),
 );
 
 entity_messages!(
@@ -479,6 +486,9 @@ entity_messages!(
     UpdateWorktree,
     UpdateWorktreeSettings,
     LspExtExpandMacro,
+    CreateRemoteTerminal,
+    UpdateRemoteTerminal,
+    InputRemoteTerminal,
 );
 
 entity_messages!(

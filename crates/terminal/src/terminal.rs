@@ -1,4 +1,6 @@
+pub mod headless;
 pub mod mappings;
+pub mod pty;
 
 pub use alacritty_terminal;
 
@@ -6,7 +8,7 @@ mod pty_info;
 pub mod terminal_settings;
 
 use alacritty_terminal::{
-    event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
+    event::{Event as AlacTermEvent, EventListener, Notify, OnResize, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Scroll as AlacScroll},
     index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
@@ -25,7 +27,7 @@ use anyhow::{bail, Result};
 
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-    FutureExt,
+    FutureExt, SinkExt,
 };
 
 use mappings::mouse::{
@@ -38,7 +40,7 @@ use futures::StreamExt;
 use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::channel::{Receiver, Sender};
+use smol::channel::{bounded, Receiver, Sender};
 use task::TaskId;
 use terminal_settings::{AlternateScroll, Shell, TerminalBlink, TerminalSettings};
 use theme::{ActiveTheme, Theme};
@@ -417,7 +419,100 @@ impl TerminalBuilder {
             last_mouse: None,
             matches: Vec::new(),
             selection_head: None,
-            pty_info,
+            pty_info: Some(pty_info),
+            breadcrumb_text: String::new(),
+            scroll_px: px(0.),
+            last_mouse_position: None,
+            next_link_id: 0,
+            selection_phase: SelectionPhase::Ended,
+            secondary_pressed: false,
+            hovered_word: false,
+            url_regex,
+            word_regex,
+        };
+
+        Ok(TerminalBuilder {
+            terminal,
+            events_rx,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_remote<T>(
+        blink_settings: Option<TerminalBlink>,
+        alternate_scroll: AlternateScroll,
+        max_scroll_history_lines: Option<usize>,
+        pty: T,
+    ) -> Result<TerminalBuilder>
+    where
+        T: tty::EventedPty + OnResize + Send + 'static,
+    {
+        let scrolling_history = max_scroll_history_lines
+            .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
+            .min(MAX_SCROLL_HISTORY_LINES);
+        let config = Config {
+            scrolling_history,
+            ..Config::default()
+        };
+
+        println!("!!config done");
+        //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
+        //TODO: Remove with a bounded sender which can be dispatched on &self
+        let (mut events_tx, events_rx) = unbounded();
+        //Set up the terminal...
+        let mut term = Term::new(
+            config,
+            &TerminalSize::default(),
+            ZedListener(events_tx.clone()),
+        );
+
+        //Start off blinking if we need to
+        if let Some(TerminalBlink::On) = blink_settings {
+            term.set_private_mode(PrivateMode::Named(NamedPrivateMode::BlinkingCursor));
+        }
+
+        //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
+        if let AlternateScroll::Off = alternate_scroll {
+            term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
+        }
+
+        let term = Arc::new(FairMutex::new(term));
+
+        println!("!!term done");
+
+        // let pty_info = PtyProcessInfo::new(&pty);
+
+        //And connect them together
+        let event_loop = EventLoop::new(
+            term.clone(),
+            ZedListener(events_tx.clone()),
+            pty,
+            false,
+            true,
+        )?;
+
+        println!("!!loop done");
+        //Kick things off
+        let pty_tx = event_loop.channel();
+        let _io_thread = event_loop.spawn(); // DANGER
+
+        println!("!!spawn done");
+
+        let url_regex = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
+        let word_regex = RegexSearch::new(r#"[\$\+\w.\[\]:/@\-~]+"#).unwrap();
+
+        let (completion_tx, _) = bounded(1);
+        let terminal = Terminal {
+            task: None,
+            pty_tx: Notifier(pty_tx),
+            completion_tx,
+            term,
+            events: VecDeque::with_capacity(10), //Should never get this high.
+            last_content: Default::default(),
+            last_mouse: None,
+            matches: Vec::new(),
+            selection_head: None,
+            pty_info: None,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
             last_mouse_position: None,
@@ -438,7 +533,9 @@ impl TerminalBuilder {
     pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
         //Event loop
         cx.spawn(|terminal, mut cx| async move {
+            println!("subscribed");
             while let Some(event) = self.events_rx.next().await {
+                println!("event_rx");
                 terminal.update(&mut cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
                     terminal.process_event(&event, cx);
@@ -572,7 +669,7 @@ pub struct Terminal {
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
-    pub pty_info: PtyProcessInfo,
+    pub pty_info: Option<PtyProcessInfo>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -620,6 +717,7 @@ impl TaskStatus {
 
 impl Terminal {
     fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
+        println!("event {event:?}");
         match event {
             AlacTermEvent::Title(title) => {
                 self.breadcrumb_text = title.to_string();
@@ -654,8 +752,10 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
 
-                if self.pty_info.has_changed() {
-                    cx.emit(Event::TitleChanged);
+                if let Some(pty_info) = &mut self.pty_info {
+                    if pty_info.has_changed() {
+                        cx.emit(Event::TitleChanged);
+                    }
                 }
             }
             AlacTermEvent::ColorRequest(idx, fun_ptr) => {
@@ -673,7 +773,11 @@ impl Terminal {
     }
 
     pub fn get_cwd(&self) -> Option<PathBuf> {
-        self.pty_info.current.as_ref().map(|info| info.cwd.clone())
+        if let Some(pty_info) = &self.pty_info {
+            pty_info.current.as_ref().map(|info| info.cwd.clone())
+        } else {
+            None
+        }
     }
 
     ///Takes events from Alacritty and translates them to behavior on this view
@@ -1372,38 +1476,43 @@ impl Terminal {
                     task_state.full_label.clone()
                 }
             }
-            None => self
-                .pty_info
-                .current
-                .as_ref()
-                .map(|fpi| {
-                    let process_file = fpi
-                        .cwd
-                        .file_name()
-                        .map(|name| name.to_string_lossy().to_string())
-                        .unwrap_or_default();
+            None => {
+                if let Some(pty_info) = &self.pty_info {
+                    pty_info
+                        .current
+                        .as_ref()
+                        .map(|fpi| {
+                            let process_file = fpi
+                                .cwd
+                                .file_name()
+                                .map(|name| name.to_string_lossy().to_string())
+                                .unwrap_or_default();
 
-                    let argv = fpi.argv.clone();
-                    let process_name = format!(
-                        "{}{}",
-                        fpi.name,
-                        if argv.len() >= 1 {
-                            format!(" {}", (argv[1..]).join(" "))
-                        } else {
-                            "".to_string()
-                        }
-                    );
-                    let (process_file, process_name) = if truncate {
-                        (
-                            truncate_and_trailoff(&process_file, MAX_CHARS),
-                            truncate_and_trailoff(&process_name, MAX_CHARS),
-                        )
-                    } else {
-                        (process_file, process_name)
-                    };
-                    format!("{process_file} — {process_name}")
-                })
-                .unwrap_or_else(|| "Terminal".to_string()),
+                            let argv = fpi.argv.clone();
+                            let process_name = format!(
+                                "{}{}",
+                                fpi.name,
+                                if argv.len() >= 1 {
+                                    format!(" {}", (argv[1..]).join(" "))
+                                } else {
+                                    "".to_string()
+                                }
+                            );
+                            let (process_file, process_name) = if truncate {
+                                (
+                                    truncate_and_trailoff(&process_file, MAX_CHARS),
+                                    truncate_and_trailoff(&process_name, MAX_CHARS),
+                                )
+                            } else {
+                                (process_file, process_name)
+                            };
+                            format!("{process_file} — {process_name}")
+                        })
+                        .unwrap_or_else(|| "Terminal".to_string())
+                } else {
+                    "Terminal".to_string()
+                }
+            }
         }
     }
 

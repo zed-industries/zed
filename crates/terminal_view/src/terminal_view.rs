@@ -118,24 +118,28 @@ impl TerminalView {
             get_working_directory(workspace, cx, strategy.working_directory.clone());
 
         let window = cx.window_handle();
-        let terminal = workspace
-            .project()
-            .update(cx, |project, cx| {
-                project.create_terminal(working_directory, None, window, cx)
-            })
-            .notify_err(workspace, cx);
+        let terminal = workspace.project().update(cx, |project, cx| {
+            project.create_terminal(working_directory, None, window, cx)
+        });
+        let workspace_handle = workspace.weak_handle();
+        let workspace_id = workspace.database_id();
 
-        if let Some(terminal) = terminal {
-            let view = cx.new_view(|cx| {
-                TerminalView::new(
-                    terminal,
-                    workspace.weak_handle(),
-                    workspace.database_id(),
-                    cx,
-                )
-            });
-            workspace.add_item_to_active_pane(Box::new(view), cx)
-        }
+        cx.spawn(|workspace, mut cx| async move {
+            if let Some(terminal) = terminal.await.notify_async_err(&mut cx) {
+                let view = Box::new(
+                    cx.new_view(|cx| {
+                        TerminalView::new(terminal, workspace_handle, workspace_id, cx)
+                    })
+                    .unwrap(),
+                );
+                workspace
+                    .update(&mut cx, |workspace, cx| {
+                        workspace.add_item_to_active_pane(view, cx);
+                    })
+                    .unwrap();
+            }
+        })
+        .detach();
     }
 
     pub fn new(
@@ -894,9 +898,11 @@ impl Item for TerminalView {
                 })
                 .filter(|cwd| !cwd.as_os_str().is_empty());
 
-            let terminal = project.update(&mut cx, |project, cx| {
-                project.create_terminal(cwd, None, window, cx)
-            })??;
+            let terminal = project
+                .update(&mut cx, |project, cx| {
+                    project.create_terminal(cwd, None, window, cx)
+                })?
+                .await?;
             pane.update(&mut cx, |_, cx| {
                 cx.new_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
             })

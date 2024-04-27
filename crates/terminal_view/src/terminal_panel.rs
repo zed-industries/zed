@@ -494,35 +494,46 @@ impl TerminalPanel {
         self.pending_terminals_to_add += 1;
         cx.spawn(|terminal_panel, mut cx| async move {
             let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
-            workspace.update(&mut cx, |workspace, cx| {
-                let working_directory = if let Some(working_directory) = working_directory {
+            let working_directory = workspace.update(&mut cx, |workspace, cx| {
+                if let Some(working_directory) = working_directory {
                     Some(working_directory)
                 } else {
                     let working_directory_strategy =
                         TerminalSettings::get_global(cx).working_directory.clone();
                     crate::get_working_directory(workspace, cx, working_directory_strategy)
-                };
-
-                let window = cx.window_handle();
-                if let Some(terminal) = workspace.project().update(cx, |project, cx| {
-                    project
-                        .create_terminal(working_directory, spawn_task, window, cx)
-                        .log_err()
-                }) {
-                    let terminal = Box::new(cx.new_view(|cx| {
-                        TerminalView::new(
-                            terminal,
-                            workspace.weak_handle(),
-                            workspace.database_id(),
-                            cx,
-                        )
-                    }));
-                    pane.update(cx, |pane, cx| {
-                        let focus = pane.has_focus(cx);
-                        pane.add_item(terminal, true, focus, None, cx);
-                    });
                 }
             })?;
+            let window = cx.window_handle();
+            let terminal = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.project().update(cx, |project, cx| {
+                        project
+                            .create_terminal(working_directory, spawn_task, window, cx)
+                            .log_err()
+                    })
+                })?
+                .await;
+            if let Some(terminal) = terminal {
+                let terminal = Box::new(
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            cx.new_view(|cx| {
+                                TerminalView::new(
+                                    terminal,
+                                    workspace.weak_handle(),
+                                    workspace.database_id(),
+                                    cx,
+                                )
+                            })
+                        })
+                        .unwrap(),
+                );
+                pane.update(&mut cx, |pane, cx| {
+                    let focus = pane.has_focus(cx);
+                    pane.add_item(terminal, true, focus, None, cx);
+                })
+                .log_err();
+            }
             terminal_panel.update(&mut cx, |this, cx| {
                 this.pending_terminals_to_add = this.pending_terminals_to_add.saturating_sub(1);
                 this.serialize(cx)
@@ -576,7 +587,7 @@ impl TerminalPanel {
         );
     }
 
-    fn replace_terminal(
+    async fn replace_terminal(
         &self,
         working_directory: Option<PathBuf>,
         spawn_task: SpawnInTerminal,
@@ -590,11 +601,12 @@ impl TerminalPanel {
             .ok()?;
         let reveal = spawn_task.reveal;
         let window = cx.window_handle();
-        let new_terminal = project.update(cx, |project, cx| {
-            project
-                .create_terminal(working_directory, Some(spawn_task), window, cx)
-                .log_err()
-        })?;
+        let new_terminal = project
+            .update(cx, |project, cx| {
+                project.create_terminal(working_directory, Some(spawn_task), window, cx)
+            })
+            .await
+            .log_err()?;
         terminal_to_replace.update(cx, |terminal_to_replace, cx| {
             terminal_to_replace.set_terminal(new_terminal, cx);
         });
