@@ -11,6 +11,7 @@ use collections::{HashMap, HashSet};
 use futures::channel::oneshot::Receiver;
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
+use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::WEnum;
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
@@ -617,10 +618,23 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+        let opaque = background_appearance == WindowBackgroundAppearance::Opaque;
         let mut state = self.borrow_mut();
-        state
-            .renderer
-            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+        state.renderer.update_transparency(!opaque);
+        if opaque {
+            // Promise the compositor that this region of the window surface
+            // contains no transparent pixels. This allows the compositor to
+            // do skip whatever is behind the surface for better performance.
+            let region = state
+                .globals
+                .compositor
+                .create_region(&state.globals.qh, ());
+            region.add(0, 0, i32::MAX, i32::MAX);
+            state.surface.set_opaque_region(Some(&region));
+            region.destroy();
+        } else {
+            state.surface.set_opaque_region(None);
+        };
     }
 
     fn set_edited(&mut self, edited: bool) {

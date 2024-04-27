@@ -24,7 +24,7 @@ use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_data_device_manager::DndAction;
 use wayland_client::protocol::wl_pointer::{AxisRelativeDirection, AxisSource};
 use wayland_client::protocol::{
-    wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output,
+    wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output, wl_region,
 };
 use wayland_client::{
     delegate_noop,
@@ -557,6 +557,7 @@ delegate_noop!(WaylandClientStatePtr: ignore wl_data_device_manager::WlDataDevic
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(WaylandClientStatePtr: ignore wl_buffer::WlBuffer);
+delegate_noop!(WaylandClientStatePtr: ignore wl_region::WlRegion);
 delegate_noop!(WaylandClientStatePtr: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore wp_viewporter::WpViewporter);
