@@ -5,7 +5,7 @@ use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
     size, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels, Platform, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
-    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOpenStatus, WindowOptions,
+    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions,
     WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
 };
 use blade_graphics as gpu;
