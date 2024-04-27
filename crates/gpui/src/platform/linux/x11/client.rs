@@ -12,9 +12,10 @@ use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::errors::ConnectionError;
 use x11rb::protocol::randr::ConnectionExt as _;
+use x11rb::protocol::xinput::{ConnectionExt, ScrollClass};
 use x11rb::protocol::xkb::ConnectionExt as _;
 use x11rb::protocol::xproto::ConnectionExt as _;
-use x11rb::protocol::{randr, xkb, xproto, Event};
+use x11rb::protocol::{randr, xinput, xkb, xproto, Event};
 use x11rb::xcb_ffi::XCBConnection;
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb as xkbc;
@@ -63,6 +64,10 @@ pub struct X11ClientState {
     pub(crate) focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
 
+    pub(crate) scroll_class_datas: Vec<xinput::DeviceClassDataScroll>,
+    pub(crate) scroll_x: Option<f32>,
+    pub(crate) scroll_y: Option<f32>,
+
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: X11ClipboardContext<Clipboard>,
     pub(crate) primary: X11ClipboardContext<Primary>,
@@ -92,6 +97,35 @@ impl X11Client {
         xcb_connection
             .prefetch_extension_information(randr::X11_EXTENSION_NAME)
             .unwrap();
+        xcb_connection
+            .prefetch_extension_information(xinput::X11_EXTENSION_NAME)
+            .unwrap();
+
+        let xinput_version = xcb_connection
+            .xinput_xi_query_version(2, 0)
+            .unwrap()
+            .reply()
+            .unwrap();
+        assert!(
+            xinput_version.major_version >= 2,
+            "XInput Extension v2 not supported."
+        );
+
+        let master_device_query = xcb_connection
+            .xinput_xi_query_device(1_u16)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let scroll_class_datas = master_device_query
+            .infos
+            .iter()
+            .find(|info| info.type_ == xinput::DeviceType::MASTER_POINTER)
+            .unwrap()
+            .classes
+            .iter()
+            .filter_map(|class| class.data.as_scroll())
+            .map(|class| class.clone())
+            .collect::<Vec<_>>();
 
         let atoms = XcbAtoms::new(&xcb_connection).unwrap();
         let xkb = xcb_connection
@@ -166,6 +200,11 @@ impl X11Client {
             windows: HashMap::default(),
             focused_window: None,
             xkb: xkb_state,
+
+            scroll_class_datas,
+            scroll_x: None,
+            scroll_y: None,
+
             clipboard,
             primary,
         })))
@@ -314,18 +353,6 @@ impl X11Client {
                         click_count: current_count,
                         first_mouse: false,
                     }));
-                } else if event.detail >= 4 && event.detail <= 5 {
-                    // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11
-                    let scroll_direction = if event.detail == 4 { 1.0 } else { -1.0 };
-                    let scroll_y = SCROLL_LINES * scroll_direction;
-
-                    drop(state);
-                    window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
-                        position,
-                        delta: ScrollDelta::Lines(Point::new(0.0, scroll_y as f32)),
-                        modifiers,
-                        touch_phase: TouchPhase::Moved,
-                    }));
                 } else {
                     log::warn!("Unknown button press: {event:?}");
                 }
@@ -345,6 +372,75 @@ impl X11Client {
                         modifiers,
                         click_count,
                     }));
+                }
+            }
+            Event::XinputMotion(event) => {
+                let window = self.get_window(event.event)?;
+
+                let position = Point::new(
+                    (event.event_x as f32 / u16::MAX as f32).into(),
+                    (event.event_y as f32 / u16::MAX as f32).into(),
+                );
+
+                let axisvalues = event
+                    .axisvalues
+                    .iter()
+                    .map(|axisvalue| fp3232_to_f32(*axisvalue))
+                    .collect::<Vec<_>>();
+
+                let scroll_class_datas = self.0.borrow().scroll_class_datas.clone();
+                for scroll_class in scroll_class_datas {
+                    let valuator_mask = 2_u32.pow(scroll_class.number as u32);
+
+                    if scroll_class.scroll_type == xinput::ScrollType::HORIZONTAL
+                        && event.valuator_mask[0] & valuator_mask == valuator_mask
+                    {
+                        let new_scroll = axisvalues[0] / fp3232_to_f32(scroll_class.increment)
+                            * SCROLL_LINES as f32
+                            * 16.0;
+                        let old_scroll = self.0.borrow().scroll_x;
+                        self.0.borrow_mut().scroll_x = Some(new_scroll);
+
+                        if let Some(old_scroll) = old_scroll {
+                            let delta_scroll = (old_scroll - new_scroll).into();
+                            window.handle_input(PlatformInput::ScrollWheel(
+                                crate::ScrollWheelEvent {
+                                    position,
+                                    delta: ScrollDelta::Pixels(Point::new(
+                                        delta_scroll,
+                                        0.0.into(),
+                                    )),
+                                    modifiers: crate::Modifiers::none(),
+                                    touch_phase: TouchPhase::default(),
+                                },
+                            ));
+                        }
+                    }
+
+                    if scroll_class.scroll_type == xinput::ScrollType::VERTICAL
+                        && event.valuator_mask[0] & valuator_mask == valuator_mask
+                    {
+                        let new_scroll = axisvalues[0] / fp3232_to_f32(scroll_class.increment)
+                            * SCROLL_LINES as f32
+                            * 16.0;
+                        let old_scroll = self.0.borrow().scroll_y;
+                        self.0.borrow_mut().scroll_y = Some(new_scroll);
+
+                        if let Some(old_scroll) = old_scroll {
+                            let delta_scroll = (old_scroll - new_scroll).into();
+                            window.handle_input(PlatformInput::ScrollWheel(
+                                crate::ScrollWheelEvent {
+                                    position,
+                                    delta: ScrollDelta::Pixels(Point::new(
+                                        0.0.into(),
+                                        delta_scroll,
+                                    )),
+                                    modifiers: crate::Modifiers::none(),
+                                    touch_phase: TouchPhase::default(),
+                                },
+                            ));
+                        }
+                    }
                 }
             }
             Event::MotionNotify(event) => {
@@ -538,4 +634,8 @@ pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     let micros = 1_000_000_000 / millihertz;
     log::info!("Refreshing at {} micros", micros);
     Duration::from_micros(micros)
+}
+
+fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
+    value.integral as f32 + value.frac as f32 / u32::MAX as f32
 }
