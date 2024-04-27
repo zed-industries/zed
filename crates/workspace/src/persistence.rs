@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{point, size, Axis, Bounds, WindowOpenStatus};
+use gpui::{point, size, Axis, Bounds, WindowBounds};
 
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -60,7 +60,7 @@ impl sqlez::bindable::Column for SerializedAxis {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
-pub(crate) struct SerializedWindowOpenStatus(pub(crate) WindowOpenStatus);
+pub(crate) struct SerializedWindowOpenStatus(pub(crate) WindowBounds);
 
 impl StaticColumnCount for SerializedWindowOpenStatus {
     fn column_count() -> usize {
@@ -71,7 +71,7 @@ impl StaticColumnCount for SerializedWindowOpenStatus {
 impl Bind for SerializedWindowOpenStatus {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         match self.0 {
-            WindowOpenStatus::Windowed(bounds) => {
+            WindowBounds::Windowed(bounds) => {
                 let next_index = statement.bind(&"Windowed", start_index)?;
                 // this can not be None
                 let bounds = bounds.unwrap();
@@ -85,7 +85,7 @@ impl Bind for SerializedWindowOpenStatus {
                     next_index,
                 )
             }
-            WindowOpenStatus::Maximized(bounds) => {
+            WindowBounds::Maximized(bounds) => {
                 let next_index = statement.bind(&"Maximized", start_index)?;
                 statement.bind(
                     &(
@@ -97,7 +97,7 @@ impl Bind for SerializedWindowOpenStatus {
                     next_index,
                 )
             }
-            WindowOpenStatus::Fullscreen(bounds) => {
+            WindowBounds::Fullscreen(bounds) => {
                 let next_index = statement.bind(&"FullScreen", start_index)?;
                 statement.bind(
                     &(
@@ -123,7 +123,7 @@ impl Column for SerializedWindowOpenStatus {
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowOpenStatus(WindowOpenStatus::Windowed(Some(Bounds {
+                SerializedWindowOpenStatus(WindowBounds::Windowed(Some(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
                 })))
@@ -134,7 +134,7 @@ impl Column for SerializedWindowOpenStatus {
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowOpenStatus(WindowOpenStatus::Maximized(Bounds {
+                SerializedWindowOpenStatus(WindowBounds::Maximized(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
                 }))
@@ -145,7 +145,7 @@ impl Column for SerializedWindowOpenStatus {
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowOpenStatus(WindowOpenStatus::Fullscreen(Bounds {
+                SerializedWindowOpenStatus(WindowBounds::Fullscreen(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
                 }))

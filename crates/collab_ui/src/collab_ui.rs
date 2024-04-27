@@ -14,7 +14,7 @@ pub use collab_panel::CollabPanel;
 pub use collab_titlebar_item::CollabTitlebarItem;
 use gpui::{
     actions, point, AppContext, DevicePixels, Pixels, PlatformDisplay, Size, Task,
-    WindowBackgroundAppearance, WindowContext, WindowKind, WindowOpenStatus, WindowOptions,
+    WindowBackgroundAppearance, WindowBounds, WindowContext, WindowKind, WindowOptions,
 };
 use panel_settings::MessageEditorSettings;
 pub use panel_settings::{
@@ -117,7 +117,7 @@ fn notification_window_options(
     let app_id = ReleaseChannel::global(cx).app_id();
 
     WindowOptions {
-        open_status: WindowOpenStatus::Windowed(Some(bounds)),
+        window_bounds: WindowBounds::Windowed(Some(bounds)),
         titlebar: None,
         focus: false,
         show: true,

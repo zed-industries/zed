@@ -12,7 +12,7 @@ use crate::{
     RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowOpenStatus, WindowOptions, WindowParams,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions, WindowParams,
     WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -592,7 +592,7 @@ impl Window {
         cx: &mut AppContext,
     ) -> Self {
         let WindowOptions {
-            open_status,
+            window_bounds,
             titlebar,
             focus,
             show,
@@ -603,8 +603,8 @@ impl Window {
             app_id,
         } = options;
 
-        let bounds = open_status
-            .get_bounds()
+        let bounds = window_bounds
+            .map(|bounds| bounds.get_bounds())
             .unwrap_or_else(|| default_bounds(display_id, cx));
         let mut platform_window = cx.platform.open_window(
             handle,
@@ -633,10 +633,12 @@ impl Window {
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
-        match open_status {
-            WindowOpenStatus::Fullscreen(_) => platform_window.toggle_fullscreen(),
-            WindowOpenStatus::Maximized(_) => platform_window.zoom(),
-            WindowOpenStatus::Windowed(_) => {}
+        if let Some(ref window_open_state) = window_bounds {
+            match window_open_state {
+                WindowBounds::Fullscreen(_) => platform_window.toggle_fullscreen(),
+                WindowBounds::Maximized(_) => platform_window.zoom(),
+                WindowBounds::Windowed(_) => {}
+            }
         }
 
         platform_window.on_close(Box::new({
@@ -948,7 +950,7 @@ impl<'a> WindowContext<'a> {
 
     /// Return the restore size to indicate that how a window should be opened
     /// after it has been closed
-    pub fn restore_status(&self) -> WindowOpenStatus {
+    pub fn restore_status(&self) -> WindowBounds {
         self.window.platform_window.restore_status()
     }
 

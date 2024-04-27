@@ -4,9 +4,8 @@ use crate::{
     Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext, WindowContext,
-    WindowHandle, WindowOpenStatus,
-    WindowOptions,
+    TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext, WindowBounds,
+    WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -189,7 +188,7 @@ impl TestAppContext {
         let bounds = Bounds::maximized(None, &mut cx);
         cx.open_window(
             WindowOptions {
-                open_status: WindowOpenStatus::Windowed(Some(bounds)),
+                window_bounds: WindowBounds::Windowed(Some(bounds)),
                 ..Default::default()
             },
             |cx| cx.new_view(build_window),
@@ -202,7 +201,7 @@ impl TestAppContext {
         let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
-                open_status: WindowOpenStatus::Windowed(Some(bounds)),
+                window_bounds: WindowBounds::Windowed(Some(bounds)),
                 ..Default::default()
             },
             |cx| cx.new_view(|_| Empty),
@@ -225,7 +224,7 @@ impl TestAppContext {
         let bounds = Bounds::maximized(None, &mut cx);
         let window = cx.open_window(
             WindowOptions {
-                open_status: WindowOpenStatus::Windowed(Some(bounds)),
+                window_bounds: WindowBounds::Windowed(Some(bounds)),
                 ..Default::default()
             },
             |cx| cx.new_view(build_root_view),

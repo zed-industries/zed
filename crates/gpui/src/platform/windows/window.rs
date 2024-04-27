@@ -109,7 +109,7 @@ impl WindowsWindowState {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
-    fn restore_status(&self) -> WindowOpenStatus {
+    fn restore_status(&self) -> WindowBounds {
         self.restore_size.get()
     }
 
@@ -134,11 +134,11 @@ impl WindowsWindowState {
         };
 
         if self.is_fullscreen() {
-            WindowOpenStatus::Fullscreen(self.fullscreen_restore_bounds.get())
+            WindowBounds::Fullscreen(self.fullscreen_restore_bounds.get())
         } else if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
-            WindowOpenStatus::Maximized(bounds)
+            WindowBounds::Maximized(bounds)
         } else {
-            WindowOpenStatus::Windowed(Some(bounds))
+            WindowBounds::Windowed(bounds)
         }
     }
 
@@ -360,7 +360,7 @@ impl PlatformWindow for WindowsWindow {
         self.0.is_minimized()
     }
 
-    fn restore_status(&self) -> WindowOpenStatus {
+    fn restore_status(&self) -> WindowBounds {
         self.inner.restore_status()
     }
 

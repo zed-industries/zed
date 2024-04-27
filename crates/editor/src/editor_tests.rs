@@ -9,7 +9,7 @@ use crate::{
     JoinLines,
 };
 use futures::StreamExt;
-use gpui::{div, TestAppContext, VisualTestContext, WindowOpenStatus, WindowOptions};
+use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
@@ -7493,7 +7493,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let follower = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
-                open_status: WindowOpenStatus::Windowed(Some(Bounds::from_corners(
+                window_bounds: WindowBounds::Windowed(Some(Bounds::from_corners(
                     gpui::Point::new(0.into(), 0.into()),
                     gpui::Point::new(10.into(), 80.into()),
                 ))),
