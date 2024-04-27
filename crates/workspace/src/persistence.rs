@@ -73,8 +73,6 @@ impl Bind for SerializedWindowOpenStatus {
         match self.0 {
             WindowBounds::Windowed(bounds) => {
                 let next_index = statement.bind(&"Windowed", start_index)?;
-                // this can not be None
-                let bounds = bounds.unwrap();
                 statement.bind(
                     &(
                         SerializedDevicePixels(bounds.origin.x),
@@ -123,10 +121,10 @@ impl Column for SerializedWindowOpenStatus {
                 let y: i32 = y;
                 let width: i32 = width;
                 let height: i32 = height;
-                SerializedWindowOpenStatus(WindowBounds::Windowed(Some(Bounds {
+                SerializedWindowOpenStatus(WindowBounds::Windowed(Bounds {
                     origin: point(x.into(), y.into()),
                     size: size(width.into(), height.into()),
-                })))
+                }))
             }
             "Maximized" => {
                 let ((x, y, width, height), _) = Column::column(statement, next_index)?;
