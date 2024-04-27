@@ -328,6 +328,8 @@ define_connection! {
         ALTER TABLE pane_groups ADD COLUMN flexes TEXT;
     ),
     // Add fullscreen field to workspace
+    // Deprecated, `WindowBounds` holds the fullscreen state now.
+    // Preserving so users can downgrade Zed.
     sql!(
         ALTER TABLE workspaces ADD COLUMN fullscreen INTEGER; //bool
     ),
