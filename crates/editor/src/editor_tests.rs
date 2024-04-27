@@ -7468,7 +7468,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let follower = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
-                window_bounds: WindowBounds::Windowed(Some(Bounds::from_corners(
+                window_bounds: Some(WindowBounds::Windowed(Bounds::from_corners(
                     gpui::Point::new(0.into(), 0.into()),
                     gpui::Point::new(10.into(), 80.into()),
                 ))),
