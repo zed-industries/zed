@@ -32,7 +32,7 @@ use gpui::{
     ElementId, Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
     GlobalElementId, KeyContext, Keystroke, LayoutId, ManagedView, Model, ModelContext,
     PathPromptOptions, Point, PromptLevel, Render, Size, Subscription, Task, View, WeakView,
-    WindowHandle, WindowOpenStatus, WindowOptions,
+    WindowBounds, WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -934,7 +934,7 @@ impl Workspace {
                 let window_bounds_override = window_bounds_env_override();
 
                 let (open_status, display) = if let Some(bounds) = window_bounds_override {
-                    (WindowOpenStatus::Windowed(Some(bounds)), None)
+                    (Some(WindowBounds::Windowed(bounds)), None)
                 } else {
                     let restorable_bounds = serialized_workspace
                         .as_ref()
@@ -947,13 +947,13 @@ impl Workspace {
                     if let Some((serialized_display, serialized_status)) = restorable_bounds {
                         (serialized_status.0, Some(serialized_display))
                     } else {
-                        (WindowOpenStatus::Windowed(None), None)
+                        (WindowBounds::Windowed(None), None)
                     }
                 };
 
                 // Use the serialized workspace to construct the new window
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
-                options.open_status = open_status;
+                options.window_bounds = open_status;
                 let centered_layout = serialized_workspace
                     .as_ref()
                     .map(|w| w.centered_layout)
@@ -4850,7 +4850,8 @@ pub fn join_hosted_project(
             let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
-                options.open_status = WindowOpenStatus::Windowed(window_bounds_override);
+                options.window_bounds =
+                    window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
@@ -4914,7 +4915,8 @@ pub fn join_dev_server_project(
                 let window_bounds_override = window_bounds_env_override();
                 cx.update(|cx| {
                     let mut options = (app_state.build_window_options)(None, cx);
-                    options.open_status = WindowOpenStatus::Windowed(window_bounds_override);
+                    options.window_bounds =
+                        window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                     cx.open_window(options, |cx| {
                         cx.new_view(|cx| {
                             Workspace::new(Default::default(), project, app_state.clone(), cx)
@@ -4976,7 +4978,8 @@ pub fn join_in_room_project(
             let window_bounds_override = window_bounds_env_override();
             cx.update(|cx| {
                 let mut options = (app_state.build_window_options)(None, cx);
-                options.open_status = WindowOpenStatus::Windowed(window_bounds_override);
+                options.window_bounds =
+                    window_bounds_override.map(|bounds| WindowBounds::Windowed(bounds));
                 cx.open_window(options, |cx| {
                     cx.new_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
