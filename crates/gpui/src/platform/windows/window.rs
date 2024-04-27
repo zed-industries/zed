@@ -138,7 +138,7 @@ impl WindowsWindowInner {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
-    fn restore_status(&self) -> WindowBounds {
+    fn window_bounds(&self) -> WindowBounds {
         let placement = unsafe {
             let mut placement = WINDOWPLACEMENT {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
@@ -1389,8 +1389,8 @@ impl PlatformWindow for WindowsWindow {
         self.inner.is_maximized()
     }
 
-    fn restore_status(&self) -> WindowBounds {
-        self.inner.restore_status()
+    fn window_bounds(&self) -> WindowBounds {
+        self.inner.window_bounds()
     }
 
     /// get the logical size of the app's drawable area.

@@ -554,11 +554,11 @@ impl PlatformWindow for WaylandWindow {
     fn window_bounds(&self) -> WindowBounds {
         let state = self.borrow();
         if state.fullscreen {
-            WindowOpenStatus::Fullscreen(state.restore_bounds)
+            WindowBounds::Fullscreen(state.restore_bounds)
         } else if state.maximized {
-            WindowOpenStatus::Maximized(state.restore_bounds)
+            WindowBounds::Maximized(state.restore_bounds)
         } else {
-            WindowOpenStatus::Windowed(state.bounds.map(|p| DevicePixels(p as i32)))
+            WindowBounds::Windowed(state.bounds.map(|p| DevicePixels(p as i32)))
         }
     }
 

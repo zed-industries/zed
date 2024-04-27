@@ -497,11 +497,11 @@ impl MacWindowState {
 
     fn window_bounds(&self) -> WindowBounds {
         if self.is_fullscreen() {
-            WindowBoundss::Fullscreen(self.fullscreen_restore_bounds)
+            WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
         } else if self.is_maximized() {
-            WindowBoundss::Maximized(self.maximized_restore_bounds)
+            WindowBounds::Maximized(self.maximized_restore_bounds)
         } else {
-            WindowBoundss::Windowed(self.bounds())
+            WindowBounds::Windowed(self.bounds())
         }
     }
 }
@@ -788,7 +788,7 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().bounds()
     }
 
-    fn window_bounds(&self) -> WindowOpenStatus {
+    fn window_bounds(&self) -> WindowBounds {
         self.0.as_ref().lock().window_bounds()
     }
 

@@ -951,7 +951,7 @@ impl<'a> WindowContext<'a> {
     /// Return the restore size to indicate that how a window should be opened
     /// after it has been closed
     pub fn restore_status(&self) -> WindowBounds {
-        self.window.platform_window.restore_status()
+        self.window.platform_window.window_bounds()
     }
 
     /// Dispatch the given action on the currently focused element.
