@@ -578,6 +578,7 @@ message CopyProjectEntry {
 message DeleteProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
+    bool use_trash = 3;
 }
 
 message ExpandProjectEntry {

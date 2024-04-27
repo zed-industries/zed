@@ -111,7 +111,13 @@ pub struct Delete {
     pub skip_prompt: bool,
 }
 
-impl_actions!(project_panel, [Delete]);
+#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+pub struct Trash {
+    #[serde(default)]
+    pub skip_prompt: bool,
+}
+
+impl_actions!(project_panel, [Delete, Trash]);
 
 actions!(
     project_panel,
@@ -880,16 +886,25 @@ impl ProjectPanel {
         }
     }
 
+    fn trash(&mut self, action: &Trash, cx: &mut ViewContext<Self>) {
+        self.remove(true, action.skip_prompt, cx);
+    }
+
     fn delete(&mut self, action: &Delete, cx: &mut ViewContext<Self>) {
+        self.remove(false, action.skip_prompt, cx);
+    }
+
+    fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
             let Selection { entry_id, .. } = self.selection?;
             let path = self.project.read(cx).path_for_entry(entry_id, cx)?.path;
             let file_name = path.file_name()?;
 
-            let answer = (!action.skip_prompt).then(|| {
+            let operation = if trash { "Trash" } else { "Delete" };
+            let answer = (!skip_prompt).then(|| {
                 cx.prompt(
                     PromptLevel::Destructive,
-                    &format!("Delete {file_name:?}?"),
+                    &format!("{operation:?} {file_name:?}?",),
                     None,
                     &["Delete", "Cancel"],
                 )
@@ -903,7 +918,7 @@ impl ProjectPanel {
                 }
                 this.update(&mut cx, |this, cx| {
                     this.project
-                        .update(cx, |project, cx| project.delete_entry(entry_id, cx))
+                        .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
                         .ok_or_else(|| anyhow!("no such entry"))
                 })??
                 .await
@@ -1808,6 +1823,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
                         .on_action(cx.listener(Self::delete))
+                        .on_action(cx.listener(Self::trash))
                         .on_action(cx.listener(Self::cut))
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))

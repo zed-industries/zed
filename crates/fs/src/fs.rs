@@ -49,7 +49,13 @@ pub trait Fs: Send + Sync {
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.remove_dir(path, options).await
+    }
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.remove_file(path, options).await
+    }
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
@@ -235,6 +241,33 @@ impl Fs for RealFs {
             }
             Err(err) => Err(err)?,
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
+        use cocoa::{
+            base::{id, nil},
+            foundation::{NSAutoreleasePool, NSString},
+        };
+        use objc::{class, msg_send, sel, sel_impl};
+
+        unsafe {
+            unsafe fn ns_string(string: &str) -> id {
+                NSString::alloc(nil).init_str(string).autorelease()
+            }
+
+            let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
+            let array: id = msg_send![class!(NSArray), arrayWithObject: url];
+            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+
+            let _: id = msg_send![workspace, recycleURLs: array completionHandler: nil];
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        self.trash_file(path, options).await
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
