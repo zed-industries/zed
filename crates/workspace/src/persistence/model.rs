@@ -1,4 +1,4 @@
-use super::{SerializedAxis, SerializedWindowOpenStatus};
+use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{item::ItemHandle, ItemDeserializers, Member, Pane, PaneAxis, Workspace, WorkspaceId};
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -110,7 +110,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) center_group: SerializedPaneGroup,
-    pub(crate) open_status: Option<SerializedWindowOpenStatus>,
+    pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
