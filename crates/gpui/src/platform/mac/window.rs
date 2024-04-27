@@ -280,10 +280,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(windowShouldClose:),
         window_should_close as extern "C" fn(&Object, Sel, id) -> BOOL,
     );
-    decl.add_method(
-        sel!(windowShouldZoom:toFrame:),
-        window_should_zoom as extern "C" fn(&Object, Sel, id, NSRect) -> BOOL,
-    );
 
     decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
 
@@ -345,8 +341,6 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
-    maximized: bool,
-    maximized_restore_bounds: Bounds<DevicePixels>,
     fullscreen_restore_bounds: Bounds<DevicePixels>,
 }
 
@@ -427,7 +421,11 @@ impl MacWindowState {
     }
 
     fn is_maximized(&self) -> bool {
-        self.maximized
+        unsafe {
+            let bounds = self.bounds();
+            let screen_size = self.native_window.screen().visibleFrame().into();
+            bounds.size == screen_size
+        }
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -489,8 +487,6 @@ impl MacWindowState {
     fn window_bounds(&self) -> WindowBounds {
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
-        } else if self.is_maximized() {
-            WindowBounds::Maximized(self.maximized_restore_bounds)
         } else {
             WindowBounds::Windowed(self.bounds())
         }
@@ -640,8 +636,6 @@ impl MacWindow {
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
                 first_mouse: false,
-                maximized: false,
-                maximized_restore_bounds: Bounds::default(),
                 fullscreen_restore_bounds: Bounds::default(),
             })));
 
@@ -731,7 +725,6 @@ impl MacWindow {
             // the window position might be incorrect if the main screen (the screen that contains the window that has focus)
             //  is different from the primary screen.
             NSWindow::setFrameTopLeftPoint_(native_window, window_rect.origin);
-
             window.0.lock().move_traffic_light();
 
             pool.drain();
@@ -1553,16 +1546,6 @@ extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
     } else {
         YES
     }
-}
-
-extern "C" fn window_should_zoom(this: &Object, _: Sel, _: id, _: NSRect) -> BOOL {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-    let bounds = lock.bounds();
-    lock.maximized_restore_bounds = bounds;
-    lock.maximized = !lock.maximized;
-
-    YES
 }
 
 extern "C" fn close_window(this: &Object, _: Sel) {
