@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{AsyncReadExt, Future};
 use serde::{Deserialize, Serialize};
-use smol::fs::unix::PermissionsExt as _;
 use smol::fs::{self, File};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -224,9 +223,24 @@ pub fn download_latest(client: Arc<dyn HttpClient>) -> impl Future<Output = Resu
             .await
             .with_context(|| format!("Unable to write binary to file at {:?}", binary_path))?;
 
-        let mut permissions = file.metadata().await?.permissions();
-        permissions.set_mode(0o755);
-        file.set_permissions(permissions).await?;
+        #[cfg(not(windows))]
+        {
+            use smol::fs::unix::PermissionsExt as _;
+            let mut permissions = file.metadata().await?.permissions();
+            permissions.set_mode(0o755);
+            file.set_permissions(permissions).await?;
+        }
+        #[cfg(windows)]
+        {
+            use std::fs::OpenOptions;
+            use std::os::windows::fs::OpenOptionsExt as _;
+
+            let mut options = OpenOptions::new();
+            options.write(true);
+            options.read(true);
+            options.custom_flags(libc::O_BINARY);
+            let file = options.open(&binary_path)?;
+        }
 
         Ok(binary_path)
     }
