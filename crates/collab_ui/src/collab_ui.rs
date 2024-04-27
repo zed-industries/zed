@@ -117,7 +117,7 @@ fn notification_window_options(
     let app_id = ReleaseChannel::global(cx).app_id();
 
     WindowOptions {
-        window_bounds: WindowBounds::Windowed(bounds),
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: None,
         focus: false,
         show: true,
