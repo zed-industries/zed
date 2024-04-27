@@ -404,59 +404,61 @@ impl X11Client {
                     .map(|axisvalue| fp3232_to_f32(*axisvalue))
                     .collect::<Vec<_>>();
 
+                let mut valuator_idx = 0;
                 let scroll_class_data = self.0.borrow().scroll_class_data.clone();
-                for scroll_class in scroll_class_data {
-                    let valuator_mask = 2_u32.pow(scroll_class.number as u32);
+                for shift in 0..32 {
+                    if (event.valuator_mask[0] >> shift) & 1 == 0 {
+                        continue;
+                    }
 
-                    if scroll_class.scroll_type == xinput::ScrollType::HORIZONTAL
-                        && event.valuator_mask[0] & valuator_mask == valuator_mask
-                    {
-                        let new_scroll = axisvalues[0] / fp3232_to_f32(scroll_class.increment)
-                            * SCROLL_LINES as f32
-                            * 16.0;
-                        let old_scroll = self.0.borrow().scroll_x;
-                        self.0.borrow_mut().scroll_x = Some(new_scroll);
+                    for scroll_class in &scroll_class_data {
+                        if scroll_class.scroll_type == xinput::ScrollType::HORIZONTAL
+                            && scroll_class.number == shift
+                        {
+                            let new_scroll = axisvalues[valuator_idx]
+                                / fp3232_to_f32(scroll_class.increment)
+                                * SCROLL_LINES as f32;
+                            let old_scroll = self.0.borrow().scroll_x;
+                            self.0.borrow_mut().scroll_x = Some(new_scroll);
 
-                        if let Some(old_scroll) = old_scroll {
-                            let delta_scroll = (old_scroll - new_scroll).into();
-                            window.handle_input(PlatformInput::ScrollWheel(
-                                crate::ScrollWheelEvent {
-                                    position,
-                                    delta: ScrollDelta::Pixels(Point::new(
-                                        delta_scroll,
-                                        0.0.into(),
-                                    )),
-                                    modifiers: crate::Modifiers::none(),
-                                    touch_phase: TouchPhase::default(),
-                                },
-                            ));
+                            if let Some(old_scroll) = old_scroll {
+                                let delta_scroll = old_scroll - new_scroll;
+                                window.handle_input(PlatformInput::ScrollWheel(
+                                    crate::ScrollWheelEvent {
+                                        position,
+                                        delta: ScrollDelta::Lines(Point::new(delta_scroll, 0.0)),
+                                        modifiers: crate::Modifiers::none(),
+                                        touch_phase: TouchPhase::default(),
+                                    },
+                                ));
+                            }
+                        }
+
+                        if scroll_class.scroll_type == xinput::ScrollType::VERTICAL
+                            && scroll_class.number == shift
+                        {
+                            // the `increment` is the valuator delta equivalent to one positive unit of scrolling. Here that means SCROLL_LINES lines.
+                            let new_scroll = axisvalues[valuator_idx]
+                                / fp3232_to_f32(scroll_class.increment)
+                                * SCROLL_LINES as f32;
+                            let old_scroll = self.0.borrow().scroll_y;
+                            self.0.borrow_mut().scroll_y = Some(new_scroll);
+
+                            if let Some(old_scroll) = old_scroll {
+                                let delta_scroll = old_scroll - new_scroll;
+                                window.handle_input(PlatformInput::ScrollWheel(
+                                    crate::ScrollWheelEvent {
+                                        position,
+                                        delta: ScrollDelta::Lines(Point::new(0.0, delta_scroll)),
+                                        modifiers: crate::Modifiers::none(),
+                                        touch_phase: TouchPhase::default(),
+                                    },
+                                ));
+                            }
                         }
                     }
 
-                    if scroll_class.scroll_type == xinput::ScrollType::VERTICAL
-                        && event.valuator_mask[0] & valuator_mask == valuator_mask
-                    {
-                        let new_scroll = axisvalues[0] / fp3232_to_f32(scroll_class.increment)
-                            * SCROLL_LINES as f32
-                            * 16.0;
-                        let old_scroll = self.0.borrow().scroll_y;
-                        self.0.borrow_mut().scroll_y = Some(new_scroll);
-
-                        if let Some(old_scroll) = old_scroll {
-                            let delta_scroll = (old_scroll - new_scroll).into();
-                            window.handle_input(PlatformInput::ScrollWheel(
-                                crate::ScrollWheelEvent {
-                                    position,
-                                    delta: ScrollDelta::Pixels(Point::new(
-                                        0.0.into(),
-                                        delta_scroll,
-                                    )),
-                                    modifiers: crate::Modifiers::none(),
-                                    touch_phase: TouchPhase::default(),
-                                },
-                            ));
-                        }
-                    }
+                    valuator_idx += 1;
                 }
             }
             Event::MotionNotify(event) => {
