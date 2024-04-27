@@ -933,27 +933,27 @@ impl Workspace {
             } else {
                 let window_bounds_override = window_bounds_env_override();
 
-                let (open_status, display) = if let Some(bounds) = window_bounds_override {
+                let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
                 } else {
                     let restorable_bounds = serialized_workspace
                         .as_ref()
                         .and_then(|workspace| Some((workspace.display?, workspace.open_status?)))
                         .or_else(|| {
-                            let (display, open_status, _) = DB.last_window().log_err()?;
-                            Some((display?, open_status?))
+                            let (display, window_bounds, _) = DB.last_window().log_err()?;
+                            Some((display?, window_bounds?))
                         });
 
                     if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                        (serialized_status.0, Some(serialized_display))
+                        (Some(serialized_status.0), Some(serialized_display))
                     } else {
-                        (WindowBounds::Windowed(None), None)
+                        (None, None)
                     }
                 };
 
                 // Use the serialized workspace to construct the new window
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
-                options.window_bounds = open_status;
+                options.window_bounds = window_bounds;
                 let centered_layout = serialized_workspace
                     .as_ref()
                     .map(|w| w.centered_layout)
