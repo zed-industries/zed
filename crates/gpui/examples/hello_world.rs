@@ -26,7 +26,7 @@ fn main() {
         let bounds = Bounds::centered(None, size(px(600.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
-                window_bounds: WindowBounds::Windowed(Some(bounds)),
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
             |cx| {
