@@ -79,8 +79,8 @@
     "jpg": "image",
     "js": "js",
     "jsx": "react",
-    "json": "storage",
-    "jsonc": "storage",
+    "json": "json",
+    "jsonc": "json",
     "jxl": "image",
     "kt": "kotlin",
     "ldf": "storage",
@@ -140,7 +140,7 @@
     "sdf": "storage",
     "sh": "terminal",
     "sqlite": "storage",
-    "svelte": "template",
+    "svelte": "svelte",
     "svg": "image",
     "sc": "scala",
     "scala": "scala",
@@ -173,6 +173,7 @@
     "yml": "settings",
     "yrl": "erlang",
     "zlogin": "terminal",
+    "zig": : "ziglang",
     "zsh": "terminal",
     "zsh_aliases": "terminal",
     "zsh_histfile": "terminal",
@@ -201,6 +202,12 @@
     },
     "coffeescript": {
       "icon": "icons/file_icons/coffeescript.svg"
+    },
+    "c": {
+      "icon": "icons/file_icons/c.svg"
+    },
+    "c++": {
+      "icon": "icons/file_icons/c++.svg"
     },
     "dart": {
       "icon": "icons/file_icons/dart.svg"
@@ -256,6 +263,12 @@
     "java": {
       "icon": "icons/file_icons/java.svg"
     },
+    "js": {
+      "icon": "icons/file_icons/js.svg"
+    },
+    "json": {
+      "icon": "icons/file_icons/json.svg"
+    },
     "kotlin": {
       "icon": "icons/file_icons/kotlin.svg"
     },
@@ -292,6 +305,9 @@
     "python": {
       "icon": "icons/file_icons/python.svg"
     },
+    "react": {
+      "icon": "icons/file_icons/react.svg"
+    },
     "ruby": {
       "icon": "icons/file_icons/ruby.svg"
     },
@@ -309,6 +325,9 @@
     },
     "scala": {
       "icon": "icons/file_icons/scala.svg"
+    },
+    "svelte": {
+      "icon": "icons/file_icons/svelte.svg"
     },
     "swift": {
       "icon": "icons/file_icons/swift.svg"
@@ -339,6 +358,9 @@
     },
     "vue": {
       "icon": "icons/file_icons/vue.svg"
+    },
+    "ziglang": {
+      "icon": "icons/file_icons/zig.svg"
     }
   }
 }
