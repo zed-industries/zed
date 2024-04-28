@@ -353,7 +353,7 @@ pub(crate) struct TooltipRequest {
 pub(crate) struct DeferredDraw {
     priority: usize,
     parent_node: DispatchNodeId,
-    element_id_stack: GlobalElementId,
+    element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: Vec<TextStyleRefinement>,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
@@ -454,9 +454,10 @@ impl Frame {
 
     pub(crate) fn finish(&mut self, prev_frame: &mut Self) {
         for element_state_key in &self.accessed_element_states {
-            if let Some(element_state) = prev_frame.element_states.remove(element_state_key) {
-                self.element_states
-                    .insert(element_state_key.clone(), element_state);
+            if let Some((element_state_key, element_state)) =
+                prev_frame.element_states.remove_entry(element_state_key)
+            {
+                self.element_states.insert(element_state_key, element_state);
             }
         }
 
@@ -477,7 +478,7 @@ pub struct Window {
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
-    pub(crate) element_id_stack: GlobalElementId,
+    pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
@@ -745,7 +746,7 @@ impl Window {
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
-            element_id_stack: GlobalElementId::default(),
+            element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
@@ -1499,7 +1500,7 @@ impl<'a> WindowContext<'a> {
             window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .cloned(),
+                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
         window
             .text_system
@@ -1562,7 +1563,7 @@ impl<'a> WindowContext<'a> {
             window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
                 ..range.end.accessed_element_states_index]
                 .iter()
-                .cloned(),
+                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
         window
             .text_system
@@ -1628,35 +1629,6 @@ impl<'a> WindowContext<'a> {
             .tooltip_requests
             .push(Some(TooltipRequest { id, tooltip }));
         id
-    }
-
-    /// Pushes the given element id onto the global stack and invokes the given closure
-    /// with a `GlobalElementId`, which disambiguates the given id in the context of its ancestor
-    /// ids. Because elements are discarded and recreated on each frame, the `GlobalElementId` is
-    /// used to associate state with identified elements across separate frames. This method should
-    /// only be called as part of element drawing.
-    pub fn with_element_id<R>(
-        &mut self,
-        id: Option<impl Into<ElementId>>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        debug_assert!(
-            matches!(
-                self.window.draw_phase,
-                DrawPhase::Prepaint | DrawPhase::Paint
-            ),
-            "this method can only be called during request_layout, prepaint, or paint"
-        );
-        if let Some(id) = id.map(Into::into) {
-            let window = self.window_mut();
-            window.element_id_stack.push(id);
-            let result = f(self);
-            let window: &mut Window = self.borrow_mut();
-            window.element_id_stack.pop();
-            result
-        } else {
-            f(self)
-        }
     }
 
     /// Invoke the given function with the given content mask after intersecting it
@@ -1903,13 +1875,114 @@ impl<'a> WindowContext<'a> {
             })
     }
 
+    /// Provide elements in the called function with a new namespace in which their identiers must be unique.
+    /// This can be used within a custom element to distinguish multiple sets of child elements.
+    pub fn with_element_namespace<R>(
+        &mut self,
+        element_id: impl Into<ElementId>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.window.element_id_stack.push(element_id.into());
+        let result = f(self);
+        self.window.element_id_stack.pop();
+        result
+    }
+
     /// Updates or initializes state for an element with the given id that lives across multiple
     /// frames. If an element with this ID existed in the rendered frame, its state will be passed
     /// to the given closure. The state returned by the closure will be stored so it can be referenced
     /// when drawing the next frame. This method should only be called as part of element drawing.
     pub fn with_element_state<S, R>(
         &mut self,
-        element_id: Option<ElementId>,
+        global_id: &GlobalElementId,
+        f: impl FnOnce(Option<S>, &mut Self) -> (R, S),
+    ) -> R
+    where
+        S: 'static,
+    {
+        debug_assert!(
+            matches!(
+                self.window.draw_phase,
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
+            "this method can only be called during request_layout, prepaint, or paint"
+        );
+
+        let key = (GlobalElementId(global_id.0.clone()), TypeId::of::<S>());
+        self.window
+            .next_frame
+            .accessed_element_states
+            .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
+
+        if let Some(any) = self
+            .window
+            .next_frame
+            .element_states
+            .remove(&key)
+            .or_else(|| self.window.rendered_frame.element_states.remove(&key))
+        {
+            let ElementStateBox {
+                inner,
+                #[cfg(debug_assertions)]
+                type_name,
+            } = any;
+            // Using the extra inner option to avoid needing to reallocate a new box.
+            let mut state_box = inner
+                .downcast::<Option<S>>()
+                .map_err(|_| {
+                    #[cfg(debug_assertions)]
+                    {
+                        anyhow::anyhow!(
+                            "invalid element state type for id, requested {:?}, actual: {:?}",
+                            std::any::type_name::<S>(),
+                            type_name
+                        )
+                    }
+
+                    #[cfg(not(debug_assertions))]
+                    {
+                        anyhow::anyhow!(
+                            "invalid element state type for id, requested {:?}",
+                            std::any::type_name::<S>(),
+                        )
+                    }
+                })
+                .unwrap();
+
+            let state = state_box.take().expect(
+                "reentrant call to with_element_state for the same state type and element id",
+            );
+            let (result, state) = f(Some(state), self);
+            state_box.replace(state);
+            self.window.next_frame.element_states.insert(
+                key,
+                ElementStateBox {
+                    inner: state_box,
+                    #[cfg(debug_assertions)]
+                    type_name,
+                },
+            );
+            result
+        } else {
+            let (result, state) = f(None, self);
+            self.window.next_frame.element_states.insert(
+                key,
+                ElementStateBox {
+                    inner: Box::new(Some(state)),
+                    #[cfg(debug_assertions)]
+                    type_name: std::any::type_name::<S>(),
+                },
+            );
+            result
+        }
+    }
+
+    /// A variant of `with_element_state` that allows the element's id to be optional. This is a convenience
+    /// method for elements where the element id may or may not be assigned. Prefer using `with_element_state`
+    /// when the element is guaranteed to have an id.
+    pub fn with_optional_element_state<S, R>(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
         f: impl FnOnce(Option<Option<S>>, &mut Self) -> (R, Option<S>),
     ) -> R
     where
@@ -1922,90 +1995,22 @@ impl<'a> WindowContext<'a> {
             ),
             "this method can only be called during request_layout, prepaint, or paint"
         );
-        let id_is_none = element_id.is_none();
-        self.with_element_id(element_id, |cx| {
-                if id_is_none {
-                    let (result, state) = f(None, cx);
-                    debug_assert!(state.is_none(), "you must not return an element state when passing None for the element id");
-                    result
-                } else {
-                    let global_id = cx.window().element_id_stack.clone();
-                    let key = (global_id, TypeId::of::<S>());
-                    cx.window.next_frame.accessed_element_states.push(key.clone());
 
-                    if let Some(any) = cx
-                        .window_mut()
-                        .next_frame
-                        .element_states
-                        .remove(&key)
-                        .or_else(|| {
-                            cx.window_mut()
-                                .rendered_frame
-                                .element_states
-                                .remove(&key)
-                        })
-                    {
-                        let ElementStateBox {
-                            inner,
-                            #[cfg(debug_assertions)]
-                            type_name
-                        } = any;
-                        // Using the extra inner option to avoid needing to reallocate a new box.
-                        let mut state_box = inner
-                            .downcast::<Option<S>>()
-                            .map_err(|_| {
-                                #[cfg(debug_assertions)]
-                                {
-                                    anyhow::anyhow!(
-                                        "invalid element state type for id, requested_type {:?}, actual type: {:?}",
-                                        std::any::type_name::<S>(),
-                                        type_name
-                                    )
-                                }
-
-                                #[cfg(not(debug_assertions))]
-                                {
-                                    anyhow::anyhow!(
-                                        "invalid element state type for id, requested_type {:?}",
-                                        std::any::type_name::<S>(),
-                                    )
-                                }
-                            })
-                            .unwrap();
-
-                        // Actual: Option<AnyElement> <- View
-                        // Requested: () <- AnyElement
-                        let state = state_box
-                            .take()
-                            .expect("reentrant call to with_element_state for the same state type and element id");
-                        let (result, state) = f(Some(Some(state)), cx);
-                        state_box.replace(state.expect("you must return "));
-                        cx.window_mut()
-                            .next_frame
-                            .element_states
-                            .insert(key, ElementStateBox {
-                                inner: state_box,
-                                #[cfg(debug_assertions)]
-                                type_name
-                            });
-                        result
-                    } else {
-                        let (result, state) = f(Some(None), cx);
-                        cx.window_mut()
-                            .next_frame
-                            .element_states
-                            .insert(key,
-                                ElementStateBox {
-                                    inner: Box::new(Some(state.expect("you must return Some<State> when you pass some element id"))),
-                                    #[cfg(debug_assertions)]
-                                    type_name: std::any::type_name::<S>()
-                                }
-
-                            );
-                        result
-                    }
-                }
+        if let Some(global_id) = global_id {
+            self.with_element_state(global_id, |state, cx| {
+                let (result, state) = f(Some(state), cx);
+                let state =
+                    state.expect("you must return some state when you pass some element id");
+                (result, state)
             })
+        } else {
+            let (result, state) = f(None, self);
+            debug_assert!(
+                state.is_none(),
+                "you must not return an element state when passing None for the global id"
+            );
+            result
+        }
     }
 
     /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree

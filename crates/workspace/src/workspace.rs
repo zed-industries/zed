@@ -28,9 +28,10 @@ use futures::{
 use gpui::{
     actions, canvas, impl_actions, point, relative, size, Action, AnyElement, AnyView, AnyWeakView,
     AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DevicePixels, DragMoveEvent,
-    Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke,
-    LayoutId, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render,
-    Size, Subscription, Task, View, WeakView, WindowHandle, WindowOptions,
+    ElementId, Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global,
+    GlobalElementId, KeyContext, Keystroke, LayoutId, ManagedView, Model, ModelContext,
+    PathPromptOptions, Point, PromptLevel, Render, Size, Subscription, Task, View, WeakView,
+    WindowHandle, WindowOptions,
 };
 use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -5060,7 +5061,15 @@ impl Element for DisconnectedOverlay {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()
@@ -5083,6 +5092,7 @@ impl Element for DisconnectedOverlay {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         overlay: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -5093,6 +5103,7 @@ impl Element for DisconnectedOverlay {
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         _: Bounds<Pixels>,
         overlay: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,

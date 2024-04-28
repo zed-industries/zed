@@ -597,9 +597,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, Along, AnyElement, Axis, Bounds, Element, IntoElement, MouseDownEvent,
-        MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style, WeakView,
-        WindowContext,
+        px, relative, Along, AnyElement, Axis, Bounds, Element, GlobalElementId, IntoElement,
+        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
+        WeakView, WindowContext,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -795,8 +795,13 @@ mod element {
         type RequestLayoutState = ();
         type PrepaintState = PaneAxisLayout;
 
+        fn id(&self) -> Option<ElementId> {
+            Some(self.basis.into())
+        }
+
         fn request_layout(
             &mut self,
+            _global_id: Option<&GlobalElementId>,
             cx: &mut ui::prelude::WindowContext,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let mut style = Style::default();
@@ -810,17 +815,16 @@ mod element {
 
         fn prepaint(
             &mut self,
+            global_id: Option<&GlobalElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
             cx: &mut WindowContext,
         ) -> PaneAxisLayout {
             let dragged_handle = cx.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
-                Some(self.basis.into()),
+                global_id.unwrap(),
                 |state, _cx| {
-                    let state = state
-                        .unwrap()
-                        .unwrap_or_else(|| Rc::new(RefCell::new(None)));
-                    (state.clone(), Some(state))
+                    let state = state.unwrap_or_else(|| Rc::new(RefCell::new(None)));
+                    (state.clone(), state)
                 },
             );
             let flexes = self.flexes.lock().clone();
@@ -897,6 +901,7 @@ mod element {
 
         fn paint(
             &mut self,
+            _id: Option<&GlobalElementId>,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
