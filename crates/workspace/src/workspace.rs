@@ -85,7 +85,8 @@ use ui::{
 use util::{maybe, ResultExt};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, RestoreOnStartupBehaviour, StatusBarSettings, TabBarSettings,
+    TitleBarSettings, WorkspaceSettings,
 };
 
 use crate::notifications::NotificationId;
@@ -268,6 +269,8 @@ pub fn init_settings(cx: &mut AppContext) {
     ItemSettings::register(cx);
     PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
+    TitleBarSettings::register(cx);
+    StatusBarSettings::register(cx);
 }
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
@@ -4053,6 +4056,9 @@ impl Render for Workspace {
             )
         };
 
+        let show_titlebar = TitleBarSettings::get_global(cx).show;
+        let show_statusbar = StatusBarSettings::get_global(cx).show;
+
         let theme = cx.theme().clone();
         let colors = theme.colors();
         cx.set_rem_size(ui_font_size);
@@ -4069,7 +4075,9 @@ impl Render for Workspace {
             .items_start()
             .text_color(colors.text)
             .bg(colors.background)
-            .children(self.titlebar_item.clone())
+            .when(show_titlebar, |this| {
+                this.children(self.titlebar_item.clone())
+            })
             .child(
                 div()
                     .id("workspace")
@@ -4195,7 +4203,7 @@ impl Render for Workspace {
                     .child(self.modal_layer.clone())
                     .children(self.render_notifications(cx)),
             )
-            .child(self.status_bar.clone())
+            .when(show_statusbar, |this| this.child(self.status_bar.clone()))
             .children(if self.project.read(cx).is_disconnected() {
                 Some(DisconnectedOverlay)
             } else {
@@ -5062,12 +5070,15 @@ impl Element for DisconnectedOverlay {
 
     fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
         let mut background = cx.theme().colors().elevated_surface_background;
+        let show_titlebar = TitleBarSettings::get_global(cx).show;
+
         background.fade_out(0.2);
+
         let mut overlay = div()
             .bg(background)
             .absolute()
             .left_0()
-            .top(ui::TitleBar::height(cx))
+            .when(show_titlebar, |this| this.top(ui::TitleBar::height(cx)))
             .size_full()
             .flex()
             .items_center()

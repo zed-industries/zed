@@ -315,6 +315,52 @@ List of `string` values
 
 `boolean` values
 
+## Title Bar
+
+- Description: Settings related to the editor's title bar.
+- Setting: `title_bar`
+- Default:
+
+```json
+"title_bar": {
+  "show": true
+}
+```
+
+### Show
+
+- Description: Whether or not to show the title bar.
+- Setting: `show`
+- Default: `true`
+
+This only configures the visibility of zed's title bar. The visibility of the system's title bar is depending on the platform and gpuis according settings.
+
+**Options**
+
+`boolean` values
+
+## Status Bar
+
+- Description: Settings related to the editor's status bar.
+- Setting: `status_bar`
+- Default:
+
+```json
+"status_bar": {
+  "show": true
+}
+```
+
+### Show
+
+- Description: Whether or not to show the status bar.
+- Setting: `show`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
