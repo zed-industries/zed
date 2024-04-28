@@ -137,8 +137,8 @@ impl X11WindowState {
         xcb_connection: &Rc<XCBConnection>,
         x_main_screen_index: usize,
         x_window: xproto::Window,
-        resource_database: &Database,
         atoms: &XcbAtoms,
+        scale_factor: f32,
     ) -> Self {
         let x_screen_index = params
             .display_id
@@ -240,15 +240,6 @@ impl X11WindowState {
             .unwrap(),
         );
 
-        let scale_factor = resource_database
-            .get_value("Xft.dpi", "Xft.dpi")
-            .ok()
-            .flatten()
-            .map(|dpi| dpi / 96.0)
-            .unwrap_or(1.0);
-
-        println!("scale factor: {scale_factor}");
-
         // Note: this has to be done after the GPU init, or otherwise
         // the sizes are immediately invalidated.
         let gpu_extent = query_render_extent(xcb_connection, x_window);
@@ -311,8 +302,8 @@ impl X11Window {
         xcb_connection: &Rc<XCBConnection>,
         x_main_screen_index: usize,
         x_window: xproto::Window,
-        resource_database: &Database,
         atoms: &XcbAtoms,
+        scale_factor: f32,
     ) -> Self {
         Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -322,8 +313,8 @@ impl X11Window {
                 xcb_connection,
                 x_main_screen_index,
                 x_window,
-                resource_database,
                 atoms,
+                scale_factor,
             ))),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
