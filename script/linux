@@ -102,4 +102,22 @@ if [[ -n $xbps ]]; then
   exit 0
 fi
 
+# Gentoo
+# https://packages.gentoo.org/
+emerge=$(command -v emerge || true)
+if [[ -n $emerge ]]; then
+  deps=(
+    app-arch/zstd
+    dev-libs/openssl
+    dev-libs/wayland
+    media-libs/alsa-lib
+    media-libs/fontconfig
+    media-libs/vulkan-loader
+    x11-libs/libxcb
+    x11-libs/libxkbcommon
+  )
+  $maysudo "$emerge" -u "${deps[@]}"
+  exit 0
+fi
+
 echo "Unsupported Linux distribution in script/linux"
