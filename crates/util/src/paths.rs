@@ -188,15 +188,17 @@ impl<P> PathLikeWithPosition<P> {
             })
         };
 
+        let trimmed = s.trim();
+
         #[cfg(target_os = "windows")]
         {
-            let is_absolute = s.starts_with("\\\\?\\");
+            let is_absolute = trimmed.starts_with(r"\\?\");
             if is_absolute {
-                return Self::parse_absolute_path(s, parse_path_like_str);
+                return Self::parse_absolute_path(trimmed, parse_path_like_str);
             }
         }
 
-        match s.trim().split_once(FILE_ROW_COLUMN_DELIMITER) {
+        match trimmed.split_once(FILE_ROW_COLUMN_DELIMITER) {
             Some((path_like_str, maybe_row_and_col_str)) => {
                 let path_like_str = path_like_str.trim();
                 let maybe_row_and_col_str = maybe_row_and_col_str.trim();
@@ -264,7 +266,7 @@ impl<P> PathLikeWithPosition<P> {
             })
         };
 
-        let mut iterator = s.trim().split(FILE_ROW_COLUMN_DELIMITER);
+        let mut iterator = s.split(FILE_ROW_COLUMN_DELIMITER);
 
         let drive_prefix = iterator.next().unwrap_or_default();
         let file_path = iterator.next().unwrap_or_default();
