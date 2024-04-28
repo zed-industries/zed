@@ -176,7 +176,6 @@ impl<P> PathLikeWithPosition<P> {
     /// Parses a string that possibly has `:row:column` suffix.
     /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
     /// If any of the row/column component parsing fails, the whole string is then parsed as a path like.
-    #[cfg(not(target_os = "windows"))]
     pub fn parse_str<E>(
         s: &str,
         parse_path_like_str: impl Fn(&str) -> Result<P, E>,
@@ -189,80 +188,12 @@ impl<P> PathLikeWithPosition<P> {
             })
         };
 
-        match s.trim().split_once(FILE_ROW_COLUMN_DELIMITER) {
-            Some((path_like_str, maybe_row_and_col_str)) => {
-                let path_like_str = path_like_str.trim();
-                let maybe_row_and_col_str = maybe_row_and_col_str.trim();
-                if path_like_str.is_empty() {
-                    fallback(s)
-                } else if maybe_row_and_col_str.is_empty() {
-                    fallback(path_like_str)
-                } else {
-                    let (row_parse_result, maybe_col_str) =
-                        match maybe_row_and_col_str.split_once(FILE_ROW_COLUMN_DELIMITER) {
-                            Some((maybe_row_str, maybe_col_str)) => {
-                                (maybe_row_str.parse::<u32>(), maybe_col_str.trim())
-                            }
-                            None => (maybe_row_and_col_str.parse::<u32>(), ""),
-                        };
-
-                    match row_parse_result {
-                        Ok(row) => {
-                            if maybe_col_str.is_empty() {
-                                Ok(Self {
-                                    path_like: parse_path_like_str(path_like_str)?,
-                                    row: Some(row),
-                                    column: None,
-                                })
-                            } else {
-                                let (maybe_col_str, _) =
-                                    maybe_col_str.split_once(':').unwrap_or((maybe_col_str, ""));
-                                match maybe_col_str.parse::<u32>() {
-                                    Ok(col) => Ok(Self {
-                                        path_like: parse_path_like_str(path_like_str)?,
-                                        row: Some(row),
-                                        column: Some(col),
-                                    }),
-                                    Err(_) => Ok(Self {
-                                        path_like: parse_path_like_str(path_like_str)?,
-                                        row: Some(row),
-                                        column: None,
-                                    }),
-                                }
-                            }
-                        }
-                        Err(_) => Ok(Self {
-                            path_like: parse_path_like_str(path_like_str)?,
-                            row: None,
-                            column: None,
-                        }),
-                    }
-                }
+        #[cfg(target_os = "windows")]
+        {
+            let is_absolute = s.starts_with("\\\\?\\");
+            if is_absolute {
+                return Self::parse_absolute_path(s, parse_path_like_str);
             }
-            None => fallback(s),
-        }
-    }
-
-    /// Parses a string that possibly has `:row:column` suffix.
-    /// Ignores trailing `:`s, so `test.rs:22:` is parsed as `test.rs:22`.
-    /// If any of the row/column component parsing fails, the whole string is then parsed as a path like.
-    #[cfg(target_os = "windows")]
-    pub fn parse_str<E>(
-        s: &str,
-        parse_path_like_str: impl Fn(&str) -> Result<P, E>,
-    ) -> Result<Self, E> {
-        let fallback = |fallback_str| {
-            Ok(Self {
-                path_like: parse_path_like_str(fallback_str)?,
-                row: None,
-                column: None,
-            })
-        };
-
-        let is_absolute = s.starts_with("\\\\?\\");
-
-        if is_absolute {
-            return Self::parse_absolute_path(s, parse_path_like_str);
         }
 
         match s.trim().split_once(FILE_ROW_COLUMN_DELIMITER) {
