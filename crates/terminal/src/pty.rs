@@ -1,9 +1,4 @@
-use std::{
-    io::{Read, Write},
-    os::unix::net::UnixStream,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{io::Write, os::unix::net::UnixStream};
 
 use alacritty_terminal::{
     event::OnResize,
@@ -13,7 +8,7 @@ use futures::{
     channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
     AsyncReadExt, SinkExt,
 };
-use gpui::{AsyncAppContext, WeakModel};
+use gpui::AsyncAppContext;
 use polling::{Event, PollMode, Poller};
 use smol::stream::StreamExt;
 

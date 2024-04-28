@@ -1,9 +1,5 @@
-use std::sync::Arc;
-
-use alacritty_terminal::tty::{self, setup_env, EventedReadWrite};
 use gpui::AnyWindowHandle;
 pub use polling;
-use polling::{Event as PollingEvent, PollMode, Poller};
 pub use portable_pty;
 use portable_pty::{native_pty_system, PtyPair, PtySize, PtySystem};
 

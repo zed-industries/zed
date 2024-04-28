@@ -27,7 +27,7 @@ use anyhow::{bail, Result};
 
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-    FutureExt, SinkExt,
+    FutureExt,
 };
 
 use mappings::mouse::{
@@ -458,7 +458,7 @@ impl TerminalBuilder {
         println!("!!config done");
         //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
         //TODO: Remove with a bounded sender which can be dispatched on &self
-        let (mut events_tx, events_rx) = unbounded();
+        let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
         let mut term = Term::new(
             config,

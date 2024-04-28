@@ -720,7 +720,6 @@ impl Project {
                 terminals: Terminals {
                     local_handles: Vec::new(),
                     remote_handles: HashMap::default(),
-                    headless_handles: Vec::new(),
                 },
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,
@@ -878,7 +877,6 @@ impl Project {
                 terminals: Terminals {
                     local_handles: Vec::new(),
                     remote_handles: HashMap::default(),
-                    headless_handles: Vec::new(),
                 },
                 copilot_lsp_subscription,
                 copilot_log_subscription: None,

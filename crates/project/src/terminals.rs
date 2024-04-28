@@ -8,17 +8,10 @@ use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, Task, WeakMode
 use rpc::proto;
 use settings::Settings;
 use smol::{channel::bounded, io::AsyncReadExt};
-use std::{
-    io::{ErrorKind, Read},
-    num::NonZeroUsize,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::path::{Path, PathBuf};
 use task::SpawnInTerminal;
 use terminal::{
-    alacritty_terminal::tty::EventedReadWrite,
-    headless::{polling::Events, portable_pty::CommandBuilder, HeadlessTerminal},
+    headless::{portable_pty::CommandBuilder, HeadlessTerminal},
     pty::RemotePty,
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
     TaskState, TaskStatus, Terminal, TerminalBuilder,
@@ -31,7 +24,6 @@ use util::ResultExt;
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakModel<terminal::Terminal>>,
     pub(crate) remote_handles: HashMap<u64, UnboundedSender<Vec<u8>>>,
-    pub(crate) headless_handles: Vec<WeakModel<terminal::headless::HeadlessTerminal>>,
 }
 
 impl Project {
@@ -92,7 +84,7 @@ impl Project {
 
                 let weak_handle = terminal_handle.as_ref().map(|t| t.downgrade());
                 if let Ok(terminal_handle) = weak_handle {
-                    project.update(&mut cx, |this, cx| {
+                    project.update(&mut cx, |this, _| {
                         this.terminals.local_handles.push(terminal_handle);
                     })?;
                 }
@@ -324,8 +316,8 @@ impl Project {
         let reader = pair.master.try_clone_reader()?;
         let mut writer = pair.master.take_writer()?;
 
-        let read: Task<anyhow::Result<()>> = cx.spawn(|_, cx| async move {
-            let mut child = smol::unblock(move || pair.slave.spawn_command(cmd)).await?;
+        let read: Task<anyhow::Result<()>> = cx.spawn(|_, _| async move {
+            let _child = smol::unblock(move || pair.slave.spawn_command(cmd)).await?;
             let mut reader = smol::Unblock::new(reader);
             let mut buffer = [0; 1024];
             loop {
@@ -348,7 +340,7 @@ impl Project {
         let (input_tx, mut input_rx) = mpsc::unbounded();
         let write = cx.spawn(|project, mut cx| async move {
             project
-                .update(&mut cx, |project, cx| {
+                .update(&mut cx, |project, _| {
                     project.terminals.remote_handles.insert(0, input_tx);
                 })
                 .unwrap();
