@@ -2468,7 +2468,12 @@ async fn test_propagate_saves_and_fs_changes(
     });
     project_a
         .update(cx_a, |project, cx| {
-            project.save_buffer_as(new_buffer_a.clone(), "/a/file3.rs".into(), cx)
+            let path = ProjectPath {
+                path: Arc::from(Path::new("file3.rs")),
+                worktree_id: worktree_a.read(cx).id(),
+            };
+
+            project.save_buffer_as(new_buffer_a.clone(), path, cx)
         })
         .await
         .unwrap();
@@ -3185,7 +3190,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.delete_entry(dir_entry.id, cx).unwrap()
+            project.delete_entry(dir_entry.id, false, cx).unwrap()
         })
         .await
         .unwrap();
@@ -3213,7 +3218,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.delete_entry(entry.id, cx).unwrap()
+            project.delete_entry(entry.id, false, cx).unwrap()
         })
         .await
         .unwrap();
@@ -3742,6 +3747,10 @@ async fn test_leaving_project(
         .unwrap();
 
     buffer_b2.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "a-contents"));
+
+    project_a.read_with(cx_a, |project, _| {
+        assert_eq!(project.collaborators().len(), 2);
+    });
 
     // Drop client B's connection and ensure client A and client C observe client B leaving.
     client_b.disconnect(&cx_b.to_async());

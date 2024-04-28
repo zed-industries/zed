@@ -1,0 +1,27 @@
+id = "elixir"
+name = "Elixir"
+description = "Elixir support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Marshall Bowers <elliott.codes@gmail.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.elixir-ls]
+name = "ElixirLS"
+languages = ["Elixir", "HEEX"]
+
+[language_servers.next-ls]
+name = "Next LS"
+languages = ["Elixir", "HEEX"]
+
+[language_servers.lexical]
+name = "Lexical"
+languages = ["Elixir", "HEEX"]
+
+[grammars.elixir]
+repository = "https://github.com/elixir-lang/tree-sitter-elixir"
+commit = "a2861e88a730287a60c11ea9299c033c7d076e30"
+
+[grammars.heex]
+repository = "https://github.com/phoenixframework/tree-sitter-heex"
+commit = "2e1348c3cf2c9323e87c2744796cf3f3868aa82a"

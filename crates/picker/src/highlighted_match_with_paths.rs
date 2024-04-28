@@ -11,6 +11,7 @@ pub struct HighlightedText {
     pub text: String,
     pub highlight_positions: Vec<usize>,
     pub char_count: usize,
+    pub color: Color,
 }
 
 impl HighlightedText {
@@ -39,13 +40,17 @@ impl HighlightedText {
             text,
             highlight_positions,
             char_count,
+            color: Color::Default,
         }
     }
-}
 
+    pub fn color(self, color: Color) -> Self {
+        Self { color, ..self }
+    }
+}
 impl RenderOnce for HighlightedText {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        HighlightedLabel::new(self.text, self.highlight_positions)
+    fn render(self, _: &mut WindowContext) -> impl IntoElement {
+        HighlightedLabel::new(self.text, self.highlight_positions).color(self.color)
     }
 }
 

@@ -325,13 +325,13 @@ impl settings::Settings for ThemeSettings {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
                 family: defaults.ui_font_family.clone().unwrap().into(),
-                features: defaults.ui_font_features.unwrap(),
+                features: defaults.ui_font_features.clone().unwrap(),
                 weight: Default::default(),
                 style: Default::default(),
             },
             buffer_font: Font {
                 family: defaults.buffer_font_family.clone().unwrap().into(),
-                features: defaults.buffer_font_features.unwrap(),
+                features: defaults.buffer_font_features.clone().unwrap(),
                 weight: FontWeight::default(),
                 style: FontStyle::default(),
             },
@@ -349,14 +349,14 @@ impl settings::Settings for ThemeSettings {
             if let Some(value) = value.buffer_font_family.clone() {
                 this.buffer_font.family = value.into();
             }
-            if let Some(value) = value.buffer_font_features {
+            if let Some(value) = value.buffer_font_features.clone() {
                 this.buffer_font.features = value;
             }
 
             if let Some(value) = value.ui_font_family.clone() {
                 this.ui_font.family = value.into();
             }
-            if let Some(value) = value.ui_font_features {
+            if let Some(value) = value.ui_font_features.clone() {
                 this.ui_font.features = value;
             }
 

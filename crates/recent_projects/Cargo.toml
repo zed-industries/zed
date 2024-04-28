@@ -13,14 +13,21 @@ path = "src/recent_projects.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
+feature_flags.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
 ordered-float.workspace = true
 picker.workspace = true
+remote_projects.workspace = true
+rpc.workspace = true
 serde.workspace = true
+settings.workspace = true
 smol.workspace = true
+theme.workspace = true
 ui.workspace = true
+ui_text_field.workspace = true
 util.workspace = true
 workspace.workspace = true
 

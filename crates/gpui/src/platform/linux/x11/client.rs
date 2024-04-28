@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::ops::Deref;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
 use calloop::{EventLoop, LoopHandle};
@@ -12,10 +12,9 @@ use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::errors::ConnectionError;
 use x11rb::protocol::randr::ConnectionExt as _;
-use x11rb::protocol::xinput::ConnectionExt;
 use x11rb::protocol::xkb::ConnectionExt as _;
 use x11rb::protocol::xproto::ConnectionExt as _;
-use x11rb::protocol::{randr, xinput, xkb, xproto, Event};
+use x11rb::protocol::{randr, xkb, xproto, Event};
 use x11rb::xcb_ffi::XCBConnection;
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb as xkbc;
@@ -24,10 +23,10 @@ use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers, ModifiersChangedEvent, Pixels,
-    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams,
+    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
-use super::{super::SCROLL_LINES, X11Display, X11Window, XcbAtoms};
+use super::{super::SCROLL_LINES, X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{button_of_key, modifiers_from_state};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
@@ -37,12 +36,12 @@ use calloop::{
 };
 
 pub(crate) struct WindowRef {
-    window: X11Window,
+    window: X11WindowStatePtr,
     refresh_event_token: RegistrationToken,
 }
 
 impl Deref for WindowRef {
-    type Target = X11Window;
+    type Target = X11WindowStatePtr;
 
     fn deref(&self) -> &Self::Target {
         &self.window
@@ -64,13 +63,27 @@ pub struct X11ClientState {
     pub(crate) focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
 
-    pub(crate) scroll_devices: Vec<xinput::DeviceInfo>,
-    pub(crate) scroll_x: Option<f32>,
-    pub(crate) scroll_y: Option<f32>,
-
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: X11ClipboardContext<Clipboard>,
     pub(crate) primary: X11ClipboardContext<Primary>,
+}
+
+#[derive(Clone)]
+pub struct X11ClientStatePtr(pub Weak<RefCell<X11ClientState>>);
+
+impl X11ClientStatePtr {
+    pub fn drop_window(&self, x_window: u32) {
+        let client = X11Client(self.0.upgrade().expect("client already dropped"));
+        let mut state = client.0.borrow_mut();
+
+        if let Some(window_ref) = state.windows.remove(&x_window) {
+            state.loop_handle.remove(window_ref.refresh_event_token);
+        }
+
+        if state.windows.is_empty() {
+            state.common.signal.stop();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -97,19 +110,6 @@ impl X11Client {
         xcb_connection
             .prefetch_extension_information(randr::X11_EXTENSION_NAME)
             .unwrap();
-        xcb_connection
-            .prefetch_extension_information(xinput::X11_EXTENSION_NAME)
-            .unwrap();
-
-        let xinput_version = xcb_connection
-            .xinput_xi_query_version(2, 0)
-            .unwrap()
-            .reply()
-            .unwrap();
-        assert!(
-            xinput_version.major_version >= 2,
-            "XInput Extension v2 not supported."
-        );
 
         let atoms = XcbAtoms::new(&xcb_connection).unwrap();
         let xkb = xcb_connection
@@ -142,46 +142,6 @@ impl X11Client {
             );
             xkbc::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
         };
-
-        let device_list = xcb_connection
-            .xinput_list_input_devices()
-            .unwrap()
-            .reply()
-            .unwrap();
-        let scroll_devices = device_list
-            .devices
-            .iter()
-            .scan(0, |class_info_idx, device_info| {
-                Some(*class_info_idx + device_info.num_class_info as usize)
-            })
-            .zip(device_list.devices.iter())
-            .map(|(class_info_idx, device_info)| {
-                (
-                    device_info,
-                    device_list.infos
-                        [(class_info_idx - device_info.num_class_info as usize)..(class_info_idx)]
-                        .to_vec(),
-                )
-            })
-            .filter(|(device_info, class_info)| {
-                device_info.device_use == xinput::DeviceUse::IS_X_EXTENSION_POINTER
-                    && class_info.iter().any(|class_info| match class_info.info {
-                        xinput::InputInfoInfo::Valuator(xinput::InputInfoInfoValuator {
-                            mode,
-                            ..
-                        }) => mode == xinput::ValuatorMode::RELATIVE,
-                        _ => false,
-                    })
-            })
-            .map(|(device_info, _)| *device_info)
-            .collect::<Vec<_>>();
-        for device in &scroll_devices {
-            xcb_connection
-                .xinput_open_device(device.device_id)
-                .unwrap()
-                .reply()
-                .unwrap();
-        }
 
         let clipboard = X11ClipboardContext::<Clipboard>::new().unwrap();
         let primary = X11ClipboardContext::<Primary>::new().unwrap();
@@ -224,17 +184,12 @@ impl X11Client {
             windows: HashMap::default(),
             focused_window: None,
             xkb: xkb_state,
-
-            scroll_devices,
-            scroll_x: None,
-            scroll_y: None,
-
             clipboard,
             primary,
         })))
     }
 
-    fn get_window(&self, win: xproto::Window) -> Option<X11Window> {
+    fn get_window(&self, win: xproto::Window) -> Option<X11WindowStatePtr> {
         let state = self.0.borrow();
         state
             .windows
@@ -245,18 +200,16 @@ impl X11Client {
     fn handle_event(&self, event: Event) -> Option<()> {
         match event {
             Event::ClientMessage(event) => {
+                let window = self.get_window(event.window)?;
                 let [atom, ..] = event.data.as_data32();
                 let mut state = self.0.borrow_mut();
 
                 if atom == state.atoms.WM_DELETE_WINDOW {
-                    // window "x" button clicked by user, we gracefully exit
-                    let window_ref = state.windows.remove(&event.window)?;
-
-                    state.loop_handle.remove(window_ref.refresh_event_token);
-                    window_ref.window.destroy();
-
-                    if state.windows.is_empty() {
-                        state.common.signal.stop();
+                    // window "x" button clicked by user
+                    if window.should_close() {
+                        let window_ref = state.windows.remove(&event.window)?;
+                        state.loop_handle.remove(window_ref.refresh_event_token);
+                        // Rest of the close logic is handled in drop_window()
                     }
                 }
             }
@@ -377,56 +330,20 @@ impl X11Client {
                         click_count: current_count,
                         first_mouse: false,
                     }));
+                } else if event.detail >= 4 && event.detail <= 5 {
+                    // https://stackoverflow.com/questions/15510472/scrollwheel-event-in-x11
+                    let scroll_direction = if event.detail == 4 { 1.0 } else { -1.0 };
+                    let scroll_y = SCROLL_LINES * scroll_direction;
+
+                    drop(state);
+                    window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
+                        position,
+                        delta: ScrollDelta::Lines(Point::new(0.0, scroll_y as f32)),
+                        modifiers,
+                        touch_phase: TouchPhase::Moved,
+                    }));
                 } else {
                     log::warn!("Unknown button press: {event:?}");
-                }
-            }
-            Event::XinputMotion(event) => {
-                let window = self.get_window(event.event)?;
-
-                let position = Point::new(
-                    (event.event_x as f32 / u16::MAX as f32).into(),
-                    (event.event_y as f32 / u16::MAX as f32).into(),
-                );
-
-                let axisvalues = event
-                    .axisvalues
-                    .iter()
-                    .map(|axisvalue| {
-                        axisvalue.integral as f32 + axisvalue.frac as f32 / u32::MAX as f32
-                    })
-                    .collect::<Vec<_>>();
-
-                if event.valuator_mask[0] & 4 == 4 {
-                    let new_scroll = axisvalues[0];
-                    let old_scroll = self.0.borrow().scroll_x;
-                    self.0.borrow_mut().scroll_x = Some(new_scroll);
-
-                    if let Some(old_scroll) = old_scroll {
-                        let delta_scroll = (old_scroll - new_scroll).into();
-                        window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
-                            position,
-                            delta: ScrollDelta::Pixels(Point::new(delta_scroll, 0.0.into())),
-                            modifiers: crate::Modifiers::none(),
-                            touch_phase: TouchPhase::default(),
-                        }));
-                    }
-                }
-
-                if event.valuator_mask[0] & 8 == 8 {
-                    let new_scroll = axisvalues[0] / 2.0;
-                    let old_scroll = self.0.borrow().scroll_y;
-                    self.0.borrow_mut().scroll_y = Some(new_scroll);
-
-                    if let Some(old_scroll) = old_scroll {
-                        let delta_scroll = (old_scroll - new_scroll).into();
-                        window.handle_input(PlatformInput::ScrollWheel(crate::ScrollWheelEvent {
-                            position,
-                            delta: ScrollDelta::Pixels(Point::new(0.0.into(), delta_scroll)),
-                            modifiers: crate::Modifiers::none(),
-                            touch_phase: TouchPhase::default(),
-                        }));
-                    }
                 }
             }
             Event::ButtonRelease(event) => {
@@ -523,12 +440,13 @@ impl LinuxClient for X11Client {
         let x_window = state.xcb_connection.generate_id().unwrap();
 
         let window = X11Window::new(
+            X11ClientStatePtr(Rc::downgrade(&self.0)),
+            state.common.foreground_executor.clone(),
             params,
             &state.xcb_connection,
             state.x_root_index,
             x_window,
             &state.atoms,
-            &state.scroll_devices,
         );
 
         let screen_resources = state
@@ -592,7 +510,7 @@ impl LinuxClient for X11Client {
             .expect("Failed to initialize refresh timer");
 
         let window_ref = WindowRef {
-            window: window.clone(),
+            window: window.0.clone(),
             refresh_event_token,
         };
 

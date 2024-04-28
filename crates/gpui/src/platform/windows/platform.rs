@@ -78,6 +78,13 @@ impl WindowsPlatformInner {
             .find(|entry| *entry == &hwnd)
             .and_then(|hwnd| try_get_window_inner(*hwnd))
     }
+
+    #[inline]
+    pub fn run_foreground_tasks(&self) {
+        for runnable in self.main_receiver.drain() {
+            runnable.run();
+        }
+    }
 }
 
 #[derive(Default)]
@@ -182,10 +189,9 @@ impl WindowsPlatform {
         Self { inner }
     }
 
+    #[inline]
     fn run_foreground_tasks(&self) {
-        for runnable in self.inner.main_receiver.drain() {
-            runnable.run();
-        }
+        self.inner.run_foreground_tasks();
     }
 
     fn redraw_all(&self) {

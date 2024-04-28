@@ -217,6 +217,7 @@ List of `string` values
 ```json
 "scrollbar": {
   "show": "auto",
+  "cursors": true,
   "git_diff": true,
   "search_results": true,
   "selected_symbol": true,
@@ -263,6 +264,16 @@ List of `string` values
   "show": "never"
 }
 ```
+
+### Cursor Indicators
+
+- Description: Whether to show cursor positions in the scrollbar.
+- Setting: `cursors`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ### Git Diff Indicators
 

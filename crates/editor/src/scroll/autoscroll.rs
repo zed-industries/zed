@@ -61,6 +61,10 @@ impl AutoscrollStrategy {
 }
 
 impl Editor {
+    pub fn autoscroll_requested(&self) -> bool {
+        self.scroll_manager.autoscroll_requested()
+    }
+
     pub fn autoscroll_vertically(
         &mut self,
         bounds: Bounds<Pixels>,
