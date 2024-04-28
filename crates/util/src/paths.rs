@@ -264,8 +264,6 @@ impl<P> PathLikeWithPosition<P> {
             })
         };
 
-        println!("{s}");
-
         let mut iterator = s.trim().split(FILE_ROW_COLUMN_DELIMITER);
 
         let drive_prefix = iterator.next().unwrap_or_default();
@@ -273,8 +271,6 @@ impl<P> PathLikeWithPosition<P> {
 
         // TODO: How to handle drives without a letter? UNC paths?
         let complete_path = drive_prefix.replace("\\\\?\\", "") + ":" + &file_path;
-
-        println!("{complete_path}");
 
         if let Some(row_str) = iterator.next() {
             if let Some(column_str) = iterator.next() {
