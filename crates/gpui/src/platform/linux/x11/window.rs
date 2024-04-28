@@ -130,6 +130,7 @@ impl rwh::HasDisplayHandle for X11Window {
 }
 
 impl X11WindowState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
@@ -294,6 +295,7 @@ impl Drop for X11Window {
 }
 
 impl X11Window {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
