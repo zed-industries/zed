@@ -14,7 +14,7 @@ use futures::{
     future::Shared,
     Future, FutureExt as _,
 };
-use glob::Pattern;
+use globset::GlobSet;
 use gpui::{AppContext, BackgroundExecutor, Task};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
@@ -454,7 +454,7 @@ impl LanguageRegistry {
         self.language_for_file_internal(
             &file.full_path(cx),
             content,
-            Some(&user_file_types.file_types),
+            user_file_types.file_types.as_ref(),
         )
     }
 
@@ -470,31 +470,23 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         path: &Path,
         content: Option<&Rope>,
-        user_file_types: Option<&HashMap<Arc<str>, Vec<String>>>,
+        user_file_types: Option<&HashMap<Arc<str>, GlobSet>>,
     ) -> impl Future<Output = Result<Arc<Language>>> {
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
-        let empty = Vec::new();
 
         let rx = self.get_or_load_language(move |language_name, config| {
             let path_matches_default_suffix = config
                 .path_suffixes
                 .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+                .any(|suffix| path_suffixes.iter().any(|&s| Some(suffix.as_str()) == s));
             let path_matches_custom_suffix = user_file_types
                 .and_then(|types| types.get(language_name))
-                .unwrap_or(&empty)
-                .iter()
-                .any(|suffix| {
-                    path_suffixes.iter().any(|path_suffix| {
-                        if let Some(suffix_str) = path_suffix {
-                            Pattern::new(suffix)
-                                .map_or(false, |pattern| pattern.matches(suffix_str))
-                        } else {
-                            false
-                        }
-                    })
+                .map_or(false, |globset| {
+                    path_suffixes
+                        .iter()
+                        .any(|&suffix| suffix.map_or(false, |suffix| globset.is_match(suffix)))
                 });
             let content_matches = content.zip(config.first_line_pattern.as_ref()).map_or(
                 false,
