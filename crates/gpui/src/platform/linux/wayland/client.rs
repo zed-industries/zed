@@ -145,7 +145,7 @@ pub(crate) struct WaylandClientState {
     mouse_focused_window: Option<WaylandWindowStatePtr>,
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
-    cursor_style: CursorStyle,
+    cursor_style: Option<CursorStyle>,
     cursor: Cursor,
     clipboard: Option<Clipboard>,
     primary: Option<Primary>,
@@ -343,8 +343,8 @@ impl WaylandClient {
             mouse_focused_window: None,
             keyboard_focused_window: None,
             loop_handle: handle.clone(),
-            cursor_style: CursorStyle::Arrow,
             enter_token: None,
+            cursor_style: None,
             cursor,
             clipboard: Some(clipboard),
             primary: Some(primary),
@@ -389,19 +389,27 @@ impl LinuxClient for WaylandClient {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         let mut state = self.0.borrow_mut();
-        state.cursor_style = style;
 
-        if let Some(cursor_shape_device) = &state.cursor_shape_device {
-            cursor_shape_device.set_shape(state.pointer_serial, style.to_shape());
-        } else if state.mouse_focused_window.is_some() {
+        let need_update = state
+            .cursor_style
+            .map_or(true, |current_style| current_style != style);
+
+        if need_update {
             let serial = state.pointer_serial;
-            let wl_pointer = state
-                .wl_pointer
-                .clone()
-                .expect("window is focused by pointer");
-            state
-                .cursor
-                .set_icon(&wl_pointer, serial, &style.to_icon_name());
+            state.cursor_style = Some(style);
+
+            if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                cursor_shape_device.set_shape(serial, style.to_shape());
+            } else if state.mouse_focused_window.is_some() {
+                // cursor-shape-v1 isn't supported, set the cursor using a surface.
+                let wl_pointer = state
+                    .wl_pointer
+                    .clone()
+                    .expect("window is focused by pointer");
+                state
+                    .cursor
+                    .set_icon(&wl_pointer, serial, &style.to_icon_name());
+            }
         }
     }
 
@@ -906,14 +914,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.enter_token = Some(());
                     state.mouse_focused_window = Some(window.clone());
-                    if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                        cursor_shape_device.set_shape(state.serial, state.cursor_style.to_shape());
-                    } else {
-                        let cursor_icon_name = state.cursor_style.to_icon_name();
-                        state.cursor.mark_dirty();
-                        state
-                            .cursor
-                            .set_icon(&wl_pointer, serial, &cursor_icon_name);
+                    if let Some(style) = state.cursor_style {
+                        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                            cursor_shape_device.set_shape(serial, style.to_shape());
+                        } else {
+                            state
+                                .cursor
+                                .set_icon(&wl_pointer, serial, &style.to_icon_name());
+                        }
                     }
                     drop(state);
                     window.set_focused(true);
