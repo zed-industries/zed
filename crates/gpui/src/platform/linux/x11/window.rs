@@ -160,7 +160,6 @@ impl X11WindowState {
                 | xproto::EventMask::BUTTON2_MOTION
                 | xproto::EventMask::BUTTON3_MOTION
                 | xproto::EventMask::BUTTON_MOTION,
-            // TODO: handle property_changed / resource_changed event for scale factor
         );
 
         xcb_connection

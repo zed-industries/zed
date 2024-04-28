@@ -197,7 +197,7 @@ impl X11Client {
             .unwrap();
         let resource_manager = resource_manager.reply().unwrap();
 
-        // TODO: hostname
+        // todo(linux): read hostname
         let resource_database = Database::new_from_default(&resource_manager, "HOSTNAME".into());
 
         let scale_factor = resource_database
@@ -206,8 +206,6 @@ impl X11Client {
             .flatten()
             .map(|dpi: f32| dpi / 96.0)
             .unwrap_or(1.0);
-
-        println!("scale factor: {scale_factor}");
 
         let clipboard = X11ClipboardContext::<Clipboard>::new().unwrap();
         let primary = X11ClipboardContext::<Primary>::new().unwrap();
