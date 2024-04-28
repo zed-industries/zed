@@ -4604,6 +4604,7 @@ dependencies = [
  "wayland-client",
  "wayland-cursor",
  "wayland-protocols",
+ "wayland-protocols-plasma",
  "windows 0.53.0",
  "x11rb",
  "xkbcommon",
@@ -11777,6 +11778,19 @@ dependencies = [
  "bitflags 2.4.2",
  "wayland-backend",
  "wayland-client",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-plasma"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23803551115ff9ea9bce586860c5c5a971e360825a0309264102a9495a5ff479"
+dependencies = [
+ "bitflags 2.4.2",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 
