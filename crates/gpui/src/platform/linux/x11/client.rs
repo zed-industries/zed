@@ -23,8 +23,9 @@ use xkbcommon::xkb as xkbc;
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
-    px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers, ModifiersChangedEvent, Pixels,
-    PlatformDisplay, PlatformInput, Point, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers,
+    ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size,
+    TouchPhase, WindowParams, X11Window,
 };
 
 use super::{super::SCROLL_LINES, X11Display, X11WindowStatePtr, XcbAtoms};
@@ -397,12 +398,21 @@ impl X11Client {
                     (event.event_x as f32 / u16::MAX as f32).into(),
                     (event.event_y as f32 / u16::MAX as f32).into(),
                 );
+                let modifiers = modifiers_from_xinput_info(event.mods);
 
                 let axisvalues = event
                     .axisvalues
                     .iter()
                     .map(|axisvalue| fp3232_to_f32(*axisvalue))
                     .collect::<Vec<_>>();
+
+                if event.valuator_mask[0] & 3 != 0 {
+                    window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers,
+                    }));
+                }
 
                 let mut valuator_idx = 0;
                 let scroll_class_data = self.0.borrow().scroll_class_data.clone();
@@ -427,14 +437,12 @@ impl X11Client {
                                     crate::ScrollWheelEvent {
                                         position,
                                         delta: ScrollDelta::Lines(Point::new(delta_scroll, 0.0)),
-                                        modifiers: crate::Modifiers::none(),
+                                        modifiers,
                                         touch_phase: TouchPhase::default(),
                                     },
                                 ));
                             }
-                        }
-
-                        if scroll_class.scroll_type == xinput::ScrollType::VERTICAL
+                        } else if scroll_class.scroll_type == xinput::ScrollType::VERTICAL
                             && scroll_class.number == shift
                         {
                             // the `increment` is the valuator delta equivalent to one positive unit of scrolling. Here that means SCROLL_LINES lines.
@@ -450,7 +458,7 @@ impl X11Client {
                                     crate::ScrollWheelEvent {
                                         position,
                                         delta: ScrollDelta::Lines(Point::new(0.0, delta_scroll)),
-                                        modifiers: crate::Modifiers::none(),
+                                        modifiers,
                                         touch_phase: TouchPhase::default(),
                                     },
                                 ));
