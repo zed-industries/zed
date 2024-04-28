@@ -16,7 +16,7 @@ use std::{
 use theme::{ActiveTheme, SyntaxTheme};
 use ui::{
     h_flex, tooltip_container, v_flex, Checkbox, Color, FluentBuilder, InteractiveElement, Label,
-    LabelCommon, LabelSize, LinkPreview, Render, Selection, StatefulInteractiveElement, Tooltip,
+    LabelCommon, LabelSize, LinkPreview, Render, Selection, StatefulInteractiveElement,
     VisualContext,
 };
 use workspace::Workspace;
@@ -184,7 +184,13 @@ fn render_markdown_image(image: &ParsedMarkdownImage, cx: &mut RenderContext) ->
                 .flex_shrink()
                 .child(img(source).object_fit(gpui::ObjectFit::None))
                 .when(!tooltip_text.is_empty(), |this| {
-                    this.tooltip(move |cx| ImageTooltip::new(&tooltip_text, cx))
+                    this.tooltip(move |cx| {
+                        InteractiveMarkdownElementTooltip::with_text(
+                            &tooltip_text,
+                            "open image",
+                            cx,
+                        )
+                    })
                 })
                 .cursor_pointer()
                 .on_click(move |_, cx| {
@@ -221,7 +227,7 @@ fn render_markdown_list_item(
         Unordered => "•".into_any_element(),
         Task(checked, range) => div()
             .id(cx.next_id(range))
-            .mt(px(3.))
+            .mt_0p5()
             .child(
                 Checkbox::new(
                     "checkbox",
@@ -253,15 +259,7 @@ fn render_markdown_list_item(
             )
             .hover(|s| s.cursor_pointer())
             .tooltip(|cx| {
-                let secondary_modifier = Keystroke {
-                    key: "".to_string(),
-                    modifiers: Modifiers::secondary_key(),
-                    ime_key: None,
-                };
-                Tooltip::text(
-                    format!("{}-click to toggle the checkbox", secondary_modifier),
-                    cx,
-                )
+                InteractiveMarkdownElementTooltip::new(None, "toggle checkbox".to_string(), cx)
             })
             .into_any_element(),
     };
@@ -473,20 +471,36 @@ fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     div().pt_3().pb_3().child(rule).into_any()
 }
 
-struct ImageTooltip {
-    tooltip_text: SharedString,
+struct InteractiveMarkdownElementTooltip {
+    tooltip_text: Option<SharedString>,
+    action_text: String,
 }
 
-impl ImageTooltip {
-    pub fn new(tooltip_text: &str, cx: &mut WindowContext) -> AnyView {
+impl InteractiveMarkdownElementTooltip {
+    pub fn with_text(
+        tooltip_text: &str,
+        action_text: impl Into<String>,
+        cx: &mut WindowContext,
+    ) -> AnyView {
         let tooltip_text = util::truncate_and_trailoff(tooltip_text, 50).into();
-        cx.new_view(|_| Self { tooltip_text }).into()
+        Self::new(Some(tooltip_text), action_text, cx)
+    }
+
+    pub fn new(
+        tooltip_text: Option<SharedString>,
+        action_text: impl Into<String>,
+        cx: &mut WindowContext,
+    ) -> AnyView {
+        cx.new_view(|_| Self {
+            tooltip_text,
+            action_text: action_text.into(),
+        })
+        .into()
     }
 }
 
-impl Render for ImageTooltip {
+impl Render for InteractiveMarkdownElementTooltip {
     fn render(&mut self, cx: &mut ui::prelude::ViewContext<Self>) -> impl IntoElement {
-        let tooltip_text = self.tooltip_text.clone();
         tooltip_container(cx, |el, _| {
             let secondary_modifier = Keystroke {
                 key: "".to_string(),
@@ -497,11 +511,16 @@ impl Render for ImageTooltip {
             el.child(
                 v_flex()
                     .gap_1()
-                    .child(Label::new(tooltip_text).size(LabelSize::Small))
+                    .when_some(self.tooltip_text.clone(), |this, text| {
+                        this.child(Label::new(text).size(LabelSize::Small))
+                    })
                     .child(
-                        Label::new(format!("{}-click to open image", secondary_modifier))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                        Label::new(format!(
+                            "{}-click to {}",
+                            secondary_modifier, self.action_text
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
                     ),
             )
         })
