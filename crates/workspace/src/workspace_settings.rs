@@ -69,10 +69,6 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: true
     pub show_nav_history_buttons: Option<bool>,
-    /// Whether or not to show the tab bar.
-    ///
-    /// Default: true
-    pub show: Option<bool>,
 }
 
 #[derive(Deserialize)]
