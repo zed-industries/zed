@@ -47,11 +47,20 @@
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
+  // Centered layout related settings.
+  "centered_layout": {
+    // The relative width of the left padding of the central pane from the
+    // workspace when the centered layout is used.
+    "left_padding": 0.2,
+    // The relative width of the right padding of the central pane from the
+    // workspace when the centered layout is used.
+    "right_padding": 0.2
+  },
   // The key to use for adding multiple cursors
   // Currently "alt" or "cmd_or_ctrl"  (also aliased as
   // "cmd" and "ctrl") are supported.
   "multi_cursor_modifier": "alt",
-  // Whether to enable vim modes and key bindings
+  // Whether to enable vim modes and key bindings.
   "vim_mode": false,
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
@@ -60,6 +69,8 @@
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
   "restore_on_startup": "last_workspace",
+  // Size of the drop target in the editor.
+  "drop_target_size": 0.2,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // Whether to pop the completions menu while typing in an editor without
@@ -92,8 +103,9 @@
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
-  // Whether to automatically type closing characters for you. For example,
-  // when you type (, Zed will automatically add a closing ) at the correct position.
+  // Whether to automatically add matching closing characters when typing
+  // opening parenthesis, bracket, brace, single or double quote characters.
+  // For example, when you type (, Zed will add a closing ) at the correct position.
   "use_autoclose": true,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
@@ -143,12 +155,14 @@
     // 4. Never show the scrollbar:
     //    "never"
     "show": "auto",
+    // Whether to show cursor positions in the scrollbar.
+    "cursors": true,
     // Whether to show git diff indicators in the scrollbar.
     "git_diff": true,
-    // Whether to show selections in the scrollbar.
-    "selections": true,
-    // Whether to show symbols selections in the scrollbar.
-    "symbols_selections": true,
+    // Whether to show buffer search results in the scrollbar.
+    "search_results": true,
+    // Whether to show selected symbol occurrences in the scrollbar.
+    "selected_symbol": true,
     // Whether to show diagnostic indicators in the scrollbar.
     "diagnostics": true
   },
@@ -171,7 +185,7 @@
   },
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
-  // Scroll sensitivity multiplier. This multiplier is applied 
+  // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
   "relative_line_numbers": false,
@@ -202,6 +216,8 @@
     "scroll_debounce_ms": 50
   },
   "project_panel": {
+    // Whether to show the project panel button in the status bar
+    "button": true,
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
@@ -280,6 +296,10 @@
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
+  // The list of language servers to use (or disable) for all languages.
+  //
+  // This is typically customized on a per-language basis.
+  "language_servers": ["..."],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -397,7 +417,7 @@
     // Control whether the git blame information is shown inline,
     // in the currently focused line.
     "inline_blame": {
-      "enabled": false
+      "enabled": true
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       // "delay_ms": 600
@@ -490,6 +510,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
+    // Whether to show the terminal button in the status bar
+    "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
     // environment. Use `:` to separate multiple values.
     "env": {
@@ -535,31 +557,6 @@
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
   },
-  // Settings specific to our elixir integration
-  "elixir": {
-    // Change the LSP zed uses for elixir.
-    // Note that changing this setting requires a restart of Zed
-    // to take effect.
-    //
-    // May take 3 values:
-    //  1. Use the standard ElixirLS, this is the default
-    //         "lsp": "elixir_ls"
-    //  2. Use the experimental NextLs
-    //         "lsp": "next_ls",
-    //  3. Use a language server installed locally on your machine:
-    //         "lsp": {
-    //           "local": {
-    //             "path": "~/next-ls/bin/start",
-    //             "arguments": ["--stdio"]
-    //            }
-    //          },
-    //
-    "lsp": "elixir_ls"
-  },
-  // Settings specific to our deno integration
-  "deno": {
-    "enable": false
-  },
   "code_actions_on_format": {},
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
@@ -574,6 +571,13 @@
   // }
   //
   "file_types": {},
+  // The extensions that Zed should automatically install on startup.
+  //
+  // If you don't want any of these extensions, add this field to your settings
+  // and change the value to `false`.
+  "auto_install_extensions": {
+    "html": true
+  },
   // Different settings for specific languages.
   "languages": {
     "C++": {

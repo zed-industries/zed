@@ -6,21 +6,33 @@ struct ZigExtension {
     cached_binary_path: Option<String>,
 }
 
+#[derive(Clone)]
+struct ZlsBinary {
+    path: String,
+    environment: Option<Vec<(String, String)>>,
+}
+
 impl ZigExtension {
-    fn language_server_binary_path(
+    fn language_server_binary(
         &mut self,
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
-    ) -> Result<String> {
-        if let Some(path) = &self.cached_binary_path {
-            if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
-                return Ok(path.clone());
-            }
+    ) -> Result<ZlsBinary> {
+        if let Some(path) = worktree.which("zls") {
+            let environment = worktree.shell_env();
+            return Ok(ZlsBinary {
+                path,
+                environment: Some(environment),
+            });
         }
 
-        if let Some(path) = worktree.which("zls") {
-            self.cached_binary_path = Some(path.clone());
-            return Ok(path);
+        if let Some(path) = &self.cached_binary_path {
+            if fs::metadata(&path).map_or(false, |stat| stat.is_file()) {
+                return Ok(ZlsBinary {
+                    path: path.clone(),
+                    environment: None,
+                });
+            }
         }
 
         zed::set_language_server_installation_status(
@@ -92,7 +104,10 @@ impl ZigExtension {
         }
 
         self.cached_binary_path = Some(binary_path.clone());
-        Ok(binary_path)
+        Ok(ZlsBinary {
+            path: binary_path,
+            environment: None,
+        })
     }
 }
 
@@ -108,10 +123,11 @@ impl zed::Extension for ZigExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        let zls_binary = self.language_server_binary(language_server_id, worktree)?;
         Ok(zed::Command {
-            command: self.language_server_binary_path(language_server_id, worktree)?,
+            command: zls_binary.path,
             args: vec![],
-            env: Default::default(),
+            env: zls_binary.environment.unwrap_or_default(),
         })
     }
 }

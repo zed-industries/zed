@@ -58,9 +58,10 @@ pub struct Toolbar {
 pub struct Scrollbar {
     pub show: ShowScrollbar,
     pub git_diff: bool,
-    pub selections: bool,
-    pub symbols_selections: bool,
+    pub selected_symbol: bool,
+    pub search_results: bool,
     pub diagnostics: bool,
+    pub cursors: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -194,18 +195,22 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub git_diff: Option<bool>,
-    /// Whether to show buffer search result markers in the scrollbar.
+    /// Whether to show buffer search result indicators in the scrollbar.
     ///
     /// Default: true
-    pub selections: Option<bool>,
-    /// Whether to show symbols highlighted markers in the scrollbar.
+    pub search_results: Option<bool>,
+    /// Whether to show selected symbol occurrences in the scrollbar.
     ///
     /// Default: true
-    pub symbols_selections: Option<bool>,
+    pub selected_symbol: Option<bool>,
     /// Whether to show diagnostic indicators in the scrollbar.
     ///
     /// Default: true
     pub diagnostics: Option<bool>,
+    /// Whether to show cursor positions in the scrollbar.
+    ///
+    /// Default: true
+    pub cursors: Option<bool>,
 }
 
 /// Gutter related settings

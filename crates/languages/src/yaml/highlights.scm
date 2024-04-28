@@ -20,10 +20,10 @@
 [
   (anchor_name)
   (alias_name)
-  (tag) 
+  (tag)
 ] @type
 
-key: (flow_node (plain_scalar (string_scalar) @property)) 
+key: (flow_node (plain_scalar (string_scalar) @property))
 
 [
  ","

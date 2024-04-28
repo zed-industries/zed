@@ -5,9 +5,9 @@ use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AppContext, AsyncWindowContext, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    actions, Action, AppContext, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, FocusableView, IntoElement, ParentElement, Pixels, Render, Styled,
+    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
@@ -15,18 +15,18 @@ use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use task::{RevealStrategy, SpawnInTerminal, TaskId};
-use terminal::{
-    terminal_settings::{Shell, TerminalDockPosition, TerminalSettings},
-    SpawnTask,
+use terminal::terminal_settings::{Shell, TerminalDockPosition, TerminalSettings};
+use ui::{
+    h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconSize, Selectable,
+    Tooltip,
 };
-use ui::{h_flex, ButtonCommon, Clickable, IconButton, IconSize, Selectable, Tooltip};
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::Item,
     pane,
     ui::IconName,
-    DraggedTab, NewTerminal, Pane, Workspace,
+    DraggedTab, NewTerminal, Pane, ToggleZoom, Workspace,
 };
 
 use anyhow::Result;
@@ -62,7 +62,6 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
-        let terminal_panel = cx.view().downgrade();
         let pane = cx.new_view(|cx| {
             let mut pane = Pane::new(
                 workspace.weak_handle(),
@@ -74,21 +73,45 @@ impl TerminalPanel {
             );
             pane.set_can_split(false, cx);
             pane.set_can_navigate(false, cx);
-            pane.display_nav_history_buttons(false);
+            pane.display_nav_history_buttons(None);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                let terminal_panel = terminal_panel.clone();
                 h_flex()
                     .gap_2()
                     .child(
                         IconButton::new("plus", IconName::Plus)
                             .icon_size(IconSize::Small)
-                            .on_click(move |_, cx| {
-                                terminal_panel
-                                    .update(cx, |panel, cx| panel.add_terminal(None, None, cx))
-                                    .log_err();
-                            })
-                            .tooltip(|cx| Tooltip::text("New Terminal", cx)),
+                            .on_click(cx.listener(|pane, _, cx| {
+                                let focus_handle = pane.focus_handle(cx);
+                                let menu = ContextMenu::build(cx, |menu, _| {
+                                    menu.action(
+                                        "New Terminal",
+                                        workspace::NewTerminal.boxed_clone(),
+                                    )
+                                    .entry(
+                                        "Spawn task",
+                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
+                                        move |cx| {
+                                            // We want the focus to go back to terminal panel once task modal is dismissed,
+                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                            // context menu will be gone the moment we spawn the modal.
+                                            cx.focus(&focus_handle);
+                                            cx.dispatch_action(
+                                                tasks_ui::Spawn::modal().boxed_clone(),
+                                            );
+                                        },
+                                    )
+                                });
+                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
+                                    pane.new_item_menu = None;
+                                })
+                                .detach();
+                                pane.new_item_menu = Some(menu);
+                            }))
+                            .tooltip(|cx| Tooltip::text("New...", cx)),
                     )
+                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
+                        el.child(Pane::render_menu_overlay(new_item_menu))
+                    })
                     .child({
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
@@ -99,7 +122,11 @@ impl TerminalPanel {
                                 pane.toggle_zoom(&workspace::ToggleZoom, cx);
                             }))
                             .tooltip(move |cx| {
-                                Tooltip::text(if zoomed { "Zoom Out" } else { "Zoom In" }, cx)
+                                Tooltip::for_action(
+                                    if zoomed { "Zoom Out" } else { "Zoom In" },
+                                    &ToggleZoom,
+                                    cx,
+                                )
                             })
                     })
                     .into_any_element()
@@ -287,45 +314,41 @@ impl TerminalPanel {
         action: &workspace::OpenTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let Some(this) = workspace.focus_panel::<Self>(cx) else {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
-
-        this.update(cx, |this, cx| {
-            this.add_terminal(Some(action.working_directory.clone()), None, cx)
-        })
+        terminal_panel.update(cx, |panel, cx| {
+            panel.add_terminal(Some(action.working_directory.clone()), None, cx)
+        });
+        workspace.focus_panel::<Self>(cx);
     }
 
     fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
-        let mut spawn_task = SpawnTask {
-            id: spawn_in_terminal.id.clone(),
-            full_label: spawn_in_terminal.full_label.clone(),
-            label: spawn_in_terminal.label.clone(),
-            command: spawn_in_terminal.command.clone(),
-            args: spawn_in_terminal.args.clone(),
-            env: spawn_in_terminal.env.clone(),
-            reveal: spawn_in_terminal.reveal,
-        };
+        let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match TerminalSettings::get_global(cx).shell.clone() {
-            Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, vec![])),
-            Shell::Program(shell) => Some((shell, vec![])),
+            Shell::System => std::env::var("SHELL").ok().map(|shell| (shell, Vec::new())),
+            Shell::Program(shell) => Some((shell, Vec::new())),
             Shell::WithArguments { program, args } => Some((program, args)),
         }) else {
             return;
         };
 
-        let mut command = std::mem::take(&mut spawn_task.command);
-        let args = std::mem::take(&mut spawn_task.args);
-        for arg in args {
-            command.push(' ');
-            command.push_str(&arg);
-        }
-        spawn_task.command = shell;
-        user_args.extend(["-i".to_owned(), "-c".to_owned(), command]);
+        spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+        let task_command = std::mem::replace(&mut spawn_task.command, shell);
+        let task_args = std::mem::take(&mut spawn_task.args);
+        let combined_command = task_args
+            .into_iter()
+            .fold(task_command, |mut command, arg| {
+                command.push(' ');
+                command.push_str(&arg);
+                command
+            });
+        user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
         spawn_task.args = user_args;
-        let reveal = spawn_task.reveal;
+        let spawn_task = spawn_task;
 
+        let reveal = spawn_task.reveal;
         let working_directory = spawn_in_terminal.cwd.clone();
         let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
         let use_new_terminal = spawn_in_terminal.use_new_terminal;
@@ -401,7 +424,7 @@ impl TerminalPanel {
 
     fn spawn_in_new_terminal(
         &mut self,
-        spawn_task: SpawnTask,
+        spawn_task: SpawnInTerminal,
         working_directory: Option<PathBuf>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -421,17 +444,17 @@ impl TerminalPanel {
         }
     }
 
-    ///Create a new Terminal in the current working directory or the user's home directory
+    /// Create a new Terminal in the current working directory or the user's home directory
     fn new_terminal(
         workspace: &mut Workspace,
         _: &workspace::NewTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let Some(this) = workspace.focus_panel::<Self>(cx) else {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
-
-        this.update(cx, |this, cx| this.add_terminal(None, None, cx))
+        terminal_panel.update(cx, |this, cx| this.add_terminal(None, None, cx));
+        workspace.focus_panel::<Self>(cx);
     }
 
     fn terminals_for_task(
@@ -464,7 +487,7 @@ impl TerminalPanel {
     fn add_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        spawn_task: Option<SpawnTask>,
+        spawn_task: Option<SpawnInTerminal>,
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace.clone();
@@ -556,7 +579,7 @@ impl TerminalPanel {
     fn replace_terminal(
         &self,
         working_directory: Option<PathBuf>,
-        spawn_task: SpawnTask,
+        spawn_task: SpawnInTerminal,
         terminal_item_index: usize,
         terminal_to_replace: View<TerminalView>,
         cx: &mut ViewContext<'_, Self>,
@@ -592,8 +615,13 @@ impl TerminalPanel {
 
         Some(())
     }
+
     pub fn pane(&self) -> &View<Pane> {
         &self.pane
+    }
+
+    fn has_no_terminals(&mut self, cx: &mut ViewContext<'_, Self>) -> bool {
+        self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
     }
 }
 
@@ -707,7 +735,7 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active && self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0 {
+        if active && self.has_no_terminals(cx) {
             self.add_terminal(None, None, cx)
         }
     }
@@ -725,8 +753,10 @@ impl Panel for TerminalPanel {
         "TerminalPanel"
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
-        Some(IconName::Terminal)
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        TerminalSettings::get_global(cx)
+            .button
+            .then(|| IconName::Terminal)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

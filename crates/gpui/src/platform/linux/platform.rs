@@ -3,7 +3,10 @@
 use std::any::{type_name, Any};
 use std::cell::{self, RefCell};
 use std::env;
+use std::fs::File;
+use std::io::Read;
 use std::ops::{Deref, DerefMut};
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::panic::Location;
 use std::{
     path::{Path, PathBuf},
@@ -19,6 +22,7 @@ use async_task::Runnable;
 use calloop::channel::Channel;
 use calloop::{EventLoop, LoopHandle, LoopSignal};
 use copypasta::ClipboardProvider;
+use filedescriptor::FileDescriptor;
 use flume::{Receiver, Sender};
 use futures::channel::oneshot;
 use parking_lot::Mutex;
@@ -56,7 +60,9 @@ pub trait LinuxClient {
         options: WindowParams,
     ) -> Box<dyn PlatformWindow>;
     fn set_cursor_style(&self, style: CursorStyle);
+    fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
+    fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn run(&self);
 }
@@ -406,7 +412,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         })
     }
 
-    //todo(linux): add trait methods for accessing the primary selection
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let url = url.to_string();
         self.background_executor().spawn(async move {
@@ -461,8 +466,16 @@ impl<P: LinuxClient + 'static> Platform for P {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
     }
 
+    fn write_to_primary(&self, item: ClipboardItem) {
+        self.write_to_primary(item)
+    }
+
     fn write_to_clipboard(&self, item: ClipboardItem) {
         self.write_to_clipboard(item)
+    }
+
+    fn read_from_primary(&self) -> Option<ClipboardItem> {
+        self.read_from_primary()
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
@@ -473,6 +486,19 @@ impl<P: LinuxClient + 'static> Platform for P {
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
     let diff = a - b;
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
+}
+
+pub(super) unsafe fn read_fd(mut fd: FileDescriptor) -> Result<String> {
+    let mut file = File::from_raw_fd(fd.as_raw_fd());
+
+    let mut buffer = String::new();
+    file.read_to_string(&mut buffer)?;
+
+    // Normalize the text to unix line endings, otherwise
+    // copying from eg: firefox inserts a lot of blank
+    // lines, and that is super annoying.
+    let result = buffer.replace("\r\n", "\n");
+    Ok(result)
 }
 
 impl Keystroke {

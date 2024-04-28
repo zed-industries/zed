@@ -10,7 +10,10 @@ pub use lazy_static::lazy_static;
 pub mod blame;
 pub mod commit;
 pub mod diff;
+pub mod hosting_provider;
 pub mod permalink;
+pub mod pull_request;
+pub mod repository;
 
 lazy_static! {
     pub static ref DOT_GIT: &'static OsStr = OsStr::new(".git");

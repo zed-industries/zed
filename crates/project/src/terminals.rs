@@ -4,9 +4,10 @@ use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
 use settings::Settings;
 use smol::channel::bounded;
 use std::path::{Path, PathBuf};
+use task::SpawnInTerminal;
 use terminal::{
     terminal_settings::{self, Shell, TerminalSettings, VenvSettingsContent},
-    SpawnTask, TaskState, TaskStatus, Terminal, TerminalBuilder,
+    TaskState, TaskStatus, Terminal, TerminalBuilder,
 };
 use util::ResultExt;
 
@@ -21,7 +22,7 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         working_directory: Option<PathBuf>,
-        spawn_task: Option<SpawnTask>,
+        spawn_task: Option<SpawnInTerminal>,
         window: AnyWindowHandle,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
@@ -44,6 +45,7 @@ impl Project {
             .unwrap_or_else(|| Path::new(""));
 
         let (spawn_task, shell) = if let Some(spawn_task) = spawn_task {
+            log::debug!("Spawning task: {spawn_task:?}");
             env.extend(spawn_task.env);
             // Activate minimal Python virtual environment
             if let Some(python_settings) = &python_settings.as_option() {
@@ -54,6 +56,7 @@ impl Project {
                     id: spawn_task.id,
                     full_label: spawn_task.full_label,
                     label: spawn_task.label,
+                    command_label: spawn_task.command_label,
                     status: TaskStatus::Running,
                     completion_rx,
                 }),

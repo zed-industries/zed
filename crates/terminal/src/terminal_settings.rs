@@ -36,6 +36,7 @@ pub struct TerminalSettings {
     pub alternate_scroll: AlternateScroll,
     pub option_as_meta: bool,
     pub copy_on_select: bool,
+    pub button: bool,
     pub dock: TerminalDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
@@ -138,6 +139,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub copy_on_select: Option<bool>,
+    /// Whether to show the terminal button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
     pub dock: Option<TerminalDockPosition>,
     /// Default width when the terminal is docked to the left or right.
     ///

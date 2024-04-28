@@ -171,44 +171,48 @@ impl Render for CollabTitlebarItem {
                         let room = room.read(cx);
                         let project = self.project.read(cx);
                         let is_local = project.is_local();
-                        let is_shared = is_local && project.is_shared();
+                        let is_remote_project = project.remote_project_id().is_some();
+                        let is_shared = (is_local || is_remote_project) && project.is_shared();
                         let is_muted = room.is_muted();
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
                         let can_use_microphone = room.can_use_microphone();
                         let can_share_projects = room.can_share_projects();
 
-                        this.when(is_local && can_share_projects, |this| {
-                            this.child(
-                                Button::new(
-                                    "toggle_sharing",
-                                    if is_shared { "Unshare" } else { "Share" },
-                                )
-                                .tooltip(move |cx| {
-                                    Tooltip::text(
-                                        if is_shared {
-                                            "Stop sharing project with call participants"
-                                        } else {
-                                            "Share project with call participants"
-                                        },
-                                        cx,
+                        this.when(
+                            (is_local || is_remote_project) && can_share_projects,
+                            |this| {
+                                this.child(
+                                    Button::new(
+                                        "toggle_sharing",
+                                        if is_shared { "Unshare" } else { "Share" },
                                     )
-                                })
-                                .style(ButtonStyle::Subtle)
-                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                .selected(is_shared)
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(
-                                    move |this, _, cx| {
-                                        if is_shared {
-                                            this.unshare_project(&Default::default(), cx);
-                                        } else {
-                                            this.share_project(&Default::default(), cx);
-                                        }
-                                    },
-                                )),
-                            )
-                        })
+                                    .tooltip(move |cx| {
+                                        Tooltip::text(
+                                            if is_shared {
+                                                "Stop sharing project with call participants"
+                                            } else {
+                                                "Share project with call participants"
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .style(ButtonStyle::Subtle)
+                                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                    .selected(is_shared)
+                                    .label_size(LabelSize::Small)
+                                    .on_click(cx.listener(
+                                        move |this, _, cx| {
+                                            if is_shared {
+                                                this.unshare_project(&Default::default(), cx);
+                                            } else {
+                                                this.share_project(&Default::default(), cx);
+                                            }
+                                        },
+                                    )),
+                                )
+                            },
+                        )
                         .child(
                             div()
                                 .child(
@@ -406,7 +410,7 @@ impl CollabTitlebarItem {
         )
     }
 
-    pub fn render_project_name(&self, cx: &mut ViewContext<Self>) -> impl Element {
+    pub fn render_project_name(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let name = {
             let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -423,15 +427,26 @@ impl CollabTitlebarItem {
         };
 
         let workspace = self.workspace.clone();
-        popover_menu("project_name_trigger")
-            .trigger(
-                Button::new("project_name_trigger", name)
-                    .when(!is_project_selected, |b| b.color(Color::Muted))
-                    .style(ButtonStyle::Subtle)
-                    .label_size(LabelSize::Small)
-                    .tooltip(move |cx| Tooltip::text("Recent Projects", cx)),
-            )
-            .menu(move |cx| Some(Self::render_project_popover(workspace.clone(), cx)))
+        Button::new("project_name_trigger", name)
+            .when(!is_project_selected, |b| b.color(Color::Muted))
+            .style(ButtonStyle::Subtle)
+            .label_size(LabelSize::Small)
+            .tooltip(move |cx| {
+                Tooltip::for_action(
+                    "Recent Projects",
+                    &recent_projects::OpenRecent {
+                        create_new_window: false,
+                    },
+                    cx,
+                )
+            })
+            .on_click(cx.listener(move |_, _, cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        RecentProjects::open(workspace, false, cx);
+                    })
+                }
+            }))
     }
 
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl Element> {
@@ -605,17 +620,6 @@ impl CollabTitlebarItem {
         let focus_handle = view.focus_handle(cx);
         cx.focus(&focus_handle);
         Some(view)
-    }
-
-    pub fn render_project_popover(
-        workspace: WeakView<Workspace>,
-        cx: &mut WindowContext<'_>,
-    ) -> View<RecentProjects> {
-        let view = RecentProjects::open_popover(workspace, cx);
-
-        let focus_handle = view.focus_handle(cx);
-        cx.focus(&focus_handle);
-        view
     }
 
     fn render_connection_status(

@@ -1108,7 +1108,7 @@ impl AssistantPanel {
                             )
                             .track_scroll(scroll_handle)
                             .into_any_element();
-                            saved_conversations.layout(
+                            saved_conversations.prepaint_as_root(
                                 bounds.origin,
                                 bounds.size.map(AvailableSpace::Definite),
                                 cx,
@@ -1119,8 +1119,8 @@ impl AssistantPanel {
                     )
                     .size_full()
                     .into_any_element()
-                } else {
-                    let editor = self.active_conversation_editor().unwrap();
+                } else if let Some(editor) = self.active_conversation_editor() {
+                    let editor = editor.clone();
                     let conversation = editor.read(cx).conversation.clone();
                     div()
                         .size_full()
@@ -1135,6 +1135,8 @@ impl AssistantPanel {
                                 .children(self.render_remaining_tokens(&conversation, cx)),
                         )
                         .into_any_element()
+                } else {
+                    div().into_any_element()
                 },
             ))
     }
@@ -2065,7 +2067,7 @@ impl ConversationEditor {
             workspace: workspace.downgrade(),
             _subscriptions,
         };
-        this.update_active_buffer(workspace, cx);
+        cx.defer(|this, cx| this.update_active_buffer(workspace, cx));
         this.update_message_headers(cx);
         this
     }
@@ -2871,7 +2873,7 @@ impl InlineAssistant {
                 cx.theme().colors().text
             },
             font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
+            font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,

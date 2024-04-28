@@ -26,7 +26,7 @@ use futures::{
     Future, FutureExt, StreamExt,
 };
 use gpui::{
-    actions, canvas, impl_actions, point, size, Action, AnyElement, AnyView, AnyWeakView,
+    actions, canvas, impl_actions, point, relative, size, Action, AnyElement, AnyView, AnyWeakView,
     AppContext, AsyncAppContext, AsyncWindowContext, Bounds, DevicePixels, DragMoveEvent,
     Entity as _, EntityId, EventEmitter, FocusHandle, FocusableView, Global, KeyContext, Keystroke,
     LayoutId, ManagedView, Model, ModelContext, PathPromptOptions, Point, PromptLevel, Render,
@@ -46,7 +46,7 @@ pub use pane::*;
 pub use pane_group::*;
 use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
 pub use persistence::{
-    model::{ItemId, WorkspaceLocation},
+    model::{ItemId, LocalPaths, SerializedRemoteProject, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
@@ -78,11 +78,11 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{
-    div, Context as _, Div, Element, ElementContext, FluentBuilder as _, InteractiveElement as _,
-    IntoElement, Label, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
-    VisualContext as _, WindowContext,
+    div, h_flex, Context as _, Div, Element, FluentBuilder, InteractiveElement as _, IntoElement,
+    Label, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext, VisualContext as _,
+    WindowContext,
 };
-use util::ResultExt;
+use util::{maybe, ResultExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehaviour, TabBarSettings, WorkspaceSettings,
@@ -112,6 +112,7 @@ actions!(
     workspace,
     [
         Open,
+        OpenInTerminal,
         NewFile,
         NewWindow,
         CloseWindow,
@@ -133,6 +134,7 @@ actions!(
         ToggleLeftDock,
         ToggleRightDock,
         ToggleBottomDock,
+        ToggleCenteredLayout,
         CloseAllDocks,
     ]
 );
@@ -542,6 +544,10 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
+type PromptForNewPath = Box<
+    dyn Fn(&mut Workspace, &mut ViewContext<Workspace>) -> oneshot::Receiver<Option<ProjectPath>>,
+>;
+
 /// Collects everything project-related for a certain window opened.
 /// In some way, is a counterpart of a window, as the [`WindowHandle`] could be downcast into `Workspace`.
 ///
@@ -581,7 +587,9 @@ pub struct Workspace {
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
+    centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
+    on_prompt_for_new_path: Option<PromptForNewPath>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -600,6 +608,9 @@ struct FollowerState {
 }
 
 impl Workspace {
+    const DEFAULT_PADDING: f32 = 0.2;
+    const MAX_PADDING: f32 = 0.4;
+
     pub fn new(
         workspace_id: WorkspaceId,
         project: Model<Project>,
@@ -867,7 +878,9 @@ impl Workspace {
             workspace_actions: Default::default(),
             // This data will be incorrect, but it will be overwritten by the time it needs to be used.
             bounds: Default::default(),
+            centered_layout: false,
             bounds_save_task_queued: None,
+            on_prompt_for_new_path: None,
         }
     }
 
@@ -956,12 +969,19 @@ impl Workspace {
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
                 options.bounds = bounds;
                 options.fullscreen = fullscreen;
+                let centered_layout = serialized_workspace
+                    .as_ref()
+                    .map(|w| w.centered_layout)
+                    .unwrap_or(false);
                 cx.open_window(options, {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
                     move |cx| {
                         cx.new_view(|cx| {
-                            Workspace::new(workspace_id, project_handle, app_state, cx)
+                            let mut workspace =
+                                Workspace::new(workspace_id, project_handle, app_state, cx);
+                            workspace.centered_layout = centered_layout;
+                            workspace
                         })
                     }
                 })?
@@ -1207,6 +1227,59 @@ impl Workspace {
     pub fn set_titlebar_item(&mut self, item: AnyView, cx: &mut ViewContext<Self>) {
         self.titlebar_item = Some(item);
         cx.notify();
+    }
+
+    pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
+        self.on_prompt_for_new_path = Some(prompt)
+    }
+
+    pub fn prompt_for_new_path(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> oneshot::Receiver<Option<ProjectPath>> {
+        if let Some(prompt) = self.on_prompt_for_new_path.take() {
+            let rx = prompt(self, cx);
+            self.on_prompt_for_new_path = Some(prompt);
+            rx
+        } else {
+            let start_abs_path = self
+                .project
+                .update(cx, |project, cx| {
+                    let worktree = project.visible_worktrees(cx).next()?;
+                    Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                })
+                .unwrap_or_else(|| Path::new("").into());
+
+            let (tx, rx) = oneshot::channel();
+            let abs_path = cx.prompt_for_new_path(&start_abs_path);
+            cx.spawn(|this, mut cx| async move {
+                let abs_path = abs_path.await?;
+                let project_path = abs_path.and_then(|abs_path| {
+                    this.update(&mut cx, |this, cx| {
+                        this.project.update(cx, |project, cx| {
+                            project.find_or_create_local_worktree(abs_path, true, cx)
+                        })
+                    })
+                    .ok()
+                });
+
+                if let Some(project_path) = project_path {
+                    let (worktree, path) = project_path.await?;
+                    let worktree_id = worktree.read_with(&cx, |worktree, _| worktree.id())?;
+                    tx.send(Some(ProjectPath {
+                        worktree_id,
+                        path: path.into(),
+                    }))
+                    .ok();
+                } else {
+                    tx.send(None).ok();
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            rx
+        }
     }
 
     pub fn titlebar_item(&self) -> Option<AnyView> {
@@ -3378,17 +3451,16 @@ impl Workspace {
         self.database_id
     }
 
-    fn location(&self, cx: &AppContext) -> Option<WorkspaceLocation> {
+    fn local_paths(&self, cx: &AppContext) -> Option<LocalPaths> {
         let project = self.project().read(cx);
 
         if project.is_local() {
-            Some(
+            Some(LocalPaths::new(
                 project
                     .visible_worktrees(cx)
                     .map(|worktree| worktree.read(cx).abs_path())
-                    .collect::<Vec<_>>()
-                    .into(),
-            )
+                    .collect::<Vec<_>>(),
+            ))
         } else {
             None
         }
@@ -3526,24 +3598,44 @@ impl Workspace {
             }
         }
 
-        if let Some(location) = self.location(cx) {
-            // Load bearing special case:
-            //  - with_local_workspace() relies on this to not have other stuff open
-            //    when you open your log
-            if !location.paths().is_empty() {
-                let center_group = build_serialized_pane_group(&self.center.root, cx);
-                let docks = build_serialized_docks(self, cx);
-                let serialized_workspace = SerializedWorkspace {
-                    id: self.database_id,
-                    location,
-                    center_group,
-                    bounds: Default::default(),
-                    display: Default::default(),
-                    docks,
-                    fullscreen: cx.is_fullscreen(),
-                };
-                return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
+        let location = if let Some(local_paths) = self.local_paths(cx) {
+            if !local_paths.paths().is_empty() {
+                Some(SerializedWorkspaceLocation::Local(local_paths))
+            } else {
+                None
             }
+        } else if let Some(remote_project_id) = self.project().read(cx).remote_project_id() {
+            let store = remote_projects::Store::global(cx).read(cx);
+            maybe!({
+                let project = store.remote_project(remote_project_id)?;
+                let dev_server = store.dev_server(project.dev_server_id)?;
+
+                let remote_project = SerializedRemoteProject {
+                    id: remote_project_id,
+                    dev_server_name: dev_server.name.to_string(),
+                    path: project.path.to_string(),
+                };
+                Some(SerializedWorkspaceLocation::Remote(remote_project))
+            })
+        } else {
+            None
+        };
+
+        // don't save workspace state for the empty workspace.
+        if let Some(location) = location {
+            let center_group = build_serialized_pane_group(&self.center.root, cx);
+            let docks = build_serialized_docks(self, cx);
+            let serialized_workspace = SerializedWorkspace {
+                id: self.database_id,
+                location,
+                center_group,
+                bounds: Default::default(),
+                display: Default::default(),
+                docks,
+                fullscreen: cx.is_fullscreen(),
+                centered_layout: self.centered_layout,
+            };
+            return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
         }
         Task::ready(())
     }
@@ -3704,6 +3796,7 @@ impl Workspace {
                     workspace.reopen_closed_item(cx).detach();
                 }),
             )
+            .on_action(cx.listener(Workspace::toggle_centered_layout))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3771,6 +3864,21 @@ impl Workspace {
     {
         self.modal_layer
             .update(cx, |modal_layer, cx| modal_layer.toggle_modal(cx, build))
+    }
+
+    pub fn toggle_centered_layout(&mut self, _: &ToggleCenteredLayout, cx: &mut ViewContext<Self>) {
+        self.centered_layout = !self.centered_layout;
+        cx.background_executor()
+            .spawn(DB.set_centered_layout(self.database_id, self.centered_layout))
+            .detach_and_log_err(cx);
+        cx.notify();
+    }
+
+    fn adjust_padding(padding: Option<f32>) -> f32 {
+        padding
+            .unwrap_or(Self::DEFAULT_PADDING)
+            .min(Self::MAX_PADDING)
+            .max(0.0)
     }
 }
 
@@ -3914,9 +4022,29 @@ struct DraggedDock(DockPosition);
 
 impl Render for Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut context = KeyContext::default();
+        let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
-
+        let centered_layout = self.centered_layout
+            && self.center.panes().len() == 1
+            && self.active_item(cx).is_some();
+        let render_padding = |size| {
+            (size > 0.0).then(|| {
+                div()
+                    .h_full()
+                    .w(relative(size))
+                    .bg(cx.theme().colors().editor_background)
+                    .border_color(cx.theme().colors().pane_group_border)
+            })
+        };
+        let paddings = if centered_layout {
+            let settings = WorkspaceSettings::get_global(cx).centered_layout;
+            (
+                render_padding(Self::adjust_padding(settings.left_padding)),
+                render_padding(Self::adjust_padding(settings.right_padding)),
+            )
+        } else {
+            (None, None)
+        };
         let (ui_font, ui_font_size) = {
             let theme_settings = ThemeSettings::get_global(cx);
             (
@@ -3935,7 +4063,7 @@ impl Render for Workspace {
             .size_full()
             .flex()
             .flex_col()
-            .font(ui_font)
+            .font_family(ui_font)
             .gap_0()
             .justify_start()
             .items_start()
@@ -4009,15 +4137,25 @@ impl Render for Workspace {
                                     .flex_col()
                                     .flex_1()
                                     .overflow_hidden()
-                                    .child(self.center.render(
-                                        &self.project,
-                                        &self.follower_states,
-                                        self.active_call(),
-                                        &self.active_pane,
-                                        self.zoomed.as_ref(),
-                                        &self.app_state,
-                                        cx,
-                                    ))
+                                    .child(
+                                        h_flex()
+                                            .flex_1()
+                                            .when_some(paddings.0, |this, p| {
+                                                this.child(p.border_r_1())
+                                            })
+                                            .child(self.center.render(
+                                                &self.project,
+                                                &self.follower_states,
+                                                self.active_call(),
+                                                &self.active_pane,
+                                                self.zoomed.as_ref(),
+                                                &self.app_state,
+                                                cx,
+                                            ))
+                                            .when_some(paddings.1, |this, p| {
+                                                this.child(p.border_l_1())
+                                            }),
+                                    )
                                     .children(
                                         self.zoomed_position
                                             .ne(&Some(DockPosition::Bottom))
@@ -4242,7 +4380,7 @@ pub fn activate_workspace_for_project(
     None
 }
 
-pub async fn last_opened_workspace_paths() -> Option<WorkspaceLocation> {
+pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
     DB.last_workspace().await.log_err().flatten()
 }
 
@@ -4349,7 +4487,6 @@ async fn join_channel_internal(
         if let Some((project, host)) = room.most_active_project(cx) {
             return Some(join_in_room_project(project, host, app_state.clone(), cx));
         }
-
         // if you are the first to join a channel, share your project
         if room.remote_participants().len() == 0 && !room.local_participant_is_guest() {
             if let Some(workspace) = requesting_window {
@@ -4358,7 +4495,7 @@ async fn join_channel_internal(
                         return None;
                     }
                     let project = workspace.project.read(cx);
-                    if project.is_local()
+                    if (project.is_local() || project.remote_project_id().is_some())
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
@@ -4707,6 +4844,7 @@ pub fn join_hosted_project(
 pub fn join_remote_project(
     project_id: ProjectId,
     app_state: Arc<AppState>,
+    window_to_replace: Option<WindowHandle<Workspace>>,
     cx: &mut AppContext,
 ) -> Task<Result<WindowHandle<Workspace>>> {
     let windows = cx.windows();
@@ -4738,16 +4876,25 @@ pub fn join_remote_project(
             )
             .await?;
 
-            let window_bounds_override = window_bounds_env_override();
-            cx.update(|cx| {
-                let mut options = (app_state.build_window_options)(None, cx);
-                options.bounds = window_bounds_override;
-                cx.open_window(options, |cx| {
-                    cx.new_view(|cx| {
+            if let Some(window_to_replace) = window_to_replace {
+                cx.update_window(window_to_replace.into(), |_, cx| {
+                    cx.replace_root_view(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), cx)
+                    });
+                })?;
+                window_to_replace
+            } else {
+                let window_bounds_override = window_bounds_env_override();
+                cx.update(|cx| {
+                    let mut options = (app_state.build_window_options)(None, cx);
+                    options.bounds = window_bounds_override;
+                    cx.open_window(options, |cx| {
+                        cx.new_view(|cx| {
+                            Workspace::new(Default::default(), project, app_state.clone(), cx)
+                        })
                     })
-                })
-            })?
+                })?
+            }
         };
 
         workspace.update(&mut cx, |_, cx| {
@@ -4910,10 +5057,10 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<DevicePixels>> {
 struct DisconnectedOverlay;
 
 impl Element for DisconnectedOverlay {
-    type BeforeLayout = AnyElement;
-    type AfterLayout = ();
+    type RequestLayoutState = AnyElement;
+    type PrepaintState = ();
 
-    fn before_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::BeforeLayout) {
+    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
         let mut background = cx.theme().colors().elevated_surface_background;
         background.fade_out(0.2);
         let mut overlay = div()
@@ -4931,25 +5078,25 @@ impl Element for DisconnectedOverlay {
                 "Your connection to the remote project has been lost.",
             ))
             .into_any();
-        (overlay.before_layout(cx), overlay)
+        (overlay.request_layout(cx), overlay)
     }
 
-    fn after_layout(
+    fn prepaint(
         &mut self,
         bounds: Bounds<Pixels>,
-        overlay: &mut Self::BeforeLayout,
-        cx: &mut ElementContext,
+        overlay: &mut Self::RequestLayoutState,
+        cx: &mut WindowContext,
     ) {
         cx.insert_hitbox(bounds, true);
-        overlay.after_layout(cx);
+        overlay.prepaint(cx);
     }
 
     fn paint(
         &mut self,
         _: Bounds<Pixels>,
-        overlay: &mut Self::BeforeLayout,
-        _: &mut Self::AfterLayout,
-        cx: &mut ElementContext,
+        overlay: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        cx: &mut WindowContext,
     ) {
         overlay.paint(cx)
     }

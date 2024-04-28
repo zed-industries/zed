@@ -13,6 +13,7 @@ enum ContextMenuItem {
     Separator,
     Header(SharedString),
     Entry {
+        toggled: Option<bool>,
         label: SharedString,
         icon: Option<IconName>,
         handler: Rc<dyn Fn(&mut WindowContext)>,
@@ -92,6 +93,24 @@ impl ContextMenu {
         handler: impl Fn(&mut WindowContext) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry {
+            toggled: None,
+            label: label.into(),
+            handler: Rc::new(handler),
+            icon: None,
+            action,
+        });
+        self
+    }
+
+    pub fn toggleable_entry(
+        mut self,
+        label: impl Into<SharedString>,
+        toggled: bool,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut WindowContext) + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry {
+            toggled: Some(toggled),
             label: label.into(),
             handler: Rc::new(handler),
             icon: None,
@@ -114,6 +133,7 @@ impl ContextMenu {
 
     pub fn action(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.items.push(ContextMenuItem::Entry {
+            toggled: None,
             label: label.into(),
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |cx| cx.dispatch_action(action.boxed_clone())),
@@ -124,6 +144,7 @@ impl ContextMenu {
 
     pub fn link(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.items.push(ContextMenuItem::Entry {
+            toggled: None,
             label: label.into(),
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |cx| cx.dispatch_action(action.boxed_clone())),
@@ -279,6 +300,7 @@ impl Render for ContextMenu {
                                 .inset(true)
                                 .into_any_element(),
                             ContextMenuItem::Entry {
+                                toggled,
                                 label,
                                 handler,
                                 icon,
@@ -300,13 +322,14 @@ impl Render for ContextMenu {
                                 ListItem::new(ix)
                                     .inset(true)
                                     .selected(Some(ix) == self.selected_index)
-                                    .on_click(move |_, cx| {
-                                        handler(cx);
-                                        menu.update(cx, |menu, cx| {
-                                            menu.clicked = true;
-                                            cx.emit(DismissEvent);
+                                    .when_some(*toggled, |list_item, toggled| {
+                                        list_item.start_slot(if toggled {
+                                            v_flex().flex_none().child(
+                                                Icon::new(IconName::Check).color(Color::Accent),
+                                            )
+                                        } else {
+                                            v_flex().flex_none().size(IconSize::default().rems())
                                         })
-                                        .ok();
                                     })
                                     .child(
                                         h_flex()
@@ -328,6 +351,14 @@ impl Render for ContextMenu {
                                                     .map(|binding| div().ml_1().child(binding))
                                             })),
                                     )
+                                    .on_click(move |_, cx| {
+                                        handler(cx);
+                                        menu.update(cx, |menu, cx| {
+                                            menu.clicked = true;
+                                            cx.emit(DismissEvent);
+                                        })
+                                        .ok();
+                                    })
                                     .into_any_element()
                             }
                             ContextMenuItem::CustomEntry {

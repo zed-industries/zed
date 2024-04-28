@@ -19,14 +19,14 @@ use gpui::{
     WeakModel, WeakView, WhiteSpace, WindowContext,
 };
 use menu::Confirm;
-use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project};
+use project::{search::SearchQuery, search_history::SearchHistoryCursor, Project, ProjectPath};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
     any::{Any, TypeId},
     mem,
     ops::{Not, Range},
-    path::{Path, PathBuf},
+    path::Path,
 };
 use theme::ThemeSettings;
 use ui::{
@@ -53,8 +53,6 @@ actions!(
 struct ActiveSettings(HashMap<WeakModel<Project>, ProjectSearchSettings>);
 
 impl Global for ActiveSettings {}
-
-const SEARCH_CONTEXT: u32 = 2;
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());
@@ -234,7 +232,7 @@ impl ProjectSearch {
                                     excerpts.stream_excerpts_with_context_lines(
                                         buffer,
                                         ranges,
-                                        SEARCH_CONTEXT,
+                                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
                                         cx,
                                     )
                                 })
@@ -441,7 +439,7 @@ impl Item for ProjectSearchView {
     fn save_as(
         &mut self,
         _: Model<Project>,
-        _: PathBuf,
+        _: ProjectPath,
         _: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         unreachable!("save_as should not have been called")
@@ -1309,7 +1307,7 @@ impl ProjectSearchBar {
                 cx.theme().colors().text
             },
             font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features,
+            font_features: settings.buffer_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,

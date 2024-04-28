@@ -3,7 +3,6 @@
 use std::{
     any::Any,
     cell::{Cell, RefCell},
-    ffi::c_void,
     iter::once,
     num::NonZeroIsize,
     path::PathBuf,
@@ -18,7 +17,7 @@ use anyhow::Context;
 use blade_graphics as gpu;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::result::Result;
 use windows::{
@@ -26,7 +25,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
-        System::{Com::*, Ole::*, SystemServices::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{
             Controls::*,
             HiDpi::*,
@@ -52,7 +51,6 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: RefCell<Rc<WindowsDisplay>>,
-    last_ime_input: RefCell<Option<String>>,
     click_state: RefCell<ClickState>,
     fullscreen: Cell<Option<StyleAndBounds>>,
 }
@@ -78,20 +76,26 @@ impl WindowsWindowInner {
         let scale_factor = Cell::new(monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32);
         let input_handler = Cell::new(None);
         struct RawWindow {
-            hwnd: *mut c_void,
+            hwnd: isize,
         }
-        unsafe impl blade_rwh::HasRawWindowHandle for RawWindow {
-            fn raw_window_handle(&self) -> blade_rwh::RawWindowHandle {
-                let mut handle = blade_rwh::Win32WindowHandle::empty();
-                handle.hwnd = self.hwnd;
-                handle.into()
+        impl rwh::HasWindowHandle for RawWindow {
+            fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+                Ok(unsafe {
+                    let hwnd = NonZeroIsize::new_unchecked(self.hwnd);
+                    let mut handle = rwh::Win32WindowHandle::new(hwnd);
+                    let hinstance = get_window_long(HWND(self.hwnd), GWLP_HINSTANCE);
+                    handle.hinstance = NonZeroIsize::new(hinstance);
+                    rwh::WindowHandle::borrow_raw(handle.into())
+                })
             }
         }
-        unsafe impl blade_rwh::HasRawDisplayHandle for RawWindow {
-            fn raw_display_handle(&self) -> blade_rwh::RawDisplayHandle {
-                blade_rwh::WindowsDisplayHandle::empty().into()
+        impl rwh::HasDisplayHandle for RawWindow {
+            fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+                let handle = rwh::WindowsDisplayHandle::new();
+                Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
             }
         }
+
         let raw = RawWindow { hwnd: hwnd.0 as _ };
         let gpu = Arc::new(
             unsafe {
@@ -114,7 +118,6 @@ impl WindowsWindowInner {
         let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
         let callbacks = RefCell::new(Callbacks::default());
         let display = RefCell::new(display);
-        let last_ime_input = RefCell::new(None);
         let click_state = RefCell::new(ClickState::new());
         let fullscreen = Cell::new(None);
         Self {
@@ -129,7 +132,6 @@ impl WindowsWindowInner {
             handle,
             hide_title_bar,
             display,
-            last_ime_input,
             click_state,
             fullscreen,
         }
@@ -256,6 +258,9 @@ impl WindowsWindowInner {
             WM_CREATE => self.handle_create_msg(lparam),
             WM_MOVE => self.handle_move_msg(lparam),
             WM_SIZE => self.handle_size_msg(lparam),
+            WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => self.handle_size_move_loop(),
+            WM_EXITSIZEMOVE | WM_EXITMENULOOP => self.handle_size_move_loop_exit(),
+            WM_TIMER => self.handle_timer_msg(wparam),
             WM_NCCALCSIZE => self.handle_calc_client_size(wparam, lparam),
             WM_DPICHANGED => self.handle_dpi_changed_msg(wparam, lparam),
             WM_NCHITTEST => self.handle_hit_test_msg(msg, wparam, lparam),
@@ -287,7 +292,6 @@ impl WindowsWindowInner {
             WM_CHAR => self.handle_char_msg(msg, wparam, lparam),
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(),
             WM_IME_COMPOSITION => self.handle_ime_composition(lparam),
-            WM_IME_CHAR => self.handle_ime_char(wparam),
             WM_SETCURSOR => self.handle_set_cursor(lparam),
             _ => None,
         };
@@ -346,8 +350,36 @@ impl WindowsWindowInner {
             let logical_size = logical_size(new_physical_size, scale_factor);
             callback(logical_size, scale_factor);
         }
-        self.invalidate_client_area();
         Some(0)
+    }
+
+    fn handle_size_move_loop(&self) -> Option<isize> {
+        unsafe {
+            let ret = SetTimer(self.hwnd, SIZE_MOVE_LOOP_TIMER_ID, USER_TIMER_MINIMUM, None);
+            if ret == 0 {
+                log::error!(
+                    "unable to create timer: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+        None
+    }
+
+    fn handle_size_move_loop_exit(&self) -> Option<isize> {
+        unsafe {
+            KillTimer(self.hwnd, SIZE_MOVE_LOOP_TIMER_ID).log_err();
+        }
+        None
+    }
+
+    fn handle_timer_msg(&self, wparam: WPARAM) -> Option<isize> {
+        if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
+            self.platform_inner.run_foreground_tasks();
+            self.handle_paint_msg();
+            return Some(0);
+        }
+        None
     }
 
     fn handle_paint_msg(&self) -> Option<isize> {
@@ -671,12 +703,13 @@ impl WindowsWindowInner {
         if let Some(callback) = callbacks.input.as_mut() {
             let x = lparam.signed_loword() as f32;
             let y = lparam.signed_hiword() as f32;
+            let click_count = self.click_state.borrow().current_count;
             let scale_factor = self.scale_factor.get();
             let event = MouseUpEvent {
                 button,
                 position: logical_point(x, y, scale_factor),
                 modifiers: self.current_modifiers(),
-                click_count: 1,
+                click_count,
             };
             if callback(PlatformInput::MouseUp(event)).default_prevented {
                 return Some(0);
@@ -785,7 +818,6 @@ impl WindowsWindowInner {
             let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
             let result = if string_len >= 0 {
                 let mut buffer = vec![0u8; string_len as usize + 2];
-                // let mut buffer = [0u8; MAX_PATH as _];
                 ImmGetCompositionStringW(
                     ctx,
                     GCS_COMPSTR,
@@ -815,7 +847,34 @@ impl WindowsWindowInner {
         }
     }
 
+    fn parse_ime_compostion_result(&self) -> Option<String> {
+        unsafe {
+            let ctx = ImmGetContext(self.hwnd);
+            let string_len = ImmGetCompositionStringW(ctx, GCS_RESULTSTR, None, 0);
+            let result = if string_len >= 0 {
+                let mut buffer = vec![0u8; string_len as usize + 2];
+                ImmGetCompositionStringW(
+                    ctx,
+                    GCS_RESULTSTR,
+                    Some(buffer.as_mut_ptr() as _),
+                    string_len as _,
+                );
+                let wstring = std::slice::from_raw_parts::<u16>(
+                    buffer.as_mut_ptr().cast::<u16>(),
+                    string_len as usize / 2,
+                );
+                let string = String::from_utf16_lossy(wstring);
+                Some(string)
+            } else {
+                None
+            };
+            ImmReleaseContext(self.hwnd, ctx);
+            result
+        }
+    }
+
     fn handle_ime_composition(&self, lparam: LPARAM) -> Option<isize> {
+        let mut ime_input = None;
         if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
             let Some((string, string_len)) = self.parse_ime_compostion_string() else {
                 return None;
@@ -829,10 +888,10 @@ impl WindowsWindowInner {
                 Some(0..string_len),
             );
             self.input_handler.set(Some(input_handler));
-            *self.last_ime_input.borrow_mut() = Some(string);
+            ime_input = Some(string);
         }
         if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
-            let Some(ref comp_string) = *self.last_ime_input.borrow() else {
+            let Some(ref comp_string) = ime_input else {
                 return None;
             };
             let caret_pos = self.retrieve_composition_cursor_position();
@@ -842,30 +901,20 @@ impl WindowsWindowInner {
             input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
             self.input_handler.set(Some(input_handler));
         }
+        if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
+            let Some(comp_result) = self.parse_ime_compostion_result() else {
+                return None;
+            };
+            let Some(mut input_handler) = self.input_handler.take() else {
+                return Some(1);
+            };
+            input_handler.replace_text_in_range(None, &comp_result);
+            self.input_handler.set(Some(input_handler));
+            self.invalidate_client_area();
+            return Some(0);
+        }
         // currently, we don't care other stuff
         None
-    }
-
-    fn parse_ime_char(&self, wparam: WPARAM) -> Option<String> {
-        let src = [wparam.0 as u16];
-        let Ok(first_char) = char::decode_utf16(src).collect::<Vec<_>>()[0] else {
-            return None;
-        };
-        Some(first_char.to_string())
-    }
-
-    fn handle_ime_char(&self, wparam: WPARAM) -> Option<isize> {
-        let Some(ime_char) = self.parse_ime_char(wparam) else {
-            return Some(1);
-        };
-        let Some(mut input_handler) = self.input_handler.take() else {
-            return Some(1);
-        };
-        input_handler.replace_text_in_range(None, &ime_char);
-        self.input_handler.set(Some(input_handler));
-        *self.last_ime_input.borrow_mut() = None;
-        self.invalidate_client_area();
-        Some(0)
     }
 
     fn handle_drag_drop(&self, input: PlatformInput) {
@@ -1222,7 +1271,7 @@ impl WindowsWindow {
         let nheight = options.bounds.size.height.0;
         let hwndparent = HWND::default();
         let hmenu = HMENU::default();
-        let hinstance = HINSTANCE::default();
+        let hinstance = get_module_handle();
         let mut context = WindowCreateContext {
             inner: None,
             platform_inner: platform_inner.clone(),
@@ -1273,23 +1322,18 @@ impl WindowsWindow {
     }
 }
 
-impl HasWindowHandle for WindowsWindow {
-    fn window_handle(
-        &self,
-    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
-        let raw = raw_window_handle::Win32WindowHandle::new(unsafe {
-            NonZeroIsize::new_unchecked(self.inner.hwnd.0)
-        })
-        .into();
-        Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(raw) })
+impl rwh::HasWindowHandle for WindowsWindow {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+        let raw =
+            rwh::Win32WindowHandle::new(unsafe { NonZeroIsize::new_unchecked(self.inner.hwnd.0) })
+                .into();
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(raw) })
     }
 }
 
 // todo(windows)
-impl HasDisplayHandle for WindowsWindow {
-    fn display_handle(
-        &self,
-    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+impl rwh::HasDisplayHandle for WindowsWindow {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
 }
@@ -1413,7 +1457,7 @@ impl PlatformWindow for WindowsWindow {
                             title = windows::core::w!("Warning");
                             main_icon = TD_WARNING_ICON;
                         }
-                        crate::PromptLevel::Critical => {
+                        crate::PromptLevel::Critical | crate::PromptLevel::Destructive => {
                             title = windows::core::w!("Critical");
                             main_icon = TD_ERROR_ICON;
                         }
@@ -1725,6 +1769,7 @@ fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
             hIcon: icon_handle,
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,
+            hInstance: get_module_handle().into(),
             ..Default::default()
         };
         unsafe { RegisterClassW(&wc) };
@@ -1865,12 +1910,27 @@ struct StyleAndBounds {
     cy: i32,
 }
 
+fn get_module_handle() -> HMODULE {
+    unsafe {
+        let mut h_module = std::mem::zeroed();
+        GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            windows::core::w!("ZedModule"),
+            &mut h_module,
+        )
+        .expect("Unable to get module handle"); // this should never fail
+
+        h_module
+    }
+}
+
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 // https://learn.microsoft.com/en-us/windows/win32/controls/ttm-setdelaytime?redirectedfrom=MSDN
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
 const DOUBLE_CLICK_SPATIAL_TOLERANCE: i32 = 4;
+const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
 #[cfg(test)]
 mod tests {

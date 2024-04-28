@@ -38,6 +38,8 @@ brew install zed-preview
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
 
+Also... we're hiring! Check out our [jobs](https://zed.dev/jobs) page for open roles.
+
 ## Licensing
 
 License information for third party dependencies must be correctly provided for CI to pass.
