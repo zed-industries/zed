@@ -948,7 +948,7 @@ mod tests {
                     url: "https://zed.dev".to_string()
                 }),
                 url: "https://zed.dev".to_string(),
-                alt_text: Some(text("alt text", 0..36)),
+                alt_text: Some(text("alt text", 2..10)),
             })
         );
     }
@@ -970,7 +970,7 @@ mod tests {
                         url: "https://zed.dev".to_string()
                     }),
                     url: "https://zed.dev".to_string(),
-                    alt_text: Some(text("alt text", 7..43)),
+                    alt_text: Some(text("alt text", 9..17)),
                 }),
                 p(" after", 43..49),
             ]
