@@ -480,7 +480,7 @@ impl LanguageRegistry {
             let path_matches_default_suffix = config
                 .path_suffixes
                 .iter()
-                .any(|suffix| path_suffixes.iter().any(|&s| Some(suffix.as_str()) == s));
+                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
             let path_matches_custom_suffix = user_file_types
                 .and_then(|types| types.get(language_name))
                 .map_or(false, |globset| {
