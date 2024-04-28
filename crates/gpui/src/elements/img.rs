@@ -234,7 +234,7 @@ impl Element for Img {
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
-        None
+        self.interactivity.element_id.clone()
     }
 
     fn request_layout(

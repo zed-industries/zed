@@ -41,7 +41,7 @@ impl Element for Svg {
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<crate::ElementId> {
-        None
+        self.interactivity.element_id.clone()
     }
 
     fn request_layout(
