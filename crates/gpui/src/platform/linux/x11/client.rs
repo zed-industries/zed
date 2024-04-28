@@ -16,6 +16,7 @@ use x11rb::protocol::xinput::{ConnectionExt, ScrollClass};
 use x11rb::protocol::xkb::ConnectionExt as _;
 use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::protocol::{randr, xinput, xkb, xproto, Event};
+use x11rb::resource_manager::Database;
 use x11rb::xcb_ffi::XCBConnection;
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb as xkbc;
@@ -60,6 +61,7 @@ pub struct X11ClientState {
 
     pub(crate) xcb_connection: Rc<XCBConnection>,
     pub(crate) x_root_index: usize,
+    pub(crate) resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
     pub(crate) focused_window: Option<xproto::Window>,
@@ -178,6 +180,24 @@ impl X11Client {
             xkbc::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
         };
 
+        let screen = xcb_connection.setup().roots.get(x_root_index).unwrap();
+
+        // Values from `Database::GET_RESOURCE_DATABASE`
+        let resource_manager = xcb_connection
+            .get_property(
+                false,
+                screen.root,
+                xproto::AtomEnum::RESOURCE_MANAGER,
+                xproto::AtomEnum::STRING,
+                0,
+                100_000_000,
+            )
+            .unwrap();
+        let resource_manager = resource_manager.reply().unwrap();
+
+        // TODO: hostname
+        let resource_database = Database::new_from_default(&resource_manager, "HOSTNAME".into());
+
         let clipboard = X11ClipboardContext::<Clipboard>::new().unwrap();
         let primary = X11ClipboardContext::<Primary>::new().unwrap();
 
@@ -215,6 +235,7 @@ impl X11Client {
 
             xcb_connection,
             x_root_index,
+            resource_database,
             atoms,
             windows: HashMap::default(),
             focused_window: None,
@@ -552,6 +573,7 @@ impl LinuxClient for X11Client {
             &state.xcb_connection,
             state.x_root_index,
             x_window,
+            &state.resource_database,
             &state.atoms,
         );
 

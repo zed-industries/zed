@@ -17,6 +17,7 @@ use x11rb::{
         xinput,
         xproto::{self, ConnectionExt as _, CreateWindowAux},
     },
+    resource_manager::Database,
     wrapper::ConnectionExt,
     xcb_ffi::XCBConnection,
 };
@@ -27,6 +28,7 @@ use std::{
     iter::Zip,
     mem,
     num::NonZeroU32,
+    ops::Div,
     ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
@@ -135,6 +137,7 @@ impl X11WindowState {
         xcb_connection: &Rc<XCBConnection>,
         x_main_screen_index: usize,
         x_window: xproto::Window,
+        resource_database: &Database,
         atoms: &XcbAtoms,
     ) -> Self {
         let x_screen_index = params
@@ -157,6 +160,7 @@ impl X11WindowState {
                 | xproto::EventMask::BUTTON2_MOTION
                 | xproto::EventMask::BUTTON3_MOTION
                 | xproto::EventMask::BUTTON_MOTION,
+            // TODO: handle property_changed / resource_changed event for scale factor
         );
 
         xcb_connection
@@ -236,6 +240,15 @@ impl X11WindowState {
             .unwrap(),
         );
 
+        let scale_factor = resource_database
+            .get_value("Xft.dpi", "Xft.dpi")
+            .ok()
+            .flatten()
+            .map(|dpi| dpi / 96.0)
+            .unwrap_or(1.0);
+
+        println!("scale factor: {scale_factor}");
+
         // Note: this has to be done after the GPU init, or otherwise
         // the sizes are immediately invalidated.
         let gpu_extent = query_render_extent(xcb_connection, x_window);
@@ -246,7 +259,7 @@ impl X11WindowState {
             display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
             raw,
             bounds: params.bounds.map(|v| v.0),
-            scale_factor: 1.0,
+            scale_factor,
             renderer: BladeRenderer::new(gpu, gpu_extent),
             atoms: *atoms,
 
@@ -298,6 +311,7 @@ impl X11Window {
         xcb_connection: &Rc<XCBConnection>,
         x_main_screen_index: usize,
         x_window: xproto::Window,
+        resource_database: &Database,
         atoms: &XcbAtoms,
     ) -> Self {
         Self(X11WindowStatePtr {
@@ -308,6 +322,7 @@ impl X11Window {
                 xcb_connection,
                 x_main_screen_index,
                 x_window,
+                resource_database,
                 atoms,
             ))),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
@@ -402,7 +417,7 @@ impl X11WindowStatePtr {
 
 impl PlatformWindow for X11Window {
     fn bounds(&self) -> Bounds<DevicePixels> {
-        self.0.state.borrow_mut().bounds.map(|v| v.into())
+        self.0.state.borrow().bounds.map(|v| v.into())
     }
 
     // todo(linux)
@@ -416,11 +431,16 @@ impl PlatformWindow for X11Window {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.0.state.borrow_mut().content_size()
+        // We divide by the scale factor here because this value is queried to determine how much to draw,
+        // but it will be multiplied later by the scale to adjust for scaling.
+        let state = self.0.state.borrow();
+        state
+            .content_size()
+            .map(|size| size.div(state.scale_factor))
     }
 
     fn scale_factor(&self) -> f32 {
-        self.0.state.borrow_mut().scale_factor
+        self.0.state.borrow().scale_factor
     }
 
     // todo(linux)
