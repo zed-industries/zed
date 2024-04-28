@@ -123,7 +123,7 @@ impl Render for TextField {
 
         let text_style = TextStyle {
             font_family: settings.buffer_font.family.clone(),
-            font_features: settings.buffer_font.features,
+            font_features: settings.buffer_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,

@@ -123,12 +123,12 @@ impl PlatformTextSystem for MacTextSystem {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let font_key = FontKey {
                 font_family: font.family.clone(),
-                font_features: font.features,
+                font_features: font.features.clone(),
             };
             let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
-                let font_ids = lock.load_family(&font.family, font.features)?;
+                let font_ids = lock.load_family(&font.family, &font.features)?;
                 lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
                 lock.font_ids_by_font_key[&font_key].as_ref()
             };
@@ -219,7 +219,11 @@ impl MacTextSystemState {
         Ok(())
     }
 
-    fn load_family(&mut self, name: &str, features: FontFeatures) -> Result<SmallVec<[FontId; 4]>> {
+    fn load_family(
+        &mut self,
+        name: &str,
+        features: &FontFeatures,
+    ) -> Result<SmallVec<[FontId; 4]>> {
         let name = if name == ".SystemUIFont" {
             ".AppleSystemUIFont"
         } else {

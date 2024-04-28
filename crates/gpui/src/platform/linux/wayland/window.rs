@@ -322,7 +322,7 @@ impl WaylandWindowStatePtr {
                 self.resize(width, height);
                 self.set_fullscreen(fullscreen);
                 let mut state = self.state.borrow_mut();
-                state.maximized = true;
+                state.maximized = maximized;
 
                 false
             }

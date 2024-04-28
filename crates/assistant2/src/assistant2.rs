@@ -8,22 +8,21 @@ use client::{proto, Client};
 use completion_provider::*;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
-use futures::{channel::oneshot, future::join_all, Future, FutureExt, StreamExt};
+use futures::{future::join_all, StreamExt};
 use gpui::{
     list, prelude::*, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
-    FocusableView, Global, ListAlignment, ListState, Model, Render, Task, View, WeakView,
+    FocusableView, Global, ListAlignment, ListState, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
-use project::Fs;
 use rich_text::RichText;
-use semantic_index::{CloudEmbeddingProvider, ProjectIndex, SemanticIndex};
+use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::Deserialize;
 use settings::Settings;
-use std::{cmp, sync::Arc};
+use std::sync::Arc;
 use theme::ThemeSettings;
 use tools::ProjectIndexTool;
-use ui::{popover_menu, prelude::*, ButtonLike, CollapsibleContainer, Color, ContextMenu, Tooltip};
+use ui::{popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip};
 use util::{paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -110,10 +109,10 @@ impl AssistantPanel {
 
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry
-                    .register(ProjectIndexTool::new(
-                        project_index.clone(),
-                        app_state.fs.clone(),
-                    ))
+                    .register(
+                        ProjectIndexTool::new(project_index.clone(), app_state.fs.clone()),
+                        cx,
+                    )
                     .context("failed to register ProjectIndexTool")
                     .log_err();
 
@@ -447,11 +446,7 @@ impl AssistantChat {
             }
             editor
         });
-        let message = ChatMessage::User(UserMessage {
-            id,
-            body,
-            contexts: Vec::new(),
-        });
+        let message = ChatMessage::User(UserMessage { id, body });
         self.push_message(message, cx);
     }
 
@@ -525,11 +520,7 @@ impl AssistantChat {
         let is_last = ix == self.messages.len() - 1;
 
         match &self.messages[ix] {
-            ChatMessage::User(UserMessage {
-                body,
-                contexts: _contexts,
-                ..
-            }) => div()
+            ChatMessage::User(UserMessage { body, .. }) => div()
                 .when(!is_last, |element| element.mb_2())
                 .child(div().p_2().child(Label::new("You").color(Color::Default)))
                 .child(
@@ -539,7 +530,7 @@ impl AssistantChat {
                         .text_color(cx.theme().colors().editor_foreground)
                         .font(ThemeSettings::get_global(cx).buffer_font.clone())
                         .bg(cx.theme().colors().editor_background)
-                        .child(body.clone()), // .children(contexts.iter().map(|context| context.render(cx))),
+                        .child(body.clone()),
                 )
                 .into_any(),
             ChatMessage::Assistant(AssistantMessage {
@@ -588,11 +579,11 @@ impl AssistantChat {
 
         for message in &self.messages {
             match message {
-                ChatMessage::User(UserMessage { body, contexts, .. }) => {
-                    // setup context for model
-                    contexts.iter().for_each(|context| {
-                        completion_messages.extend(context.completion_messages(cx))
-                    });
+                ChatMessage::User(UserMessage { body, .. }) => {
+                    // When we re-introduce contexts like active file, we'll inject them here instead of relying on the model to request them
+                    // contexts.iter().for_each(|context| {
+                    //     completion_messages.extend(context.completion_messages(cx))
+                    // });
 
                     // Show user's message last so that the assistant is grounded in the user's request
                     completion_messages.push(CompletionMessage::User {
@@ -712,6 +703,12 @@ impl Render for AssistantChat {
             .text_color(Color::Default.color(cx))
             .child(self.render_model_dropdown(cx))
             .child(list(self.list_state.clone()).flex_1())
+            .child(
+                h_flex()
+                    .mt_2()
+                    .gap_2()
+                    .children(self.tool_registry.status_views().iter().cloned()),
+            )
     }
 }
 
@@ -743,7 +740,6 @@ impl ChatMessage {
 struct UserMessage {
     id: MessageId,
     body: View<Editor>,
-    contexts: Vec<AssistantContext>,
 }
 
 struct AssistantMessage {
@@ -751,212 +747,4 @@ struct AssistantMessage {
     body: RichText,
     tool_calls: Vec<ToolFunctionCall>,
     error: Option<SharedString>,
-}
-
-// Since we're swapping out for direct query usage, we might not need to use this injected context
-// It will be useful though for when the user _definitely_ wants the model to see a specific file,
-// query, error, etc.
-#[allow(dead_code)]
-enum AssistantContext {
-    Codebase(View<CodebaseContext>),
-}
-
-#[allow(dead_code)]
-struct CodebaseExcerpt {
-    element_id: ElementId,
-    path: SharedString,
-    text: SharedString,
-    score: f32,
-    expanded: bool,
-}
-
-impl AssistantContext {
-    #[allow(dead_code)]
-    fn render(&self, _cx: &mut ViewContext<AssistantChat>) -> AnyElement {
-        match self {
-            AssistantContext::Codebase(context) => context.clone().into_any_element(),
-        }
-    }
-
-    fn completion_messages(&self, cx: &WindowContext) -> Vec<CompletionMessage> {
-        match self {
-            AssistantContext::Codebase(context) => context.read(cx).completion_messages(),
-        }
-    }
-}
-
-enum CodebaseContext {
-    Pending { _task: Task<()> },
-    Done(Result<Vec<CodebaseExcerpt>>),
-}
-
-impl CodebaseContext {
-    fn toggle_expanded(&mut self, element_id: ElementId, cx: &mut ViewContext<Self>) {
-        if let CodebaseContext::Done(Ok(excerpts)) = self {
-            if let Some(excerpt) = excerpts
-                .iter_mut()
-                .find(|excerpt| excerpt.element_id == element_id)
-            {
-                excerpt.expanded = !excerpt.expanded;
-                cx.notify();
-            }
-        }
-    }
-}
-
-impl Render for CodebaseContext {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        match self {
-            CodebaseContext::Pending { .. } => div()
-                .h_flex()
-                .items_center()
-                .gap_1()
-                .child(Icon::new(IconName::Ai).color(Color::Muted).into_element())
-                .child("Searching codebase..."),
-            CodebaseContext::Done(Ok(excerpts)) => {
-                div()
-                    .v_flex()
-                    .gap_2()
-                    .children(excerpts.iter().map(|excerpt| {
-                        let expanded = excerpt.expanded;
-                        let element_id = excerpt.element_id.clone();
-
-                        CollapsibleContainer::new(element_id.clone(), expanded)
-                            .start_slot(
-                                h_flex()
-                                    .gap_1()
-                                    .child(Icon::new(IconName::File).color(Color::Muted))
-                                    .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
-                            )
-                            .on_click(cx.listener(move |this, _, cx| {
-                                this.toggle_expanded(element_id.clone(), cx);
-                            }))
-                            .child(
-                                div()
-                                    .p_2()
-                                    .rounded_md()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .child(
-                                        excerpt.text.clone(), // todo!(): Show as an editor block
-                                    ),
-                            )
-                    }))
-            }
-            CodebaseContext::Done(Err(error)) => div().child(error.to_string()),
-        }
-    }
-}
-
-impl CodebaseContext {
-    #[allow(dead_code)]
-    fn new(
-        query: impl 'static + Future<Output = Result<String>>,
-        populated: oneshot::Sender<bool>,
-        project_index: Model<ProjectIndex>,
-        fs: Arc<dyn Fs>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        let query = query.boxed_local();
-        let _task = cx.spawn(|this, mut cx| async move {
-            let result = async {
-                let query = query.await?;
-                let results = this
-                    .update(&mut cx, |_this, cx| {
-                        project_index.read(cx).search(&query, 16, cx)
-                    })?
-                    .await;
-
-                let excerpts = results.into_iter().map(|result| {
-                    let abs_path = result
-                        .worktree
-                        .read_with(&cx, |worktree, _| worktree.abs_path().join(&result.path));
-                    let fs = fs.clone();
-
-                    async move {
-                        let path = result.path.clone();
-                        let text = fs.load(&abs_path?).await?;
-                        // todo!("what should we do with stale ranges?");
-                        let range = cmp::min(result.range.start, text.len())
-                            ..cmp::min(result.range.end, text.len());
-
-                        let text = SharedString::from(text[range].to_string());
-
-                        anyhow::Ok(CodebaseExcerpt {
-                            element_id: ElementId::Name(nanoid::nanoid!().into()),
-                            path: path.to_string_lossy().to_string().into(),
-                            text,
-                            score: result.score,
-                            expanded: false,
-                        })
-                    }
-                });
-
-                anyhow::Ok(
-                    futures::future::join_all(excerpts)
-                        .await
-                        .into_iter()
-                        .filter_map(|result| result.log_err())
-                        .collect(),
-                )
-            }
-            .await;
-
-            this.update(&mut cx, |this, cx| {
-                this.populate(result, populated, cx);
-            })
-            .ok();
-        });
-
-        Self::Pending { _task }
-    }
-
-    #[allow(dead_code)]
-    fn populate(
-        &mut self,
-        result: Result<Vec<CodebaseExcerpt>>,
-        populated: oneshot::Sender<bool>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let success = result.is_ok();
-        *self = Self::Done(result);
-        populated.send(success).ok();
-        cx.notify();
-    }
-
-    fn completion_messages(&self) -> Vec<CompletionMessage> {
-        // One system message for the whole batch of excerpts:
-
-        // Semantic search results for user query:
-        //
-        // Excerpt from $path:
-        // ~~~
-        // `text`
-        // ~~~
-        //
-        // Excerpt from $path:
-
-        match self {
-            CodebaseContext::Done(Ok(excerpts)) => {
-                if excerpts.is_empty() {
-                    return Vec::new();
-                }
-
-                let mut body = "Semantic search results for user query:\n".to_string();
-
-                for excerpt in excerpts {
-                    body.push_str("Excerpt from ");
-                    body.push_str(excerpt.path.as_ref());
-                    body.push_str(", score ");
-                    body.push_str(&excerpt.score.to_string());
-                    body.push_str(":\n");
-                    body.push_str("~~~\n");
-                    body.push_str(excerpt.text.as_ref());
-                    body.push_str("~~~\n");
-                }
-
-                vec![CompletionMessage::System { content: body }]
-            }
-            _ => vec![],
-        }
-    }
 }

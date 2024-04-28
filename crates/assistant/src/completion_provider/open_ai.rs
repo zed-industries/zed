@@ -241,7 +241,7 @@ impl AuthenticationPrompt {
         let text_style = TextStyle {
             color: cx.theme().colors().text,
             font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features,
+            font_features: settings.ui_font.features.clone(),
             font_size: rems(0.875).into(),
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,

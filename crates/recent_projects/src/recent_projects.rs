@@ -310,7 +310,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     workspace.open_workspace_for_paths(false, paths, cx)
                                 }
                             }
-                            //TODO support opening remote projects in the same window
                             SerializedWorkspaceLocation::Remote(remote_project) => {
                                 let store = ::remote_projects::Store::global(cx).read(cx);
                                 let Some(project_id) = store
@@ -338,12 +337,38 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     })
                                 };
                                 if let Some(app_state) = AppState::global(cx).upgrade() {
-                                    let task =
-                                        workspace::join_remote_project(project_id, app_state, cx);
-                                    cx.spawn(|_, _| async move {
-                                        task.await?;
-                                        Ok(())
-                                    })
+                                    let handle = if replace_current_window {
+                                        cx.window_handle().downcast::<Workspace>()
+                                    } else {
+                                        None
+                                    };
+
+                                    if let Some(handle) = handle {
+                                            cx.spawn(move |workspace, mut cx| async move {
+                                                let continue_replacing = workspace
+                                                    .update(&mut cx, |workspace, cx| {
+                                                        workspace.
+                                                            prepare_to_close(true, cx)
+                                                    })?
+                                                    .await?;
+                                                if continue_replacing {
+                                                    workspace
+                                                        .update(&mut cx, |_workspace, cx| {
+                                                            workspace::join_remote_project(project_id, app_state, Some(handle), cx)
+                                                        })?
+                                                        .await?;
+                                                }
+                                                Ok(())
+                                            })
+                                        }
+                                    else {
+                                        let task =
+                                            workspace::join_remote_project(project_id, app_state, None, cx);
+                                        cx.spawn(|_, _| async move {
+                                            task.await?;
+                                            Ok(())
+                                        })
+                                    }
                                 } else {
                                     Task::ready(Err(anyhow::anyhow!("App state not found")))
                                 }

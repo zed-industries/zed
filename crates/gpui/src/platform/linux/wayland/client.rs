@@ -843,7 +843,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
                         });
 
-                        state.repeat.current_keysym = None;
+                        if state.repeat.current_keysym == Some(keysym) {
+                            state.repeat.current_keysym = None;
+                        }
 
                         drop(state);
                         focused_window.handle_input(input);

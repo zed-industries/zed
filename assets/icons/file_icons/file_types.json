@@ -19,11 +19,11 @@
     "bash_profile": "terminal",
     "bashrc": "terminal",
     "bmp": "image",
-    "c": "code",
-    "cc": "code",
-    "cjs": "code",
+    "c": "c",
+    "cc": "cpp",
+    "cjs": "javascript",
     "conf": "settings",
-    "cpp": "code",
+    "cpp": "cpp",
     "css": "css",
     "csv": "storage",
     "cts": "typescript",
@@ -58,7 +58,7 @@
     "gitmodules": "vcs",
     "go": "go",
     "graphql": "graphql",
-    "h": "code",
+    "h": "c",
     "handlebars": "code",
     "hbs": "template",
     "heex": "elixir",
@@ -77,7 +77,8 @@
     "jp2": "image",
     "jpeg": "image",
     "jpg": "image",
-    "js": "code",
+    "js": "javascript",
+    "jsx": "react",
     "json": "storage",
     "jsonc": "storage",
     "jxl": "image",
@@ -95,7 +96,7 @@
     "mdx": "document",
     "metadata": "code",
     "mkv": "video",
-    "mjs": "code",
+    "mjs": "javascript",
     "mka": "audio",
     "ml": "ocaml",
     "mli": "ocaml",
@@ -152,7 +153,7 @@
     "ts": "typescript",
     "tsv": "storage",
     "ttf": "font",
-    "tsx": "code",
+    "tsx": "react",
     "txt": "document",
     "tcl": "tcl",
     "vue": "vue",
@@ -194,6 +195,12 @@
     },
     "collapsed_folder": {
       "icon": "icons/file_icons/folder.svg"
+    },
+    "c": {
+      "icon": "icons/file_icons/c.svg"
+    },
+    "cpp": {
+      "icon": "icons/file_icons/cpp.svg"
     },
     "css": {
       "icon": "icons/file_icons/css.svg"
@@ -255,6 +262,9 @@
     "java": {
       "icon": "icons/file_icons/java.svg"
     },
+    "javascript": {
+      "icon": "icons/file_icons/javascript.svg"
+    },
     "kotlin": {
       "icon": "icons/file_icons/kotlin.svg"
     },
@@ -291,14 +301,17 @@
     "python": {
       "icon": "icons/file_icons/python.svg"
     },
+    "r": {
+      "icon": "icons/file_icons/r.svg"
+    },
+    "react": {
+      "icon": "icons/file_icons/react.svg"
+    },
     "ruby": {
       "icon": "icons/file_icons/ruby.svg"
     },
     "rust": {
       "icon": "icons/file_icons/rust.svg"
-    },
-    "r": {
-      "icon": "icons/file_icons/r.svg"
     },
     "settings": {
       "icon": "icons/file_icons/settings.svg"

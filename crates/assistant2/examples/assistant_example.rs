@@ -87,16 +87,14 @@ fn main() {
 
                 let project_index = semantic_index.project_index(project.clone(), cx);
 
-                let mut tool_registry = ToolRegistry::new();
-                tool_registry
-                    .register(ProjectIndexTool::new(project_index.clone(), fs.clone()))
-                    .context("failed to register ProjectIndexTool")
-                    .log_err();
-
-                let tool_registry = Arc::new(tool_registry);
-
                 cx.open_window(WindowOptions::default(), |cx| {
-                    cx.new_view(|cx| Example::new(language_registry, tool_registry, cx))
+                    let mut tool_registry = ToolRegistry::new();
+                    tool_registry
+                        .register(ProjectIndexTool::new(project_index.clone(), fs.clone()), cx)
+                        .context("failed to register ProjectIndexTool")
+                        .log_err();
+
+                    cx.new_view(|cx| Example::new(language_registry, Arc::new(tool_registry), cx))
                 });
                 cx.activate(true);
             })

@@ -36,7 +36,6 @@ use std::{
     cmp::Ordering,
     mem,
     ops::Range,
-    path::PathBuf,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
@@ -740,7 +739,7 @@ impl Item for ProjectDiagnosticsEditor {
     fn save_as(
         &mut self,
         _: Model<Project>,
-        _: PathBuf,
+        _: ProjectPath,
         _: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unreachable!()
@@ -860,20 +859,25 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     })
 }
 
-fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
-    lhs: &DiagnosticEntry<L>,
-    rhs: &DiagnosticEntry<R>,
+fn compare_diagnostics(
+    old: &DiagnosticEntry<language::Anchor>,
+    new: &DiagnosticEntry<language::Anchor>,
     snapshot: &language::BufferSnapshot,
 ) -> Ordering {
-    lhs.range
+    use language::ToOffset;
+    // The old diagnostics may point to a previously open Buffer for this file.
+    if !old.range.start.is_valid(snapshot) {
+        return Ordering::Greater;
+    }
+    old.range
         .start
         .to_offset(snapshot)
-        .cmp(&rhs.range.start.to_offset(snapshot))
+        .cmp(&new.range.start.to_offset(snapshot))
         .then_with(|| {
-            lhs.range
+            old.range
                 .end
                 .to_offset(snapshot)
-                .cmp(&rhs.range.end.to_offset(snapshot))
+                .cmp(&new.range.end.to_offset(snapshot))
         })
-        .then_with(|| lhs.diagnostic.message.cmp(&rhs.diagnostic.message))
+        .then_with(|| old.diagnostic.message.cmp(&new.diagnostic.message))
 }

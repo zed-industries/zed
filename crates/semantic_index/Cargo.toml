@@ -30,6 +30,7 @@ language.workspace = true
 log.workspace = true
 heed.workspace = true
 open_ai.workspace = true
+parking_lot.workspace = true
 project.workspace = true
 settings.workspace = true
 serde.workspace = true

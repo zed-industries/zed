@@ -95,10 +95,14 @@ pub trait LanguageModelTool {
 
     fn format(input: &Self::Input, output: &Result<Self::Output>) -> String;
 
-    fn new_view(
+    fn output_view(
         tool_call_id: String,
         input: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,
     ) -> View<Self::View>;
+
+    fn status_view(&self, _cx: &mut WindowContext) -> Option<AnyView> {
+        None
+    }
 }

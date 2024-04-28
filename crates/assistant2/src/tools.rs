@@ -1,9 +1,9 @@
 use anyhow::Result;
 use assistant_tooling::LanguageModelTool;
-use gpui::{prelude::*, AppContext, Model, Task};
+use gpui::{prelude::*, AnyView, AppContext, Model, Task};
 use project::Fs;
 use schemars::JsonSchema;
-use semantic_index::ProjectIndex;
+use semantic_index::{ProjectIndex, Status};
 use serde::Deserialize;
 use std::sync::Arc;
 use ui::{
@@ -36,13 +36,14 @@ pub struct CodebaseQuery {
 
 pub struct ProjectIndexView {
     input: CodebaseQuery,
-    output: Result<Vec<CodebaseExcerpt>>,
+    output: Result<ProjectIndexOutput>,
 }
 
 impl ProjectIndexView {
     fn toggle_expanded(&mut self, element_id: ElementId, cx: &mut ViewContext<Self>) {
-        if let Ok(excerpts) = &mut self.output {
-            if let Some(excerpt) = excerpts
+        if let Ok(output) = &mut self.output {
+            if let Some(excerpt) = output
+                .excerpts
                 .iter_mut()
                 .find(|excerpt| excerpt.element_id == element_id)
             {
@@ -59,11 +60,11 @@ impl Render for ProjectIndexView {
 
         let result = &self.output;
 
-        let excerpts = match result {
+        let output = match result {
             Err(err) => {
                 return div().child(Label::new(format!("Error: {}", err)).color(Color::Error));
             }
-            Ok(excerpts) => excerpts,
+            Ok(output) => output,
         };
 
         div()
@@ -80,7 +81,7 @@ impl Render for ProjectIndexView {
                             .child(Label::new(query).color(Color::Muted)),
                     ),
             )
-            .children(excerpts.iter().map(|excerpt| {
+            .children(output.excerpts.iter().map(|excerpt| {
                 let element_id = excerpt.element_id.clone();
                 let expanded = excerpt.expanded;
 
@@ -99,9 +100,7 @@ impl Render for ProjectIndexView {
                             .p_2()
                             .rounded_md()
                             .bg(cx.theme().colors().editor_background)
-                            .child(
-                                excerpt.text.clone(), // todo!(): Show as an editor block
-                            ),
+                            .child(excerpt.text.clone()),
                     )
             }))
     }
@@ -112,8 +111,15 @@ pub struct ProjectIndexTool {
     fs: Arc<dyn Fs>,
 }
 
+pub struct ProjectIndexOutput {
+    excerpts: Vec<CodebaseExcerpt>,
+    status: Status,
+}
+
 impl ProjectIndexTool {
     pub fn new(project_index: Model<ProjectIndex>, fs: Arc<dyn Fs>) -> Self {
+        // Listen for project index status and update the ProjectIndexTool directly
+
         // TODO: setup a better description based on the user's current codebase.
         Self { project_index, fs }
     }
@@ -121,7 +127,7 @@ impl ProjectIndexTool {
 
 impl LanguageModelTool for ProjectIndexTool {
     type Input = CodebaseQuery;
-    type Output = Vec<CodebaseExcerpt>;
+    type Output = ProjectIndexOutput;
     type View = ProjectIndexView;
 
     fn name(&self) -> String {
@@ -135,6 +141,7 @@ impl LanguageModelTool for ProjectIndexTool {
     fn execute(&self, query: &Self::Input, cx: &AppContext) -> Task<Result<Self::Output>> {
         let project_index = self.project_index.read(cx);
 
+        let status = project_index.status();
         let results = project_index.search(
             query.query.as_str(),
             query.limit.unwrap_or(DEFAULT_SEARCH_LIMIT),
@@ -180,11 +187,11 @@ impl LanguageModelTool for ProjectIndexTool {
                 .into_iter()
                 .filter_map(|result| result.log_err())
                 .collect();
-            anyhow::Ok(excerpts)
+            anyhow::Ok(ProjectIndexOutput { excerpts, status })
         })
     }
 
-    fn new_view(
+    fn output_view(
         _tool_call_id: String,
         input: Self::Input,
         output: Result<Self::Output>,
@@ -193,16 +200,28 @@ impl LanguageModelTool for ProjectIndexTool {
         cx.new_view(|_cx| ProjectIndexView { input, output })
     }
 
+    fn status_view(&self, cx: &mut WindowContext) -> Option<AnyView> {
+        Some(
+            cx.new_view(|cx| ProjectIndexStatusView::new(self.project_index.clone(), cx))
+                .into(),
+        )
+    }
+
     fn format(_input: &Self::Input, output: &Result<Self::Output>) -> String {
         match &output {
-            Ok(excerpts) => {
-                if excerpts.len() == 0 {
-                    return "No results found".to_string();
-                }
-
+            Ok(output) => {
                 let mut body = "Semantic search results:\n".to_string();
 
-                for excerpt in excerpts {
+                if output.status != Status::Idle {
+                    body.push_str("Still indexing. Results may be incomplete.\n");
+                }
+
+                if output.excerpts.is_empty() {
+                    body.push_str("No results found");
+                    return body;
+                }
+
+                for excerpt in &output.excerpts {
                     body.push_str("Excerpt from ");
                     body.push_str(excerpt.path.as_ref());
                     body.push_str(", score ");
@@ -216,5 +235,33 @@ impl LanguageModelTool for ProjectIndexTool {
             }
             Err(err) => format!("Error: {}", err),
         }
+    }
+}
+
+struct ProjectIndexStatusView {
+    project_index: Model<ProjectIndex>,
+}
+
+impl ProjectIndexStatusView {
+    pub fn new(project_index: Model<ProjectIndex>, cx: &mut ViewContext<Self>) -> Self {
+        cx.subscribe(&project_index, |_this, _, _status: &Status, cx| {
+            cx.notify();
+        })
+        .detach();
+        Self { project_index }
+    }
+}
+
+impl Render for ProjectIndexStatusView {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let status = self.project_index.read(cx).status();
+
+        h_flex().gap_2().map(|element| match status {
+            Status::Idle => element.child(Label::new("Project index ready")),
+            Status::Loading => element.child(Label::new("Project index loading...")),
+            Status::Scanning { remaining_count } => element.child(Label::new(format!(
+                "Project index scanning: {remaining_count} remaining..."
+            ))),
+        })
     }
 }
