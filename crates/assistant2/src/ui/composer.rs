@@ -217,6 +217,6 @@ impl RenderOnce for ModelSelector {
                     .style(ButtonStyle::Subtle)
                     .tooltip(move |cx| Tooltip::text("Change Model", cx)),
             )
-            .anchor(gpui::AnchorCorner::TopRight)
+            .anchor(gpui::AnchorCorner::BottomRight)
     }
 }
