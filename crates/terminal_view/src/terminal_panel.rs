@@ -402,8 +402,7 @@ impl TerminalPanel {
                                 );
                             }
                         })
-                        .ok()
-                        .unwrap();
+                        .ok();
                 }),
             );
 

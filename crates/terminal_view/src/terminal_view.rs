@@ -126,17 +126,16 @@ impl TerminalView {
 
         cx.spawn(|workspace, mut cx| async move {
             if let Some(terminal) = terminal.await.notify_async_err(&mut cx) {
-                let view = Box::new(
-                    cx.new_view(|cx| {
-                        TerminalView::new(terminal, workspace_handle, workspace_id, cx)
-                    })
-                    .unwrap(),
-                );
-                workspace
-                    .update(&mut cx, |workspace, cx| {
-                        workspace.add_item_to_active_pane(view, cx);
-                    })
-                    .unwrap();
+                let view = cx
+                    .new_view(|cx| TerminalView::new(terminal, workspace_handle, workspace_id, cx))
+                    .notify_async_err(&mut cx);
+                if let Some(view) = view {
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            workspace.add_item_to_active_pane(Box::new(view), cx);
+                        })
+                        .notify_async_err(&mut cx);
+                }
             }
         })
         .detach();
