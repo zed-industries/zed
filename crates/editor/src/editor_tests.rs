@@ -11261,8 +11261,10 @@ fn assert_hunk_revert(
             .unwrap()
             .read(cx)
             .snapshot();
-        let reverted_hunk_statuses = snapshot.git_diff_hunks_in_row_
-            < (0..u32::MAX).map(|hunk| hunk.status()).collect::<Vec<_>>();
+        let reverted_hunk_statuses = snapshot
+            .git_diff_hunks_in_row_range(0..u32::MAX)
+            .map(|hunk| hunk.status())
+            .collect::<Vec<_>>();
 
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
         reverted_hunk_statuses
