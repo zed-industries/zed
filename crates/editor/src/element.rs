@@ -1261,7 +1261,7 @@ impl EditorElement {
 
     fn calculate_relative_line_numbers(
         &self,
-        buffer_rows: Vec<Option<u32>>,
+        snapshot: &EditorSnapshot,
         rows: &Range<u32>,
         relative_to: Option<u32>,
     ) -> HashMap<u32, u32> {
@@ -1271,6 +1271,12 @@ impl EditorElement {
         };
 
         let start = rows.start.min(relative_to);
+        let end = rows.end.max(relative_to);
+
+        let buffer_rows = snapshot
+            .buffer_rows(start)
+            .take(1 + (end - start) as usize)
+            .collect::<Vec<_>>();
 
         let head_idx = relative_to - start;
         let mut delta = 1;
@@ -1345,9 +1351,7 @@ impl EditorElement {
             None
         };
 
-        let buffer_rows = buffer_rows.collect::<Vec<_>>();
-        let relative_rows =
-            self.calculate_relative_line_numbers(buffer_rows.clone(), &rows, relative_to);
+        let relative_rows = self.calculate_relative_line_numbers(snapshot, &rows, relative_to);
 
         for (ix, row) in buffer_rows.into_iter().enumerate() {
             let display_row = rows.start + ix as u32;
@@ -4551,8 +4555,12 @@ mod tests {
             .unwrap();
         assert_eq!(layouts.len(), 6);
 
-        let relative_rows =
-            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(0..6), Some(3));
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
+            })
+            .unwrap();
         assert_eq!(relative_rows[&0], 3);
         assert_eq!(relative_rows[&1], 2);
         assert_eq!(relative_rows[&2], 1);
@@ -4561,16 +4569,24 @@ mod tests {
         assert_eq!(relative_rows[&5], 2);
 
         // works if cursor is before screen
-        let relative_rows =
-            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(3..6), Some(1));
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
+            })
+            .unwrap();
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&3], 2);
         assert_eq!(relative_rows[&4], 3);
         assert_eq!(relative_rows[&5], 4);
 
         // works if cursor is after screen
-        let relative_rows =
-            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(0..3), Some(6));
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
+            })
+            .unwrap();
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&0], 5);
         assert_eq!(relative_rows[&1], 4);
