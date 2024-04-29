@@ -1060,7 +1060,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+        view.move_to_beginning_of_line(&MoveToBeginningOfLine::default(), cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1071,7 +1071,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+        view.move_to_beginning_of_line(&MoveToBeginningOfLine::default(), cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1082,7 +1082,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+        view.move_to_beginning_of_line(&MoveToBeginningOfLine::default(), cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1093,7 +1093,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_end_of_line(&MoveToEndOfLine, cx);
+        view.move_to_end_of_line(&MoveToEndOfLine::default(), cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1105,7 +1105,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
 
     // Moving to the end of line again is a no-op.
     _ = view.update(cx, |view, cx| {
-        view.move_to_end_of_line(&MoveToEndOfLine, cx);
+        view.move_to_end_of_line(&MoveToEndOfLine::default(), cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
