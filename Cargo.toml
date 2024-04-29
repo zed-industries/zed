@@ -427,6 +427,7 @@ wasmtime = { opt-level = 3 }
 
 [profile.release]
 debug = "limited"
+split-debuginfo = "packed"
 lto = "thin"
 codegen-units = 1
 
