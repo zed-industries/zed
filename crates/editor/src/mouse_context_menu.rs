@@ -1,6 +1,7 @@
 use crate::{
-    DisplayPoint, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Rename, RevealInFinder, SelectMode, ToggleCodeActions,
+    CopyPath, CopyRelativePath, DisplayPoint, Editor, EditorMode, FindAllReferences,
+    GoToDefinition, GoToImplementation, GoToTypeDefinition, Rename, RevealInFinder, SelectMode,
+    ToggleCodeActions,
 };
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
 use workspace::OpenInTerminal;
@@ -85,6 +86,9 @@ pub fn deploy_context_menu(
                 .separator()
                 .action("Reveal in Finder", Box::new(RevealInFinder))
                 .action("Open in Terminal", Box::new(OpenInTerminal))
+                .separator()
+                .action("Copy Path", Box::new(CopyPath))
+                .action("Copy Relative Path", Box::new(CopyRelativePath))
         })
     };
     let mouse_context_menu = MouseContextMenu::new(position, context_menu, cx);
