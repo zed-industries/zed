@@ -6232,13 +6232,13 @@ impl Editor {
 
     pub fn move_to_beginning_of_line(
         &mut self,
-        _: &MoveToBeginningOfLine,
+        action: &MoveToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, head, _| {
                 (
-                    movement::indented_line_beginning(map, head, true),
+                    movement::indented_line_beginning(map, head, action.stop_at_soft_wraps),
                     SelectionGoal::None,
                 )
             });
@@ -6282,10 +6282,13 @@ impl Editor {
         });
     }
 
-    pub fn move_to_end_of_line(&mut self, _: &MoveToEndOfLine, cx: &mut ViewContext<Self>) {
+    pub fn move_to_end_of_line(&mut self, action: &MoveToEndOfLine, cx: &mut ViewContext<Self>) {
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.move_cursors_with(|map, head, _| {
-                (movement::line_end(map, head, true), SelectionGoal::None)
+                (
+                    movement::line_end(map, head, action.stop_at_soft_wraps),
+                    SelectionGoal::None,
+                )
             });
         })
     }
