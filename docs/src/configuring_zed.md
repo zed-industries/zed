@@ -809,7 +809,8 @@ These values take in the same options as the root-level settings with the same n
 ```json
 "preview_tabs": {
   "enabled": true,
-  "enable_preview_from_file_finder": false
+  "enable_preview_from_file_finder": false,
+  "enable_preview_from_code_navigation": false,
 }
 ```
 
@@ -817,6 +818,16 @@ These values take in the same options as the root-level settings with the same n
 
 - Description: Determines whether to open files in preview mode when selected from the file finder.
 - Setting: `enable_preview_from_file_finder`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Enable preview from code navigation
+
+- Description: Determines whether a preview tab gets replaced when code navigation is used to navigate away from the tab (requires Zed `0.134.x`).
+- Setting: `enable_preview_from_code_navigation`
 - Default: `false`
 
 **Options**
