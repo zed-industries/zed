@@ -89,7 +89,7 @@ pub struct PreviewTabsSettingsContent {
     ///
     /// Default: false
     enable_preview_from_file_finder: Option<bool>,
-    /// Whether a preview tab remains in preview mode when code navigation is used to navigate away from the tab.
+    /// Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
     ///
     /// Default: false
     enable_preview_from_code_navigation: Option<bool>,
