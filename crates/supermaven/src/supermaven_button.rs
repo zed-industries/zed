@@ -57,6 +57,16 @@ impl Render for SupermavenButton {
             Supermaven::Spawned(agent) => agent.account_status.clone(),
         };
 
+        let icon = match supermaven {
+            Supermaven::Starting => IconName::SupermavenDisabled,
+            Supermaven::FailedDownload { .. } => IconName::SupermavenError,
+            Supermaven::Spawned(agent) => match agent.account_status {
+                AccountStatus::NeedsActivation { .. } => IconName::SupermavenInit,
+                AccountStatus::Unknown => IconName::SupermavenError,
+                AccountStatus::Ready => IconName::Supermaven,
+            },
+        };
+
         let this = cx.view().clone();
 
         div().child(
@@ -72,7 +82,7 @@ impl Render for SupermavenButton {
                 })
                 .anchor(AnchorCorner::BottomRight)
                 .trigger(
-                    IconButton::new("supermaven-icon", IconName::Supermaven)
+                    IconButton::new("supermaven-icon", icon)
                         .tooltip(|cx| Tooltip::text("Supermaven", cx)),
                 ),
         )
