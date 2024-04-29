@@ -1,17 +1,19 @@
 mod assistant_settings;
 mod completion_provider;
 pub mod tools;
+mod ui;
 
+use ::ui::{div, prelude::*, Color, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{ToolFunctionCall, ToolRegistry};
-use client::{proto, Client};
+use client::{proto, Client, UserStore};
 use completion_provider::*;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
 use futures::{future::join_all, StreamExt};
 use gpui::{
-    list, prelude::*, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle,
-    FocusableView, ListAlignment, ListState, Render, Task, View, WeakView,
+    list, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
+    ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
@@ -22,7 +24,7 @@ use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use tools::ProjectIndexTool;
-use ui::{popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip};
+use ui::Composer;
 use util::{paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -101,6 +103,8 @@ impl AssistantPanel {
                 (workspace.app_state().clone(), workspace.project().clone())
             })?;
 
+            let user_store = app_state.user_store.clone();
+
             cx.new_view(|cx| {
                 // todo!("this will panic if the semantic index failed to load or has not loaded yet")
                 let project_index = cx.update_global(|semantic_index: &mut SemanticIndex, cx| {
@@ -118,7 +122,7 @@ impl AssistantPanel {
 
                 let tool_registry = Arc::new(tool_registry);
 
-                Self::new(app_state.languages.clone(), tool_registry, cx)
+                Self::new(app_state.languages.clone(), tool_registry, user_store, cx)
             })
         })
     }
@@ -126,10 +130,16 @@ impl AssistantPanel {
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
+        user_store: Model<UserStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let chat = cx.new_view(|cx| {
-            AssistantChat::new(language_registry.clone(), tool_registry.clone(), cx)
+            AssistantChat::new(
+                language_registry.clone(),
+                tool_registry.clone(),
+                user_store,
+                cx,
+            )
         });
 
         Self { width: None, chat }
@@ -174,7 +184,7 @@ impl Panel for AssistantPanel {
         cx.notify();
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<ui::IconName> {
+    fn icon(&self, _cx: &WindowContext) -> Option<::ui::IconName> {
         Some(IconName::Ai)
     }
 
@@ -191,13 +201,7 @@ impl EventEmitter<PanelEvent> for AssistantPanel {}
 
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.chat
-            .read(cx)
-            .messages
-            .iter()
-            .rev()
-            .find_map(|msg| msg.focus_handle(cx))
-            .expect("no user message in chat")
+        self.chat.read(cx).composer_editor.read(cx).focus_handle(cx)
     }
 }
 
@@ -206,6 +210,8 @@ struct AssistantChat {
     messages: Vec<ChatMessage>,
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
+    composer_editor: View<Editor>,
+    user_store: Model<UserStore>,
     next_message_id: MessageId,
     pending_completion: Option<Task<()>>,
     tool_registry: Arc<ToolRegistry>,
@@ -215,6 +221,7 @@ impl AssistantChat {
     fn new(
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
+        user_store: Model<UserStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let model = CompletionProvider::get(cx).default_model();
@@ -229,17 +236,22 @@ impl AssistantChat {
             },
         );
 
-        let mut this = Self {
+        Self {
             model,
             messages: Vec::new(),
+            composer_editor: cx.new_view(|cx| {
+                let mut editor = Editor::auto_height(80, cx);
+                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                editor.set_placeholder_text("Type a message to the assistant", cx);
+                editor
+            }),
             list_state,
+            user_store,
             language_registry,
             next_message_id: MessageId(0),
             pending_completion: None,
             tool_registry,
-        };
-        this.push_new_user_message(true, cx);
-        this
+        }
     }
 
     fn focused_message_id(&self, cx: &WindowContext) -> Option<MessageId> {
@@ -262,19 +274,37 @@ impl AssistantChat {
         if let Some(ChatMessage::Assistant(message)) = self.messages.last() {
             if message.body.text.is_empty() {
                 self.pop_message(cx);
-            } else {
-                self.push_new_user_message(false, cx);
             }
         }
     }
 
     fn submit(&mut self, Submit(mode): &Submit, cx: &mut ViewContext<Self>) {
-        let Some(focused_message_id) = self.focused_message_id(cx) else {
+        // Don't allow multiple concurrent completions.
+        if self.pending_completion.is_some() {
+            cx.propagate();
+            return;
+        }
+
+        if let Some(focused_message_id) = self.focused_message_id(cx) {
+            self.truncate_messages(focused_message_id, cx);
+        } else if self.composer_editor.focus_handle(cx).is_focused(cx) {
+            let message = self.composer_editor.update(cx, |composer_editor, cx| {
+                let text = composer_editor.text(cx);
+                let id = self.next_message_id.post_inc();
+                let body = cx.new_view(|cx| {
+                    let mut editor = Editor::auto_height(80, cx);
+                    editor.set_text(text, cx);
+                    editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                    editor
+                });
+                composer_editor.clear(cx);
+                ChatMessage::User(UserMessage { id, body })
+            });
+            self.push_message(message, cx);
+        } else {
             log::error!("unexpected state: no user message editor is focused.");
             return;
-        };
-
-        self.truncate_messages(focused_message_id, cx);
+        }
 
         let mode = *mode;
         self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
@@ -288,17 +318,17 @@ impl AssistantChat {
             .log_err();
 
             this.update(&mut cx, |this, cx| {
-                let focus = this
-                    .user_message(focused_message_id)
-                    .body
-                    .focus_handle(cx)
-                    .contains_focused(cx);
-                this.push_new_user_message(focus, cx);
+                let composer_focus_handle = this.composer_editor.focus_handle(cx);
+                cx.focus(&composer_focus_handle);
                 this.pending_completion = None;
             })
             .context("Failed to push new user message")
             .log_err();
         }));
+    }
+
+    fn can_submit(&self) -> bool {
+        self.pending_completion.is_none()
     }
 
     async fn request_completion(
@@ -424,32 +454,6 @@ impl AssistantChat {
         }
     }
 
-    fn user_message(&mut self, message_id: MessageId) -> &mut UserMessage {
-        self.messages
-            .iter_mut()
-            .find_map(|message| match message {
-                ChatMessage::User(user_message) if user_message.id == message_id => {
-                    Some(user_message)
-                }
-                _ => None,
-            })
-            .expect("User message not found")
-    }
-
-    fn push_new_user_message(&mut self, focus: bool, cx: &mut ViewContext<Self>) {
-        let id = self.next_message_id.post_inc();
-        let body = cx.new_view(|cx| {
-            let mut editor = Editor::auto_height(80, cx);
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            if focus {
-                cx.focus_self();
-            }
-            editor
-        });
-        let message = ChatMessage::User(UserMessage { id, body });
-        self.push_message(message, cx);
-    }
-
     fn push_new_assistant_message(&mut self, cx: &mut ViewContext<Self>) {
         let message = ChatMessage::Assistant(AssistantMessage {
             id: self.next_message_id.post_inc(),
@@ -525,7 +529,6 @@ impl AssistantChat {
                 .child(div().p_2().child(Label::new("You").color(Color::Default)))
                 .child(
                     div()
-                        .on_action(cx.listener(Self::submit))
                         .p_2()
                         .text_color(cx.theme().colors().editor_foreground)
                         .font(ThemeSettings::get_global(cx).buffer_font.clone())
@@ -637,59 +640,6 @@ impl AssistantChat {
 
         completion_messages
     }
-
-    fn render_model_dropdown(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let this = cx.view().downgrade();
-        div().h_flex().justify_end().child(
-            div().w_32().child(
-                popover_menu("user-menu")
-                    .menu(move |cx| {
-                        ContextMenu::build(cx, |mut menu, cx| {
-                            for model in CompletionProvider::get(cx).available_models() {
-                                menu = menu.custom_entry(
-                                    {
-                                        let model = model.clone();
-                                        move |_| Label::new(model.clone()).into_any_element()
-                                    },
-                                    {
-                                        let this = this.clone();
-                                        move |cx| {
-                                            _ = this.update(cx, |this, cx| {
-                                                this.model = model.clone();
-                                                cx.notify();
-                                            });
-                                        }
-                                    },
-                                );
-                            }
-                            menu
-                        })
-                        .into()
-                    })
-                    .trigger(
-                        ButtonLike::new("active-model")
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .gap_0p5()
-                                    .child(
-                                        div()
-                                            .overflow_x_hidden()
-                                            .flex_grow()
-                                            .whitespace_nowrap()
-                                            .child(Label::new(self.model.clone())),
-                                    )
-                                    .child(div().child(
-                                        Icon::new(IconName::ChevronDown).color(Color::Muted),
-                                    )),
-                            )
-                            .style(ButtonStyle::Subtle)
-                            .tooltip(move |cx| Tooltip::text("Change Model", cx)),
-                    )
-                    .anchor(gpui::AnchorCorner::TopRight),
-            ),
-        )
-    }
 }
 
 impl Render for AssistantChat {
@@ -699,20 +649,22 @@ impl Render for AssistantChat {
             .flex_1()
             .v_flex()
             .key_context("AssistantChat")
+            .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
             .text_color(Color::Default.color(cx))
-            .child(self.render_model_dropdown(cx))
             .child(list(self.list_state.clone()).flex_1())
-            .child(
-                h_flex()
-                    .mt_2()
-                    .gap_2()
-                    .children(self.tool_registry.status_views().iter().cloned()),
-            )
+            .child(Composer::new(
+                cx.view().downgrade(),
+                self.model.clone(),
+                self.composer_editor.clone(),
+                self.user_store.read(cx).current_user(),
+                self.can_submit(),
+                self.tool_registry.clone(),
+            ))
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct MessageId(usize);
 
 impl MessageId {
