@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+
+commit=$(git rev-parse HEAD | cut -c 1-7)
+target="x86_64-unknown-linux-gnu"
+target_short="x86_64"
+
+# Build binary in release mode
+cargo build --release --target "${target}" --package zed
+
+# Copy package directory
+target_folder="zed-linux-${target_short}-$commit"
+mkdir $target_folder
+
+# Copy binary into directory
+cp "target/${target}/release/Zed" "${target_folder}/zed"
+
+# Create archive
+archive="${target_folder}.tar.gz"
+tar -czvf $archive ${target_folder}
