@@ -982,6 +982,8 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn set_app_id(&mut self, _app_id: &str) {}
+
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
         let this = self.0.as_ref().lock();
         let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {

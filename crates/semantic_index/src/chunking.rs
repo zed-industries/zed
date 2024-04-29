@@ -188,6 +188,7 @@ mod tests {
                         kind: WindowKind::PopUp,
                         is_movable: false,
                         fullscreen: false,
+                        app_id: None,
                     }
                 };
 
@@ -239,7 +240,7 @@ mod tests {
         // The break between chunks is right before the "Specify the display_id" comment
 
         assert_eq!(chunks[1].range.start, 1498);
-        assert_eq!(chunks[1].range.end, 2396);
+        assert_eq!(chunks[1].range.end, 2434);
     }
 
     #[test]
