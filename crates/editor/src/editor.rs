@@ -8035,19 +8035,22 @@ impl Editor {
 
         let item = Box::new(editor);
         let item_id = item.item_id();
-        let mut destination_index = None;
-        workspace.active_pane().update(cx, |pane, cx| {
-            if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
-                destination_index = pane.close_current_preview_item(cx);
-            }
-            pane.set_preview_item_id(Some(item_id), cx);
-        });
 
         if split {
             workspace.split_item(SplitDirection::Right, item.clone(), cx);
         } else {
+            let destination_index = workspace.active_pane().update(cx, |pane, cx| {
+                if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
+                    pane.close_current_preview_item(cx)
+                } else {
+                    None
+                }
+            });
             workspace.add_item_to_active_pane(item.clone(), destination_index, cx);
         }
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.set_preview_item_id(Some(item_id), cx);
+        });
     }
 
     pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
