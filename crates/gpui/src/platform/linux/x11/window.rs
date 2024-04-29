@@ -13,7 +13,10 @@ use raw_window_handle as rwh;
 use util::ResultExt;
 use x11rb::{
     connection::Connection,
-    protocol::xproto::{self, ConnectionExt as _, CreateWindowAux},
+    protocol::{
+        xinput,
+        xproto::{self, ConnectionExt as _, CreateWindowAux},
+    },
     wrapper::ConnectionExt,
     xcb_ffi::XCBConnection,
 };
@@ -153,8 +156,6 @@ impl X11WindowState {
                 | xproto::EventMask::BUTTON1_MOTION
                 | xproto::EventMask::BUTTON2_MOTION
                 | xproto::EventMask::BUTTON3_MOTION
-                | xproto::EventMask::BUTTON4_MOTION
-                | xproto::EventMask::BUTTON5_MOTION
                 | xproto::EventMask::BUTTON_MOTION,
         );
 
@@ -173,6 +174,18 @@ impl X11WindowState {
                 &win_aux,
             )
             .unwrap();
+
+        xinput::ConnectionExt::xinput_xi_select_events(
+            &xcb_connection,
+            x_window,
+            &[xinput::EventMask {
+                deviceid: 1,
+                mask: vec![xinput::XIEventMask::MOTION],
+            }],
+        )
+        .unwrap()
+        .check()
+        .unwrap();
 
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
