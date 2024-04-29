@@ -3,7 +3,7 @@ mod completion_provider;
 pub mod tools;
 mod ui;
 
-use ::ui::{div, popover_menu, prelude::*, ButtonLike, Color, ContextMenu, Tooltip, ViewContext};
+use ::ui::{div, prelude::*, Color, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{ToolFunctionCall, ToolRegistry};
 use client::{proto, Client, UserStore};
@@ -638,59 +638,6 @@ impl AssistantChat {
 
         completion_messages
     }
-
-    fn render_model_dropdown(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let this = cx.view().downgrade();
-        div().h_flex().justify_end().child(
-            div().w_32().child(
-                popover_menu("user-menu")
-                    .menu(move |cx| {
-                        ContextMenu::build(cx, |mut menu, cx| {
-                            for model in CompletionProvider::get(cx).available_models() {
-                                menu = menu.custom_entry(
-                                    {
-                                        let model = model.clone();
-                                        move |_| Label::new(model.clone()).into_any_element()
-                                    },
-                                    {
-                                        let this = this.clone();
-                                        move |cx| {
-                                            _ = this.update(cx, |this, cx| {
-                                                this.model = model.clone();
-                                                cx.notify();
-                                            });
-                                        }
-                                    },
-                                );
-                            }
-                            menu
-                        })
-                        .into()
-                    })
-                    .trigger(
-                        ButtonLike::new("active-model")
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .gap_0p5()
-                                    .child(
-                                        div()
-                                            .overflow_x_hidden()
-                                            .flex_grow()
-                                            .whitespace_nowrap()
-                                            .child(Label::new(self.model.clone())),
-                                    )
-                                    .child(div().child(
-                                        Icon::new(IconName::ChevronDown).color(Color::Muted),
-                                    )),
-                            )
-                            .style(ButtonStyle::Subtle)
-                            .tooltip(move |cx| Tooltip::text("Change Model", cx)),
-                    )
-                    .anchor(gpui::AnchorCorner::TopRight),
-            ),
-        )
-    }
 }
 
 impl Render for AssistantChat {
@@ -702,9 +649,10 @@ impl Render for AssistantChat {
             .key_context("AssistantChat")
             .on_action(cx.listener(Self::cancel))
             .text_color(Color::Default.color(cx))
-            .child(self.render_model_dropdown(cx))
             .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(
+                cx.view().downgrade(),
+                self.model.clone(),
                 self.composer_editor.clone(),
                 self.user_store.read(cx).current_user(),
                 self.can_submit(),

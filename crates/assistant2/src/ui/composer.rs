@@ -1,16 +1,18 @@
 use assistant_tooling::ToolRegistry;
 use client::User;
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{FontStyle, FontWeight, TextStyle, View, WhiteSpace};
+use gpui::{FontStyle, FontWeight, Global, TextStyle, View, WeakView, WhiteSpace};
 use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
-use ui::{prelude::*, Avatar, Tooltip};
+use ui::{popover_menu, prelude::*, Avatar, ButtonLike, ContextMenu, Tooltip};
 
-use crate::{Submit, SubmitMode};
+use crate::{AssistantChat, CompletionProvider, Submit, SubmitMode};
 
 #[derive(IntoElement)]
 pub struct Composer {
+    assistant_chat: WeakView<AssistantChat>,
+    model: String,
     editor: View<Editor>,
     player: Option<Arc<User>>,
     can_submit: bool,
@@ -19,12 +21,16 @@ pub struct Composer {
 
 impl Composer {
     pub fn new(
+        assistant_chat: WeakView<AssistantChat>,
+        model: String,
         editor: View<Editor>,
         player: Option<Arc<User>>,
         can_submit: bool,
         tool_registry: Arc<ToolRegistry>,
     ) -> Self {
         Self {
+            assistant_chat,
+            model,
             editor,
             player,
             can_submit,
@@ -142,9 +148,74 @@ impl RenderOnce for Composer {
                         h_flex()
                             .w_full()
                             .justify_between()
-                            .child(Button::new("switch-model", "gpt-4-turbo").color(Color::Muted))
+                            .child(ModelSelector::new(self.assistant_chat, self.model))
                             .children(self.tool_registry.status_views().iter().cloned()),
                     ),
             )
+    }
+}
+
+#[derive(IntoElement)]
+struct ModelSelector {
+    assistant_chat: WeakView<AssistantChat>,
+    model: String,
+}
+
+impl ModelSelector {
+    pub fn new(assistant_chat: WeakView<AssistantChat>, model: String) -> Self {
+        Self {
+            assistant_chat,
+            model,
+        }
+    }
+}
+
+impl RenderOnce for ModelSelector {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        popover_menu("model-switcher")
+            .menu(move |cx| {
+                ContextMenu::build(cx, |mut menu, cx| {
+                    for model in CompletionProvider::get(cx).available_models() {
+                        menu = menu.custom_entry(
+                            {
+                                let model = model.clone();
+                                move |_| Label::new(model.clone()).into_any_element()
+                            },
+                            {
+                                let assistant_chat = self.assistant_chat.clone();
+                                move |cx| {
+                                    _ = assistant_chat.update(cx, |assistant_chat, cx| {
+                                        assistant_chat.model = model.clone();
+                                        cx.notify();
+                                    });
+                                }
+                            },
+                        );
+                    }
+                    menu
+                })
+                .into()
+            })
+            .trigger(
+                ButtonLike::new("active-model")
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .overflow_x_hidden()
+                                    .flex_grow()
+                                    .whitespace_nowrap()
+                                    .child(Label::new(self.model)),
+                            )
+                            .child(
+                                div().child(Icon::new(IconName::ChevronDown).color(Color::Muted)),
+                            ),
+                    )
+                    .style(ButtonStyle::Subtle)
+                    .tooltip(move |cx| Tooltip::text("Change Model", cx)),
+            )
+            .anchor(gpui::AnchorCorner::TopRight)
     }
 }
