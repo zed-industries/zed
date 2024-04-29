@@ -97,6 +97,8 @@ impl Anchor {
     pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
         if *self == Anchor::MIN || *self == Anchor::MAX {
             true
+        } else if self.buffer_id != Some(buffer.remote_id) {
+            false
         } else {
             let fragment_id = buffer.fragment_id_for_anchor(self);
             let mut fragment_cursor = buffer.fragments.cursor::<(Option<&Locator>, usize)>();
