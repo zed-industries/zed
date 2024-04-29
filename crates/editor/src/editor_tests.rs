@@ -2,8 +2,9 @@ use super::*;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
-        assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-        editor_test_context::EditorTestContext, select_ranges,
+        assert_text_with_selections, build_editor, editor_hunks,
+        editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        expanded_hunks, expanded_hunks_background_highlights, select_ranges,
     },
     JoinLines,
 };
@@ -11083,89 +11084,6 @@ async fn test_multiple_expanded_hunks_merge(
     );
 }
 
-fn editor_hunks(
-    editor: &Editor,
-    snapshot: &DisplaySnapshot,
-    cx: &mut ViewContext<'_, Editor>,
-) -> Vec<(String, DiffHunkStatus, Range<u32>)> {
-    snapshot
-        .buffer_snapshot
-        .git_diff_hunks_in_range(0..u32::MAX)
-        .map(|hunk| {
-            let display_range = Point::new(hunk.associated_range.start, 0)
-                .to_display_point(snapshot)
-                .row()
-                ..Point::new(hunk.associated_range.end, 0)
-                    .to_display_point(snapshot)
-                    .row();
-            let (_, buffer, _) = editor
-                .buffer()
-                .read(cx)
-                .excerpt_containing(Point::new(hunk.associated_range.start, 0), cx)
-                .expect("no excerpt for expanded buffer's hunk start");
-            let diff_base = &buffer
-                .read(cx)
-                .diff_base()
-                .expect("should have a diff base for expanded hunk")
-                [hunk.diff_base_byte_range.clone()];
-            (diff_base.to_owned(), hunk.status(), display_range)
-        })
-        .collect()
-}
-
-fn expanded_hunks(
-    editor: &Editor,
-    snapshot: &DisplaySnapshot,
-    cx: &mut ViewContext<'_, Editor>,
-) -> Vec<(String, DiffHunkStatus, Range<u32>)> {
-    editor
-        .expanded_hunks
-        .iter()
-        .map(|expanded_hunk| {
-            let hunk_display_range = expanded_hunk
-                .hunk_range
-                .start
-                .to_display_point(snapshot)
-                .row()
-                ..expanded_hunk
-                    .hunk_range
-                    .end
-                    .to_display_point(snapshot)
-                    .row();
-            let (_, buffer, _) = editor
-                .buffer()
-                .read(cx)
-                .excerpt_containing(expanded_hunk.hunk_range.start, cx)
-                .expect("no excerpt for expanded buffer's hunk start");
-            let diff_base = &buffer
-                .read(cx)
-                .diff_base()
-                .expect("should have a diff base for expanded hunk")
-                [expanded_hunk.diff_base_byte_range.clone()];
-            (
-                diff_base.to_owned(),
-                expanded_hunk.status,
-                hunk_display_range,
-            )
-        })
-        .collect()
-}
-
-fn expanded_hunks_background_highlights(
-    editor: &Editor,
-    snapshot: &DisplaySnapshot,
-) -> Vec<Range<u32>> {
-    editor
-        .highlighted_rows::<GitRowHighlight>()
-        .into_iter()
-        .flatten()
-        .map(|(range, _)| {
-            range.start.to_display_point(snapshot).row()..range.end.to_display_point(snapshot).row()
-        })
-        .unique()
-        .collect()
-}
-
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
@@ -11343,10 +11261,8 @@ fn assert_hunk_revert(
             .unwrap()
             .read(cx)
             .snapshot();
-        let reverted_hunk_statuses = snapshot
-            .git_diff_hunks_in_row_range(0..u32::MAX)
-            .map(|hunk| hunk.status())
-            .collect::<Vec<_>>();
+        let reverted_hunk_statuses = snapshot.git_diff_hunks_in_row_
+            < (0..u32::MAX).map(|hunk| hunk.status()).collect::<Vec<_>>();
 
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
         reverted_hunk_statuses

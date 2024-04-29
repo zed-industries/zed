@@ -10369,7 +10369,6 @@ impl Editor {
     }
 
     // TODO kb make async, consider `block_with_timeout` + need to debounce between edits (configurable?)
-    // TODO kb test: merge different hunks into one dy deleting N lines in the middle,
     fn sync_expanded_diff_hunks(&mut self, buffer: &Model<Buffer>, cx: &mut ViewContext<'_, Self>) {
         let snapshot = self.snapshot(cx);
         let buffer_snapshot = buffer.read(cx).snapshot();
