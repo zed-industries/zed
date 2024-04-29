@@ -14,6 +14,12 @@ pub struct SelectPrevious {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct MoveToBeginningOfLine {
+    #[serde(default)]
+    pub(super) stop_at_soft_wraps: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
@@ -29,6 +35,12 @@ pub struct MovePageUp {
 pub struct MovePageDown {
     #[serde(default)]
     pub(super) center_cursor: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct MoveToEndOfLine {
+    #[serde(default)]
+    pub(super) stop_at_soft_wraps: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -106,10 +118,12 @@ impl_actions!(
         SelectNext,
         SelectPrevious,
         SelectToBeginningOfLine,
+        MoveToBeginningOfLine,
         ExpandExcerpts,
         MovePageUp,
         MovePageDown,
         SelectToEndOfLine,
+        MoveToEndOfLine,
         ToggleCodeActions,
         ConfirmCompletion,
         ConfirmCodeAction,
@@ -190,10 +204,8 @@ gpui::actions!(
         MoveLineUp,
         MoveRight,
         MoveToBeginning,
-        MoveToBeginningOfLine,
         MoveToEnclosingBracket,
         MoveToEnd,
-        MoveToEndOfLine,
         MoveToEndOfParagraph,
         MoveToNextSubwordEnd,
         MoveToNextWordEnd,
