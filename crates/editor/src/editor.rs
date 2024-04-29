@@ -8498,7 +8498,6 @@ impl Editor {
                         && (entry.range.start.row == entry.range.end.row
                             || snapshot.is_line_folded(entry.range.end.row))
                     {
-                        dbg!(entry.diagnostic.is_primary);
                         return None;
                     }
                     if entry.range.end > group_end {
