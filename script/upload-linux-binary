@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euxo pipefail
+source script/lib/blob-store.sh
 
 commit=$(git rev-parse HEAD | cut -c 1-7)
 target="x86_64-unknown-linux-gnu"
@@ -19,3 +20,7 @@ cp "target/${target}/release/Zed" "${target_folder}/zed"
 # Create archive
 archive="${target_folder}.tar.gz"
 tar -czvf $archive ${target_folder}
+
+# Upload it
+bucket_name="zed-linux-builds"
+upload_to_blob_store_public $bucket_name $archive
