@@ -7,6 +7,7 @@ use ::ui::{div, prelude::*, Color, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{ToolFunctionCall, ToolRegistry};
 use client::{proto, Client, UserStore};
+use collections::HashMap;
 use completion_provider::*;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
@@ -214,6 +215,7 @@ struct AssistantChat {
     composer_editor: View<Editor>,
     user_store: Model<UserStore>,
     next_message_id: MessageId,
+    collapsed_messages: HashMap<MessageId, bool>,
     pending_completion: Option<Task<()>>,
     tool_registry: Arc<ToolRegistry>,
 }
@@ -250,6 +252,7 @@ impl AssistantChat {
             user_store,
             language_registry,
             next_message_id: MessageId(0),
+            collapsed_messages: HashMap::default(),
             pending_completion: None,
             tool_registry,
         }
@@ -496,6 +499,15 @@ impl AssistantChat {
         }
     }
 
+    fn is_message_collapsed(&self, id: &MessageId) -> bool {
+        self.collapsed_messages.get(id).copied().unwrap_or_default()
+    }
+
+    fn toggle_message_collapsed(&mut self, id: MessageId) {
+        let entry = self.collapsed_messages.entry(id).or_insert(false);
+        *entry = !*entry;
+    }
+
     fn render_error(
         &self,
         error: Option<SharedString>,
@@ -531,8 +543,13 @@ impl AssistantChat {
                     *id,
                     UserOrAssistant::User(self.user_store.read(cx).current_user()),
                     body.clone().into_any_element(),
-                    false,
-                    Box::new(|_, _| {}),
+                    self.is_message_collapsed(id),
+                    Box::new(cx.listener({
+                        let id = *id;
+                        move |assistant_chat, _event, _cx| {
+                            assistant_chat.toggle_message_collapsed(id)
+                        }
+                    })),
                 ))
                 .into_any(),
             ChatMessage::Assistant(AssistantMessage {
@@ -554,8 +571,13 @@ impl AssistantChat {
                         *id,
                         UserOrAssistant::Assistant,
                         assistant_body.into_any_element(),
-                        false,
-                        Box::new(|_, _| {}),
+                        self.is_message_collapsed(id),
+                        Box::new(cx.listener({
+                            let id = *id;
+                            move |assistant_chat, _event, _cx| {
+                                assistant_chat.toggle_message_collapsed(id)
+                            }
+                        })),
                     ))
                     // TODO: Should the errors and tool calls get passed into `ChatMessage`?
                     .child(self.render_error(error.clone(), ix, cx))
@@ -665,7 +687,7 @@ impl Render for AssistantChat {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 struct MessageId(usize);
 
 impl MessageId {

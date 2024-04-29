@@ -12,6 +12,7 @@ path = "src/assistant2.rs"
 anyhow.workspace = true
 assistant_tooling.workspace = true
 client.workspace = true
+collections.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
