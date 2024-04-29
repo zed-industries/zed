@@ -22,7 +22,6 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use theme::ThemeSettings;
 use tools::ProjectIndexTool;
 use ui::Composer;
 use util::{paths::EMBEDDINGS_DIR, ResultExt};
@@ -33,7 +32,7 @@ use workspace::{
 
 pub use assistant_settings::AssistantSettings;
 
-use crate::ui::{ChatMessageHeader, UserOrAssistant};
+use crate::ui::UserOrAssistant;
 
 const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
 
@@ -526,19 +525,15 @@ impl AssistantChat {
         let is_last = ix == self.messages.len() - 1;
 
         match &self.messages[ix] {
-            ChatMessage::User(UserMessage { body, .. }) => div()
+            ChatMessage::User(UserMessage { id, body }) => div()
                 .when(!is_last, |element| element.mb_2())
-                .child(ChatMessageHeader::new(UserOrAssistant::User(
-                    self.user_store.read(cx).current_user(),
-                )))
-                .child(
-                    div()
-                        .p_2()
-                        .text_color(cx.theme().colors().editor_foreground)
-                        .font(ThemeSettings::get_global(cx).buffer_font.clone())
-                        .bg(cx.theme().colors().editor_background)
-                        .child(body.clone()),
-                )
+                .child(crate::ui::ChatMessage::new(
+                    *id,
+                    UserOrAssistant::User(self.user_store.read(cx).current_user()),
+                    body.clone().into_any_element(),
+                    false,
+                    Box::new(|_, _| {}),
+                ))
                 .into_any(),
             ChatMessage::Assistant(AssistantMessage {
                 id,
@@ -555,8 +550,14 @@ impl AssistantChat {
 
                 div()
                     .when(!is_last, |element| element.mb_2())
-                    .child(ChatMessageHeader::new(UserOrAssistant::Assistant))
-                    .child(assistant_body)
+                    .child(crate::ui::ChatMessage::new(
+                        *id,
+                        UserOrAssistant::Assistant,
+                        assistant_body.into_any_element(),
+                        false,
+                        Box::new(|_, _| {}),
+                    ))
+                    // TODO: Should the errors and tool calls get passed into `ChatMessage`?
                     .child(self.render_error(error.clone(), ix, cx))
                     .children(tool_calls.iter().map(|tool_call| {
                         let result = &tool_call.result;

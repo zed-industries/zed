@@ -1,5 +1,5 @@
-mod chat_message_header;
+mod chat_message;
 mod composer;
 
-pub use chat_message_header::*;
+pub use chat_message::*;
 pub use composer::*;
