@@ -286,7 +286,7 @@ pub async fn post_hang(
                 .add_section(|s| {
                     s.add_field(slack::Text::markdown(format!(
                         "*Version:*\n {} ",
-                        report.app_version.unwrap_or_default().to_string()
+                        report.app_version.unwrap_or_default()
                     )))
                     .add_field({
                         let hostname = app.config.blob_store_url.clone().unwrap_or_default();

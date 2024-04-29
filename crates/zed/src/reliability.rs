@@ -4,11 +4,7 @@ use chrono::Utc;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AppContext, SemanticVersion};
 use isahc::config::Configurable;
-use nix::sys::signal::{
-    sigaction, SaFlags, SigAction, SigHandler, SigSet,
-    Signal::{self, SIGUSR2},
-};
-use parking_lot::Mutex;
+
 use paths::{CRASHES_DIR, CRASHES_RETIRED_DIR};
 use release_channel::ReleaseChannel;
 use release_channel::RELEASE_CHANNEL;
@@ -20,15 +16,9 @@ use std::{
     ffi::OsStr,
     sync::{atomic::Ordering, Arc},
 };
-use std::{
-    ffi::c_int,
-    sync::{mpsc, OnceLock},
-    time::Duration,
-};
 use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
-use telemetry_events::{BacktraceFrame, HangReport};
 use util::{
-    http::{self, HttpClient, HttpClientWithUrl, Method},
+    http::{self, HttpClient, HttpClientWithUrl},
     paths, ResultExt,
 };
 
@@ -187,11 +177,27 @@ pub fn init(
     upload_panics_and_crashes(http_client, installation_id, cx)
 }
 
+#[cfg(target_os = "macos")]
 pub fn monitor_main_thread_hangs(
     http_client: Arc<HttpClientWithUrl>,
     installation_id: Option<String>,
     cx: &AppContext,
 ) {
+    use nix::sys::signal::{
+        sigaction, SaFlags, SigAction, SigHandler, SigSet,
+        Signal::{self, SIGUSR2},
+    };
+
+    use parking_lot::Mutex;
+
+    use std::{
+        ffi::c_int,
+        sync::{mpsc, OnceLock},
+        time::Duration,
+    };
+    use telemetry_events::{BacktraceFrame, HangReport};
+    use util::http::Method;
+
     use nix::sys::pthread;
 
     let foreground_executor = cx.foreground_executor();
