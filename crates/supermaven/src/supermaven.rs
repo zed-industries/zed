@@ -248,9 +248,9 @@ impl SupermavenAgent {
                 continue;
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, _cx| {
                 if let Supermaven::Spawned(this) = this {
-                    this.handle_message(message, cx)
+                    this.handle_message(message)
                 }
             })?;
         }
@@ -258,7 +258,7 @@ impl SupermavenAgent {
         Ok(())
     }
 
-    fn handle_message(&mut self, message: SupermavenMessage, cx: &mut AppContext) {
+    fn handle_message(&mut self, message: SupermavenMessage) {
         match message {
             SupermavenMessage::ActivationRequest(request) => {
                 let Some(activate_url) = request.activate_url else {
@@ -281,7 +281,7 @@ impl SupermavenAgent {
                     *state.updates_tx.borrow_mut() = ();
                 }
             }
-            SupermavenMessage::Passthrough { passthrough } => self.handle_message(*passthrough, cx),
+            SupermavenMessage::Passthrough { passthrough } => self.handle_message(*passthrough),
             _ => {
                 log::warn!("unhandled message: {:?}", message);
             }
