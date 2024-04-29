@@ -12700,6 +12700,7 @@ dependencies = [
  "markdown_preview",
  "menu",
  "mimalloc",
+ "nix 0.28.0",
  "node_runtime",
  "notifications",
  "outline",

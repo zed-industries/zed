@@ -3,6 +3,7 @@
 // Disable command line from opening on release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
@@ -190,6 +191,7 @@ fn init_ui(args: Args) {
         .unzip();
     let session_id = Uuid::new_v4().to_string();
     init_panic_hook(&app, installation_id.clone(), session_id.clone());
+    reliability::init(app.foreground_executor(), app.background_executor());
 
     let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
         app.path_for_auxiliary_executable("git")

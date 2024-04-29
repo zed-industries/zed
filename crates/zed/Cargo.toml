@@ -62,6 +62,7 @@ log.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 mimalloc = "0.1"
+nix.workspace = true
 node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
