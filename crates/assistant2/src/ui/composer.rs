@@ -41,7 +41,7 @@ impl Composer {
 
 impl RenderOnce for Composer {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let mut player_avatar = div().into_any_element();
+        let mut player_avatar = div().size(rems(20.0 / 16.0)).into_any_element();
         if let Some(player) = self.player.clone() {
             player_avatar = Avatar::new(player.avatar_uri.clone())
                 .size(rems(20.0 / 16.0))
@@ -54,6 +54,7 @@ impl RenderOnce for Composer {
         h_flex()
             .w_full()
             .items_start()
+            .mt_4()
             .gap_3()
             .child(player_avatar)
             .child(

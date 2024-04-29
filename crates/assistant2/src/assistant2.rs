@@ -288,16 +288,19 @@ impl AssistantChat {
         if let Some(focused_message_id) = self.focused_message_id(cx) {
             self.truncate_messages(focused_message_id, cx);
         } else if self.composer_editor.focus_handle(cx).is_focused(cx) {
-            let id = self.next_message_id.post_inc();
-            let body = cx.new_view(|cx| {
-                let mut editor = Editor::auto_height(80, cx);
-                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-                editor
+            let message = self.composer_editor.update(cx, |composer_editor, cx| {
+                let text = composer_editor.text(cx);
+                let id = self.next_message_id.post_inc();
+                let body = cx.new_view(|cx| {
+                    let mut editor = Editor::auto_height(80, cx);
+                    editor.set_text(text, cx);
+                    editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                    editor
+                });
+                composer_editor.clear(cx);
+                ChatMessage::User(UserMessage { id, body })
             });
-            let message = ChatMessage::User(UserMessage { id, body });
             self.push_message(message, cx);
-            self.composer_editor
-                .update(cx, |editor, cx| editor.clear(cx));
         } else {
             log::error!("unexpected state: no user message editor is focused.");
             return;
@@ -526,7 +529,6 @@ impl AssistantChat {
                 .child(div().p_2().child(Label::new("You").color(Color::Default)))
                 .child(
                     div()
-                        .on_action(cx.listener(Self::submit))
                         .p_2()
                         .text_color(cx.theme().colors().editor_foreground)
                         .font(ThemeSettings::get_global(cx).buffer_font.clone())
@@ -647,6 +649,7 @@ impl Render for AssistantChat {
             .flex_1()
             .v_flex()
             .key_context("AssistantChat")
+            .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
             .text_color(Color::Default.color(cx))
             .child(list(self.list_state.clone()).flex_1())
@@ -661,7 +664,7 @@ impl Render for AssistantChat {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct MessageId(usize);
 
 impl MessageId {
