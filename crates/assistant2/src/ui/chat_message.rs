@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use client::User;
-use gpui::AnyElement;
+use gpui::{AnyElement, ClickEvent};
 use ui::{prelude::*, Avatar};
 
 use crate::MessageId;
@@ -17,7 +17,7 @@ pub struct ChatMessage {
     player: UserOrAssistant,
     message: AnyElement,
     collapsed: bool,
-    on_collapse: Box<dyn Fn(bool, &mut WindowContext) + 'static>,
+    on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
 }
 
 impl ChatMessage {
@@ -26,14 +26,14 @@ impl ChatMessage {
         player: UserOrAssistant,
         message: AnyElement,
         collapsed: bool,
-        on_collapse: Box<dyn Fn(bool, &mut WindowContext) + 'static>,
+        on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
     ) -> Self {
         Self {
             id,
             player,
             message,
             collapsed,
-            on_collapse,
+            on_collapse_handle_click,
         }
     }
 }
@@ -53,7 +53,7 @@ impl RenderOnce for ChatMessage {
             .w_1()
             .mx_2()
             .h_full()
-            .on_click(move |_event, cx| (self.on_collapse)(!self.collapsed, cx))
+            .on_click(self.on_collapse_handle_click)
             .child(
                 div()
                     .w_px()

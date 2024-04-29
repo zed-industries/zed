@@ -379,6 +379,7 @@ dependencies = [
  "assets",
  "assistant_tooling",
  "client",
+ "collections",
  "editor",
  "env_logger",
  "feature_flags",
