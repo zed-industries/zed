@@ -1,10 +1,13 @@
+use std::ops::Range;
+
 use gpui::{
-    div, rems, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, WindowContext,
+    div, px, rems, HighlightStyle, InteractiveText, IntoElement, ParentElement, Pixels, Rems,
+    RenderOnce, SharedString, Styled, StyledText, TextStyle, UnderlineStyle, WindowContext,
 };
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 
-use crate::rems_from_px;
+use crate::{rems_from_px, Color};
 
 /// Extends [`gpui::Styled`] with typography-related styling methods.
 pub trait StyledTypography: Styled + Sized {
@@ -124,6 +127,14 @@ impl TextSize {
             Self::Editor => rems_from_px(theme_settings.buffer_font_size.into()),
         }
     }
+
+    pub fn px(self, cx: &WindowContext) -> Pixels {
+        self.rems(cx).to_pixels(cx.rem_size())
+    }
+
+    pub fn line_height(self, cx: &WindowContext, ratio: f32) -> Rems {
+        self.rems(cx) * ratio
+    }
 }
 
 /// The size of a [`Headline`] element
@@ -166,6 +177,20 @@ pub struct Headline {
     text: SharedString,
 }
 
+impl Headline {
+    pub fn new(text: impl Into<SharedString>) -> Self {
+        Self {
+            size: HeadlineSize::default(),
+            text: text.into(),
+        }
+    }
+
+    pub fn size(mut self, size: HeadlineSize) -> Self {
+        self.size = size;
+        self
+    }
+}
+
 impl RenderOnce for Headline {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
@@ -179,16 +204,108 @@ impl RenderOnce for Headline {
     }
 }
 
-impl Headline {
-    pub fn new(text: impl Into<SharedString>) -> Self {
-        Self {
-            size: HeadlineSize::default(),
-            text: text.into(),
+#[derive(Debug, Clone)]
+pub enum Font {
+    UI,
+    Editor,
+}
+
+impl Font {
+    pub fn font(self, cx: &WindowContext) -> gpui::Font {
+        match self {
+            Self::UI => ThemeSettings::get_global(cx).ui_font.clone(),
+            Self::Editor => ThemeSettings::get_global(cx).buffer_font.clone(),
         }
     }
 
-    pub fn size(mut self, size: HeadlineSize) -> Self {
-        self.size = size;
+    pub fn family(self, cx: &WindowContext) -> SharedString {
+        match self {
+            Self::UI => ThemeSettings::get_global(cx).ui_font.family.clone(),
+            Self::Editor => ThemeSettings::get_global(cx).buffer_font.family.clone(),
+        }
+    }
+
+    pub fn size(self, cx: &WindowContext) -> Rems {
+        match self {
+            Self::UI => TextSize::UI.rems(cx),
+            Self::Editor => TextSize::Editor.rems(cx),
+        }
+    }
+}
+
+#[derive(IntoElement)]
+pub struct Link {
+    text: String,
+    font: Font,
+    uri: String,
+    tooltip: Option<SharedString>,
+    color: Color,
+}
+
+impl Link {
+    pub fn new(text: String, uri: String) -> Self {
+        Self {
+            text,
+            font: Font::UI,
+            uri: uri.into(),
+            tooltip: None,
+            color: Color::Default,
+        }
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
         self
+    }
+
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
+    }
+
+    pub fn font(mut self, font: Font) -> Self {
+        self.font = font;
+        self
+    }
+}
+
+impl RenderOnce for Link {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let font_size = theme_settings.ui_font_size;
+        let font = self.font.font(cx);
+
+        let text_style = TextStyle {
+            color: self.color.color(cx),
+            font_family: font.family,
+            font_size: font_size.into(),
+            ..Default::default()
+        };
+
+        let highlight_style = HighlightStyle {
+            color: Some(self.color.color(cx)),
+            underline: Some(UnderlineStyle {
+                thickness: px(1.0),
+                color: Some(self.color.color(cx)),
+                wavy: false,
+            }),
+            ..Default::default()
+        };
+
+        let len = self.text.len();
+
+        let link_range = Range { start: 0, end: len };
+
+        let styled_text = StyledText::new(self.text)
+            .with_highlights(&text_style, vec![(link_range.clone(), highlight_style)]);
+
+        InteractiveText::new("link", styled_text).on_click(vec![link_range], {
+            move |_, cx| {
+                let url = &self.uri;
+                if url.starts_with("http") {
+                    cx.open_url(url);
+                }
+            }
+        })
     }
 }
