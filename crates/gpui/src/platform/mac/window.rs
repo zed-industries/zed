@@ -926,7 +926,6 @@ impl PlatformWindow for MacWindow {
             if let Some((ix, answer)) = latest_non_cancel_label {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
-                let _: () = msg_send![button, setHasDestructiveAction: YES];
                 if level == PromptLevel::Destructive {
                     let _: () = msg_send![button, setHasDestructiveAction: YES];
                 }
