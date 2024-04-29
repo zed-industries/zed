@@ -34,6 +34,10 @@ use wayland_client::{
     },
     Connection, Dispatch, Proxy, QueueHandle,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
+};
 use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
 };
@@ -68,6 +72,7 @@ const MIN_KEYCODE: u32 = 8;
 pub struct Globals {
     pub qh: QueueHandle<WaylandClientStatePtr>,
     pub compositor: wl_compositor::WlCompositor,
+    pub cursor_shape_manager: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     pub data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     pub wm_base: xdg_wm_base::XdgWmBase,
     pub shm: wl_shm::WlShm,
@@ -93,6 +98,7 @@ impl Globals {
                     (),
                 )
                 .unwrap(),
+            cursor_shape_manager: globals.bind(&qh, 1..=1, ()).ok(),
             data_device_manager: globals
                 .bind(
                     &qh,
@@ -112,9 +118,11 @@ impl Globals {
 }
 
 pub(crate) struct WaylandClientState {
-    serial: u32,
+    serial: u32, // todo(linux): storing a general serial is wrong
+    pointer_serial: u32,
     globals: Globals,
     wl_pointer: Option<wl_pointer::WlPointer>,
+    cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
     // Surface to Window mapping
     windows: HashMap<ObjectId, WaylandWindowStatePtr>,
@@ -137,7 +145,7 @@ pub(crate) struct WaylandClientState {
     mouse_focused_window: Option<WaylandWindowStatePtr>,
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
-    cursor_icon_name: String,
+    cursor_style: Option<CursorStyle>,
     cursor: Cursor,
     clipboard: Option<Clipboard>,
     primary: Option<Primary>,
@@ -196,6 +204,9 @@ impl WaylandClientStatePtr {
             state.primary = None;
             if let Some(wl_pointer) = &state.wl_pointer {
                 wl_pointer.release();
+            }
+            if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                cursor_shape_device.destroy();
             }
             if let Some(data_device) = &state.data_device {
                 data_device.release();
@@ -289,8 +300,10 @@ impl WaylandClient {
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             serial: 0,
+            pointer_serial: 0,
             globals,
             wl_pointer: None,
+            cursor_shape_device: None,
             data_device,
             output_scales: outputs,
             windows: HashMap::default(),
@@ -330,8 +343,8 @@ impl WaylandClient {
             mouse_focused_window: None,
             keyboard_focused_window: None,
             loop_handle: handle.clone(),
-            cursor_icon_name: "arrow".to_string(),
             enter_token: None,
+            cursor_style: None,
             cursor,
             clipboard: Some(clipboard),
             primary: Some(primary),
@@ -375,39 +388,28 @@ impl LinuxClient for WaylandClient {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        // Based on cursor names from https://gitlab.gnome.org/GNOME/adwaita-icon-theme (GNOME)
-        // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
-        // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
-        let cursor_icon_name = match style {
-            CursorStyle::Arrow => "arrow",
-            CursorStyle::IBeam => "text",
-            CursorStyle::Crosshair => "crosshair",
-            CursorStyle::ClosedHand => "grabbing",
-            CursorStyle::OpenHand => "grab",
-            CursorStyle::PointingHand => "pointer",
-            CursorStyle::ResizeLeft => "w-resize",
-            CursorStyle::ResizeRight => "e-resize",
-            CursorStyle::ResizeLeftRight => "ew-resize",
-            CursorStyle::ResizeUp => "n-resize",
-            CursorStyle::ResizeDown => "s-resize",
-            CursorStyle::ResizeUpDown => "ns-resize",
-            CursorStyle::DisappearingItem => "grabbing", // todo(linux) - couldn't find equivalent icon in linux
-            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
-            CursorStyle::OperationNotAllowed => "not-allowed",
-            CursorStyle::DragLink => "alias",
-            CursorStyle::DragCopy => "copy",
-            CursorStyle::ContextualMenu => "context-menu",
-        }
-        .to_string();
-
         let mut state = self.0.borrow_mut();
-        state.cursor_icon_name = cursor_icon_name.clone();
-        if state.mouse_focused_window.is_some() {
-            let wl_pointer = state
-                .wl_pointer
-                .clone()
-                .expect("window is focused by pointer");
-            state.cursor.set_icon(&wl_pointer, &cursor_icon_name);
+
+        let need_update = state
+            .cursor_style
+            .map_or(true, |current_style| current_style != style);
+
+        if need_update {
+            let serial = state.pointer_serial;
+            state.cursor_style = Some(style);
+
+            if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                cursor_shape_device.set_shape(serial, style.to_shape());
+            } else if state.mouse_focused_window.is_some() {
+                // cursor-shape-v1 isn't supported, set the cursor using a surface.
+                let wl_pointer = state
+                    .wl_pointer
+                    .clone()
+                    .expect("window is focused by pointer");
+                state
+                    .cursor
+                    .set_icon(&wl_pointer, serial, &style.to_icon_name());
+            }
         }
     }
 
@@ -516,6 +518,8 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
 }
 
 delegate_noop!(WaylandClientStatePtr: ignore wl_compositor::WlCompositor);
+delegate_noop!(WaylandClientStatePtr: ignore wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
+delegate_noop!(WaylandClientStatePtr: ignore wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
 delegate_noop!(WaylandClientStatePtr: ignore wl_data_device_manager::WlDataDeviceManager);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm::WlShm);
 delegate_noop!(WaylandClientStatePtr: ignore wl_shm_pool::WlShmPool);
@@ -684,7 +688,13 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 let client = state.get_client();
                 let mut state = client.borrow_mut();
-                state.wl_pointer = Some(seat.get_pointer(qh, ()));
+                let pointer = seat.get_pointer(qh, ());
+                state.cursor_shape_device = state
+                    .globals
+                    .cursor_shape_manager
+                    .as_ref()
+                    .map(|cursor_shape_manager| cursor_shape_manager.get_pointer(&pointer, qh, ()));
+                state.wl_pointer = Some(pointer);
             }
         }
     }
@@ -889,7 +899,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
     ) {
         let mut client = this.get_client();
         let mut state = client.borrow_mut();
-        let cursor_icon_name = state.cursor_icon_name.clone();
 
         match event {
             wl_pointer::Event::Enter {
@@ -899,17 +908,21 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 surface_y,
                 ..
             } => {
-                state.serial = serial;
+                state.pointer_serial = serial;
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
                     state.enter_token = Some(());
                     state.mouse_focused_window = Some(window.clone());
-                    state.cursor.mark_dirty();
-                    state.cursor.set_serial_id(serial);
-                    state
-                        .cursor
-                        .set_icon(&wl_pointer, cursor_icon_name.as_str());
+                    if let Some(style) = state.cursor_style {
+                        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                            cursor_shape_device.set_shape(serial, style.to_shape());
+                        } else {
+                            state
+                                .cursor
+                                .set_icon(&wl_pointer, serial, &style.to_icon_name());
+                        }
+                    }
                     drop(state);
                     window.set_focused(true);
                 }
