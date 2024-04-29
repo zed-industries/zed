@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use backtrace::Backtrace;
+use backtrace::{self, Backtrace};
 use chrono::Utc;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AppContext, SemanticVersion};
@@ -8,6 +8,7 @@ use nix::sys::signal::{
     sigaction, SaFlags, SigAction, SigHandler, SigSet,
     Signal::{self, SIGUSR2},
 };
+use parking_lot::Mutex;
 use paths::{CRASHES_DIR, CRASHES_RETIRED_DIR};
 use release_channel::ReleaseChannel;
 use release_channel::RELEASE_CHANNEL;
@@ -200,30 +201,50 @@ pub fn monitor_main_thread_hangs(
 
     // Initialize SIGUSR2 handler to send a backrace to a channel.
     let (backtrace_tx, backtrace_rx) = mpsc::channel();
-    static BACKTRACE_SENDER: OnceLock<mpsc::Sender<backtrace::Backtrace>> = OnceLock::new();
+    static BACKTRACE: Mutex<Vec<backtrace::Frame>> = Mutex::new(Vec::new());
+    static BACKTRACE_SENDER: OnceLock<mpsc::Sender<()>> = OnceLock::new();
     BACKTRACE_SENDER.get_or_init(|| backtrace_tx);
-    unsafe {
-        extern "C" fn handle_sigusr2(_i: c_int) {
-            BACKTRACE_SENDER
-                .get()
-                .unwrap()
-                // NOTE: this allocates, it shouldn't
-                .send(backtrace::Backtrace::new())
-                .ok();
-        }
+    BACKTRACE.lock().reserve(100);
 
-        let mut mask = SigSet::empty();
-        mask.add(SIGUSR2);
-        sigaction(
-            Signal::SIGUSR2,
-            &SigAction::new(
-                SigHandler::Handler(handle_sigusr2),
-                SaFlags::SA_RESTART,
-                mask,
-            ),
-        )
-        .log_err();
+    fn handle_backtrace_signal() {
+        unsafe {
+            extern "C" fn handle_sigusr2(_i: c_int) {
+                unsafe {
+                    // ASYNC SIGNAL SAFETY: This lock is only accessed one other time,
+                    // which can only be triggered by This signal handler. In addition,
+                    // this signal handler is immediately removed by SA_RESETHAND, and this
+                    // signal handler cannot be re-entrant due to to the SIGUSR2 mask defined
+                    // below
+                    let mut bt = BACKTRACE.lock();
+                    bt.clear();
+                    backtrace::trace_unsynchronized(|frame| {
+                        if bt.len() < bt.capacity() {
+                            bt.push(frame.clone());
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                }
+
+                BACKTRACE_SENDER.get().unwrap().send(()).ok();
+            }
+
+            let mut mask = SigSet::empty();
+            mask.add(SIGUSR2);
+            sigaction(
+                Signal::SIGUSR2,
+                &SigAction::new(
+                    SigHandler::Handler(handle_sigusr2),
+                    SaFlags::SA_RESTART | SaFlags::SA_RESETHAND,
+                    mask,
+                ),
+            )
+            .log_err();
+        }
     }
+
+    handle_backtrace_signal();
     let main_thread = pthread::pthread_self();
 
     let (mut tx, mut rx) = futures::channel::mpsc::channel(3);
@@ -243,6 +264,7 @@ pub fn monitor_main_thread_hangs(
                             if e.into_send_error().is_full() {
                                 pthread::pthread_kill(main_thread, SIGUSR2).log_err();
                             }
+                            // Only detect the first hang
                             break;
                         }
                     }
@@ -255,26 +277,47 @@ pub fn monitor_main_thread_hangs(
         .clone()
         .spawn(async move {
             loop {
-                while let Some(backtrace) = backtrace_rx.recv().ok() {
-                    println!("Suspected hang on main thread:\n{:?}", backtrace);
+                while let Some(_) = backtrace_rx.recv().ok() {
                     if !telemetry_settings.diagnostics {
                         return;
                     }
 
-                    let backtrace = backtrace
-                        .frames()
+                    // ASYNC SIGNAL SAFETY: This lock is only accessed _after_
+                    // the backtrace transmitter has fired, which itself is only done
+                    // by the signal handler. And due to SA_RESETHAND  the signal handler
+                    // will not run again until `handle_backtrace_signal` is called.
+                    let raw_backtrace = BACKTRACE.lock().drain(..).collect::<Vec<_>>();
+                    let backtrace: Vec<_> = raw_backtrace
                         .into_iter()
-                        .map(|frame| BacktraceFrame {
-                            ip: frame.ip() as usize,
-                            symbol_addr: frame.symbol_address() as usize,
-                            base: frame.module_base_address().map(|addr| addr as usize),
-                            symbols: frame
-                                .symbols()
-                                .iter()
-                                .filter_map(|symbol| Some(format!("{:#}", symbol.name()?)))
-                                .collect(),
+                        .map(|frame| {
+                            let mut btf = BacktraceFrame {
+                                ip: frame.ip() as usize,
+                                symbol_addr: frame.symbol_address() as usize,
+                                base: frame.module_base_address().map(|addr| addr as usize),
+                                symbols: vec![],
+                            };
+
+                            backtrace::resolve_frame(&frame, |symbol| {
+                                if let Some(name) = symbol.name() {
+                                    btf.symbols.push(name.to_string());
+                                }
+                            });
+
+                            btf
                         })
                         .collect();
+
+                    // IMPORTANT: Don't move this to before `BACKTRACE.lock()`
+                    handle_backtrace_signal();
+
+                    log::error!(
+                        "Suspected hang on main thread:\n{}",
+                        backtrace
+                            .iter()
+                            .flat_map(|bt| bt.symbols.first().as_ref().map(|s| s.as_str()))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    );
 
                     let report = HangReport {
                         backtrace,
