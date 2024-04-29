@@ -9603,6 +9603,319 @@ async fn test_toggled_diff_base_change(
 }
 
 #[gpui::test]
+async fn test_folld_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            println!("hello");
+
+            println!("world");
+        }
+
+        fn another() {
+            println!("another");
+        }
+
+        fn another2() {
+            println!("another2");
+        }
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //ˇ»
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    3..3
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    5..7
+                ),
+                ("".to_string(), DiffHunkStatus::Added, 9..11),
+                ("".to_string(), DiffHunkStatus::Added, 15..16),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    18..18
+                ),
+            ]
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_git_hunk_diffs(&ExpandAllGitHunkDiffs, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //ˇ»
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![9..11, 13..15, 19..20]
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    1..1
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    5..5
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    9..11
+                ),
+                ("".to_string(), DiffHunkStatus::Added, 13..15),
+                ("".to_string(), DiffHunkStatus::Added, 19..20),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    23..23
+                ),
+            ],
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| editor.fold_selected_ranges(&FoldSelectedRanges, cx));
+    cx.assert_editor_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //ˇ»
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![5..6],
+            "Only one hunk is left not folded, its highlight should be visible"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    0..0
+                ),
+                ("".to_string(), DiffHunkStatus::Added, 0..1),
+                ("".to_string(), DiffHunkStatus::Added, 5..6),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    9..9
+                ),
+            ],
+            "Hunk list should still return shifted folded hunks"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            vec![
+                ("".to_string(), DiffHunkStatus::Added, 5..6),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    9..9
+                ),
+            ],
+            "Only non-folded hunks should be left expanded"
+        );
+    });
+
+    cx.update_editor(|editor, cx| editor.unfold_lines(&UnfoldLines, cx));
+    cx.assert_editor_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //ˇ»
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![15..16],
+            // TODO kb change this and allow to restore the folded hunks?
+            "The inly non-folded hunk should be shifted down by the unfold and keep its highlights. \
+            Folded hunks do not get restored after unfold."
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    3..3
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    5..7
+                ),
+                ("".to_string(), DiffHunkStatus::Added, 9..11),
+                ("".to_string(), DiffHunkStatus::Added, 15..16),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    19..19
+                ),
+            ],
+            "Hunk list should keep all diff hunks, shifted back due to unfold and hidden diff expands"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            vec![
+                ("".to_string(), DiffHunkStatus::Added, 15..16),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    19..19
+                ),
+            ],
+            "Only non-folded hunks should be left expanded after unfold"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_edits_around_toggled_additions(
     executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
