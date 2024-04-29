@@ -207,6 +207,13 @@ trait AnySettingValue: 'static + Send + Sync {
 struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
+    pub fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
+    where
+        C: BorrowAppContext,
+    {
+        cx.update_global(f)
+    }
+
     /// Add a new type of setting to the store.
     pub fn register_setting<T: Settings>(&mut self, cx: &mut AppContext) {
         let setting_type_id = TypeId::of::<T>();
