@@ -17,6 +17,7 @@ use x11rb::{
         xinput,
         xproto::{self, ConnectionExt as _, CreateWindowAux},
     },
+    resource_manager::Database,
     wrapper::ConnectionExt,
     xcb_ffi::XCBConnection,
 };
@@ -27,6 +28,7 @@ use std::{
     iter::Zip,
     mem,
     num::NonZeroU32,
+    ops::Div,
     ptr::NonNull,
     rc::Rc,
     sync::{self, Arc},
@@ -128,6 +130,7 @@ impl rwh::HasDisplayHandle for X11Window {
 }
 
 impl X11WindowState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
@@ -136,6 +139,7 @@ impl X11WindowState {
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
+        scale_factor: f32,
     ) -> Self {
         let x_screen_index = params
             .display_id
@@ -246,7 +250,7 @@ impl X11WindowState {
             display: Rc::new(X11Display::new(xcb_connection, x_screen_index).unwrap()),
             raw,
             bounds: params.bounds.map(|v| v.0),
-            scale_factor: 1.0,
+            scale_factor,
             renderer: BladeRenderer::new(gpu, gpu_extent),
             atoms: *atoms,
 
@@ -291,6 +295,7 @@ impl Drop for X11Window {
 }
 
 impl X11Window {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
@@ -299,6 +304,7 @@ impl X11Window {
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
+        scale_factor: f32,
     ) -> Self {
         Self(X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -309,6 +315,7 @@ impl X11Window {
                 x_main_screen_index,
                 x_window,
                 atoms,
+                scale_factor,
             ))),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb_connection: xcb_connection.clone(),
@@ -402,7 +409,7 @@ impl X11WindowStatePtr {
 
 impl PlatformWindow for X11Window {
     fn bounds(&self) -> Bounds<DevicePixels> {
-        self.0.state.borrow_mut().bounds.map(|v| v.into())
+        self.0.state.borrow().bounds.map(|v| v.into())
     }
 
     // todo(linux)
@@ -416,11 +423,16 @@ impl PlatformWindow for X11Window {
     }
 
     fn content_size(&self) -> Size<Pixels> {
-        self.0.state.borrow_mut().content_size()
+        // We divide by the scale factor here because this value is queried to determine how much to draw,
+        // but it will be multiplied later by the scale to adjust for scaling.
+        let state = self.0.state.borrow();
+        state
+            .content_size()
+            .map(|size| size.div(state.scale_factor))
     }
 
     fn scale_factor(&self) -> f32 {
-        self.0.state.borrow_mut().scale_factor
+        self.0.state.borrow().scale_factor
     }
 
     // todo(linux)

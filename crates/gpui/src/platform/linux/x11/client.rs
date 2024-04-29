@@ -16,6 +16,7 @@ use x11rb::protocol::xinput::{ConnectionExt, ScrollClass};
 use x11rb::protocol::xkb::ConnectionExt as _;
 use x11rb::protocol::xproto::ConnectionExt as _;
 use x11rb::protocol::{randr, xinput, xkb, xproto, Event};
+use x11rb::resource_manager::Database;
 use x11rb::xcb_ffi::XCBConnection;
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb as xkbc;
@@ -23,9 +24,9 @@ use xkbcommon::xkb as xkbc;
 use crate::platform::linux::LinuxClient;
 use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
-    modifiers_from_xinput_info, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId, Modifiers,
-    ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta, Size,
-    TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, CursorStyle, DisplayId,
+    Modifiers, ModifiersChangedEvent, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
+    Size, TouchPhase, WindowParams, X11Window,
 };
 
 use super::{super::SCROLL_LINES, X11Display, X11WindowStatePtr, XcbAtoms};
@@ -58,8 +59,11 @@ pub struct X11ClientState {
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
+    pub(crate) scale_factor: f32,
+
     pub(crate) xcb_connection: Rc<XCBConnection>,
     pub(crate) x_root_index: usize,
+    pub(crate) resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
     pub(crate) focused_window: Option<xproto::Window>,
@@ -178,6 +182,31 @@ impl X11Client {
             xkbc::x11::state_new_from_device(&xkb_keymap, &xcb_connection, xkb_device_id)
         };
 
+        let screen = xcb_connection.setup().roots.get(x_root_index).unwrap();
+
+        // Values from `Database::GET_RESOURCE_DATABASE`
+        let resource_manager = xcb_connection
+            .get_property(
+                false,
+                screen.root,
+                xproto::AtomEnum::RESOURCE_MANAGER,
+                xproto::AtomEnum::STRING,
+                0,
+                100_000_000,
+            )
+            .unwrap();
+        let resource_manager = resource_manager.reply().unwrap();
+
+        // todo(linux): read hostname
+        let resource_database = Database::new_from_default(&resource_manager, "HOSTNAME".into());
+
+        let scale_factor = resource_database
+            .get_value("Xft.dpi", "Xft.dpi")
+            .ok()
+            .flatten()
+            .map(|dpi: f32| dpi / 96.0)
+            .unwrap_or(1.0);
+
         let clipboard = X11ClipboardContext::<Clipboard>::new().unwrap();
         let primary = X11ClipboardContext::<Primary>::new().unwrap();
 
@@ -212,9 +241,11 @@ impl X11Client {
             last_click: Instant::now(),
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
+            scale_factor,
 
             xcb_connection,
             x_root_index,
+            resource_database,
             atoms,
             windows: HashMap::default(),
             focused_window: None,
@@ -345,8 +376,10 @@ impl X11Client {
                 let mut state = self.0.borrow_mut();
 
                 let modifiers = modifiers_from_state(event.state);
-                let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
+                let position = point(
+                    px(event.event_x as f32 / state.scale_factor),
+                    px(event.event_y as f32 / state.scale_factor),
+                );
                 if let Some(button) = button_of_key(event.detail) {
                     let click_elapsed = state.last_click.elapsed();
 
@@ -378,8 +411,10 @@ impl X11Client {
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
                 let modifiers = modifiers_from_state(event.state);
-                let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
+                let position = point(
+                    px(event.event_x as f32 / state.scale_factor),
+                    px(event.event_y as f32 / state.scale_factor),
+                );
                 if let Some(button) = button_of_key(event.detail) {
                     let click_count = state.current_count;
                     drop(state);
@@ -393,11 +428,12 @@ impl X11Client {
             }
             Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
-
-                let position = Point::new(
-                    (event.event_x as f32 / u16::MAX as f32).into(),
-                    (event.event_y as f32 / u16::MAX as f32).into(),
+                let state = self.0.borrow();
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
+                drop(state);
                 let modifiers = modifiers_from_xinput_info(event.mods);
 
                 let axisvalues = event
@@ -471,10 +507,14 @@ impl X11Client {
             }
             Event::MotionNotify(event) => {
                 let window = self.get_window(event.event)?;
+                let state = self.0.borrow();
                 let pressed_button = super::button_from_state(event.state);
-                let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
+                let position = point(
+                    px(event.event_x as f32 / state.scale_factor),
+                    px(event.event_y as f32 / state.scale_factor),
+                );
                 let modifiers = modifiers_from_state(event.state);
+                drop(state);
                 window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
                     pressed_button,
                     position,
@@ -483,10 +523,14 @@ impl X11Client {
             }
             Event::LeaveNotify(event) => {
                 let window = self.get_window(event.event)?;
+                let state = self.0.borrow();
                 let pressed_button = super::button_from_state(event.state);
-                let position =
-                    Point::new((event.event_x as f32).into(), (event.event_y as f32).into());
+                let position = point(
+                    px(event.event_x as f32 / state.scale_factor),
+                    px(event.event_y as f32 / state.scale_factor),
+                );
                 let modifiers = modifiers_from_state(event.state);
+                drop(state);
                 window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
                     pressed_button,
                     position,
@@ -553,6 +597,7 @@ impl LinuxClient for X11Client {
             state.x_root_index,
             x_window,
             &state.atoms,
+            state.scale_factor,
         );
 
         let screen_resources = state
