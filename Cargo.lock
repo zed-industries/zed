@@ -12723,6 +12723,7 @@ dependencies = [
  "tab_switcher",
  "task",
  "tasks_ui",
+ "telemetry_events",
  "terminal_view",
  "theme",
  "theme_selector",

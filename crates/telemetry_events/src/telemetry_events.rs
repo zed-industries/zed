@@ -135,3 +135,21 @@ pub struct ExtensionEvent {
 pub struct AppEvent {
     pub operation: String,
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BacktraceFrame {
+    pub ip: usize,
+    pub symbol_addr: usize,
+    pub base: Option<usize>,
+    pub symbols: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HangReport {
+    pub backtrace: Vec<BacktraceFrame>,
+    pub app_version: Option<SemanticVersion>,
+    pub os_name: String,
+    pub os_version: Option<SemanticVersion>,
+    pub architecture: String,
+    pub installation_id: Option<String>,
+}
