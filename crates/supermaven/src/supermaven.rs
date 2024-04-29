@@ -258,7 +258,7 @@ impl SupermavenAgent {
         Ok(())
     }
 
-    fn handle_message(&mut self, message: SupermavenMessage, _cx: &mut AppContext) {
+    fn handle_message(&mut self, message: SupermavenMessage, cx: &mut AppContext) {
         match message {
             SupermavenMessage::ActivationRequest(request) => {
                 let Some(activate_url) = request.activate_url else {
