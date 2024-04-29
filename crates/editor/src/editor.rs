@@ -9542,7 +9542,7 @@ impl Editor {
                 |mut unique_rows, (highlight_order, anchor_range, hsla)| {
                     let start_row = anchor_range.start.to_display_point(&snapshot).row();
                     let end_row = anchor_range.end.to_display_point(&snapshot).row();
-                    for row in start_row..end_row {
+                    for row in start_row..=end_row {
                         let used_index =
                             used_highlight_orders.entry(row).or_insert(*highlight_order);
                         if highlight_order >= used_index {
