@@ -1190,6 +1190,7 @@ impl EditorElement {
             editor
                 .expanded_hunks
                 .iter()
+                .filter(|expanded_hunk| !expanded_hunk.folded)
                 .map(|expanded_hunk| {
                     let start_row = expanded_hunk
                         .hunk_range
@@ -1208,7 +1209,7 @@ impl EditorElement {
 
         buffer_snapshot
             .git_diff_hunks_in_range(buffer_start_row..buffer_end_row)
-            .map(|hunk| diff_hunk_to_display(hunk, snapshot))
+            .map(|hunk| diff_hunk_to_display(&hunk, snapshot))
             .dedup()
             .map(|hunk| {
                 let hitbox = if let DisplayDiffHunk::Unfolded {

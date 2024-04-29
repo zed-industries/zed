@@ -493,6 +493,7 @@ struct ExpandedGitHunk {
     diff_base_byte_range: Range<usize>,
     diff_base_version: usize,
     status: DiffHunkStatus,
+    folded: bool,
 }
 
 #[derive(Clone)]
@@ -7658,7 +7659,7 @@ impl Editor {
     ) -> bool {
         let display_point = initial_point.to_display_point(snapshot);
         let mut hunks = hunks
-            .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
+            .map(|hunk| diff_hunk_to_display(&hunk, &snapshot))
             .filter(|hunk| {
                 if is_wrapped {
                     true
@@ -8794,12 +8795,26 @@ impl Editor {
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut ranges = ranges.into_iter().peekable();
+        let mut unfold_ranges = Vec::new();
+        let mut buffers_affected = HashMap::default();
+        let multi_buffer = self.buffer().read(cx);
+        for range in ranges {
+            if let Some((_, buffer, _)) = multi_buffer.excerpt_containing(range.start.clone(), cx) {
+                buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
+            };
+            unfold_ranges.push(range);
+        }
+
+        let mut ranges = unfold_ranges.into_iter().peekable();
         if ranges.peek().is_some() {
             self.display_map
                 .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
+            }
+
+            for buffer in buffers_affected.into_values() {
+                self.sync_expanded_diff_hunks(&buffer, cx);
             }
 
             cx.notify();
@@ -9129,6 +9144,7 @@ impl Editor {
         let display_rows_with_expanded_hunks = self
             .expanded_hunks
             .iter()
+            .filter(|hunk| !hunk.folded)
             .map(|hunk| &hunk.hunk_range)
             .map(|anchor_range| {
                 (
@@ -9170,6 +9186,9 @@ impl Editor {
         let mut blocks_to_remove = HashSet::default();
         let mut hunks_to_expand = Vec::new();
         self.expanded_hunks.retain(|expanded_hunk| {
+            if expanded_hunk.folded {
+                return true;
+            }
             let expanded_hunk_row_range = expanded_hunk
                 .hunk_range
                 .start
@@ -9182,7 +9201,7 @@ impl Editor {
                     .row();
             let mut retain = true;
             while let Some(hunk_to_toggle) = hunks_to_toggle.peek() {
-                match diff_hunk_to_display(hunk_to_toggle.clone(), snapshot) {
+                match diff_hunk_to_display(hunk_to_toggle, snapshot) {
                     DisplayDiffHunk::Folded { .. } => {
                         hunks_to_toggle.next();
                         continue;
@@ -9320,6 +9339,7 @@ impl Editor {
                 hunk_range: hunk_start..hunk_end,
                 diff_base_version,
                 status: hunk.status,
+                folded: false,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
             },
         );
@@ -10379,7 +10399,7 @@ impl Editor {
         let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.len());
         let mut blocks_to_remove = HashSet::default();
         let mut hunks_to_reexpand = Vec::with_capacity(self.expanded_hunks.len());
-        self.expanded_hunks.retain(|expanded_hunk| {
+        self.expanded_hunks.retain_mut(|expanded_hunk| {
             if expanded_hunk.hunk_range.start.buffer_id != Some(buffer_snapshot.remote_id()) {
                 return true;
             }
@@ -10397,10 +10417,20 @@ impl Editor {
             let mut retain = false;
             if expanded_hunk.diff_base_version == buffer.read(cx).diff_base_version() {
                 while let Some(buffer_hunk) = recalculated_hunks.peek() {
-                    match diff_hunk_to_display(buffer_hunk.clone(), &snapshot) {
+                    match diff_hunk_to_display(buffer_hunk, &snapshot) {
                         DisplayDiffHunk::Folded { display_row } => {
                             recalculated_hunks.next();
-                            if expanded_hunk_display_range.contains(&display_row) {
+                            if !expanded_hunk.folded
+                                && expanded_hunk_display_range
+                                    .to_inclusive()
+                                    .contains(&display_row)
+                            {
+                                retain = true;
+                                expanded_hunk.folded = true;
+                                highlights_to_remove.push(expanded_hunk.hunk_range.clone());
+                                if let Some(block) = expanded_hunk.block.take() {
+                                    blocks_to_remove.insert(block);
+                                }
                                 break;
                             } else {
                                 continue;
@@ -10419,7 +10449,8 @@ impl Editor {
                             } else if expanded_hunk_display_range.end < hunk_display_range.start {
                                 break;
                             } else {
-                                if expanded_hunk_display_range == hunk_display_range
+                                if !expanded_hunk.folded
+                                    && expanded_hunk_display_range == hunk_display_range
                                     && expanded_hunk.status == buffer_hunk.status()
                                     && expanded_hunk.diff_base_byte_range
                                         == buffer_hunk.diff_base_byte_range

@@ -118,6 +118,7 @@ pub fn expanded_hunks(
     editor
         .expanded_hunks
         .iter()
+        .filter(|hunk| !hunk.folded)
         .map(|expanded_hunk| {
             let hunk_display_range = expanded_hunk
                 .hunk_range

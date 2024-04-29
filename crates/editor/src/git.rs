@@ -49,7 +49,7 @@ impl DisplayDiffHunk {
     }
 }
 
-pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> DisplayDiffHunk {
+pub fn diff_hunk_to_display(hunk: &DiffHunk<u32>, snapshot: &DisplaySnapshot) -> DisplayDiffHunk {
     let hunk_start_point = Point::new(hunk.associated_range.start, 0);
     let hunk_start_point_sub = Point::new(hunk.associated_range.start.saturating_sub(1), 0);
     let hunk_end_point_sub = Point::new(
@@ -98,7 +98,7 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
             display_row_range: start..end,
             multi_buffer_range: multi_buffer_start..multi_buffer_end,
             status: hunk.status(),
-            diff_base_byte_range: hunk.diff_base_byte_range,
+            diff_base_byte_range: hunk.diff_base_byte_range.clone(),
         }
     }
 }
