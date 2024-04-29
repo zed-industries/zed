@@ -84,7 +84,7 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use task::TaskTemplate;
+use task::{TaskContext, TaskTemplate};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
@@ -1271,6 +1271,8 @@ struct CodeActionsMenu {
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
     deployed_from_indicator: Option<u32>,
+    /// None if `actions` does not contain any tasks
+    task_context: Option<TaskContext>,
 }
 
 impl CodeActionsMenu {
@@ -1369,8 +1371,16 @@ impl CodeActionsMenu {
                             .when_some(action.as_task(), |this, task| {
                                 this.on_mouse_down(
                                     MouseButton::Left,
-                                    cx.listener(move |_, _, cx| {
+                                    cx.listener(move |editor, _, cx| {
                                         cx.stop_propagation();
+                                        if let Some(task) = editor.confirm_code_action(
+                                            &ConfirmCodeAction {
+                                                item_ix: Some(item_ix),
+                                            },
+                                            cx,
+                                        ) {
+                                            task.detach_and_log_err(cx)
+                                        }
                                     }),
                                 )
                                 .child(SharedString::from(task.label.clone()))
@@ -3815,6 +3825,16 @@ impl Editor {
                     };
                     this.completion_tasks.clear();
                     this.discard_inline_completion(cx);
+                    let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
+                        |(_, (workspace, _))| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    tasks::task_context_with_editor(workspace, this, cx)
+                                })
+                                .ok()
+                                .flatten()
+                        },
+                    );
                     *this.context_menu.write() = Some(ContextMenu::CodeActions(CodeActionsMenu {
                         buffer,
                         actions: CodeActionContents {
@@ -3824,6 +3844,7 @@ impl Editor {
                         selected_item: Default::default(),
                         scroll_handle: UniformListScrollHandle::default(),
                         deployed_from_indicator,
+                        task_context,
                     }));
                     cx.notify();
                 }
@@ -3834,7 +3855,7 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    pub fn confirm_code_action(
+    pub(crate) fn confirm_code_action(
         &mut self,
         action: &ConfirmCodeAction,
         cx: &mut ViewContext<Self>,
@@ -3850,20 +3871,39 @@ impl Editor {
         let buffer = actions_menu.buffer;
         let workspace = self.workspace()?;
 
-        let apply_code_actions =
-            workspace
-                .read(cx)
-                .project()
-                .clone()
-                .update(cx, |project, cx| {
-                    let action = action.as_code_action()?.clone();
-                    Some(project.apply_code_action(buffer, action, true, cx))
-                })?; //todo: this is wrong, as we should take care of task dispatch too.
-        let workspace = workspace.downgrade();
-        Some(cx.spawn(|editor, cx| async move {
-            let project_transaction = apply_code_actions.await?;
-            Self::open_project_transaction(&editor, workspace, project_transaction, title, cx).await
-        }))
+        match action {
+            CodeActionsItem::Task(task) => workspace.update(cx, |_, cx| {
+                if let Some(resolved_task) = task
+                    .resolve_task("base", actions_menu.task_context.as_ref().unwrap())
+                    .and_then(|task| task.resolved)
+                {
+                    cx.emit(workspace::Event::SpawnTask(resolved_task));
+                }
+
+                None
+            }),
+            CodeActionsItem::CodeAction(action) => {
+                let apply_code_actions = workspace
+                    .read(cx)
+                    .project()
+                    .clone()
+                    .update(cx, |project, cx| {
+                        project.apply_code_action(buffer, action, true, cx)
+                    });
+                let workspace = workspace.downgrade();
+                Some(cx.spawn(|editor, cx| async move {
+                    let project_transaction = apply_code_actions.await?;
+                    Self::open_project_transaction(
+                        &editor,
+                        workspace,
+                        project_transaction,
+                        title,
+                        cx,
+                    )
+                    .await
+                }))
+            }
+        }
     }
 
     async fn open_project_transaction(
