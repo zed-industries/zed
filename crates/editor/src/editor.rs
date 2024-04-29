@@ -130,7 +130,7 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::item::ItemHandle;
+use workspace::item::{ItemHandle, PreviewTabsSettings};
 use workspace::notifications::NotificationId;
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
@@ -1610,6 +1610,7 @@ impl Editor {
         {
             workspace.add_item_to_active_pane(
                 Box::new(cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
+                None,
                 cx,
             );
         }
@@ -3781,7 +3782,7 @@ impl Editor {
             let project = workspace.project().clone();
             let editor =
                 cx.new_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
                     &ranges_to_highlight,
@@ -7526,13 +7527,14 @@ impl Editor {
         } else {
             selection.head()
         };
-
+        let snapshot = self.snapshot(cx);
         loop {
             let mut diagnostics = if direction == Direction::Prev {
                 buffer.diagnostics_in_range::<_, usize>(0..search_start, true)
             } else {
                 buffer.diagnostics_in_range::<_, usize>(search_start..buffer.len(), false)
-            };
+            }
+            .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start));
             let group = diagnostics.find_map(|entry| {
                 if entry.diagnostic.is_primary
                     && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
@@ -8102,14 +8104,23 @@ impl Editor {
                 cx,
             );
         });
+
         let item = Box::new(editor);
+        let item_id = item.item_id();
+
         if split {
             workspace.split_item(SplitDirection::Right, item.clone(), cx);
         } else {
-            workspace.add_item_to_active_pane(item.clone(), cx);
+            let destination_index = workspace.active_pane().update(cx, |pane, cx| {
+                if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
+                    pane.close_current_preview_item(cx)
+                } else {
+                    None
+                }
+            });
+            workspace.add_item_to_active_pane(item.clone(), destination_index, cx);
         }
-        workspace.active_pane().clone().update(cx, |pane, cx| {
-            let item_id = item.item_id();
+        workspace.active_pane().update(cx, |pane, cx| {
             pane.set_preview_item_id(Some(item_id), cx);
         });
     }
@@ -8483,6 +8494,7 @@ impl Editor {
 
     fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) -> bool {
         self.dismiss_diagnostics(cx);
+        let snapshot = self.snapshot(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
 
@@ -8491,7 +8503,13 @@ impl Editor {
             let mut group_end = Point::zero();
             let diagnostic_group = buffer
                 .diagnostic_group::<Point>(group_id)
-                .map(|entry| {
+                .filter_map(|entry| {
+                    if snapshot.is_line_folded(entry.range.start.row)
+                        && (entry.range.start.row == entry.range.end.row
+                            || snapshot.is_line_folded(entry.range.end.row))
+                    {
+                        return None;
+                    }
                     if entry.range.end > group_end {
                         group_end = entry.range.end;
                     }
@@ -8499,7 +8517,7 @@ impl Editor {
                         primary_range = Some(entry.range.clone());
                         primary_message = Some(entry.diagnostic.message.clone());
                     }
-                    entry
+                    Some(entry)
                 })
                 .collect::<Vec<_>>();
             let primary_range = primary_range?;
@@ -8728,6 +8746,18 @@ impl Editor {
             }
 
             cx.notify();
+
+            if let Some(active_diagnostics) = self.active_diagnostics.take() {
+                // Clear diagnostics block when folding a range that contains it.
+                let snapshot = self.snapshot(cx);
+                if snapshot.intersects_fold(active_diagnostics.primary_range.start) {
+                    drop(snapshot);
+                    self.active_diagnostics = Some(active_diagnostics);
+                    self.dismiss_diagnostics(cx);
+                } else {
+                    self.active_diagnostics = Some(active_diagnostics);
+                }
+            }
         }
     }
 

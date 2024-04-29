@@ -921,7 +921,7 @@ fn db_key_for_path(path: &Arc<Path>) -> String {
 mod tests {
     use super::*;
     use futures::{future::BoxFuture, FutureExt};
-    use gpui::{Global, TestAppContext};
+    use gpui::TestAppContext;
     use language::language_settings::AllLanguageSettings;
     use project::Project;
     use settings::SettingsStore;

@@ -111,7 +111,13 @@ pub struct Delete {
     pub skip_prompt: bool,
 }
 
-impl_actions!(project_panel, [Delete]);
+#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+pub struct Trash {
+    #[serde(default)]
+    pub skip_prompt: bool,
+}
+
+impl_actions!(project_panel, [Delete, Trash]);
 
 actions!(
     project_panel,
@@ -134,6 +140,7 @@ actions!(
         NewSearchInDirectory,
         UnfoldDirectory,
         FoldDirectory,
+        SelectParent,
     ]
 );
 
@@ -464,7 +471,8 @@ impl ProjectPanel {
                             .separator()
                             .action("Rename", Box::new(Rename))
                             .when(!is_root, |menu| {
-                                menu.action("Delete", Box::new(Delete { skip_prompt: false }))
+                                menu.action("Trash", Box::new(Trash { skip_prompt: false }))
+                                    .action("Delete", Box::new(Delete { skip_prompt: false }))
                             })
                             .when(is_local & is_root, |menu| {
                                 menu.separator()
@@ -879,16 +887,25 @@ impl ProjectPanel {
         }
     }
 
+    fn trash(&mut self, action: &Trash, cx: &mut ViewContext<Self>) {
+        self.remove(true, action.skip_prompt, cx);
+    }
+
     fn delete(&mut self, action: &Delete, cx: &mut ViewContext<Self>) {
+        self.remove(false, action.skip_prompt, cx);
+    }
+
+    fn remove(&mut self, trash: bool, skip_prompt: bool, cx: &mut ViewContext<'_, ProjectPanel>) {
         maybe!({
             let Selection { entry_id, .. } = self.selection?;
             let path = self.project.read(cx).path_for_entry(entry_id, cx)?.path;
             let file_name = path.file_name()?;
 
-            let answer = (!action.skip_prompt).then(|| {
+            let operation = if trash { "Trash" } else { "Delete" };
+            let answer = (!skip_prompt).then(|| {
                 cx.prompt(
                     PromptLevel::Destructive,
-                    &format!("Delete {file_name:?}?"),
+                    &format!("{operation:?} {file_name:?}?",),
                     None,
                     &["Delete", "Cancel"],
                 )
@@ -902,7 +919,7 @@ impl ProjectPanel {
                 }
                 this.update(&mut cx, |this, cx| {
                     this.project
-                        .update(cx, |project, cx| project.delete_entry(entry_id, cx))
+                        .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
                         .ok_or_else(|| anyhow!("no such entry"))
                 })??
                 .await
@@ -983,6 +1000,23 @@ impl ProjectPanel {
                     self.selection = Some(Selection {
                         worktree_id: *worktree_id,
                         entry_id: entry.id,
+                    });
+                    self.autoscroll(cx);
+                    cx.notify();
+                }
+            }
+        } else {
+            self.select_first(&SelectFirst {}, cx);
+        }
+    }
+
+    fn select_parent(&mut self, _: &SelectParent, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            if let Some(parent) = entry.path.parent() {
+                if let Some(parent_entry) = worktree.entry_for_path(parent) {
+                    self.selection = Some(Selection {
+                        worktree_id: worktree.id(),
+                        entry_id: parent_entry.id,
                     });
                     self.autoscroll(cx);
                     cx.notify();
@@ -1772,6 +1806,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::select_prev))
                 .on_action(cx.listener(Self::select_first))
                 .on_action(cx.listener(Self::select_last))
+                .on_action(cx.listener(Self::select_parent))
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
@@ -1789,6 +1824,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
                         .on_action(cx.listener(Self::delete))
+                        .on_action(cx.listener(Self::trash))
                         .on_action(cx.listener(Self::cut))
                         .on_action(cx.listener(Self::copy))
                         .on_action(cx.listener(Self::paste))

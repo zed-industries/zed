@@ -1,7 +1,7 @@
 use assistant_tooling::ToolRegistry;
 use client::User;
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{FontStyle, FontWeight, Global, TextStyle, View, WeakView, WhiteSpace};
+use gpui::{FontStyle, FontWeight, TextStyle, View, WeakView, WhiteSpace};
 use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;

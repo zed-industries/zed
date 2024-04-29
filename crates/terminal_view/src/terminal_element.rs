@@ -1,11 +1,11 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, FocusHandle, Font,
-    FontStyle, FontWeight, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton,
-    MouseMoveEvent, Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle,
-    Styled, TextRun, TextStyle, UnderlineStyle, WeakView, WhiteSpace, WindowContext,
-    WindowTextSystem,
+    div, fill, point, px, relative, AnyElement, Bounds, DispatchPhase, Element, ElementId,
+    FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle, Hitbox, Hsla,
+    InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId, Model, ModelContext,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UnderlineStyle,
+    WeakView, WhiteSpace, WindowContext, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -544,26 +544,37 @@ impl Element for TerminalElement {
     type RequestLayoutState = ();
     type PrepaintState = LayoutState;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
-        self.interactivity.occlude_mouse();
-        let layout_id = self.interactivity.request_layout(cx, |mut style, cx| {
-            style.size.width = relative(1.).into();
-            style.size.height = relative(1.).into();
-            let layout_id = cx.request_layout(&style, None);
+    fn id(&self) -> Option<ElementId> {
+        self.interactivity.element_id.clone()
+    }
 
-            layout_id
-        });
+    fn request_layout(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        self.interactivity.occlude_mouse();
+        let layout_id = self
+            .interactivity
+            .request_layout(global_id, cx, |mut style, cx| {
+                style.size.width = relative(1.).into();
+                style.size.height = relative(1.).into();
+                let layout_id = cx.request_layout(&style, None);
+
+                layout_id
+            });
         (layout_id, ())
     }
 
     fn prepaint(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Self::PrepaintState {
         self.interactivity
-            .prepaint(bounds, bounds.size, cx, |_, _, hitbox, cx| {
+            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
                 let hitbox = hitbox.unwrap();
                 let settings = ThemeSettings::get_global(cx).clone();
 
@@ -775,6 +786,7 @@ impl Element for TerminalElement {
 
     fn paint(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
@@ -802,7 +814,7 @@ impl Element for TerminalElement {
         let cursor = layout.cursor.take();
         let hyperlink_tooltip = layout.hyperlink_tooltip.take();
         self.interactivity
-            .paint(bounds, Some(&layout.hitbox), cx, |_, cx| {
+            .paint(global_id, bounds, Some(&layout.hitbox), cx, |_, cx| {
                 cx.handle_input(&self.focus, terminal_input_handler);
 
                 cx.on_key_event({

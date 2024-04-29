@@ -25,10 +25,11 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful, StatefulInteractiveElement, Style,
-    Styled, TextRun, TextStyle, TextStyleRefinement, View, ViewContext, WeakView, WindowContext,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
+    ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, Stateful,
+    StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
+    ViewContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::language_settings::ShowWhitespaceSetting;
@@ -919,16 +920,21 @@ impl EditorElement {
         em_width: Pixels,
         autoscroll_containing_element: bool,
         cx: &mut WindowContext,
-    ) -> Vec<CursorLayout> {
+    ) -> (Vec<CursorLayout>, bool) {
         let mut autoscroll_bounds = None;
+        let mut non_visible_cursors = false;
         let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
             for (player_color, selections) in selections {
                 for selection in selections {
                     let cursor_position = selection.head;
-                    if (selection.is_local && !editor.show_local_cursors(cx))
-                        || !visible_display_row_range.contains(&cursor_position.row())
-                    {
+
+                    let in_range = visible_display_row_range.contains(&cursor_position.row());
+                    if !in_range {
+                        non_visible_cursors |= true;
+                    }
+
+                    if (selection.is_local && !editor.show_local_cursors(cx)) || !in_range {
                         continue;
                     }
 
@@ -1035,7 +1041,7 @@ impl EditorElement {
             cx.request_autoscroll(bounds);
         }
 
-        cursor_layouts
+        (cursor_layouts, non_visible_cursors)
     }
 
     fn layout_scrollbar(
@@ -1369,7 +1375,7 @@ impl EditorElement {
 
     fn calculate_relative_line_numbers(
         &self,
-        buffer_rows: Vec<Option<u32>>,
+        snapshot: &EditorSnapshot,
         rows: &Range<u32>,
         relative_to: Option<u32>,
     ) -> HashMap<u32, u32> {
@@ -1379,6 +1385,12 @@ impl EditorElement {
         };
 
         let start = rows.start.min(relative_to);
+        let end = rows.end.max(relative_to);
+
+        let buffer_rows = snapshot
+            .buffer_rows(start)
+            .take(1 + (end - start) as usize)
+            .collect::<Vec<_>>();
 
         let head_idx = relative_to - start;
         let mut delta = 1;
@@ -1453,9 +1465,7 @@ impl EditorElement {
             None
         };
 
-        let buffer_rows = buffer_rows.collect::<Vec<_>>();
-        let relative_rows =
-            self.calculate_relative_line_numbers(buffer_rows.clone(), &rows, relative_to);
+        let relative_rows = self.calculate_relative_line_numbers(snapshot, &rows, relative_to);
 
         for (ix, row) in buffer_rows.into_iter().enumerate() {
             let display_row = rows.start + ix as u32;
@@ -2270,7 +2280,7 @@ impl EditorElement {
         }
 
         cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
-            cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
+            cx.with_element_namespace("gutter_fold_indicators", |cx| {
                 for fold_indicator in layout.fold_indicators.iter_mut().flatten() {
                     fold_indicator.paint(cx);
                 }
@@ -2419,7 +2429,7 @@ impl EditorElement {
                 };
                 cx.set_cursor_style(cursor_style, &layout.text_hitbox);
 
-                cx.with_element_id(Some("folds"), |cx| self.paint_folds(layout, cx));
+                cx.with_element_namespace("folds", |cx| self.paint_folds(layout, cx));
                 let invisible_display_ranges = self.paint_highlights(layout, cx);
                 self.paint_lines(&invisible_display_ranges, layout, cx);
                 self.paint_redactions(layout, cx);
@@ -3446,7 +3456,15 @@ impl Element for EditorElement {
     type RequestLayoutState = ();
     type PrepaintState = EditorLayout;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (gpui::LayoutId, ()) {
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (gpui::LayoutId, ()) {
         self.editor.update(cx, |editor, cx| {
             editor.set_style(self.style.clone(), cx);
 
@@ -3490,6 +3508,7 @@ impl Element for EditorElement {
 
     fn prepaint(
         &mut self,
+        _: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -3666,19 +3685,22 @@ impl Element for EditorElement {
                     .width;
                 let mut scroll_width =
                     longest_line_width.max(max_visible_line_width) + overscroll.width;
-                let mut blocks = self.build_blocks(
-                    start_row..end_row,
-                    &snapshot,
-                    &hitbox,
-                    &text_hitbox,
-                    &mut scroll_width,
-                    &gutter_dimensions,
-                    em_width,
-                    gutter_dimensions.width + gutter_dimensions.margin,
-                    line_height,
-                    &line_layouts,
-                    cx,
-                );
+
+                let mut blocks = cx.with_element_namespace("blocks", |cx| {
+                    self.build_blocks(
+                        start_row..end_row,
+                        &snapshot,
+                        &hitbox,
+                        &text_hitbox,
+                        &mut scroll_width,
+                        &gutter_dimensions,
+                        em_width,
+                        gutter_dimensions.width + gutter_dimensions.margin,
+                        line_height,
+                        &line_layouts,
+                        cx,
+                    )
+                });
 
                 let scroll_pixel_position = point(
                     scroll_position.x * em_width,
@@ -3740,7 +3762,7 @@ impl Element for EditorElement {
                     }
                 });
 
-                cx.with_element_id(Some("blocks"), |cx| {
+                cx.with_element_namespace("blocks", |cx| {
                     self.layout_blocks(
                         &mut blocks,
                         &hitbox,
@@ -3752,7 +3774,7 @@ impl Element for EditorElement {
 
                 let cursors = self.collect_cursors(&snapshot, cx);
 
-                let visible_cursors = self.layout_visible_cursors(
+                let (visible_cursors, non_visible_cursors) = self.layout_visible_cursors(
                     &snapshot,
                     &selections,
                     start_row..end_row,
@@ -3772,11 +3794,11 @@ impl Element for EditorElement {
                     bounds,
                     scroll_position,
                     height_in_lines,
-                    cursors.len() > visible_cursors.len(),
+                    non_visible_cursors,
                     cx,
                 );
 
-                let folds = cx.with_element_id(Some("folds"), |cx| {
+                let folds = cx.with_element_namespace("folds", |cx| {
                     self.layout_folds(
                         &snapshot,
                         content_origin,
@@ -3837,7 +3859,7 @@ impl Element for EditorElement {
                 let mouse_context_menu = self.layout_mouse_context_menu(cx);
 
                 let fold_indicators = if gutter_settings.folds {
-                    cx.with_element_id(Some("gutter_fold_indicators"), |cx| {
+                    cx.with_element_namespace("gutter_fold_indicators", |cx| {
                         self.layout_gutter_fold_indicators(
                             fold_statuses,
                             line_height,
@@ -3930,6 +3952,7 @@ impl Element for EditorElement {
 
     fn paint(
         &mut self,
+        _: Option<&GlobalElementId>,
         bounds: Bounds<gpui::Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
@@ -3962,7 +3985,7 @@ impl Element for EditorElement {
                 self.paint_text(layout, cx);
 
                 if !layout.blocks.is_empty() {
-                    cx.with_element_id(Some("blocks"), |cx| {
+                    cx.with_element_namespace("blocks", |cx| {
                         self.paint_blocks(layout, cx);
                     });
                 }
@@ -4559,8 +4582,12 @@ mod tests {
             .unwrap();
         assert_eq!(layouts.len(), 6);
 
-        let relative_rows =
-            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(0..6), Some(3));
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                element.calculate_relative_line_numbers(&snapshot, &(0..6), Some(3))
+            })
+            .unwrap();
         assert_eq!(relative_rows[&0], 3);
         assert_eq!(relative_rows[&1], 2);
         assert_eq!(relative_rows[&2], 1);
@@ -4569,16 +4596,24 @@ mod tests {
         assert_eq!(relative_rows[&5], 2);
 
         // works if cursor is before screen
-        let relative_rows =
-            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(3..6), Some(1));
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                element.calculate_relative_line_numbers(&snapshot, &(3..6), Some(1))
+            })
+            .unwrap();
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&3], 2);
         assert_eq!(relative_rows[&4], 3);
         assert_eq!(relative_rows[&5], 4);
 
         // works if cursor is after screen
-        let relative_rows =
-            element.calculate_relative_line_numbers((0..6).map(Some).collect(), &(0..3), Some(6));
+        let relative_rows = window
+            .update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(cx);
+                element.calculate_relative_line_numbers(&snapshot, &(0..3), Some(6))
+            })
+            .unwrap();
         assert_eq!(relative_rows.len(), 3);
         assert_eq!(relative_rows[&0], 5);
         assert_eq!(relative_rows[&1], 4);

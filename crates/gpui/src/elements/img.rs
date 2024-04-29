@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
-    point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element, Hitbox,
-    ImageData, InteractiveElement, Interactivity, IntoElement, LayoutId, Length, Pixels, SharedUri,
-    Size, StyleRefinement, Styled, SvgSize, UriOrPath, WindowContext,
+    point, px, size, AbsoluteLength, Asset, Bounds, DefiniteLength, DevicePixels, Element,
+    ElementId, GlobalElementId, Hitbox, ImageData, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, Length, Pixels, SharedUri, Size, StyleRefinement, Styled, SvgSize, UriOrPath,
+    WindowContext,
 };
 use futures::{AsyncReadExt, Future};
 use image::{ImageBuffer, ImageError};
@@ -232,42 +233,54 @@ impl Element for Img {
     type RequestLayoutState = ();
     type PrepaintState = Option<Hitbox>;
 
-    fn request_layout(&mut self, cx: &mut WindowContext) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id = self.interactivity.request_layout(cx, |mut style, cx| {
-            if let Some(data) = self.source.data(cx) {
-                let image_size = data.size();
-                match (style.size.width, style.size.height) {
-                    (Length::Auto, Length::Auto) => {
-                        style.size = Size {
-                            width: Length::Definite(DefiniteLength::Absolute(
-                                AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
-                            )),
-                            height: Length::Definite(DefiniteLength::Absolute(
-                                AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
-                            )),
-                        }
-                    }
-                    _ => {}
-                }
-            }
+    fn id(&self) -> Option<ElementId> {
+        self.interactivity.element_id.clone()
+    }
 
-            cx.request_layout(&style, [])
-        });
+    fn request_layout(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let layout_id = self
+            .interactivity
+            .request_layout(global_id, cx, |mut style, cx| {
+                if let Some(data) = self.source.data(cx) {
+                    let image_size = data.size();
+                    match (style.size.width, style.size.height) {
+                        (Length::Auto, Length::Auto) => {
+                            style.size = Size {
+                                width: Length::Definite(DefiniteLength::Absolute(
+                                    AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
+                                )),
+                                height: Length::Definite(DefiniteLength::Absolute(
+                                    AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
+                                )),
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                cx.request_layout(&style, [])
+            });
         (layout_id, ())
     }
 
     fn prepaint(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Option<Hitbox> {
         self.interactivity
-            .prepaint(bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
+            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
     }
 
     fn paint(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
@@ -275,7 +288,7 @@ impl Element for Img {
     ) {
         let source = self.source.clone();
         self.interactivity
-            .paint(bounds, hitbox.as_ref(), cx, |style, cx| {
+            .paint(global_id, bounds, hitbox.as_ref(), cx, |style, cx| {
                 let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
 
                 if let Some(data) = source.data(cx) {

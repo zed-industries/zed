@@ -13,7 +13,7 @@ use feature_flags::FeatureFlagAppExt as _;
 use futures::{future::join_all, StreamExt};
 use gpui::{
     list, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
-    Global, ListAlignment, ListState, Model, Render, Task, View, WeakView,
+    ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};

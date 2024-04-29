@@ -161,7 +161,7 @@ pub(crate) struct KeyRepeat {
     characters_per_second: u32,
     delay: Duration,
     current_id: u64,
-    current_keysym: Option<xkb::Keysym>,
+    current_keycode: Option<xkb::Keycode>,
 }
 
 /// This struct is required to conform to Rust's orphan rules, so we can dispatch on the state but hand the
@@ -310,7 +310,7 @@ impl WaylandClient {
                 characters_per_second: 16,
                 delay: Duration::from_millis(500),
                 current_id: 0,
-                current_keysym: None,
+                current_keycode: None,
             },
             modifiers: Modifiers {
                 shift: false,
@@ -805,7 +805,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                         });
 
                         state.repeat.current_id += 1;
-                        state.repeat.current_keysym = Some(keysym);
+                        state.repeat.current_keycode = Some(keycode);
 
                         let rate = state.repeat.characters_per_second;
                         let id = state.repeat.current_id;
@@ -817,7 +817,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                     let mut client = this.get_client();
                                     let mut state = client.borrow_mut();
                                     let is_repeating = id == state.repeat.current_id
-                                        && state.repeat.current_keysym.is_some()
+                                        && state.repeat.current_keycode.is_some()
                                         && state.keyboard_focused_window.is_some();
 
                                     if !is_repeating {
@@ -843,8 +843,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
                         });
 
-                        if state.repeat.current_keysym == Some(keysym) {
-                            state.repeat.current_keysym = None;
+                        if state.repeat.current_keycode == Some(keycode) {
+                            state.repeat.current_keycode = None;
                         }
 
                         drop(state);

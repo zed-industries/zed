@@ -331,8 +331,10 @@
     // when you switch to another file unless you explicitly pin them.
     // This is useful for quickly viewing files without cluttering your workspace.
     "enabled": true,
-    // Whether to open files in preview mode when selected from the file finder.
-    "enable_preview_from_file_finder": false
+    // Whether to open tabs in preview mode when selected from the file finder.
+    "enable_preview_from_file_finder": false,
+    // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
+    "enable_preview_from_code_navigation": false
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

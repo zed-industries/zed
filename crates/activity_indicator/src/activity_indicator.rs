@@ -99,6 +99,7 @@ impl ActivityIndicator {
                         Box::new(
                             cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
                         ),
+                        None,
                         cx,
                     );
                 }

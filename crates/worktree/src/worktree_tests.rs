@@ -1764,7 +1764,7 @@ fn randomly_mutate_worktree(
     match rng.gen_range(0_u32..100) {
         0..=33 if entry.path.as_ref() != Path::new("") => {
             log::info!("deleting entry {:?} ({})", entry.path, entry.id.0);
-            worktree.delete_entry(entry.id, cx).unwrap()
+            worktree.delete_entry(entry.id, false, cx).unwrap()
         }
         ..=66 if entry.path.as_ref() != Path::new("") => {
             let other_entry = snapshot.entries(false).choose(rng).unwrap();

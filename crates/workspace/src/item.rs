@@ -45,6 +45,7 @@ pub struct ItemSettings {
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_file_finder: bool,
+    pub enable_preview_from_code_navigation: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -78,15 +79,19 @@ pub struct ItemSettingsContent {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PreviewTabsSettingsContent {
-    /// Whether to show opened editors as preview editors.
-    /// Preview editors do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
+    /// Whether to show opened editors as preview tabs.
+    /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
     ///
     /// Default: true
     enabled: Option<bool>,
-    /// Whether to open a preview editor when opening a file using the file finder.
+    /// Whether to open tabs in preview mode when selected from the file finder.
     ///
     /// Default: false
     enable_preview_from_file_finder: Option<bool>,
+    /// Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
+    ///
+    /// Default: false
+    enable_preview_from_code_navigation: Option<bool>,
 }
 
 impl Settings for ItemSettings {

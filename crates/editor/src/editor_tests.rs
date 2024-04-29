@@ -9161,7 +9161,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
                 workspace.active_item(cx).is_none(),
                 "active item should be None before the first item is added"
             );
-            workspace.add_item_to_active_pane(Box::new(multi_buffer_editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(multi_buffer_editor.clone()), None, cx);
             let active_item = workspace
                 .active_item(cx)
                 .expect("should have an active item after adding the multi buffer");

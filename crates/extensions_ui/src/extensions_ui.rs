@@ -45,7 +45,7 @@ pub fn init(cx: &mut AppContext) {
                     workspace.activate_item(&existing, cx);
                 } else {
                     let extensions_page = ExtensionsPage::new(workspace, cx);
-                    workspace.add_item_to_active_pane(Box::new(extensions_page), cx)
+                    workspace.add_item_to_active_pane(Box::new(extensions_page), None, cx)
                 }
             })
             .register_action(move |_, _: &InstallDevExtension, cx| {

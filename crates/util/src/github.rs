@@ -40,18 +40,13 @@ struct Commit {
 
 #[derive(Debug, Deserialize)]
 struct Author {
-    name: String,
     email: String,
-    date: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct User {
-    pub login: String,
     pub id: u64,
-    pub node_id: String,
     pub avatar_url: String,
-    pub gravatar_id: String,
 }
 
 #[derive(Debug)]

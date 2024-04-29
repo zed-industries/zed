@@ -1335,6 +1335,7 @@ impl LocalWorktree {
     pub fn delete_entry(
         &self,
         entry_id: ProjectEntryId,
+        trash: bool,
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Task<Result<()>>> {
         let entry = self.entry_for_id(entry_id)?.clone();
@@ -1343,16 +1344,31 @@ impl LocalWorktree {
 
         let delete = cx.background_executor().spawn(async move {
             if entry.is_file() {
-                fs.remove_file(&abs_path?, Default::default()).await?;
+                if trash {
+                    fs.trash_file(&abs_path?, Default::default()).await?;
+                } else {
+                    fs.remove_file(&abs_path?, Default::default()).await?;
+                }
             } else {
-                fs.remove_dir(
-                    &abs_path?,
-                    RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: false,
-                    },
-                )
-                .await?;
+                if trash {
+                    fs.trash_dir(
+                        &abs_path?,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: false,
+                        },
+                    )
+                    .await?;
+                } else {
+                    fs.remove_dir(
+                        &abs_path?,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: false,
+                        },
+                    )
+                    .await?;
+                }
             }
             anyhow::Ok(entry.path)
         });
