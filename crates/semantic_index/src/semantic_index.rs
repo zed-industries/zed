@@ -296,6 +296,27 @@ impl ProjectIndex {
         }
         Ok(result)
     }
+
+    pub fn debug(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let indices = self
+            .worktree_indices
+            .values()
+            .filter_map(|worktree_index| {
+                if let WorktreeIndexHandle::Loaded { index, .. } = worktree_index {
+                    Some(index.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(|_, mut cx| async move {
+            for index in indices {
+                index.update(&mut cx, |index, cx| index.debug(cx))?.await?
+            }
+            Ok(())
+        })
+    }
 }
 
 pub struct SearchResult {
@@ -840,6 +861,22 @@ impl WorktreeIndex {
             }
 
             Ok(search_results)
+        })
+    }
+
+    fn debug(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let connection = self.db_connection.clone();
+        let db = self.db.clone();
+        cx.background_executor().spawn(async move {
+            let tx = connection
+                .read_txn()
+                .context("failed to create read transaction")?;
+            for record in db.iter(&tx)? {
+                let (key, _) = record?;
+                eprintln!("path: {}", key);
+                // eprintln!("value: {:?}", value);
+            }
+            Ok(())
         })
     }
 
