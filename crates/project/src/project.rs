@@ -5712,7 +5712,6 @@ impl Project {
                 let mut completions = completions.write();
                 let completion = &mut completions[completion_index];
 
-                completion.lsp_completion = completion_item;
                 completion.new_text = new_text;
                 completion.old_range = old_range;
             }
