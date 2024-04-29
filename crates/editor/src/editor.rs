@@ -392,6 +392,7 @@ impl Default for ScrollbarMarkerState {
     }
 }
 
+#[derive(Clone)]
 struct RunnableTasks {
     pub templates: SmallVec<[TaskTemplate; 1]>,
     match_range: Range<usize>, // The equivalent of the newest selection,
@@ -3781,6 +3782,7 @@ impl Editor {
         //  3. If not, do as below
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
+        let action = action.clone();
         cx.spawn(|this, mut cx| async move {
             while let Some(prev_task) = task {
                 prev_task.await;
@@ -3789,22 +3791,41 @@ impl Editor {
 
             this.update(&mut cx, |this, cx| {
                 if this.focus_handle.is_focused(cx) {
-                    if let Some((buffer, actions)) = this.available_code_actions.clone() {
-                        this.completion_tasks.clear();
-                        this.discard_inline_completion(cx);
-                        *this.context_menu.write() =
-                            Some(ContextMenu::CodeActions(CodeActionsMenu {
-                                buffer,
-                                actions: CodeActionContents {
-                                    tasks: None,
-                                    actions: Some(actions),
-                                },
-                                selected_item: Default::default(),
-                                scroll_handle: UniformListScrollHandle::default(),
-                                deployed_from_indicator,
-                            }));
-                        cx.notify();
+                    let tasks = action
+                        .deployed_from_indicator
+                        .and_then(|row| this.tasks.get(&row))
+                        .map(|t| Arc::new(t.to_owned()));
+                    let (buffer, code_actions) = this.available_code_actions.clone().unzip();
+                    if tasks.is_none() && code_actions.is_none() {
+                        return;
                     }
+                    let buffer = if let Some(row) = action.deployed_from_indicator {
+                        buffer.or_else(|| {
+                            let snapshot = this.snapshot(cx);
+                            let (buffer_snapshot, _) =
+                                snapshot.buffer_snapshot.buffer_line_for_row(row)?;
+                            let buffer_id = buffer_snapshot.remote_id();
+                            this.buffer().read(cx).buffer(buffer_id)
+                        })
+                    } else {
+                        buffer
+                    };
+                    let Some(buffer) = buffer else {
+                        return;
+                    };
+                    this.completion_tasks.clear();
+                    this.discard_inline_completion(cx);
+                    *this.context_menu.write() = Some(ContextMenu::CodeActions(CodeActionsMenu {
+                        buffer,
+                        actions: CodeActionContents {
+                            tasks,
+                            actions: code_actions,
+                        },
+                        selected_item: Default::default(),
+                        scroll_handle: UniformListScrollHandle::default(),
+                        deployed_from_indicator,
+                    }));
+                    cx.notify();
                 }
             })?;
 
