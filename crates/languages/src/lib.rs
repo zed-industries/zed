@@ -165,10 +165,10 @@ pub fn init(
     );
     language!("proto");
 
-    // Register Tailwind globally as an available language server.
+    // Register globally available language servers.
     //
-    // This will allow users to add Tailwind support for a given language via
-    // the `language_servers` setting:
+    // This will allow users to add support for a built-in language server (e.g., Tailwind)
+    // for a given language via the `language_servers` setting:
     //
     // ```json
     // {
@@ -186,6 +186,10 @@ pub fn init(
             move || Arc::new(tailwind::TailwindLspAdapter::new(node_runtime.clone()))
         },
     );
+    languages.register_available_lsp_adapter(LanguageServerName("eslint".into()), {
+        let node_runtime = node_runtime.clone();
+        move || Arc::new(typescript::EsLintLspAdapter::new(node_runtime.clone()))
+    });
 
     // Register Tailwind for the existing languages that should have it by default.
     //
