@@ -996,6 +996,8 @@ impl PlatformWindow for MacWindow {
         };
         unsafe {
             this.native_window.setOpaque_(opaque);
+            // Shadows for transparent windows cause artifacts and performance issues
+            this.native_window.setHasShadow_(opaque);
             let clear_color = if opaque == YES {
                 NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
             } else {
