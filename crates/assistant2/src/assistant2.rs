@@ -33,6 +33,8 @@ use workspace::{
 
 pub use assistant_settings::AssistantSettings;
 
+use crate::ui::{ChatMessageHeader, UserOrAssistant};
+
 const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
 
 #[derive(Eq, PartialEq, Copy, Clone, Deserialize)]
@@ -526,7 +528,9 @@ impl AssistantChat {
         match &self.messages[ix] {
             ChatMessage::User(UserMessage { body, .. }) => div()
                 .when(!is_last, |element| element.mb_2())
-                .child(div().p_2().child(Label::new("You").color(Color::Default)))
+                .child(ChatMessageHeader::new(UserOrAssistant::User(
+                    self.user_store.read(cx).current_user(),
+                )))
                 .child(
                     div()
                         .p_2()
@@ -551,11 +555,7 @@ impl AssistantChat {
 
                 div()
                     .when(!is_last, |element| element.mb_2())
-                    .child(
-                        div()
-                            .p_2()
-                            .child(Label::new("Assistant").color(Color::Modified)),
-                    )
+                    .child(ChatMessageHeader::new(UserOrAssistant::Assistant))
                     .child(assistant_body)
                     .child(self.render_error(error.clone(), ix, cx))
                     .children(tool_calls.iter().map(|tool_call| {
