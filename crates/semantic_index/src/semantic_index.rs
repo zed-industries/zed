@@ -21,6 +21,7 @@ use smol::channel;
 use std::{
     cmp::Ordering,
     future::Future,
+    iter,
     num::NonZeroUsize,
     ops::Range,
     path::{Path, PathBuf},
@@ -419,7 +420,7 @@ impl WorktreeIndex {
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_entries(worktree.clone(), cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
-        let embed = self.embed_files(chunk.files, cx);
+        let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
@@ -436,7 +437,7 @@ impl WorktreeIndex {
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
-        let embed = self.embed_files(chunk.files, cx);
+        let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
@@ -500,7 +501,7 @@ impl WorktreeIndex {
                 }
 
                 if entry.mtime != saved_mtime {
-                    let handle = entries_being_indexed.insert(&entry);
+                    let handle = entries_being_indexed.insert(entry.id);
                     updated_entries_tx.send((entry.clone(), handle)).await?;
                 }
             }
@@ -539,7 +540,7 @@ impl WorktreeIndex {
                     | project::PathChange::AddedOrUpdated => {
                         if let Some(entry) = worktree.entry_for_id(*entry_id) {
                             if entry.is_file() {
-                                let handle = entries_being_indexed.insert(&entry);
+                                let handle = entries_being_indexed.insert(entry.id);
                                 updated_entries_tx.send((entry.clone(), handle)).await?;
                             }
                         }
@@ -601,7 +602,8 @@ impl WorktreeIndex {
                                 let chunked_file = ChunkedFile {
                                     chunks: chunk_text(&text, grammar),
                                     handle,
-                                    entry,
+                                    path: entry.path,
+                                    mtime: entry.mtime,
                                     text,
                                 };
 
@@ -623,11 +625,11 @@ impl WorktreeIndex {
     }
 
     fn embed_files(
-        &self,
+        embedding_provider: Arc<dyn EmbeddingProvider>,
         chunked_files: channel::Receiver<ChunkedFile>,
         cx: &AppContext,
     ) -> EmbedFiles {
-        let embedding_provider = self.embedding_provider.clone();
+        let embedding_provider = embedding_provider.clone();
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
         let task = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
@@ -635,9 +637,10 @@ impl WorktreeIndex {
             while let Some(chunked_files) = chunked_file_batches.next().await {
                 // View the batch of files as a vec of chunks
                 // Flatten out to a vec of chunks that we can subdivide into batch sized pieces
-                // Once those are done, reassemble it back into which files they belong to
+                // Once those are done, reassemble them back into the files in which they belong
+                // If any embeddings fail for a file, the entire file is discarded
 
-                let chunks = chunked_files
+                let chunks: Vec<TextToEmbed> = chunked_files
                     .iter()
                     .flat_map(|file| {
                         file.chunks.iter().map(|chunk| TextToEmbed {
@@ -647,36 +650,50 @@ impl WorktreeIndex {
                     })
                     .collect::<Vec<_>>();
 
-                let mut embeddings = Vec::new();
+                let mut embeddings: Vec<Option<Embedding>> = Vec::new();
                 for embedding_batch in chunks.chunks(embedding_provider.batch_size()) {
                     if let Some(batch_embeddings) =
                         embedding_provider.embed(embedding_batch).await.log_err()
                     {
-                        embeddings.extend_from_slice(&batch_embeddings);
+                        if batch_embeddings.len() == embedding_batch.len() {
+                            embeddings.extend(batch_embeddings.into_iter().map(Some));
+                            continue;
+                        }
+                        log::error!(
+                            "embedding provider returned unexpected embedding count {}, expected {}",
+                            batch_embeddings.len(), embedding_batch.len()
+                        );
                     }
+
+                    embeddings.extend(iter::repeat(None).take(embedding_batch.len()));
                 }
 
                 let mut embeddings = embeddings.into_iter();
                 for chunked_file in chunked_files {
-                    let chunk_embeddings = embeddings
-                        .by_ref()
-                        .take(chunked_file.chunks.len())
-                        .collect::<Vec<_>>();
-                    let embedded_chunks = chunked_file
-                        .chunks
-                        .into_iter()
-                        .zip(chunk_embeddings)
-                        .map(|(chunk, embedding)| EmbeddedChunk { chunk, embedding })
-                        .collect();
-                    let embedded_file = EmbeddedFile {
-                        path: chunked_file.entry.path.clone(),
-                        mtime: chunked_file.entry.mtime,
-                        chunks: embedded_chunks,
+                    let mut embedded_file = EmbeddedFile {
+                        path: chunked_file.path,
+                        mtime: chunked_file.mtime,
+                        chunks: Vec::new(),
                     };
 
-                    embedded_files_tx
-                        .send((embedded_file, chunked_file.handle))
-                        .await?;
+                    let mut embedded_all_chunks = true;
+                    for (chunk, embedding) in
+                        chunked_file.chunks.into_iter().zip(embeddings.by_ref())
+                    {
+                        if let Some(embedding) = embedding {
+                            embedded_file
+                                .chunks
+                                .push(EmbeddedChunk { chunk, embedding });
+                        } else {
+                            embedded_all_chunks = false;
+                        }
+                    }
+
+                    if embedded_all_chunks {
+                        embedded_files_tx
+                            .send((embedded_file, chunked_file.handle))
+                            .await?;
+                    }
                 }
             }
             Ok(())
@@ -848,7 +865,8 @@ struct ChunkFiles {
 }
 
 struct ChunkedFile {
-    pub entry: Entry,
+    pub path: Arc<Path>,
+    pub mtime: Option<SystemTime>,
     pub handle: IndexingEntryHandle,
     pub text: String,
     pub chunks: Vec<Chunk>,
@@ -872,11 +890,14 @@ struct EmbeddedChunk {
     embedding: Embedding,
 }
 
+/// The set of entries that are currently being indexed.
 struct IndexingEntrySet {
     entry_ids: Mutex<HashSet<ProjectEntryId>>,
     tx: channel::Sender<()>,
 }
 
+/// When dropped, removes the entry from the set of entries that are being indexed.
+#[derive(Clone)]
 struct IndexingEntryHandle {
     entry_id: ProjectEntryId,
     set: Weak<IndexingEntrySet>,
@@ -890,11 +911,11 @@ impl IndexingEntrySet {
         }
     }
 
-    fn insert(self: &Arc<Self>, entry: &project::Entry) -> IndexingEntryHandle {
-        self.entry_ids.lock().insert(entry.id);
+    fn insert(self: &Arc<Self>, entry_id: ProjectEntryId) -> IndexingEntryHandle {
+        self.entry_ids.lock().insert(entry_id);
         self.tx.send_blocking(()).ok();
         IndexingEntryHandle {
-            entry_id: entry.id,
+            entry_id,
             set: Arc::downgrade(self),
         }
     }
@@ -939,7 +960,22 @@ mod tests {
         });
     }
 
-    pub struct TestEmbeddingProvider;
+    pub struct TestEmbeddingProvider {
+        batch_size: usize,
+        compute_embedding: Box<dyn Fn(&str) -> Result<Embedding> + Send + Sync>,
+    }
+
+    impl TestEmbeddingProvider {
+        pub fn new(
+            batch_size: usize,
+            compute_embedding: impl 'static + Fn(&str) -> Result<Embedding> + Send + Sync,
+        ) -> Self {
+            return Self {
+                batch_size,
+                compute_embedding: Box::new(compute_embedding),
+            };
+        }
+    }
 
     impl EmbeddingProvider for TestEmbeddingProvider {
         fn embed<'a>(
@@ -948,29 +984,13 @@ mod tests {
         ) -> BoxFuture<'a, Result<Vec<Embedding>>> {
             let embeddings = texts
                 .iter()
-                .map(|text| {
-                    let mut embedding = vec![0f32; 2];
-                    // if the text contains garbage, give it a 1 in the first dimension
-                    if text.text.contains("garbage in") {
-                        embedding[0] = 0.9;
-                    } else {
-                        embedding[0] = -0.9;
-                    }
-
-                    if text.text.contains("garbage out") {
-                        embedding[1] = 0.9;
-                    } else {
-                        embedding[1] = -0.9;
-                    }
-
-                    Embedding::new(embedding)
-                })
+                .map(|to_embed| (self.compute_embedding)(to_embed.text))
                 .collect();
-            future::ready(Ok(embeddings)).boxed()
+            future::ready(embeddings).boxed()
         }
 
         fn batch_size(&self) -> usize {
-            16
+            self.batch_size
         }
     }
 
@@ -984,7 +1004,23 @@ mod tests {
 
         let mut semantic_index = SemanticIndex::new(
             temp_dir.path().into(),
-            Arc::new(TestEmbeddingProvider),
+            Arc::new(TestEmbeddingProvider::new(16, |text| {
+                let mut embedding = vec![0f32; 2];
+                // if the text contains garbage, give it a 1 in the first dimension
+                if text.contains("garbage in") {
+                    embedding[0] = 0.9;
+                } else {
+                    embedding[0] = -0.9;
+                }
+
+                if text.contains("garbage out") {
+                    embedding[1] = 0.9;
+                } else {
+                    embedding[1] = -0.9;
+                }
+
+                Ok(Embedding::new(embedding))
+            })),
             &mut cx.to_async(),
         )
         .await
@@ -1045,5 +1081,83 @@ mod tests {
         let content = content[range.clone()].to_owned();
 
         assert!(content.contains("garbage in, garbage out"));
+    }
+
+    #[gpui::test]
+    async fn test_embed_files(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let provider = Arc::new(TestEmbeddingProvider::new(3, |text| {
+            if text.contains('g') {
+                Err(anyhow!("cannot embed text containing a 'g' character"))
+            } else {
+                Ok(Embedding::new(
+                    ('a'..'z')
+                        .map(|char| text.chars().filter(|c| *c == char).count() as f32)
+                        .collect(),
+                ))
+            }
+        }));
+
+        let (indexing_progress_tx, _) = channel::unbounded();
+        let indexing_entries = Arc::new(IndexingEntrySet::new(indexing_progress_tx));
+
+        let (chunked_files_tx, chunked_files_rx) = channel::unbounded::<ChunkedFile>();
+        chunked_files_tx
+            .send_blocking(ChunkedFile {
+                path: Path::new("test1.md").into(),
+                mtime: None,
+                handle: indexing_entries.insert(ProjectEntryId::from_proto(0)),
+                text: "abcdefghijklmnop".to_string(),
+                chunks: [0..4, 4..8, 8..12, 12..16]
+                    .into_iter()
+                    .map(|range| Chunk {
+                        range,
+                        digest: Default::default(),
+                    })
+                    .collect(),
+            })
+            .unwrap();
+        chunked_files_tx
+            .send_blocking(ChunkedFile {
+                path: Path::new("test2.md").into(),
+                mtime: None,
+                handle: indexing_entries.insert(ProjectEntryId::from_proto(1)),
+                text: "qrstuvwxyz".to_string(),
+                chunks: [0..4, 4..8, 8..10]
+                    .into_iter()
+                    .map(|range| Chunk {
+                        range,
+                        digest: Default::default(),
+                    })
+                    .collect(),
+            })
+            .unwrap();
+        chunked_files_tx.close();
+
+        let embed_files_task =
+            cx.update(|cx| WorktreeIndex::embed_files(provider.clone(), chunked_files_rx, cx));
+        embed_files_task.task.await.unwrap();
+
+        let mut embedded_files_rx = embed_files_task.files;
+        let mut embedded_files = Vec::new();
+        while let Some((embedded_file, _)) = embedded_files_rx.next().await {
+            embedded_files.push(embedded_file);
+        }
+
+        assert_eq!(embedded_files.len(), 1);
+        assert_eq!(embedded_files[0].path.as_ref(), Path::new("test2.md"));
+        assert_eq!(
+            embedded_files[0]
+                .chunks
+                .iter()
+                .map(|embedded_chunk| { embedded_chunk.embedding.clone() })
+                .collect::<Vec<Embedding>>(),
+            vec![
+                (provider.compute_embedding)("qrst").unwrap(),
+                (provider.compute_embedding)("uvwx").unwrap(),
+                (provider.compute_embedding)("yz").unwrap(),
+            ],
+        );
     }
 }
