@@ -98,7 +98,7 @@ use std::{
 };
 use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
-use text::{Anchor, BufferId};
+use text::{Anchor, BufferId, LineEnding};
 use util::{
     debug_panic, defer,
     http::{HttpClient, Url},
@@ -5576,6 +5576,7 @@ impl Project {
 
     pub fn resolve_completions(
         &self,
+        buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
@@ -5585,6 +5586,8 @@ impl Project {
 
         let is_remote = self.is_remote();
         let project_id = self.remote_id();
+
+        let buffer_snapshot = buffer.read(cx).snapshot();
 
         cx.spawn(move |this, mut cx| async move {
             let mut did_resolve = false;
@@ -5607,7 +5610,7 @@ impl Project {
                         (server_id, completion)
                     };
 
-                    Self::resolve_completion_documentation_remote(
+                    Self::resolve_completion_remote(
                         project_id,
                         server_id,
                         completions.clone(),
@@ -5644,8 +5647,9 @@ impl Project {
                     };
 
                     did_resolve = true;
-                    Self::resolve_completion_documentation_local(
+                    Self::resolve_completion_local(
                         server,
+                        &buffer_snapshot,
                         completions.clone(),
                         completion_index,
                         completion,
@@ -5659,8 +5663,9 @@ impl Project {
         })
     }
 
-    async fn resolve_completion_documentation_local(
+    async fn resolve_completion_local(
         server: Arc<lsp::LanguageServer>,
+        snapshot: &BufferSnapshot,
         completions: Arc<RwLock<Box<[Completion]>>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
@@ -5681,9 +5686,9 @@ impl Project {
             return;
         };
 
-        if let Some(lsp_documentation) = completion_item.documentation {
+        if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
             let documentation = language::prepare_completion_documentation(
-                &lsp_documentation,
+                lsp_documentation,
                 &language_registry,
                 None, // TODO: Try to reasonably work out which language the completion is for
             )
@@ -5697,9 +5702,55 @@ impl Project {
             let completion = &mut completions[completion_index];
             completion.documentation = Some(Documentation::Undocumented);
         }
+
+        if let Some(text_edit) = completion_item.text_edit.as_ref() {
+            let edit = match text_edit {
+                lsp::CompletionTextEdit::Edit(edit) => {
+                    let range = range_from_lsp(edit.range);
+                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                    if start != range.start.0 || end != range.end.0 {
+                        log::info!("completion out of expected range");
+                        None
+                    } else {
+                        Some((
+                            snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                            edit.new_text.clone(),
+                        ))
+                    }
+                }
+
+                lsp::CompletionTextEdit::InsertAndReplace(edit) => {
+                    let range = range_from_lsp(edit.insert);
+
+                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                    if start != range.start.0 || end != range.end.0 {
+                        log::info!("completion out of expected range");
+                        None
+                    } else {
+                        Some((
+                            snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                            edit.new_text.clone(),
+                        ))
+                    }
+                }
+            };
+
+            if let Some((old_range, mut new_text)) = edit {
+                LineEnding::normalize(&mut new_text);
+
+                let mut completions = completions.write();
+                let completion = &mut completions[completion_index];
+
+                completion.lsp_completion = completion_item;
+                completion.new_text = new_text;
+                completion.old_range = old_range;
+            }
+        }
     }
 
-    async fn resolve_completion_documentation_remote(
+    async fn resolve_completion_remote(
         project_id: u64,
         server_id: LanguageServerId,
         completions: Arc<RwLock<Box<[Completion]>>>,

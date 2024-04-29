@@ -59,6 +59,7 @@ impl CompletionProvider for MessageEditorCompletionProvider {
 
     fn resolve_completions(
         &self,
+        _buffer: Model<Buffer>,
         _completion_indices: Vec<usize>,
         _completions: Arc<RwLock<Box<[Completion]>>>,
         _cx: &mut ViewContext<Editor>,
