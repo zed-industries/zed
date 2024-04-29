@@ -186,6 +186,18 @@ impl LspAdapter for TypeScriptLspAdapter {
         })))
     }
 
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        Ok(json!({
+            "completions": {
+              "completeFunctionCalls": true
+            }
+        }))
+    }
+
     fn language_ids(&self) -> HashMap<String, String> {
         HashMap::from_iter([
             ("TypeScript".into(), "typescript".into()),
