@@ -1505,18 +1505,11 @@ impl LspCommand for GetCompletions {
                 let edit = match lsp_completion.text_edit.as_ref() {
                     // If the language server provides a range to overwrite, then
                     // check that the range is valid.
-                    Some(lsp::CompletionTextEdit::Edit(edit)) => {
-                        let range = range_from_lsp(edit.range);
-                        let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                        let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                        if start != range.start.0 || end != range.end.0 {
-                            log::info!("completion out of expected range");
-                            return false;
+                    Some(completion_text_edit) => {
+                        match parse_completion_text_edit(completion_text_edit, &snapshot) {
+                            Some(edit) => edit,
+                            None => return false,
                         }
-                        (
-                            snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                            edit.new_text.clone(),
-                        )
                     }
 
                     // If the language server does not provide a range, then infer
@@ -1569,21 +1562,6 @@ impl LspCommand for GetCompletions {
                             .unwrap_or(&lsp_completion.label)
                             .clone();
                         (range, text)
-                    }
-
-                    Some(lsp::CompletionTextEdit::InsertAndReplace(edit)) => {
-                        let range = range_from_lsp(edit.insert);
-
-                        let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                        let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                        if start != range.start.0 || end != range.end.0 {
-                            log::info!("completion out of expected range");
-                            return false;
-                        }
-                        (
-                            snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                            edit.new_text.clone(),
-                        )
                     }
                 };
 
@@ -1681,6 +1659,44 @@ impl LspCommand for GetCompletions {
 
     fn buffer_id_from_proto(message: &proto::GetCompletions) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
+    }
+}
+
+pub(crate) fn parse_completion_text_edit(
+    edit: &lsp::CompletionTextEdit,
+    snapshot: &BufferSnapshot,
+) -> Option<(Range<Anchor>, String)> {
+    match edit {
+        lsp::CompletionTextEdit::Edit(edit) => {
+            let range = range_from_lsp(edit.range);
+            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+            if start != range.start.0 || end != range.end.0 {
+                log::info!("completion out of expected range");
+                None
+            } else {
+                Some((
+                    snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                    edit.new_text.clone(),
+                ))
+            }
+        }
+
+        lsp::CompletionTextEdit::InsertAndReplace(edit) => {
+            let range = range_from_lsp(edit.insert);
+
+            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+            if start != range.start.0 || end != range.end.0 {
+                log::info!("completion out of expected range");
+                None
+            } else {
+                Some((
+                    snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                    edit.new_text.clone(),
+                ))
+            }
+        }
     }
 }
 

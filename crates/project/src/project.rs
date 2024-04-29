@@ -5704,38 +5704,7 @@ impl Project {
         }
 
         if let Some(text_edit) = completion_item.text_edit.as_ref() {
-            let edit = match text_edit {
-                lsp::CompletionTextEdit::Edit(edit) => {
-                    let range = range_from_lsp(edit.range);
-                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                    if start != range.start.0 || end != range.end.0 {
-                        log::info!("completion out of expected range");
-                        None
-                    } else {
-                        Some((
-                            snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                            edit.new_text.clone(),
-                        ))
-                    }
-                }
-
-                lsp::CompletionTextEdit::InsertAndReplace(edit) => {
-                    let range = range_from_lsp(edit.insert);
-
-                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                    if start != range.start.0 || end != range.end.0 {
-                        log::info!("completion out of expected range");
-                        None
-                    } else {
-                        Some((
-                            snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                            edit.new_text.clone(),
-                        ))
-                    }
-                }
-            };
+            let edit = parse_completion_text_edit(text_edit, snapshot);
 
             if let Some((old_range, mut new_text)) = edit {
                 LineEnding::normalize(&mut new_text);
