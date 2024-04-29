@@ -397,8 +397,9 @@ struct RunnableTasks {
     templates: SmallVec<[(TaskSourceKind, TaskTemplate); 1]>,
 }
 
+type Row = u32;
 #[derive(Clone)]
-struct ResolvedTasks(SmallVec<[(TaskSourceKind, ResolvedTask); 1]>);
+struct ResolvedTasks(SmallVec<[(TaskSourceKind, ResolvedTask); 1]>, Row);
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
@@ -1405,8 +1406,9 @@ impl CodeActionsMenu {
         )
         .into_any_element();
 
-        if self.deployed_from_indicator.is_some() {
+        if let Some(row) = self.deployed_from_indicator {
             *cursor_position.column_mut() = 0;
+            *cursor_position.row_mut() = row;
         }
 
         (cursor_position, element)
@@ -3784,10 +3786,6 @@ impl Editor {
         }
         drop(context_menu);
 
-        // TODO:
-        // 1. Grab the tasks available, if possible.
-        //  2. if so, show the menu immediately, pop-in the code actions
-        //  3. If not, do as below
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
         let action = action.clone();
@@ -3799,25 +3797,21 @@ impl Editor {
 
             this.update(&mut cx, |this, cx| {
                 if this.focus_handle.is_focused(cx) {
-                    let tasks = action
+                    let row = action
                         .deployed_from_indicator
-                        .and_then(|row| this.tasks.get(&row))
-                        .map(|t| Arc::new(t.to_owned()));
+                        .unwrap_or_else(|| this.selections.newest::<Point>(cx).head().row);
+                    let tasks = this.tasks.get(&row).map(|t| Arc::new(t.to_owned()));
                     let (buffer, code_actions) = this.available_code_actions.clone().unzip();
                     if tasks.is_none() && code_actions.is_none() {
                         return;
                     }
-                    let buffer = if let Some(row) = action.deployed_from_indicator {
-                        buffer.or_else(|| {
-                            let snapshot = this.snapshot(cx);
-                            let (buffer_snapshot, _) =
-                                snapshot.buffer_snapshot.buffer_line_for_row(row)?;
-                            let buffer_id = buffer_snapshot.remote_id();
-                            this.buffer().read(cx).buffer(buffer_id)
-                        })
-                    } else {
-                        buffer
-                    };
+                    let buffer = buffer.or_else(|| {
+                        let snapshot = this.snapshot(cx);
+                        let (buffer_snapshot, _) =
+                            snapshot.buffer_snapshot.buffer_line_for_row(row)?;
+                        let buffer_id = buffer_snapshot.remote_id();
+                        this.buffer().read(cx).buffer(buffer_id)
+                    });
                     let Some(buffer) = buffer else {
                         return;
                     };
@@ -3846,6 +3840,7 @@ impl Editor {
                                             .map(|task| (kind.clone(), task))
                                     })
                                     .collect(),
+                                row,
                             ))
                         });
                     *this.context_menu.write() = Some(ContextMenu::CodeActions(CodeActionsMenu {

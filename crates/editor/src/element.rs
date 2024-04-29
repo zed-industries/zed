@@ -12,10 +12,11 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GutterDimensions, HalfPageDown,
-    HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
-    RunnableTasks, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    CodeActionsMenu, CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite,
+    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts,
+    GutterDimensions, HalfPageDown, HalfPageUp, HoveredCursor, LineDown, LineUp, OpenExcerpts,
+    PageDown, PageUp, Point, RunnableTasks, SelectPhase, Selection, SoftWrap, ToPoint,
+    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
@@ -1289,12 +1290,32 @@ impl EditorElement {
         self.editor.update(cx, |editor, cx| {
             editor.clear_tasks();
 
+            let active_task_indicator_row =
+                if let Some(crate::ContextMenu::CodeActions(CodeActionsMenu {
+                    deployed_from_indicator,
+                    actions,
+                    ..
+                })) = editor.context_menu.read().as_ref()
+                {
+                    actions
+                        .tasks
+                        .as_ref()
+                        .map(|tasks| tasks.1)
+                        .or_else(|| deployed_from_indicator.clone())
+                } else {
+                    None
+                };
             task_lines
                 .into_iter()
                 .filter_map(|(row, tasks)| {
                     editor.insert_tasks(row, tasks);
-                    // active = todo check if the run menu is open or something
-                    let button = editor.render_run_indicator(&self.style, false, row, cx);
+
+                    let button = editor.render_run_indicator(
+                        &self.style,
+                        Some(row) == active_task_indicator_row,
+                        row,
+                        cx,
+                    );
 
                     let button = prepaint_gutter_button(
                         button,
@@ -1324,10 +1345,13 @@ impl EditorElement {
         let mut button = None;
         let row = newest_selection_head.row();
         self.editor.update(cx, |editor, cx| {
-            active = matches!(
-                editor.context_menu.read().as_ref(),
-                Some(crate::ContextMenu::CodeActions(_))
-            );
+            if let Some(crate::ContextMenu::CodeActions(CodeActionsMenu {
+                deployed_from_indicator,
+                ..
+            })) = editor.context_menu.read().as_ref()
+            {
+                active = deployed_from_indicator.map_or(true, |indicator_row| indicator_row == row);
+            };
             button = editor.render_code_actions_indicator(&self.style, row, active, cx);
         });
 
