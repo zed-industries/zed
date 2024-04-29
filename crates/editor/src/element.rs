@@ -14,8 +14,8 @@ use crate::{
     scroll::scroll_amount::ScrollAmount,
     CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GutterDimensions, HalfPageDown,
-    HalfPageUp, HoveredCursor, HunkToShow, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
-    SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    HalfPageUp, HoveredCursor, HunkToExpand, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
+    Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use client::ParticipantIndex;
@@ -413,7 +413,7 @@ impl EditorElement {
     fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
-        hovered_hunk: Option<&HunkToShow>,
+        hovered_hunk: Option<&HunkToExpand>,
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
@@ -3103,7 +3103,7 @@ impl EditorElement {
     fn paint_mouse_listeners(
         &mut self,
         layout: &EditorLayout,
-        hovered_hunk: Option<HunkToShow>,
+        hovered_hunk: Option<HunkToExpand>,
         cx: &mut WindowContext,
     ) {
         self.paint_scroll_wheel_listener(layout, cx);
@@ -4095,7 +4095,7 @@ impl Element for EditorElement {
                         .map(|hitbox| hitbox.contains(&mouse_position))
                         .unwrap_or(false)
                     {
-                        Some(HunkToShow {
+                        Some(HunkToExpand {
                             status: *status,
                             multi_buffer_range: multi_buffer_range.clone(),
                             diff_base_byte_range: diff_base_byte_range.clone(),

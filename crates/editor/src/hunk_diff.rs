@@ -1,0 +1,481 @@
+use std::{ops::Range, sync::Arc};
+
+use collections::{HashMap, HashSet};
+use git::diff::{DiffHunk, DiffHunkStatus};
+use gpui::{AppContext, Hsla, Model, View};
+use language::{Buffer, Language};
+use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
+use text::Point;
+use ui::{div, ActiveTheme, IntoElement, ParentElement, Styled, ViewContext, VisualContext};
+use util::{debug_panic, RangeExt};
+
+use crate::{
+    git::{diff_hunk_to_display, DisplayDiffHunk},
+    hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle, DisplaySnapshot,
+    Editor, ExpandAllGitHunkDiffs, GitRowHighlight, RangeToAnchorExt, ToDisplayPoint,
+    ToggleGitHunkDiff,
+};
+
+#[derive(Debug, Clone)]
+pub(super) struct HunkToExpand {
+    pub multi_buffer_range: Range<Anchor>,
+    pub status: DiffHunkStatus,
+    pub diff_base_byte_range: Range<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ExpandedGitHunk {
+    pub block: Option<BlockId>,
+    pub hunk_range: Range<Anchor>,
+    pub diff_base_byte_range: Range<usize>,
+    pub diff_base_version: usize,
+    pub status: DiffHunkStatus,
+    pub folded: bool,
+}
+
+impl Editor {
+    pub fn toggle_git_hunk_diff(&mut self, _: &ToggleGitHunkDiff, cx: &mut ViewContext<Self>) {
+        let snapshot = self.snapshot(cx);
+        let selections = self.selections.disjoint_anchors();
+        self.toggle_hunks_expanded(
+            hunks_for_selections(&snapshot.buffer_snapshot, &selections),
+            &snapshot.display_snapshot,
+            cx,
+        );
+    }
+
+    pub fn expand_all_git_hunk_diffs(
+        &mut self,
+        _: &ExpandAllGitHunkDiffs,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let snapshot = self.snapshot(cx);
+        let display_rows_with_expanded_hunks = self
+            .expanded_hunks
+            .iter()
+            .filter(|hunk| !hunk.folded)
+            .map(|hunk| &hunk.hunk_range)
+            .map(|anchor_range| {
+                (
+                    anchor_range
+                        .start
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row(),
+                    anchor_range
+                        .end
+                        .to_display_point(&snapshot.display_snapshot)
+                        .row(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let hunks = snapshot
+            .display_snapshot
+            .buffer_snapshot
+            .git_diff_hunks_in_range(0..u32::MAX)
+            .filter(|hunk| {
+                let hunk_display_row_range = Point::new(hunk.associated_range.start, 0)
+                    .to_display_point(&snapshot.display_snapshot)
+                    ..Point::new(hunk.associated_range.end, 0)
+                        .to_display_point(&snapshot.display_snapshot);
+                let row_range_end =
+                    display_rows_with_expanded_hunks.get(&hunk_display_row_range.start.row());
+                row_range_end.is_none() || row_range_end != Some(&hunk_display_row_range.end.row())
+            });
+        self.toggle_hunks_expanded(hunks, &snapshot.display_snapshot, cx);
+    }
+
+    fn toggle_hunks_expanded(
+        &mut self,
+        hunks_to_toggle: impl IntoIterator<Item = DiffHunk<u32>>,
+        snapshot: &DisplaySnapshot,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut hunks_to_toggle = hunks_to_toggle.into_iter().fuse().peekable();
+        let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.len());
+        let mut blocks_to_remove = HashSet::default();
+        let mut hunks_to_expand = Vec::new();
+        self.expanded_hunks.retain(|expanded_hunk| {
+            if expanded_hunk.folded {
+                return true;
+            }
+            let expanded_hunk_row_range = expanded_hunk
+                .hunk_range
+                .start
+                .to_display_point(snapshot)
+                .row()
+                ..expanded_hunk
+                    .hunk_range
+                    .end
+                    .to_display_point(snapshot)
+                    .row();
+            let mut retain = true;
+            while let Some(hunk_to_toggle) = hunks_to_toggle.peek() {
+                match diff_hunk_to_display(hunk_to_toggle, snapshot) {
+                    DisplayDiffHunk::Folded { .. } => {
+                        hunks_to_toggle.next();
+                        continue;
+                    }
+                    DisplayDiffHunk::Unfolded {
+                        diff_base_byte_range,
+                        display_row_range,
+                        multi_buffer_range,
+                        status,
+                    } => {
+                        let hunk_to_toggle_row_range = display_row_range;
+                        if hunk_to_toggle_row_range.start > expanded_hunk_row_range.end {
+                            break;
+                        } else if expanded_hunk_row_range == hunk_to_toggle_row_range {
+                            highlights_to_remove.push(expanded_hunk.hunk_range.clone());
+                            blocks_to_remove.extend(expanded_hunk.block);
+                            hunks_to_toggle.next();
+                            retain = false;
+                            break;
+                        } else {
+                            hunks_to_expand.push(HunkToExpand {
+                                status,
+                                multi_buffer_range,
+                                diff_base_byte_range,
+                            });
+                            hunks_to_toggle.next();
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            retain
+        });
+        for remaining_hunk in hunks_to_toggle {
+            let remaining_hunk_point_range = Point::new(remaining_hunk.associated_range.start, 0)
+                ..Point::new(remaining_hunk.associated_range.end, 0);
+            hunks_to_expand.push(HunkToExpand {
+                status: remaining_hunk.status(),
+                multi_buffer_range: remaining_hunk_point_range
+                    .to_anchors(&snapshot.buffer_snapshot),
+                diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
+            });
+        }
+
+        for removed_rows in highlights_to_remove {
+            self.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
+        }
+        self.remove_blocks(blocks_to_remove, None, cx);
+        for hunk in hunks_to_expand {
+            self.expand_git_diff_hunk(&hunk, cx);
+        }
+        cx.notify();
+    }
+
+    // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
+    // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
+    pub(super) fn expand_git_diff_hunk(
+        &mut self,
+        hunk: &HunkToExpand,
+        cx: &mut ViewContext<'_, Editor>,
+    ) -> Option<()> {
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let multi_buffer_row_range = hunk
+            .multi_buffer_range
+            .start
+            .to_point(&multi_buffer_snapshot)
+            ..hunk.multi_buffer_range.end.to_point(&multi_buffer_snapshot);
+        let hunk_start = hunk.multi_buffer_range.start;
+        let hunk_end = hunk.multi_buffer_range.end;
+
+        let (diff_base_version, deleted_text) = self.buffer().update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot(cx);
+            let hunk = buffer_diff_hunk(&snapshot, multi_buffer_row_range.clone())?;
+            let mut buffer_ranges = buffer.range_to_buffer_ranges(multi_buffer_row_range, cx);
+            if buffer_ranges.len() == 1 {
+                let (buffer, _, _) = buffer_ranges.pop()?;
+                let buffer = buffer.read(cx);
+                Some((
+                    buffer.diff_base_version(),
+                    buffer.diff_base().and_then(|diff_base| {
+                        Some(diff_base.get(hunk.diff_base_byte_range)?.to_owned())
+                    }),
+                ))
+            } else {
+                None
+            }
+        })?;
+
+        let block_insert_index = match self.expanded_hunks.binary_search_by(|probe| {
+            probe
+                .hunk_range
+                .start
+                .cmp(&hunk_start, &multi_buffer_snapshot)
+        }) {
+            Ok(_already_present) => return None,
+            Err(ix) => ix,
+        };
+
+        let block = match hunk.status {
+            DiffHunkStatus::Removed => {
+                if let Some(deleted_text) = deleted_text {
+                    self.insert_deleted_hunk_block(hunk_start, deleted_text, cx)
+                } else {
+                    debug_panic!("Found no deleted text for removed hunk {hunk:?}");
+                    None
+                }
+            }
+            DiffHunkStatus::Added => {
+                self.highlight_rows::<GitRowHighlight>(
+                    hunk_start..hunk_end,
+                    Some(added_hunk_color(cx)),
+                    cx,
+                );
+                None
+            }
+            DiffHunkStatus::Modified => {
+                self.highlight_rows::<GitRowHighlight>(
+                    hunk_start..hunk_end,
+                    Some(added_hunk_color(cx)),
+                    cx,
+                );
+                if let Some(deleted_text) = deleted_text {
+                    self.insert_deleted_hunk_block(hunk_start, deleted_text, cx)
+                } else {
+                    debug_panic!("Found no deleted text for modified hunk {hunk:?}");
+                    None
+                }
+            }
+        };
+        self.expanded_hunks.insert(
+            block_insert_index,
+            ExpandedGitHunk {
+                block,
+                hunk_range: hunk_start..hunk_end,
+                diff_base_version,
+                status: hunk.status,
+                folded: false,
+                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+            },
+        );
+
+        Some(())
+    }
+
+    fn insert_deleted_hunk_block(
+        &mut self,
+        position: Anchor,
+        deleted_text: String,
+        cx: &mut ViewContext<'_, Self>,
+    ) -> Option<BlockId> {
+        let language = self.language_at(position, cx);
+        let deleted_hunk_color = deleted_hunk_color(cx);
+        let (editor_height, editor_with_deleted_text) =
+            editor_with_deleted_text(language, deleted_text, deleted_hunk_color, cx);
+        let parent_gutter_width = self.gutter_width;
+        let mut new_block_ids = self.insert_blocks(
+            Some(BlockProperties {
+                position,
+                height: editor_height,
+                style: BlockStyle::Flex,
+                render: Box::new(move |_| {
+                    div()
+                        .bg(deleted_hunk_color)
+                        .size_full()
+                        .pl(parent_gutter_width)
+                        .child(editor_with_deleted_text.clone())
+                        .into_any_element()
+                }),
+                disposition: BlockDisposition::Above,
+            }),
+            None,
+            cx,
+        );
+        if new_block_ids.len() == 1 {
+            new_block_ids.pop()
+        } else {
+            debug_panic!(
+                "Inserted one editor block but did not receive exactly one block id: {new_block_ids:?}"
+            );
+            None
+        }
+    }
+
+    pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) {
+        let to_remove = self
+            .expanded_hunks
+            .drain(..)
+            .filter_map(|expanded_hunk| expanded_hunk.block)
+            .collect();
+        self.clear_row_highlights::<GitRowHighlight>();
+        self.remove_blocks(to_remove, None, cx);
+    }
+
+    // TODO kb make async, consider `block_with_timeout` + need to debounce between edits (configurable?)
+    pub(super) fn sync_expanded_diff_hunks(
+        &mut self,
+        buffer: &Model<Buffer>,
+        cx: &mut ViewContext<'_, Self>,
+    ) {
+        let snapshot = self.snapshot(cx);
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let mut recalculated_hunks = buffer_snapshot
+            .git_diff_hunks_in_row_range(0..u32::MAX)
+            .fuse()
+            .peekable();
+        let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.len());
+        let mut blocks_to_remove = HashSet::default();
+        let mut hunks_to_reexpand = Vec::with_capacity(self.expanded_hunks.len());
+        self.expanded_hunks.retain_mut(|expanded_hunk| {
+            if expanded_hunk.hunk_range.start.buffer_id != Some(buffer_snapshot.remote_id()) {
+                return true;
+            }
+
+            let expanded_hunk_display_range = expanded_hunk
+                .hunk_range
+                .start
+                .to_display_point(&snapshot)
+                .row()
+                ..expanded_hunk
+                    .hunk_range
+                    .end
+                    .to_display_point(&snapshot)
+                    .row();
+            let mut retain = false;
+            if expanded_hunk.diff_base_version == buffer.read(cx).diff_base_version() {
+                while let Some(buffer_hunk) = recalculated_hunks.peek() {
+                    match diff_hunk_to_display(buffer_hunk, &snapshot) {
+                        DisplayDiffHunk::Folded { display_row } => {
+                            recalculated_hunks.next();
+                            if !expanded_hunk.folded
+                                && expanded_hunk_display_range
+                                    .to_inclusive()
+                                    .contains(&display_row)
+                            {
+                                retain = true;
+                                expanded_hunk.folded = true;
+                                highlights_to_remove.push(expanded_hunk.hunk_range.clone());
+                                if let Some(block) = expanded_hunk.block.take() {
+                                    blocks_to_remove.insert(block);
+                                }
+                                break;
+                            } else {
+                                continue;
+                            }
+                        }
+                        DisplayDiffHunk::Unfolded {
+                            diff_base_byte_range,
+                            display_row_range,
+                            multi_buffer_range,
+                            status,
+                        } => {
+                            let hunk_display_range = display_row_range;
+                            if expanded_hunk_display_range.start > hunk_display_range.end {
+                                recalculated_hunks.next();
+                                continue;
+                            } else if expanded_hunk_display_range.end < hunk_display_range.start {
+                                break;
+                            } else {
+                                if !expanded_hunk.folded
+                                    && expanded_hunk_display_range == hunk_display_range
+                                    && expanded_hunk.status == buffer_hunk.status()
+                                    && expanded_hunk.diff_base_byte_range
+                                        == buffer_hunk.diff_base_byte_range
+                                {
+                                    recalculated_hunks.next();
+                                    retain = true;
+                                } else {
+                                    hunks_to_reexpand.push(HunkToExpand {
+                                        status,
+                                        multi_buffer_range,
+                                        diff_base_byte_range,
+                                    });
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if !retain {
+                blocks_to_remove.extend(expanded_hunk.block);
+                highlights_to_remove.push(expanded_hunk.hunk_range.clone());
+            }
+            retain
+        });
+
+        for removed_rows in highlights_to_remove {
+            self.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
+        }
+        self.remove_blocks(blocks_to_remove, None, cx);
+        for hunk in hunks_to_reexpand {
+            self.expand_git_diff_hunk(&hunk, cx);
+        }
+    }
+}
+
+fn added_hunk_color(cx: &AppContext) -> Hsla {
+    let mut created_color = cx.theme().status().git().created;
+    created_color.fade_out(0.7);
+    created_color
+}
+
+fn deleted_hunk_color(cx: &AppContext) -> Hsla {
+    let mut deleted_color = cx.theme().status().git().deleted;
+    deleted_color.fade_out(0.7);
+    deleted_color
+}
+
+fn editor_with_deleted_text(
+    language: Option<Arc<Language>>,
+    deleted_text: String,
+    deleted_color: Hsla,
+    cx: &mut ViewContext<'_, Editor>,
+) -> (u8, View<Editor>) {
+    let deleted_text_line_count = deleted_text.lines().count() as u8;
+    let editor = cx.new_view(|cx| {
+        let mut editor = Editor::multi_line(cx);
+        editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
+        editor.show_wrap_guides = Some(false);
+        editor.show_gutter = false;
+        editor.scroll_manager.set_forbid_vertical_scroll(true);
+        editor.set_text(deleted_text, cx);
+        editor.set_read_only(true);
+
+        let editor_snapshot = editor.snapshot(cx);
+        let start = editor_snapshot.buffer_snapshot.anchor_before(0);
+        let end = editor_snapshot
+            .buffer_snapshot
+            .anchor_after(editor.buffer.read(cx).len(cx));
+
+        editor.highlight_rows::<GitRowHighlight>(start..end, Some(deleted_color), cx);
+        editor
+    });
+
+    let editor_height = editor.update(cx, |editor, cx| {
+        if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
+            let editor_snapshot = editor.snapshot(cx);
+            let display_rows = buffer.update(cx, |buffer, cx| {
+                buffer.set_language(language, cx);
+
+                let buffer_snapshot = buffer.snapshot();
+                let last_point = buffer_snapshot.offset_to_point(buffer.len());
+                last_point
+                    .to_display_point(&editor_snapshot.display_snapshot)
+                    .row() as u8
+            });
+            display_rows.max(deleted_text_line_count)
+        } else {
+            deleted_text_line_count
+        }
+    });
+
+    (editor_height, editor)
+}
+
+fn buffer_diff_hunk(
+    buffer_snapshot: &MultiBufferSnapshot,
+    row_range: Range<Point>,
+) -> Option<DiffHunk<u32>> {
+    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(row_range.start.row..row_range.end.row);
+    let hunk = hunks.next()?;
+    let second_hunk = hunks.next();
+    if second_hunk.is_none() {
+        return Some(hunk);
+    }
+    None
+}
