@@ -345,7 +345,7 @@ List of `string` values
 
 ```json
 {
-  "placement": "no"
+  "placement": "none"
 }
 ```
 

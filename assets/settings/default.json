@@ -320,7 +320,7 @@
     // 2. Show tab bar at the bottom of the editor:
     //    "bottom"
     // 3. Don't show the tab bar:
-    //   "no"
+    //   "none"
     "placement": "top",
     // Whether or not to show the navigation history buttons.
     "show_nav_history_buttons": true

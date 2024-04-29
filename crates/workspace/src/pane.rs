@@ -1,6 +1,6 @@
 use crate::{
     item::{
-        ClosePosition, Item, ItemHandle, PreviewTabsSettings, TabContentParams, TabsSettings,
+        ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
         WeakItemHandle,
     },
     toolbar::Toolbar,
@@ -1440,7 +1440,7 @@ impl Pane {
             },
             cx,
         );
-        let close_side = &TabsSettings::get_global(cx).close_position;
+        let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;

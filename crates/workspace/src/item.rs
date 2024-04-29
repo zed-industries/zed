@@ -36,7 +36,7 @@ use ui::Element as _;
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
 #[derive(Deserialize)]
-pub struct TabsSettings {
+pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
 }
@@ -65,7 +65,7 @@ impl ClosePosition {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct TabsSettingsContent {
+pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
     ///
     /// Default: false
@@ -89,10 +89,10 @@ pub struct PreviewTabsSettingsContent {
     enable_preview_from_file_finder: Option<bool>,
 }
 
-impl Settings for TabsSettings {
+impl Settings for ItemSettings {
     const KEY: Option<&'static str> = Some("tabs");
 
-    type FileContent = TabsSettingsContent;
+    type FileContent = ItemSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         sources.json_merge()

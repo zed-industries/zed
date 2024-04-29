@@ -33,8 +33,8 @@ use gpui::{
     Size, Subscription, Task, View, WeakView, WindowHandle, WindowOptions,
 };
 use item::{
-    FollowableItem, FollowableItemHandle, Item, ItemHandle, PreviewTabsSettings, ProjectItem,
-    TabsSettings,
+    FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
+    ProjectItem,
 };
 use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
@@ -265,8 +265,7 @@ impl Column for WorkspaceId {
 }
 pub fn init_settings(cx: &mut AppContext) {
     WorkspaceSettings::register(cx);
-    TabsSettings::register(cx);
-    TabsSettings::register(cx);
+    ItemSettings::register(cx);
     PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
 }

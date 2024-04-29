@@ -20,7 +20,7 @@ use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPat
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::{
-    item::{TabContentParams, TabsSettings},
+    item::{ItemSettings, TabContentParams},
     TabBarPlacement,
 };
 
@@ -599,7 +599,7 @@ impl Item for Editor {
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
-        let label_color = if TabsSettings::get_global(cx).git_status {
+        let label_color = if ItemSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
                 .as_singleton()
