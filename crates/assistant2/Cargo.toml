@@ -8,11 +8,6 @@ license = "GPL-3.0-or-later"
 [lib]
 path = "src/assistant2.rs"
 
-[[example]]
-name = "assistant_example"
-path = "examples/assistant_example.rs"
-crate-type = ["bin"]
-
 [dependencies]
 anyhow.workspace = true
 assistant_tooling.workspace = true
