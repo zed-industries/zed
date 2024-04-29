@@ -227,8 +227,9 @@ fn init_ui(args: Args) {
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
-            workspace::open_new(app_state, cx, |workspace, cx| {
-                Editor::new_file(workspace, &Default::default(), cx)
+            cx.spawn({
+                let app_state = app_state.clone();
+                |cx| async move { restore_or_create_workspace(app_state, cx).await }
             })
             .detach();
         }
