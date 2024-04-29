@@ -59,6 +59,7 @@
     "go": "go",
     "graphql": "graphql",
     "h": "c",
+    "hpp": "cpp",
     "handlebars": "code",
     "hbs": "template",
     "heex": "elixir",
