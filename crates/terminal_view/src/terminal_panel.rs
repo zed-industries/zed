@@ -402,7 +402,8 @@ impl TerminalPanel {
                                 );
                             }
                         })
-                        .ok();
+                        .ok()
+                        .unwrap();
                 }),
             );
 
@@ -587,7 +588,7 @@ impl TerminalPanel {
         );
     }
 
-    async fn replace_terminal(
+    fn replace_terminal(
         &self,
         working_directory: Option<PathBuf>,
         spawn_task: SpawnInTerminal,
@@ -601,15 +602,23 @@ impl TerminalPanel {
             .ok()?;
         let reveal = spawn_task.reveal;
         let window = cx.window_handle();
-        let new_terminal = project
-            .update(cx, |project, cx| {
-                project.create_terminal(working_directory, Some(spawn_task), window, cx)
+        cx.spawn(|_, mut cx| async move {
+            let new_terminal = project
+                .update(&mut cx, |project, cx| {
+                    project.create_terminal(working_directory, Some(spawn_task), window, cx)
+                })
+                .unwrap()
+                .await
+                .log_err()
+                .unwrap();
+            cx.update(|cx| {
+                terminal_to_replace.update(cx, |terminal_to_replace, cx| {
+                    terminal_to_replace.set_terminal(new_terminal, cx);
+                });
             })
-            .await
-            .log_err()?;
-        terminal_to_replace.update(cx, |terminal_to_replace, cx| {
-            terminal_to_replace.set_terminal(new_terminal, cx);
-        });
+            .unwrap();
+        })
+        .detach();
 
         match reveal {
             RevealStrategy::Always => {
