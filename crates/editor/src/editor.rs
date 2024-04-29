@@ -84,7 +84,7 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use task::{TaskContext, TaskTemplate};
+use task::{ResolvedTask, TaskTemplate};
 
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight};
 use lsp::{DiagnosticSeverity, LanguageServerId};
@@ -100,7 +100,7 @@ use parking_lot::{Mutex, RwLock};
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use project::{
     CodeAction, Completion, FormatTrigger, Item, Location, Project, ProjectPath,
-    ProjectTransaction, WorktreeId,
+    ProjectTransaction, TaskSourceKind, WorktreeId,
 };
 use rand::prelude::*;
 use rpc::proto::*;
@@ -110,7 +110,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
-use std::ops::{Index, Not as _};
+use std::ops::Not as _;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -394,11 +394,11 @@ impl Default for ScrollbarMarkerState {
 
 #[derive(Clone)]
 struct RunnableTasks {
-    pub templates: SmallVec<[TaskTemplate; 1]>,
-    match_range: Range<usize>, // The equivalent of the newest selection,
-    language: Arc<Language>,   // For getting a context provider
-    worktree: Option<WorktreeId>,
+    templates: SmallVec<[(TaskSourceKind, TaskTemplate); 1]>,
 }
+
+#[derive(Clone)]
+struct ResolvedTasks(SmallVec<[(TaskSourceKind, ResolvedTask); 1]>);
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
@@ -1173,15 +1173,15 @@ impl CompletionsMenu {
 
 #[derive(Clone)]
 struct CodeActionContents {
-    tasks: Option<Arc<RunnableTasks>>,
+    tasks: Option<Arc<ResolvedTasks>>,
     actions: Option<Arc<[CodeAction]>>,
 }
 
 impl CodeActionContents {
     fn len(&self) -> usize {
         match (&self.tasks, &self.actions) {
-            (Some(tasks), Some(actions)) => actions.len() + tasks.templates.len(),
-            (Some(tasks), None) => tasks.templates.len(),
+            (Some(tasks), Some(actions)) => actions.len() + tasks.0.len(),
+            (Some(tasks), None) => tasks.0.len(),
             (None, Some(actions)) => actions.len(),
             (None, None) => 0,
         }
@@ -1189,8 +1189,8 @@ impl CodeActionContents {
 
     fn is_empty(&self) -> bool {
         match (&self.tasks, &self.actions) {
-            (Some(tasks), Some(actions)) => actions.is_empty() && tasks.templates.is_empty(),
-            (Some(tasks), None) => tasks.templates.is_empty(),
+            (Some(tasks), Some(actions)) => actions.is_empty() && tasks.0.is_empty(),
+            (Some(tasks), None) => tasks.0.is_empty(),
             (None, Some(actions)) => actions.is_empty(),
             (None, None) => true,
         }
@@ -1201,9 +1201,9 @@ impl CodeActionContents {
             .iter()
             .flat_map(|tasks| {
                 tasks
-                    .templates
+                    .0
                     .iter()
-                    .map(|template| CodeActionsItem::Task(template.clone()))
+                    .map(|(kind, task)| CodeActionsItem::Task(kind.clone(), task.clone()))
             })
             .chain(self.actions.iter().flat_map(|actions| {
                 actions
@@ -1214,24 +1214,24 @@ impl CodeActionContents {
     fn get(&self, index: usize) -> Option<CodeActionsItem> {
         match (&self.tasks, &self.actions) {
             (Some(tasks), Some(actions)) => {
-                if index < tasks.templates.len() {
+                if index < tasks.0.len() {
                     tasks
-                        .templates
+                        .0
                         .get(index)
                         .cloned()
-                        .map(CodeActionsItem::Task)
+                        .map(|(kind, task)| CodeActionsItem::Task(kind, task))
                 } else {
                     actions
-                        .get(index - tasks.templates.len())
+                        .get(index - tasks.0.len())
                         .cloned()
                         .map(CodeActionsItem::CodeAction)
                 }
             }
             (Some(tasks), None) => tasks
-                .templates
+                .0
                 .get(index)
                 .cloned()
-                .map(CodeActionsItem::Task),
+                .map(|(kind, task)| CodeActionsItem::Task(kind, task)),
             (None, Some(actions)) => actions.get(index).cloned().map(CodeActionsItem::CodeAction),
             (None, None) => None,
         }
@@ -1240,13 +1240,13 @@ impl CodeActionContents {
 
 #[derive(Clone)]
 enum CodeActionsItem {
-    Task(TaskTemplate),
+    Task(TaskSourceKind, ResolvedTask),
     CodeAction(CodeAction),
 }
 
 impl CodeActionsItem {
-    fn as_task(&self) -> Option<&TaskTemplate> {
-        let Self::Task(task) = self else {
+    fn as_task(&self) -> Option<&ResolvedTask> {
+        let Self::Task(_, task) = self else {
             return None;
         };
         Some(task)
@@ -1260,7 +1260,7 @@ impl CodeActionsItem {
     fn label(&self) -> String {
         match self {
             Self::CodeAction(action) => action.lsp_action.title.clone(),
-            Self::Task(task) => task.label.clone(),
+            Self::Task(_, task) => task.resolved_label.clone(),
         }
     }
 }
@@ -1271,8 +1271,6 @@ struct CodeActionsMenu {
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
     deployed_from_indicator: Option<u32>,
-    /// None if `actions` does not contain any tasks
-    task_context: Option<TaskContext>,
 }
 
 impl CodeActionsMenu {
@@ -1383,7 +1381,7 @@ impl CodeActionsMenu {
                                         }
                                     }),
                                 )
-                                .child(SharedString::from(task.label.clone()))
+                                .child(SharedString::from(task.resolved_label.clone()))
                             })
                     })
                     .collect()
@@ -1400,7 +1398,7 @@ impl CodeActionsMenu {
                 .iter()
                 .enumerate()
                 .max_by_key(|(_, action)| match action {
-                    CodeActionsItem::Task(task) => task.label.chars().count(),
+                    CodeActionsItem::Task(_, task) => task.resolved_label.chars().count(),
                     CodeActionsItem::CodeAction(action) => action.lsp_action.title.chars().count(),
                 })
                 .map(|(ix, _)| ix),
@@ -3835,6 +3833,21 @@ impl Editor {
                                 .flatten()
                         },
                     );
+                    let tasks = tasks
+                        .zip(task_context.as_ref())
+                        .map(|(tasks, task_context)| {
+                            Arc::new(ResolvedTasks(
+                                tasks
+                                    .templates
+                                    .iter()
+                                    .filter_map(|(kind, template)| {
+                                        template
+                                            .resolve_task(&kind.to_id_base(), &task_context)
+                                            .map(|task| (kind.clone(), task))
+                                    })
+                                    .collect(),
+                            ))
+                        });
                     *this.context_menu.write() = Some(ContextMenu::CodeActions(CodeActionsMenu {
                         buffer,
                         actions: CodeActionContents {
@@ -3844,7 +3857,6 @@ impl Editor {
                         selected_item: Default::default(),
                         scroll_handle: UniformListScrollHandle::default(),
                         deployed_from_indicator,
-                        task_context,
                     }));
                     cx.notify();
                 }
@@ -3872,16 +3884,19 @@ impl Editor {
         let workspace = self.workspace()?;
 
         match action {
-            CodeActionsItem::Task(task) => workspace.update(cx, |_, cx| {
-                if let Some(resolved_task) = task
-                    .resolve_task("base", actions_menu.task_context.as_ref().unwrap())
-                    .and_then(|task| task.resolved)
-                {
-                    cx.emit(workspace::Event::SpawnTask(resolved_task));
-                }
+            CodeActionsItem::Task(task_source_kind, resolved_task) => {
+                workspace.update(cx, |workspace, cx| {
+                    workspace::tasks::schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        resolved_task,
+                        false,
+                        cx,
+                    );
 
-                None
-            }),
+                    None
+                })
+            }
             CodeActionsItem::CodeAction(action) => {
                 let apply_code_actions = workspace
                     .read(cx)
@@ -7618,19 +7633,14 @@ impl Editor {
             .buffer_snapshot
             .runnable_ranges(range)
             .filter_map(|(multi_buffer_range, mut runnable)| {
-                let (tasks, worktree_id) = self.resolve_runnable(&mut runnable, cx);
+                let (tasks, _) = self.resolve_runnable(&mut runnable, cx);
                 if tasks.is_empty() {
                     return None;
                 }
 
                 Some((
                     multi_buffer_range.start.to_display_point(&snapshot).row(),
-                    RunnableTasks {
-                        templates: tasks,
-                        match_range: multi_buffer_range,
-                        language: runnable.language,
-                        worktree: worktree_id,
-                    },
+                    RunnableTasks { templates: tasks },
                 ))
             })
             .collect()
@@ -7640,7 +7650,10 @@ impl Editor {
         &self,
         runnable: &mut Runnable,
         cx: &WindowContext<'_>,
-    ) -> (SmallVec<[TaskTemplate; 1]>, Option<WorktreeId>) {
+    ) -> (
+        SmallVec<[(TaskSourceKind, TaskTemplate); 1]>,
+        Option<WorktreeId>,
+    ) {
         let Some(project) = self.project.as_ref() else {
             return Default::default();
         };
@@ -7667,8 +7680,7 @@ impl Editor {
                                 template.tags.iter().any(|source_tag| source_tag == &tag)
                             })
                     })
-                    .sorted_by_key(|(kind, _)| kind.to_owned())
-                    .map(|(_, template)| template),
+                    .sorted_by_key(|(kind, _)| kind.to_owned()),
             ),
             worktree_id,
         )

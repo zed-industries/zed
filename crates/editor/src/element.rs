@@ -49,7 +49,6 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
-use task::{RunnableTag, TaskTemplate};
 use theme::{ActiveTheme, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
