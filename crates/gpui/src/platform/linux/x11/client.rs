@@ -428,11 +428,12 @@ impl X11Client {
             }
             Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
-
-                let position = Point::new(
-                    (event.event_x as f32 / u16::MAX as f32).into(),
-                    (event.event_y as f32 / u16::MAX as f32).into(),
+                let state = self.0.borrow();
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
+                drop(state);
                 let modifiers = modifiers_from_xinput_info(event.mods);
 
                 let axisvalues = event
