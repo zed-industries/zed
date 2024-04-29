@@ -920,16 +920,21 @@ impl EditorElement {
         em_width: Pixels,
         autoscroll_containing_element: bool,
         cx: &mut WindowContext,
-    ) -> Vec<CursorLayout> {
+    ) -> (Vec<CursorLayout>, bool) {
         let mut autoscroll_bounds = None;
+        let mut non_visible_cursors = false;
         let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
             for (player_color, selections) in selections {
                 for selection in selections {
                     let cursor_position = selection.head;
-                    if (selection.is_local && !editor.show_local_cursors(cx))
-                        || !visible_display_row_range.contains(&cursor_position.row())
-                    {
+
+                    let in_range = visible_display_row_range.contains(&cursor_position.row());
+                    if !in_range {
+                        non_visible_cursors |= true;
+                    }
+
+                    if (selection.is_local && !editor.show_local_cursors(cx)) || !in_range {
                         continue;
                     }
 
@@ -1036,7 +1041,7 @@ impl EditorElement {
             cx.request_autoscroll(bounds);
         }
 
-        cursor_layouts
+        (cursor_layouts, non_visible_cursors)
     }
 
     fn layout_scrollbar(
@@ -3765,7 +3770,7 @@ impl Element for EditorElement {
 
                 let cursors = self.collect_cursors(&snapshot, cx);
 
-                let visible_cursors = self.layout_visible_cursors(
+                let (visible_cursors, non_visible_cursors) = self.layout_visible_cursors(
                     &snapshot,
                     &selections,
                     start_row..end_row,
@@ -3785,7 +3790,7 @@ impl Element for EditorElement {
                     bounds,
                     scroll_position,
                     height_in_lines,
-                    cursors.len() > visible_cursors.len(),
+                    non_visible_cursors,
                     cx,
                 );
 
