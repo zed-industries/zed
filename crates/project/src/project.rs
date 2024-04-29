@@ -642,7 +642,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_expand_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
-        client.add_model_request_handler(Self::handle_resolve_completion_documentation);
+        client.add_model_request_handler(Self::handle_resolve_completion_item);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_inlay_hints);
@@ -5727,7 +5727,7 @@ impl Project {
         client: Arc<Client>,
         language_registry: Arc<LanguageRegistry>,
     ) {
-        let request = proto::ResolveCompletionDocumentation {
+        let request = proto::ResolveCompletionItem {
             project_id,
             language_server_id: server_id.0 as u64,
             lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
@@ -5742,16 +5742,16 @@ impl Project {
             return;
         };
 
-        let documentation = if response.text.is_empty() {
+        let documentation = if response.documentation.is_empty() {
             Documentation::Undocumented
-        } else if response.is_markdown {
+        } else if response.documentation_is_markdown {
             Documentation::MultiLineMarkdown(
-                markdown::parse_markdown(&response.text, &language_registry, None).await,
+                markdown::parse_markdown(&response.documentation, &language_registry, None).await,
             )
-        } else if response.text.lines().count() <= 1 {
-            Documentation::SingleLine(response.text)
+        } else if response.documentation.lines().count() <= 1 {
+            Documentation::SingleLine(response.documentation)
         } else {
-            Documentation::MultiLinePlainText(response.text)
+            Documentation::MultiLinePlainText(response.documentation)
         };
 
         let mut completions = completions.write();
@@ -8939,12 +8939,12 @@ impl Project {
         })
     }
 
-    async fn handle_resolve_completion_documentation(
+    async fn handle_resolve_completion_item(
         this: Model<Self>,
-        envelope: TypedEnvelope<proto::ResolveCompletionDocumentation>,
+        envelope: TypedEnvelope<proto::ResolveCompletionItem>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> Result<proto::ResolveCompletionDocumentationResponse> {
+    ) -> Result<proto::ResolveCompletionItemResponse> {
         let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
 
         let completion = this
@@ -8958,19 +8958,22 @@ impl Project {
             })??
             .await?;
 
-        let mut is_markdown = false;
-        let text = match completion.documentation {
+        let mut documentation_is_markdown = false;
+        let documentation = match completion.documentation {
             Some(lsp::Documentation::String(text)) => text,
 
             Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value })) => {
-                is_markdown = kind == lsp::MarkupKind::Markdown;
+                documentation_is_markdown = kind == lsp::MarkupKind::Markdown;
                 value
             }
 
             _ => String::new(),
         };
 
-        Ok(proto::ResolveCompletionDocumentationResponse { text, is_markdown })
+        Ok(proto::ResolveCompletionItemResponse {
+            documentation,
+            documentation_is_markdown,
+        })
     }
 
     async fn handle_apply_code_action(

@@ -99,8 +99,8 @@ message Envelope {
         FormatBuffersResponse format_buffers_response = 70;
         GetCompletions get_completions = 71;
         GetCompletionsResponse get_completions_response = 72;
-        ResolveCompletionDocumentation resolve_completion_documentation = 73;
-        ResolveCompletionDocumentationResponse resolve_completion_documentation_response = 74;
+        ResolveCompletionItem resolve_completion_item = 73;
+        ResolveCompletionItemResponse resolve_completion_item_response = 74;
         ApplyCompletionAdditionalEdits apply_completion_additional_edits = 75;
         ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 76;
         GetCodeActions get_code_actions = 77;
@@ -1018,15 +1018,15 @@ message ResolveState {
     }
 }
 
-message ResolveCompletionDocumentation {
+message ResolveCompletionItem {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
     bytes lsp_completion = 3;
 }
 
-message ResolveCompletionDocumentationResponse {
-    string text = 1;
-    bool is_markdown = 2;
+message ResolveCompletionItemResponse {
+    string documentation = 1;
+    bool documentation_is_markdown = 2;
 }
 
 message ResolveInlayHint {
