@@ -46,7 +46,6 @@ x11rb::atom_manager! {
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
-        _NET_WM_WINDOW_OPACITY,
     }
 }
 
@@ -216,18 +215,6 @@ impl X11WindowState {
                 &[atoms.WM_DELETE_WINDOW],
             )
             .unwrap();
-        let transparent = params.window_background != WindowBackgroundAppearance::Opaque;
-        if transparent {
-            xcb_connection
-                .change_property32(
-                    xproto::PropMode::REPLACE,
-                    x_window,
-                    atoms._NET_WM_WINDOW_OPACITY,
-                    xproto::AtomEnum::CARDINAL,
-                    &[0],
-                )
-                .unwrap();
-        }
 
         xcb_connection.map_window(x_window).unwrap();
         xcb_connection.flush().unwrap();
@@ -258,7 +245,7 @@ impl X11WindowState {
             // Note: this has to be done after the GPU init, or otherwise
             // the sizes are immediately invalidated.
             size: query_render_extent(xcb_connection, x_window),
-            transparent,
+            transparent: params.window_background != WindowBackgroundAppearance::Opaque,
         };
 
         Self {
@@ -552,17 +539,6 @@ impl PlatformWindow for X11Window {
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
         let mut inner = self.0.state.borrow_mut();
         let transparent = background_appearance != WindowBackgroundAppearance::Opaque;
-        self.0
-            .xcb_connection
-            .change_property32(
-                xproto::PropMode::REPLACE,
-                self.0.x_window,
-                inner.atoms._NET_WM_WINDOW_OPACITY,
-                xproto::AtomEnum::CARDINAL,
-                &[if transparent { 0 } else { !0 }],
-            )
-            .unwrap();
-
         inner.renderer.update_transparency(transparent);
     }
 

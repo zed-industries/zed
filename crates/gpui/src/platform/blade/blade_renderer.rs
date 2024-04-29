@@ -80,7 +80,8 @@ pub unsafe fn new_renderer(
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GlobalParams {
     viewport_size: [f32; 2],
-    pad: [u32; 2],
+    premultiplied_alpha: u32,
+    pad: u32,
 }
 
 //Note: we can't use `Bounds` directly here because
@@ -188,6 +189,10 @@ impl BladePipelines {
     fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo) -> Self {
         use gpu::ShaderData as _;
 
+        log::info!(
+            "Initializing Blade pipelines for surface {:?}",
+            surface_info
+        );
         let shader = gpu.create_shader(gpu::ShaderDesc {
             source: include_str!("shaders.wgsl"),
         });
@@ -204,13 +209,15 @@ impl BladePipelines {
         shader.check_struct_size::<MonochromeSprite>();
         shader.check_struct_size::<PolychromeSprite>();
 
+        // See https://apoorvaj.io/alpha-compositing-opengl-blending-and-premultiplied-alpha/
+        let blend_mode = match surface_info.alpha {
+            gpu::AlphaMode::Ignored => gpu::BlendState::ALPHA_BLENDING,
+            gpu::AlphaMode::PreMultiplied => gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            gpu::AlphaMode::PostMultiplied => gpu::BlendState::ALPHA_BLENDING,
+        };
         let color_targets = &[gpu::ColorTargetState {
             format: surface_info.format,
-            blend: Some(match surface_info.alpha {
-                gpu::AlphaMode::Ignored => gpu::BlendState::ALPHA_BLENDING,
-                gpu::AlphaMode::PreMultiplied => gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
-                gpu::AlphaMode::PostMultiplied => gpu::BlendState::ALPHA_BLENDING,
-            }),
+            blend: Some(blend_mode),
             write_mask: gpu::ColorWrites::default(),
         }];
 
@@ -335,6 +342,7 @@ pub struct BladeSurfaceConfig {
 pub struct BladeRenderer {
     gpu: Arc<gpu::Context>,
     surface_config: gpu::SurfaceConfig,
+    alpha_mode: gpu::AlphaMode,
     command_encoder: gpu::CommandEncoder,
     last_sync_point: Option<gpu::SyncPoint>,
     pipelines: BladePipelines,
@@ -387,6 +395,7 @@ impl BladeRenderer {
         Self {
             gpu,
             surface_config,
+            alpha_mode: surface_info.alpha,
             command_encoder,
             last_sync_point: None,
             pipelines,
@@ -425,7 +434,9 @@ impl BladeRenderer {
         if transparent != self.surface_config.transparent {
             self.wait_for_gpu();
             self.surface_config.transparent = transparent;
-            self.gpu.resize(self.surface_config);
+            let surface_info = self.gpu.resize(self.surface_config);
+            self.pipelines = BladePipelines::new(&self.gpu, surface_info);
+            self.alpha_mode = surface_info.alpha;
         }
     }
 
@@ -479,7 +490,8 @@ impl BladeRenderer {
             let tex_info = self.atlas.get_texture_info(texture_id);
             let globals = GlobalParams {
                 viewport_size: [tex_info.size.width as f32, tex_info.size.height as f32],
-                pad: [0; 2],
+                premultiplied_alpha: 0,
+                pad: 0,
             };
 
             let vertex_buf = unsafe { self.instance_belt.alloc_data(&vertices, &self.gpu) };
@@ -527,7 +539,11 @@ impl BladeRenderer {
                 self.surface_config.size.width as f32,
                 self.surface_config.size.height as f32,
             ],
-            pad: [0; 2],
+            premultiplied_alpha: match self.alpha_mode {
+                gpu::AlphaMode::Ignored | gpu::AlphaMode::PostMultiplied => 0,
+                gpu::AlphaMode::PreMultiplied => 1,
+            },
+            pad: 0,
         };
 
         if let mut pass = self.command_encoder.render(gpu::RenderTargetSet {
