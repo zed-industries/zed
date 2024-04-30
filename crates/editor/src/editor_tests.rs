@@ -9394,6 +9394,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
             editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
         }
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::modified;
@@ -9531,6 +9532,7 @@ async fn test_toggled_diff_base_change(
     cx.update_editor(|editor, cx| {
         editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::mod2;
@@ -9696,6 +9698,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         «use some::mod2;
@@ -9760,6 +9763,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     });
 
     cx.update_editor(|editor, cx| editor.fold_selected_ranges(&FoldSelectedRanges, cx));
+    cx.executor().run_until_parked();
     cx.assert_editor_state(
         &r#"
         «use some::mod2;
@@ -9840,6 +9844,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
         editor.select_all(&SelectAll, cx);
         editor.unfold_lines(&UnfoldLines, cx);
     });
+    cx.executor().run_until_parked();
     cx.assert_editor_state(
         &r#"
         «use some::mod2;
@@ -10066,6 +10071,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     multi_buffer_editor.update(cx, |editor, cx| {
         editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
     });
+    cx.executor().run_until_parked();
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);
@@ -10166,6 +10172,7 @@ async fn test_edits_around_toggled_additions(
     cx.update_editor(|editor, cx| {
         editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::mod1;
@@ -10474,6 +10481,7 @@ async fn test_edits_around_toggled_deletions(
     cx.update_editor(|editor, cx| {
         editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::mod1;
@@ -10690,6 +10698,7 @@ async fn test_edits_around_toggled_modifications(
     cx.update_editor(|editor, cx| {
         editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::mod1;
@@ -11010,6 +11019,7 @@ async fn test_multiple_expanded_hunks_merge(
     cx.update_editor(|editor, cx| {
         editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
+    executor.run_until_parked();
     cx.assert_editor_state(
         &r#"
         use some::mod1;

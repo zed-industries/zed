@@ -1,12 +1,10 @@
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc};
 
 use collections::{HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
 use gpui::{AppContext, Hsla, Model, Task, View};
 use language::{Buffer, Language};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
-use project::project_settings::ProjectSettings;
-use settings::Settings;
 use text::{BufferId, Point};
 use ui::{div, ActiveTheme, IntoElement, ParentElement, Styled, ViewContext, VisualContext};
 use util::{debug_panic, RangeExt};
@@ -37,8 +35,6 @@ impl ExpandedHunks {
             .filter(move |hunk| include_folded || !hunk.folded)
     }
 }
-
-const HUNK_OPERATION_BLOCK_TIMEOUT: Duration = Duration::from_millis(3);
 
 #[derive(Debug, Clone)]
 pub(super) struct ExpandedHunk {
@@ -190,17 +186,9 @@ impl Editor {
                 .ok();
         });
 
-        match cx
-            .background_executor()
-            .block_with_timeout(HUNK_OPERATION_BLOCK_TIMEOUT, new_toggle_task)
-        {
-            Ok(()) => {}
-            Err(long_toggle) => {
-                self.expanded_hunks
-                    .hunk_update_tasks
-                    .insert(None, cx.background_executor().spawn(long_toggle));
-            }
-        }
+        self.expanded_hunks
+            .hunk_update_tasks
+            .insert(None, cx.background_executor().spawn(new_toggle_task));
     }
 
     // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
@@ -349,14 +337,11 @@ impl Editor {
         buffer: Model<Buffer>,
         cx: &mut ViewContext<'_, Self>,
     ) {
-        let hunk_diff_debounce_ms =
-            Duration::from_millis(ProjectSettings::get_global(cx).git.hunk_diff_debounce_ms);
         let buffer_id = buffer.read(cx).remote_id();
         self.expanded_hunks
             .hunk_update_tasks
             .remove(&Some(buffer_id));
         let new_sync_task = cx.spawn(move |editor, mut cx| async move {
-            cx.background_executor().timer(hunk_diff_debounce_ms).await;
             editor
                 .update(&mut cx, |editor, cx| {
                     let snapshot = editor.snapshot(cx);
@@ -464,17 +449,10 @@ impl Editor {
                 .ok();
         });
 
-        match cx
-            .background_executor()
-            .block_with_timeout(HUNK_OPERATION_BLOCK_TIMEOUT, new_sync_task)
-        {
-            Ok(()) => {}
-            Err(long_sync) => {
-                self.expanded_hunks
-                    .hunk_update_tasks
-                    .insert(Some(buffer_id), cx.background_executor().spawn(long_sync));
-            }
-        }
+        self.expanded_hunks.hunk_update_tasks.insert(
+            Some(buffer_id),
+            cx.background_executor().spawn(new_sync_task),
+        );
     }
 }
 

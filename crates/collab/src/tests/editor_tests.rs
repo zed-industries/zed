@@ -1880,7 +1880,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 }
 
 #[gpui::test]
-async fn test_multiple_types_reverts(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+async fn test_multiple_hunk_types_revert(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -2017,6 +2017,8 @@ struct Row10;"#};
         struct Row1220;"#});
     editor_cx_b
         .update_editor(|editor, cx| editor.toggle_hunk_diff(&editor::actions::ToggleHunkDiff, cx));
+    cx_a.executor().run_until_parked();
+    cx_b.executor().run_until_parked();
     editor_cx_a.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);

@@ -299,7 +299,9 @@
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
-  "language_servers": ["..."],
+  "language_servers": [
+    "..."
+  ],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -423,14 +425,14 @@
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       // "delay_ms": 600
-    },
-    // A delay after which all expanded diff hunk diffs are updated, in milliseconds.
-    "hunk_diff_debounce_ms": 30
+    }
   },
   "copilot": {
     // The set of glob patterns for which copilot should be disabled
     // in any matching file.
-    "disabled_globs": [".env"]
+    "disabled_globs": [
+      ".env"
+    ]
   },
   // Settings specific to journaling
   "journal": {
@@ -541,7 +543,12 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [".env", "env", ".venv", "venv"],
+        "directories": [
+          ".env",
+          "env",
+          ".venv",
+          "venv"
+        ],
         // Can also be 'csh', 'fish', and `nushell`
         "activate_script": "default"
       }
