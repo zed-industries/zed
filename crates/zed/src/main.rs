@@ -17,8 +17,7 @@ use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
 use gpui::{
-    App, AppContext, AsyncAppContext, AsyncAppContext, Context, SemanticVersion, Task,
-    VisualContext, WeakView,
+    App, AppContext, AsyncAppContext, Context, SemanticVersion, Task, VisualContext, WeakView,
 };
 use image_viewer;
 use language::LanguageRegistry;
@@ -38,11 +37,7 @@ use std::{
     fs::OpenOptions,
     io::{IsTerminal, Write},
     path::Path,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
-    thread,
+    sync::Arc,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{

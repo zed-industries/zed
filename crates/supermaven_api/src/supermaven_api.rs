@@ -225,6 +225,7 @@ pub fn download_latest(client: Arc<dyn HttpClient>) -> impl Future<Output = Resu
 
         #[cfg(not(windows))]
         {
+            use smol::fs::unix::PermissionsExt as _;
             let mut permissions = file.metadata().await?.permissions();
             permissions.set_mode(0o755);
             file.set_permissions(permissions).await?;
