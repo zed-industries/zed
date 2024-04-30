@@ -12,7 +12,6 @@ use project::{LanguageServerProgress, Project};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc};
 use ui::prelude::*;
-use util::ResultExt;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 actions!(activity_indicator, [ShowErrorMessage]);

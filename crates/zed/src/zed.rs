@@ -1332,6 +1332,7 @@ mod tests {
             })
         })
         .await;
+        cx.run_until_parked();
 
         let workspace = cx
             .update(|cx| cx.windows().first().unwrap().downcast::<Workspace>())
