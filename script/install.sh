@@ -51,7 +51,7 @@ linux() {
         suffix="-$channel"
     fi
 
-    mkdir -p "$HOME/.local/zed.app"
+    mkdir -p "$HOME/.local/zed$suffix.app"
     tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
 
     mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
@@ -60,8 +60,7 @@ linux() {
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/zed$suffix.desktop
     sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" ~/.local/share/applications/zed.desktop
 
-    if which zed >/dev/null 2>&1; then
-    else
+    if ! which zed >/dev/null 2>&1; then
         echo "To run zed from your terminal, you must add ~/.local/bin to your PATH"
         echo "Run:"
         echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
