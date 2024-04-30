@@ -36,6 +36,7 @@ pub enum ComponentStory {
     Text,
     TitleBar,
     ToggleButton,
+    ToolStrip,
     ViewportUnits,
 }
 
@@ -67,6 +68,7 @@ impl ComponentStory {
             Self::TabBar => cx.new_view(|_| ui::TabBarStory).into(),
             Self::TitleBar => cx.new_view(|_| ui::TitleBarStory).into(),
             Self::ToggleButton => cx.new_view(|_| ui::ToggleButtonStory).into(),
+            Self::ToolStrip => cx.new_view(|_| ui::ToolStripStory).into(),
             Self::ViewportUnits => cx.new_view(|_| crate::stories::ViewportUnitsStory).into(),
             Self::Picker => PickerStory::new(cx).into(),
         }

@@ -1,4 +1,4 @@
-use crate::{prelude::*, LabelLike};
+use crate::{prelude::*, IconButtonShape, LabelLike};
 use gpui::*;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -19,11 +19,11 @@ pub enum ToolStripLabelStyle {
 }
 
 pub struct ToolStripItem {
-    id: ElementId,
-    icon: IconName,
-    label: SharedString,
-    keybinding: Option<KeyBinding>,
-    on_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
+    pub id: ElementId,
+    pub icon: IconName,
+    pub label: SharedString,
+    pub keybinding: Option<KeyBinding>,
+    pub on_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
 }
 
 #[derive(IntoElement)]
@@ -37,9 +37,9 @@ pub struct ToolStrip {
 }
 
 impl ToolStrip {
-    pub fn inline(id: ElementId, tools: Vec<Vec<ToolStripItem>>) -> Self {
+    pub fn inline(id: impl Into<ElementId>, tools: Vec<Vec<ToolStripItem>>) -> Self {
         Self {
-            id,
+            id: id.into(),
             tools,
             show_labels: ToolStripLabelStyle::Hidden,
             axis: Axis::Horizontal,
@@ -49,18 +49,28 @@ impl ToolStrip {
     }
 
     pub fn popover(
-        id: ElementId,
+        id: impl Into<ElementId>,
         tools: Vec<Vec<ToolStripItem>>,
         // anchor_position: Point<Pixels>,
     ) -> Self {
         Self {
-            id,
+            id: id.into(),
             tools,
             show_labels: ToolStripLabelStyle::AlwaysVisible,
             axis: Axis::Horizontal,
             style: ToolStripStyle::Popover,
             // anchor_position: None,
         }
+    }
+
+    pub fn axis(mut self, axis: Axis) -> Self {
+        self.axis = axis;
+        self
+    }
+
+    pub fn style(mut self, style: ToolStripStyle) -> Self {
+        self.style = style;
+        self
     }
 
     fn render_label(label: &SharedString, keybinding: &Option<KeyBinding>) -> impl IntoElement {
@@ -101,22 +111,26 @@ impl RenderOnce for ToolStrip {
                     )
                     .flex_none()
                     .gap_1p5()
-                    .p_1()
+                    .p_px()
                     .children(section.into_iter().map(|item| {
                         div()
                             .relative()
                             .flex_none()
+                            .size(px(20.))
                             .child(
-                                IconButton::new(item.id.clone(), item.icon).on_click(item.on_click),
+                                IconButton::new(item.id.clone(), item.icon)
+                                    .shape(IconButtonShape::Square)
+                                    .size(ButtonSize::Compact)
+                                    .icon_size(IconSize::XSmall)
+                                    .on_click(item.on_click),
                             )
                             .when(
                                 self.show_labels == ToolStripLabelStyle::AlwaysVisible,
                                 |this| {
                                     this.child(
-                                        div().absolute().left_3().child(Self::render_label(
-                                            &item.label,
-                                            &item.keybinding,
-                                        )),
+                                        div().absolute().top_0().neg_right_3().child(
+                                            Self::render_label(&item.label, &item.keybinding),
+                                        ),
                                     )
                                 },
                             )
