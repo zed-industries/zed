@@ -398,3 +398,33 @@ async fn test_save_as_remote(cx1: &mut gpui::TestAppContext, cx2: &mut gpui::Tes
         "remote\nremote\nremote"
     );
 }
+
+#[gpui::test]
+async fn test_new_file_remote(cx1: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppContext) {
+    let (server, client1) = TestServer::start1(cx1).await;
+
+    // Creating a project with a path that does exist should not fail
+    let (dev_server, remote_workspace) =
+        create_remote_project(&server, client1.app_state.clone(), cx1, cx2).await;
+
+    let mut cx = VisualTestContext::from_window(remote_workspace.into(), cx1);
+
+    cx.simulate_keystrokes("cmd-n");
+    cx.simulate_input("new!");
+    cx.simulate_keystrokes("cmd-shift-s");
+    cx.simulate_input("2.txt");
+    cx.simulate_keystrokes("enter");
+
+    cx.executor().run_until_parked();
+
+    let title = remote_workspace
+        .update(&mut cx, |ws, cx| {
+            ws.active_item(cx).unwrap().tab_description(0, &cx).unwrap()
+        })
+        .unwrap();
+
+    assert_eq!(title, "2.txt");
+
+    let path = Path::new("/remote/2.txt");
+    assert_eq!(dev_server.fs().load(&path).await.unwrap(), "new!");
+}
