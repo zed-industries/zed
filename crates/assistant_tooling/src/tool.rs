@@ -70,16 +70,19 @@ pub trait LanguageModelTool {
 
     type View: Render;
 
-    /// The name of the tool is exposed to the language model to allow
-    /// the model to pick which tools to use. As this name is used to
-    /// identify the tool within a tool registry, it should be unique.
+    /// Returns the name of the tool.
+    ///
+    /// This name is exposed to the language model to allow the model to pick
+    /// which tools to use. As this name is used to identify the tool within a
+    /// tool registry, it should be unique.
     fn name(&self) -> String;
 
-    /// A description of the tool that can be used to _prompt_ the model
-    /// as to what the tool does.
+    /// Returns the description of the tool.
+    ///
+    /// This can be used to _prompt_ the model as to what the tool does.
     fn description(&self) -> String;
 
-    /// The OpenAI Function definition for the tool, for direct use with OpenAI's API.
+    /// Returns the OpenAI Function definition for the tool, for direct use with OpenAI's API.
     fn definition(&self) -> ToolFunctionDefinition {
         let root_schema = schema_for!(Self::Input);
 
@@ -90,7 +93,7 @@ pub trait LanguageModelTool {
         }
     }
 
-    /// Execute the tool
+    /// Executes the tool with the given input.
     fn execute(&self, input: &Self::Input, cx: &AppContext) -> Task<Result<Self::Output>>;
 
     fn format(input: &Self::Input, output: &Result<Self::Output>) -> String;
