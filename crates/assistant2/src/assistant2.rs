@@ -13,8 +13,8 @@ use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
 use futures::{future::join_all, StreamExt};
 use gpui::{
-    list, AnyElement, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
-    ListAlignment, ListState, Model, Render, Task, View, WeakView,
+    list, AnyElement, AppContext, AsyncWindowContext, ClickEvent, EventEmitter, FocusHandle,
+    FocusableView, ListAlignment, ListState, Model, Render, Task, View, WeakView,
 };
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
@@ -231,6 +231,7 @@ struct AssistantChat {
     user_store: Model<UserStore>,
     next_message_id: MessageId,
     collapsed_messages: HashMap<MessageId, bool>,
+    editing_message_id: Option<MessageId>,
     pending_completion: Option<Task<()>>,
     tool_registry: Arc<ToolRegistry>,
     project_index: Option<Model<ProjectIndex>>,
@@ -270,6 +271,7 @@ impl AssistantChat {
             language_registry,
             project_index,
             next_message_id: MessageId(0),
+            editing_message_id: None,
             collapsed_messages: HashMap::default(),
             pending_completion: None,
             tool_registry,
@@ -288,6 +290,9 @@ impl AssistantChat {
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        // If we're currently editing a message, cancel the edit.
+        self.editing_message_id.take();
+
         if self.pending_completion.take().is_none() {
             cx.propagate();
             return;
@@ -564,19 +569,49 @@ impl AssistantChat {
 
         match &self.messages[ix] {
             ChatMessage::User(UserMessage { id, body }) => div()
+                .id(SharedString::from(format!("message-{}-container", id.0)))
                 .when(!is_last, |element| element.mb_2())
-                .child(crate::ui::ChatMessage::new(
-                    *id,
-                    UserOrAssistant::User(self.user_store.read(cx).current_user()),
-                    Some(body.clone().into_any_element()),
-                    self.is_message_collapsed(id),
-                    Box::new(cx.listener({
-                        let id = *id;
-                        move |assistant_chat, _event, _cx| {
-                            assistant_chat.toggle_message_collapsed(id)
-                        }
-                    })),
-                ))
+                .map(|element| {
+                    if self.editing_message_id.as_ref() == Some(id) {
+                        element.child(Composer::new(
+                            cx.view().downgrade(),
+                            self.model.clone(),
+                            body.clone(),
+                            self.user_store.read(cx).current_user(),
+                            self.can_submit(),
+                            self.tool_registry.clone(),
+                        ))
+                    } else {
+                        element
+                            .on_click(cx.listener({
+                                let id = *id;
+                                move |assistant_chat, event: &ClickEvent, _cx| {
+                                    if event.up.click_count == 2 {
+                                        assistant_chat.editing_message_id = Some(id);
+                                    }
+                                }
+                            }))
+                            .child(crate::ui::ChatMessage::new(
+                                *id,
+                                UserOrAssistant::User(self.user_store.read(cx).current_user()),
+                                Some(
+                                    RichText::new(
+                                        body.read(cx).text(cx),
+                                        &[],
+                                        &self.language_registry,
+                                    )
+                                    .element(ElementId::from(id.0), cx),
+                                ),
+                                self.is_message_collapsed(id),
+                                Box::new(cx.listener({
+                                    let id = *id;
+                                    move |assistant_chat, _event, _cx| {
+                                        assistant_chat.toggle_message_collapsed(id)
+                                    }
+                                })),
+                            ))
+                    }
+                })
                 .into_any(),
             ChatMessage::Assistant(AssistantMessage {
                 id,
