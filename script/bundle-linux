@@ -65,7 +65,7 @@ cp "crates/zed/resources/app-icon-nightly@2x.png" "${temp_dir}/share/icons/hicol
 mkdir -p "${temp_dir}/share/applications"
 cp "crates/zed/resources/zed.desktop" "${temp_dir}/share/applications/zed.desktop"
 
-# LICENSEs
+# Licenses
 cp "assets/licenses.md" "${temp_dir}/licenses.md"
 
 # Create archive
