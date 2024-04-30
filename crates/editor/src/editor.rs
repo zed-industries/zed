@@ -401,7 +401,6 @@ struct RunnableTasks {
     column: u32,
 }
 
-type Row = u32;
 #[derive(Clone)]
 struct ResolvedTasks {
     templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
