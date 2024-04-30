@@ -323,14 +323,13 @@ jobs:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
           path: zed-*.tar.gz
 
-      # TODO linux : make it stable enough to be uploaded as a release
-      # - uses: softprops/action-gh-release@v1
-      #   name: Upload app bundle to release
-      #   if: ${{ env.RELEASE_CHANNEL == 'preview' || env.RELEASE_CHANNEL == 'stable' }}
-      #   with:
-      #     draft: true
-      #     prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
-      #     files: target/release/Zed.dmg
-      #     body: ""
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload app bundle to release
+        uses: softprops/action-gh-release@v1
+        if: ${{ env.RELEASE_CHANNEL == 'preview' }}
+        with:
+          draft: true
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+          files: target/release/zed-linux-x86_64.tar.gz
+          body: ""
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
