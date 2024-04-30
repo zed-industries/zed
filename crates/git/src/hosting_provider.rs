@@ -71,32 +71,27 @@ impl HostingProvider {
         commit: Oid,
         client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
-        let (author, query) = match self {
+        Ok(match self {
             HostingProvider::Github => {
                 let commit = commit.to_string();
-                (
-                    github::fetch_github_commit_author(repo_owner, repo, &commit, &client).await?,
-                    Some("size=128"),
-                )
+                github::fetch_github_commit_author(repo_owner, repo, &commit, &client)
+                    .await?
+                    .map(|author| -> Result<Url, url::ParseError> {
+                        let mut url = Url::parse(&author.avatar_url)?;
+                        url.set_query(Some("size=128"));
+                        Ok(url)
+                    })
+                    .transpose()
             }
             HostingProvider::Codeberg => {
                 let commit = commit.to_string();
-                (
-                    codeberg::fetch_codeberg_commit_author(repo_owner, repo, &commit, &client)
-                        .await?,
-                    None,
-                )
+                codeberg::fetch_codeberg_commit_author(repo_owner, repo, &commit, &client)
+                    .await?
+                    .map(|author| Url::parse(&author.avatar_url))
+                    .transpose()
             }
-            _ => (None, None),
-        };
-
-        Ok(author
-            .map(|author| -> Result<Url, url::ParseError> {
-                let mut url = Url::parse(&author.avatar_url)?;
-                url.set_query(query);
-                Ok(url)
-            })
-            .transpose()?)
+            _ => Ok(None),
+        }?)
     }
 }
 
