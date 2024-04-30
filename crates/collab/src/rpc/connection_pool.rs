@@ -36,7 +36,7 @@ impl ZedVersion {
     }
 
     pub fn with_save_as() -> ZedVersion {
-        ZedVersion(SemanticVersion::new(0, 135, 0))
+        ZedVersion(SemanticVersion::new(0, 134, 0))
     }
 }
 
