@@ -1887,6 +1887,24 @@ impl Pane {
         let mut to_pane = cx.view().clone();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
+        let is_remote = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                if workspace.project().read(cx).is_remote() {
+                    workspace.show_error(
+                        &anyhow::anyhow!("Cannot drop files on a remote project"),
+                        cx,
+                    );
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(true);
+        if is_remote {
+            return;
+        }
+
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = Arc::clone(workspace.project().read(cx).fs());
