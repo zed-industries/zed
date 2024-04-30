@@ -4465,7 +4465,7 @@ impl Editor {
         row: u32,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
-        IconButton::new("code_actions_test_indicator", ui::IconName::Play)
+        IconButton::new("code_actions_indicator", ui::IconName::Play)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
             .icon_color(Color::Muted)

@@ -2334,11 +2334,9 @@ impl EditorElement {
                 }
             });
 
-            cx.with_element_namespace("gutter_test_indicators", |cx| {
-                for test_indicators in layout.test_indicators.iter_mut() {
-                    test_indicators.paint(cx);
-                }
-            });
+            for test_indicators in layout.test_indicators.iter_mut() {
+                test_indicators.paint(cx);
+            }
 
             if let Some(indicator) = layout.code_actions_indicator.as_mut() {
                 indicator.paint(cx);
@@ -3939,16 +3937,14 @@ impl Element for EditorElement {
                     }
                 }
 
-                let test_indicators = cx.with_element_namespace("test-run", |cx| {
-                    self.layout_run_indicators(
-                        test_lines,
-                        line_height,
-                        scroll_pixel_position,
-                        &gutter_dimensions,
-                        &gutter_hitbox,
-                        cx,
-                    )
-                });
+                let test_indicators = self.layout_run_indicators(
+                    test_lines,
+                    line_height,
+                    scroll_pixel_position,
+                    &gutter_dimensions,
+                    &gutter_hitbox,
+                    cx,
+                );
 
                 if !context_menu_visible && !cx.has_active_drag() {
                     self.layout_hover_popovers(
