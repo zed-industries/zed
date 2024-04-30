@@ -1,12 +1,14 @@
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 
-use collections::{HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
 use gpui::{AppContext, Hsla, Model, Task, View};
-use language::{Buffer, Language};
-use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
+use language::Buffer;
+use multi_buffer::{Anchor, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToPoint};
 use text::{BufferId, Point};
-use ui::{div, ActiveTheme, IntoElement, ParentElement, Styled, ViewContext, VisualContext};
+use ui::{
+    div, ActiveTheme, Context as _, IntoElement, ParentElement, Styled, ViewContext, VisualContext,
+};
 use util::{debug_panic, RangeExt};
 
 use crate::{
@@ -25,7 +27,14 @@ pub(super) struct HunkToExpand {
 #[derive(Debug, Default)]
 pub(super) struct ExpandedHunks {
     hunks: Vec<ExpandedHunk>,
+    diff_base: HashMap<BufferId, DiffBaseBuffer>,
     hunk_update_tasks: HashMap<Option<BufferId>, Task<()>>,
+}
+
+#[derive(Debug)]
+struct DiffBaseBuffer {
+    buffer: Model<Buffer>,
+    diff_base_version: usize,
 }
 
 impl ExpandedHunks {
@@ -41,7 +50,6 @@ pub(super) struct ExpandedHunk {
     pub block: Option<BlockId>,
     pub hunk_range: Range<Anchor>,
     pub diff_base_byte_range: Range<usize>,
-    pub diff_base_version: usize,
     pub status: DiffHunkStatus,
     pub folded: bool,
 }
@@ -179,7 +187,7 @@ impl Editor {
                     }
                     editor.remove_blocks(blocks_to_remove, None, cx);
                     for hunk in hunks_to_expand {
-                        editor.expand_diff_hunk(&hunk, cx);
+                        editor.expand_diff_hunk(None, &hunk, cx);
                     }
                     cx.notify();
                 })
@@ -191,10 +199,9 @@ impl Editor {
             .insert(None, cx.background_executor().spawn(new_toggle_task));
     }
 
-    // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
-    // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
     pub(super) fn expand_diff_hunk(
         &mut self,
+        diff_base_buffer: Option<Model<Buffer>>,
         hunk: &HunkToExpand,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<()> {
@@ -207,23 +214,35 @@ impl Editor {
         let hunk_start = hunk.multi_buffer_range.start;
         let hunk_end = hunk.multi_buffer_range.end;
 
-        let (diff_base_version, deleted_text) = self.buffer().update(cx, |buffer, cx| {
-            let snapshot = buffer.snapshot(cx);
-            let hunk = buffer_diff_hunk(&snapshot, multi_buffer_row_range.clone())?;
-            let mut buffer_ranges = buffer.range_to_buffer_ranges(multi_buffer_row_range, cx);
-            if buffer_ranges.len() == 1 {
-                let (buffer, _, _) = buffer_ranges.pop()?;
-                let buffer = buffer.read(cx);
-                Some((
-                    buffer.diff_base_version(),
-                    buffer.diff_base().and_then(|diff_base| {
-                        Some(diff_base.get(hunk.diff_base_byte_range)?.to_owned())
-                    }),
-                ))
-            } else {
-                None
-            }
-        })?;
+        let buffer = self.buffer().clone();
+        let (diff_base_buffer, deleted_text_range, deleted_text_lines) =
+            buffer.update(cx, |buffer, cx| {
+                let snapshot = buffer.snapshot(cx);
+                let hunk = buffer_diff_hunk(&snapshot, multi_buffer_row_range.clone())?;
+                let mut buffer_ranges = buffer.range_to_buffer_ranges(multi_buffer_row_range, cx);
+                if buffer_ranges.len() == 1 {
+                    let (buffer, _, _) = buffer_ranges.pop()?;
+                    let diff_base_buffer = diff_base_buffer
+                        .or_else(|| self.current_diff_base_buffer(&buffer, cx))
+                        .or_else(|| create_diff_base_buffer(&buffer, cx));
+                    let buffer = buffer.read(cx);
+                    let deleted_text_lines = buffer.diff_base().and_then(|diff_base| {
+                        Some(
+                            diff_base
+                                .get(hunk.diff_base_byte_range.clone())?
+                                .lines()
+                                .count(),
+                        )
+                    });
+                    Some((
+                        diff_base_buffer?,
+                        hunk.diff_base_byte_range,
+                        deleted_text_lines,
+                    ))
+                } else {
+                    None
+                }
+            })?;
 
         let block_insert_index = match self.expanded_hunks.hunks.binary_search_by(|probe| {
             probe
@@ -236,14 +255,13 @@ impl Editor {
         };
 
         let block = match hunk.status {
-            DiffHunkStatus::Removed => {
-                if let Some(deleted_text) = deleted_text {
-                    self.insert_deleted_hunk_block(hunk_start, deleted_text, cx)
-                } else {
-                    debug_panic!("Found no deleted text for removed hunk {hunk:?}");
-                    None
-                }
-            }
+            DiffHunkStatus::Removed => self.add_deleted_lines(
+                deleted_text_lines,
+                hunk_start,
+                diff_base_buffer,
+                deleted_text_range,
+                cx,
+            ),
             DiffHunkStatus::Added => {
                 self.highlight_rows::<DiffRowHighlight>(
                     hunk_start..hunk_end,
@@ -258,12 +276,13 @@ impl Editor {
                     Some(added_hunk_color(cx)),
                     cx,
                 );
-                if let Some(deleted_text) = deleted_text {
-                    self.insert_deleted_hunk_block(hunk_start, deleted_text, cx)
-                } else {
-                    debug_panic!("Found no deleted text for modified hunk {hunk:?}");
-                    None
-                }
+                self.add_deleted_lines(
+                    deleted_text_lines,
+                    hunk_start,
+                    diff_base_buffer,
+                    deleted_text_range,
+                    cx,
+                )
             }
         };
         self.expanded_hunks.hunks.insert(
@@ -271,7 +290,6 @@ impl Editor {
             ExpandedHunk {
                 block,
                 hunk_range: hunk_start..hunk_end,
-                diff_base_version,
                 status: hunk.status,
                 folded: false,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
@@ -281,21 +299,44 @@ impl Editor {
         Some(())
     }
 
-    fn insert_deleted_hunk_block(
+    fn add_deleted_lines(
         &mut self,
-        position: Anchor,
-        deleted_text: String,
+        deleted_text_lines: Option<usize>,
+        hunk_start: Anchor,
+        diff_base_buffer: Model<Buffer>,
+        deleted_text_range: Range<usize>,
         cx: &mut ViewContext<'_, Self>,
     ) -> Option<BlockId> {
-        let language = self.language_at(position, cx);
+        if let Some(deleted_text_lines) = deleted_text_lines {
+            self.insert_deleted_text_block(
+                hunk_start,
+                diff_base_buffer,
+                deleted_text_range,
+                deleted_text_lines as u8,
+                cx,
+            )
+        } else {
+            debug_panic!("Found no deleted text for removed hunk on position {hunk_start:?}");
+            None
+        }
+    }
+
+    fn insert_deleted_text_block(
+        &mut self,
+        position: Anchor,
+        diff_base_buffer: Model<Buffer>,
+        deleted_text_range: Range<usize>,
+        deleted_text_height: u8,
+        cx: &mut ViewContext<'_, Self>,
+    ) -> Option<BlockId> {
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
-            editor_with_deleted_text(language, deleted_text, deleted_hunk_color, cx);
+            editor_with_deleted_text(diff_base_buffer, deleted_text_range, deleted_hunk_color, cx);
         let parent_gutter_width = self.gutter_width;
         let mut new_block_ids = self.insert_blocks(
             Some(BlockProperties {
                 position,
-                height: editor_height,
+                height: editor_height.max(deleted_text_height),
                 style: BlockStyle::Flex,
                 render: Box::new(move |_| {
                     div()
@@ -338,12 +379,30 @@ impl Editor {
         cx: &mut ViewContext<'_, Self>,
     ) {
         let buffer_id = buffer.read(cx).remote_id();
+        let buffer_diff_base_version = buffer.read(cx).diff_base_version();
         self.expanded_hunks
             .hunk_update_tasks
             .remove(&Some(buffer_id));
+        let diff_base_buffer = self.current_diff_base_buffer(&buffer, cx);
         let new_sync_task = cx.spawn(move |editor, mut cx| async move {
+            let diff_base_buffer_unchanged = diff_base_buffer.is_some();
+            let Ok(diff_base_buffer) =
+                cx.update(|cx| diff_base_buffer.or_else(|| create_diff_base_buffer(&buffer, cx)))
+            else {
+                return;
+            };
             editor
                 .update(&mut cx, |editor, cx| {
+                    if let Some(diff_base_buffer) = &diff_base_buffer {
+                        editor.expanded_hunks.diff_base.insert(
+                            buffer_id,
+                            DiffBaseBuffer {
+                                buffer: diff_base_buffer.clone(),
+                                diff_base_version: buffer_diff_base_version,
+                            },
+                        );
+                    }
+
                     let snapshot = editor.snapshot(cx);
                     let buffer_snapshot = buffer.read(cx).snapshot();
                     let mut recalculated_hunks = buffer_snapshot
@@ -358,20 +417,20 @@ impl Editor {
                     editor.expanded_hunks.hunks.retain_mut(|expanded_hunk| {
                         if expanded_hunk.hunk_range.start.buffer_id != Some(buffer_id) {
                             return true;
-                        }
+                        };
 
-                        let expanded_hunk_display_range = expanded_hunk
-                            .hunk_range
-                            .start
-                            .to_display_point(&snapshot)
-                            .row()
-                            ..expanded_hunk
-                                .hunk_range
-                                .end
-                                .to_display_point(&snapshot)
-                                .row();
                         let mut retain = false;
-                        if expanded_hunk.diff_base_version == buffer.read(cx).diff_base_version() {
+                        if diff_base_buffer_unchanged {
+                            let expanded_hunk_display_range = expanded_hunk
+                                .hunk_range
+                                .start
+                                .to_display_point(&snapshot)
+                                .row()
+                                ..expanded_hunk
+                                    .hunk_range
+                                    .end
+                                    .to_display_point(&snapshot)
+                                    .row();
                             while let Some(buffer_hunk) = recalculated_hunks.peek() {
                                 match diff_hunk_to_display(buffer_hunk, &snapshot) {
                                     DisplayDiffHunk::Folded { display_row } => {
@@ -442,8 +501,11 @@ impl Editor {
                         editor.highlight_rows::<DiffRowHighlight>(removed_rows, None, cx);
                     }
                     editor.remove_blocks(blocks_to_remove, None, cx);
-                    for hunk in hunks_to_reexpand {
-                        editor.expand_diff_hunk(&hunk, cx);
+
+                    if let Some(diff_base_buffer) = &diff_base_buffer {
+                        for hunk in hunks_to_reexpand {
+                            editor.expand_diff_hunk(Some(diff_base_buffer.clone()), &hunk, cx);
+                        }
                     }
                 })
                 .ok();
@@ -454,6 +516,44 @@ impl Editor {
             cx.background_executor().spawn(new_sync_task),
         );
     }
+
+    fn current_diff_base_buffer(
+        &mut self,
+        buffer: &Model<Buffer>,
+        cx: &mut AppContext,
+    ) -> Option<Model<Buffer>> {
+        buffer.update(cx, |buffer, _| {
+            match self.expanded_hunks.diff_base.entry(buffer.remote_id()) {
+                hash_map::Entry::Occupied(o) => {
+                    if o.get().diff_base_version != buffer.diff_base_version() {
+                        o.remove();
+                        None
+                    } else {
+                        Some(o.get().buffer.clone())
+                    }
+                }
+                hash_map::Entry::Vacant(_) => None,
+            }
+        })
+    }
+}
+
+fn create_diff_base_buffer(buffer: &Model<Buffer>, cx: &mut AppContext) -> Option<Model<Buffer>> {
+    buffer
+        .update(cx, |buffer, _| {
+            let language = buffer.language().cloned();
+            let diff_base = buffer.diff_base().map(|s| s.to_owned());
+            Some((diff_base?, language))
+        })
+        .map(|(diff_base, language)| {
+            cx.new_model(|cx| {
+                let buffer = Buffer::local(diff_base, cx);
+                match language {
+                    Some(language) => buffer.with_language(language, cx),
+                    None => buffer,
+                }
+            })
+        })
 }
 
 fn added_hunk_color(cx: &AppContext) -> Hsla {
@@ -469,19 +569,30 @@ fn deleted_hunk_color(cx: &AppContext) -> Hsla {
 }
 
 fn editor_with_deleted_text(
-    language: Option<Arc<Language>>,
-    deleted_text: String,
+    diff_base_buffer: Model<Buffer>,
+    deleted_text_range: Range<usize>,
     deleted_color: Hsla,
     cx: &mut ViewContext<'_, Editor>,
 ) -> (u8, View<Editor>) {
-    let deleted_text_line_count = deleted_text.lines().count() as u8;
     let editor = cx.new_view(|cx| {
-        let mut editor = Editor::multi_line(cx);
+        let multi_buffer =
+            cx.new_model(|_| MultiBuffer::without_headers(0, language::Capability::ReadOnly));
+        multi_buffer.update(cx, |multi_buffer, cx| {
+            multi_buffer.push_excerpts(
+                diff_base_buffer,
+                Some(ExcerptRange {
+                    context: deleted_text_range,
+                    primary: None,
+                }),
+                cx,
+            );
+        });
+
+        let mut editor = Editor::for_multibuffer(multi_buffer, None, cx);
         editor.soft_wrap_mode_override = Some(language::language_settings::SoftWrap::None);
         editor.show_wrap_guides = Some(false);
         editor.show_gutter = false;
         editor.scroll_manager.set_forbid_vertical_scroll(true);
-        editor.set_text(deleted_text, cx);
         editor.set_read_only(true);
 
         let editor_snapshot = editor.snapshot(cx);
@@ -494,24 +605,7 @@ fn editor_with_deleted_text(
         editor
     });
 
-    let editor_height = editor.update(cx, |editor, cx| {
-        if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
-            let editor_snapshot = editor.snapshot(cx);
-            let display_rows = buffer.update(cx, |buffer, cx| {
-                buffer.set_language(language, cx);
-
-                let buffer_snapshot = buffer.snapshot();
-                let last_point = buffer_snapshot.offset_to_point(buffer.len());
-                last_point
-                    .to_display_point(&editor_snapshot.display_snapshot)
-                    .row() as u8
-            });
-            display_rows.max(deleted_text_line_count)
-        } else {
-            deleted_text_line_count
-        }
-    });
-
+    let editor_height = editor.update(cx, |editor, cx| editor.max_point(cx).row() as u8);
     (editor_height, editor)
 }
 

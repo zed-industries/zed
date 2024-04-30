@@ -159,6 +159,7 @@ pub struct MultiBufferSnapshot {
     edit_count: usize,
     is_dirty: bool,
     has_conflict: bool,
+    show_headers: bool,
 }
 
 /// A boundary between [`Excerpt`]s in a [`MultiBuffer`]
@@ -272,6 +273,28 @@ struct ExcerptBytes<'a> {
 
 impl MultiBuffer {
     pub fn new(replica_id: ReplicaId, capability: Capability) -> Self {
+        Self {
+            snapshot: RefCell::new(MultiBufferSnapshot {
+                show_headers: true,
+                ..MultiBufferSnapshot::default()
+            }),
+            buffers: Default::default(),
+            subscriptions: Default::default(),
+            singleton: false,
+            capability,
+            replica_id,
+            history: History {
+                next_transaction_id: Default::default(),
+                undo_stack: Default::default(),
+                redo_stack: Default::default(),
+                transaction_depth: 0,
+                group_interval: Duration::from_millis(300),
+            },
+            title: Default::default(),
+        }
+    }
+
+    pub fn without_headers(replica_id: ReplicaId, capability: Capability) -> Self {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
@@ -3591,6 +3614,10 @@ impl MultiBufferSnapshot {
                         })
                     })
             })
+    }
+
+    pub fn show_headers(&self) -> bool {
+        self.show_headers
     }
 }
 
