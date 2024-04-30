@@ -1,4 +1,8 @@
+use std::{ops::Range, sync::OnceLock, time::Duration};
+
 use gpui::{actions, impl_actions, ViewContext};
+use language::Point;
+use regex::Regex;
 use search::{buffer_search, BufferSearchBar, SearchOptions};
 use serde_derive::Deserialize;
 use workspace::{searchable::Direction, Workspace};
@@ -47,6 +51,7 @@ struct Replacement {
     replacement: String,
     should_replace_all: bool,
     is_case_sensitive: bool,
+    range: Option<Range<usize>>,
 }
 
 actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPrevMatch]);
@@ -54,6 +59,11 @@ impl_actions!(
     vim,
     [FindCommand, ReplaceCommand, Search, MoveToPrev, MoveToNext]
 );
+
+static RANGE_REGEX: OnceLock<Regex> = OnceLock::new();
+pub(crate) fn range_regex() -> &'static Regex {
+    RANGE_REGEX.get_or_init(|| Regex::new(r"^(\d+),(\d+)s(.*)").unwrap())
+}
 
 pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
     workspace.register_action(move_to_next);
@@ -329,6 +339,22 @@ fn replace_command(
 ) {
     let replacement = parse_replace_all(&action.query);
     let pane = workspace.active_pane().clone();
+    let mut editor = Vim::read(cx)
+        .active_editor
+        .as_ref()
+        .and_then(|editor| editor.upgrade());
+    if let Some(range) = &replacement.range {
+        if let Some(editor) = editor.as_mut() {
+            editor.update(cx, |editor, cx| {
+                let snapshot = &editor.snapshot(cx).buffer_snapshot;
+                let range = snapshot
+                    .anchor_before(Point::new(range.start.saturating_sub(1) as u32, 0))
+                    ..snapshot.anchor_before(Point::new(range.end as u32, 0));
+
+                editor.set_search_within_ranges(&[range], cx)
+            })
+        }
+    }
     pane.update(cx, |pane, cx| {
         let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
             return;
@@ -359,6 +385,19 @@ fn replace_command(
                 if replacement.should_replace_all {
                     search_bar.select_last_match(cx);
                     search_bar.replace_all(&Default::default(), cx);
+                    if let Some(editor) = editor {
+                        cx.spawn(|_, mut cx| async move {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(200))
+                                .await;
+                            editor
+                                .update(&mut cx, |editor, cx| {
+                                    editor.set_search_within_ranges(&[], cx)
+                                })
+                                .ok();
+                        })
+                        .detach();
+                    }
                     Vim::update(cx, |vim, cx| {
                         move_cursor(
                             vim,
@@ -383,7 +422,20 @@ fn replace_command(
 // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
 fn parse_replace_all(query: &str) -> Replacement {
     let mut chars = query.chars();
-    if Some('%') != chars.next() || Some('s') != chars.next() {
+    let mut range = None;
+    let maybe_line_range_and_rest: Option<(Range<usize>, &str)> =
+        range_regex().captures(query).map(|captures| {
+            (
+                captures.get(1).unwrap().as_str().parse().unwrap()
+                    ..captures.get(2).unwrap().as_str().parse().unwrap(),
+                captures.get(3).unwrap().as_str(),
+            )
+        });
+    if maybe_line_range_and_rest.is_some() {
+        let (line_range, rest) = maybe_line_range_and_rest.unwrap();
+        range = Some(line_range);
+        chars = rest.chars();
+    } else if Some('%') != chars.next() || Some('s') != chars.next() {
         return Replacement::default();
     }
 
@@ -440,6 +492,7 @@ fn parse_replace_all(query: &str) -> Replacement {
         replacement,
         should_replace_all: true,
         is_case_sensitive: true,
+        range,
     };
 
     for c in flags.chars() {
@@ -658,6 +711,38 @@ mod test {
             "«one twoˇ»
              «three fˇ»our
              five six
+             "
+        })
+        .await;
+    }
+
+    // cargo test -p vim --features neovim test_replace_with_range
+    #[gpui::test]
+    async fn test_replace_with_range(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "ˇa
+            a
+            a
+            a
+            a
+            a
+            a
+             "
+        })
+        .await;
+        cx.simulate_shared_keystrokes([":", "2", ",", "5", "s", "/", "a", "/", "b"])
+            .await;
+        cx.simulate_shared_keystrokes(["enter"]).await;
+        cx.assert_shared_state(indoc! {
+            "a
+            b
+            b
+            b
+            ˇb
+            a
+            a
              "
         })
         .await;

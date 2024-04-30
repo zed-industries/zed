@@ -278,6 +278,8 @@ pub fn init(cx: &mut AppContext) {
     });
 }
 
+pub struct SearchWithinRange;
+
 trait InvalidationRegion {
     fn ranges(&self) -> &[Range<Anchor>];
 }
@@ -9262,6 +9264,18 @@ impl Editor {
                     unique_rows
                 },
             )
+    }
+
+    pub fn set_search_within_ranges(
+        &mut self,
+        ranges: &[Range<Anchor>],
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.highlight_background::<SearchWithinRange>(
+            ranges,
+            |colors| colors.editor_document_highlight_read_background,
+            cx,
+        )
     }
 
     pub fn highlight_background<T: 'static>(
