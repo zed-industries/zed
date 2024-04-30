@@ -99,7 +99,7 @@ use project::{
     CodeAction, Completion, FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction,
 };
 use rand::prelude::*;
-use rpc::proto::*;
+use rpc::{proto::*, ErrorExt};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
@@ -131,7 +131,7 @@ use ui::{
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
-use workspace::notifications::NotificationId;
+use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
@@ -1618,7 +1618,13 @@ impl Editor {
                 )
             })
         })
-        .detach_and_log_err(cx);
+        .detach_and_prompt_err("Failed to create buffer", cx, |e, _| match e.error_code() {
+            ErrorCode::RemoteUpgradeRequired => Some(format!(
+                "The remote instance of Zed does not support this yet. It must be upgraded to {}",
+                e.error_tag("required").unwrap_or("the latest version")
+            )),
+            _ => None,
+        });
     }
 
     pub fn new_file_in_direction(
@@ -1643,7 +1649,13 @@ impl Editor {
             })?;
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
+        .detach_and_prompt_err("Failed to create buffer", cx, |e, _| match e.error_code() {
+            ErrorCode::RemoteUpgradeRequired => Some(format!(
+                "The remote instance of Zed does not support this yet. It must be upgraded to {}",
+                e.error_tag("required").unwrap_or("the latest version")
+            )),
+            _ => None,
+        });
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {

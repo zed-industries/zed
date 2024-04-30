@@ -276,6 +276,7 @@ enum ErrorCode {
     DevServerAlreadyOnline = 14;
     DevServerOffline = 15;
     RemoteProjectPathDoesNotExist = 16;
+    RemoteUpgradeRequired = 17;
     reserved 6;
 }
 
