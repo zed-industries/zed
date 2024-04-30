@@ -1,8 +1,7 @@
 use anyhow::Result;
 use assistant_tooling::LanguageModelTool;
 use editor::Editor;
-use gpui::{prelude::*, AppContext, Model, Task, View, WeakView};
-use language::Buffer;
+use gpui::{prelude::*, Model, Task, View, WeakView};
 use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -32,11 +31,7 @@ pub struct CreateBufferInput {
     language: String,
 }
 
-pub struct CreateBufferOutput {
-    workspace: WeakView<Workspace>,
-    project: Model<Project>,
-    buffer: Model<Buffer>,
-}
+pub struct CreateBufferOutput {}
 
 impl LanguageModelTool for CreateBufferTool {
     type Input = CreateBufferInput;
@@ -51,13 +46,13 @@ impl LanguageModelTool for CreateBufferTool {
         "Create a new buffer in the current codebase".to_string()
     }
 
-    fn execute(&self, input: &Self::Input, cx: &AppContext) -> Task<Result<Self::Output>> {
+    fn execute(&self, input: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>> {
         cx.spawn({
             let workspace = self.workspace.clone();
             let project = self.project.clone();
             let text = input.text.clone();
             let language_name = input.language.clone();
-            |cx| async move {
+            |mut cx| async move {
                 let language = cx
                     .update(|cx| {
                         project
@@ -73,44 +68,37 @@ impl LanguageModelTool for CreateBufferTool {
                     })
                 })??;
 
-                Ok(CreateBufferOutput {
-                    workspace,
-                    project,
-                    buffer,
-                })
-            }
-        })
-    }
-
-    fn format(_input: &Self::Input, _output: &Result<Self::Output>) -> String {
-        "".to_string()
-    }
-
-    fn output_view(
-        _tool_call_id: String,
-        _input: Self::Input,
-        output: Result<Self::Output>,
-        cx: &mut WindowContext,
-    ) -> View<Self::View> {
-        cx.new_view(|cx| match output {
-            Ok(output) => {
-                output
-                    .workspace
-                    .update(cx, |workspace, cx| {
+                workspace
+                    .update(&mut cx, |workspace, cx| {
                         workspace.add_item_to_active_pane(
-                            Box::new(cx.new_view(|cx| {
-                                Editor::for_buffer(output.buffer, Some(output.project), cx)
-                            })),
+                            Box::new(
+                                cx.new_view(|cx| Editor::for_buffer(buffer, Some(project), cx)),
+                            ),
                             None,
                             cx,
                         );
                     })
                     .log_err();
 
-                CreateBufferView {}
+                Ok(CreateBufferOutput {})
             }
-            Err(_) => CreateBufferView {},
         })
+    }
+
+    fn format(input: &Self::Input, output: &Result<Self::Output>) -> String {
+        match output {
+            Ok(_) => format!("Created a new {} buffer", input.language),
+            Err(err) => format!("Failed to create buffer: {err:?}"),
+        }
+    }
+
+    fn output_view(
+        _tool_call_id: String,
+        _input: Self::Input,
+        _output: Result<Self::Output>,
+        cx: &mut WindowContext,
+    ) -> View<Self::View> {
+        cx.new_view(|_cx| CreateBufferView {})
     }
 }
 
@@ -118,6 +106,6 @@ pub struct CreateBufferView {}
 
 impl Render for CreateBufferView {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        div().child("Opening a buffer")
     }
 }

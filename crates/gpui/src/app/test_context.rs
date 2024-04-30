@@ -218,7 +218,7 @@ impl TestAppContext {
     /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
     /// as a `WindowContext` for the rest of the test. Typically you would shadow this context with
     /// the returned one. `let (view, cx) = cx.add_window_view(...);`
-    pub fn add_window_view<F, V>(&mut self, build_window: F) -> (View<V>, &mut VisualTestContext)
+    pub fn add_window_view<F, V>(&mut self, build_root_view: F) -> (View<V>, &mut VisualTestContext)
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
         V: 'static + Render,
@@ -230,7 +230,7 @@ impl TestAppContext {
                 bounds: Some(bounds),
                 ..Default::default()
             },
-            |cx| cx.new_view(build_window),
+            |cx| cx.new_view(build_root_view),
         );
         drop(cx);
         let view = window.root_view(self).unwrap();

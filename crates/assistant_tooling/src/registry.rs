@@ -120,8 +120,8 @@ impl ToolRegistry {
 #[cfg(test)]
 mod test {
     use super::*;
-    use gpui::View;
     use gpui::{div, prelude::*, Render, TestAppContext};
+    use gpui::{EmptyView, View};
     use schemars::schema_for;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -170,7 +170,7 @@ mod test {
         fn execute(
             &self,
             input: &Self::Input,
-            _cx: &gpui::AppContext,
+            _cx: &mut WindowContext,
         ) -> Task<Result<Self::Output>> {
             let _location = input.location.clone();
             let _unit = input.unit.clone();
@@ -200,6 +200,7 @@ mod test {
     #[gpui::test]
     async fn test_openai_weather_example(cx: &mut TestAppContext) {
         cx.background_executor.run_until_parked();
+        let (_, cx) = cx.add_window_view(|_cx| EmptyView);
 
         let tool = WeatherTool {
             current_weather: WeatherResult {

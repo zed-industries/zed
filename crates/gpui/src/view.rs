@@ -1,3 +1,4 @@
+use crate::Empty;
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
     ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, GlobalElementId, IntoElement,
@@ -455,5 +456,14 @@ mod any_view {
     ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
         view.update(cx, |view, cx| view.render(cx).into_any_element())
+    }
+}
+
+/// A view that renders nothing
+pub struct EmptyView;
+
+impl Render for EmptyView {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        Empty
     }
 }
