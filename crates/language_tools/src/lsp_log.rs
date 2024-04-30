@@ -1,4 +1,5 @@
 use collections::{HashMap, VecDeque};
+use copilot::Copilot;
 use editor::{actions::MoveToEnd, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
@@ -7,7 +8,7 @@ use gpui::{
     View, ViewContext, VisualContext, WeakModel, WindowContext,
 };
 use language::{LanguageServerId, LanguageServerName};
-use lsp::IoKind;
+use lsp::{IoKind, LanguageServer};
 use project::{search::SearchQuery, Project};
 use std::{borrow::Cow, sync::Arc};
 use ui::{popover_menu, prelude::*, Button, Checkbox, ContextMenu, Label, Selection};
@@ -24,7 +25,10 @@ const MAX_STORED_LOG_ENTRIES: usize = 2000;
 
 pub struct LogStore {
     projects: HashMap<WeakModel<Project>, ProjectState>,
-    io_tx: mpsc::UnboundedSender<(WeakModel<Project>, LanguageServerId, IoKind, String)>,
+    global_language_servers: HashMap<LanguageServerId, LanguageServerState>,
+    copilot_log_subscription: Option<lsp::Subscription>,
+    _copilot_subscription: Option<gpui::Subscription>,
+    io_tx: mpsc::UnboundedSender<(Option<WeakModel<Project>>, LanguageServerId, IoKind, String)>,
 }
 
 struct ProjectState {
@@ -109,10 +113,42 @@ pub fn init(cx: &mut AppContext) {
 impl LogStore {
     pub fn new(cx: &mut ModelContext<Self>) -> Self {
         let (io_tx, mut io_rx) = mpsc::unbounded();
+
+        let copilot_subscription =
+            Copilot::global(cx).map(|copilot| {
+                let copilot = &copilot;
+                cx.subscribe(
+                    copilot,
+                    |this, copilot, copilot_event, cx| match copilot_event {
+                        copilot::Event::CopilotLanguageServerStarted => {
+                            if let Some(server) = copilot.read(cx).language_server() {
+                                let server_id = server.server_id();
+                                let weak_this = cx.weak_model();
+                                this.copilot_log_subscription = Some(server
+                                    .on_notification::<copilot::request::LogMessage, _>(
+                                        move |params, mut cx| {
+                                            weak_this.update(&mut cx, |this, cx| {
+                                                this.add_language_server_log(None, server_id, &params.message, cx);
+                                            }).ok();
+                                        },
+                                    ));
+                                this.add_language_server(None, server.clone(), cx);
+                            } else {
+                                util::debug_panic!("Received Copilot language server started event, but no language server is running")
+                            }
+                        }
+                    },
+                )
+            });
+
         let this = Self {
+            copilot_log_subscription: None,
+            _copilot_subscription: copilot_subscription,
             projects: HashMap::default(),
+            global_language_servers: HashMap::default(),
             io_tx,
         };
+
         cx.spawn(|this, mut cx| async move {
             while let Some((project, server_id, io_kind, message)) = io_rx.next().await {
                 if let Some(this) = this.upgrade() {
@@ -139,13 +175,20 @@ impl LogStore {
                     }),
                     cx.subscribe(project, |this, project, event, cx| match event {
                         project::Event::LanguageServerAdded(id) => {
-                            this.add_language_server(&project, *id, cx);
+                            if let Some(server) = project.read(cx).language_server_for_id(*id) {
+                                this.add_language_server(Some(&project.downgrade()), server, cx);
+                            }
                         }
                         project::Event::LanguageServerRemoved(id) => {
                             this.remove_language_server(&project, *id, cx);
                         }
                         project::Event::LanguageServerLog(id, message) => {
-                            this.add_language_server_log(&project, *id, message, cx);
+                            this.add_language_server_log(
+                                Some(&project.downgrade()),
+                                *id,
+                                message,
+                                cx,
+                            );
                         }
                         _ => {}
                     }),
@@ -154,14 +197,40 @@ impl LogStore {
         );
     }
 
-    fn add_language_server(
+    fn get_language_server_state(
         &mut self,
-        project: &Model<Project>,
+        project: Option<&WeakModel<Project>>,
         id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) -> Option<&mut LanguageServerState> {
-        let project_state = self.projects.get_mut(&project.downgrade())?;
-        let server_state = project_state.servers.entry(id).or_insert_with(|| {
+        let servers = if let Some(project) = project {
+            &mut self.projects.get_mut(&project)?.servers
+        } else {
+            &mut self.global_language_servers
+        };
+        Some(servers.entry(id).or_insert_with(|| {
+            cx.notify();
+            LanguageServerState {
+                rpc_state: None,
+                log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
+                _io_logs_subscription: None,
+                _lsp_logs_subscription: None,
+            }
+        }))
+    }
+
+    fn add_language_server(
+        &mut self,
+        project: Option<&WeakModel<Project>>,
+        server: Arc<LanguageServer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<&mut LanguageServerState> {
+        let servers = if let Some(project) = project {
+            &mut self.projects.get_mut(&project)?.servers
+        } else {
+            &mut self.global_language_servers
+        };
+        let server_state = servers.entry(server.server_id()).or_insert_with(|| {
             cx.notify();
             LanguageServerState {
                 rpc_state: None,
@@ -171,57 +240,50 @@ impl LogStore {
             }
         });
 
-        let server = project.read(cx).language_server_for_id(id);
-        if let Some(server) = server.as_deref() {
-            if server.has_notification_handler::<lsp::notification::LogMessage>() {
-                // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
-                return Some(server_state);
-            }
+        if server.has_notification_handler::<lsp::notification::LogMessage>() {
+            // Another event wants to re-add the server that was already added and subscribed to, avoid doing it again.
+            return Some(server_state);
         }
 
-        let weak_project = project.downgrade();
         let io_tx = self.io_tx.clone();
-        server_state._io_logs_subscription = server.as_ref().map(|server| {
-            server.on_io(move |io_kind, message| {
+        let server_id = server.server_id();
+        server_state._io_logs_subscription = Some(server.on_io({
+            let project = project.cloned();
+            move |io_kind, message| {
                 io_tx
-                    .unbounded_send((weak_project.clone(), id, io_kind, message.to_string()))
+                    .unbounded_send((project.clone(), server_id, io_kind, message.to_string()))
                     .ok();
-            })
-        });
+            }
+        }));
         let this = cx.handle().downgrade();
-        let weak_project = project.downgrade();
-        server_state._lsp_logs_subscription = server.map(|server| {
-            let server_id = server.server_id();
-            server.on_notification::<lsp::notification::LogMessage, _>({
+        server_state._lsp_logs_subscription =
+            Some(server.on_notification::<lsp::notification::LogMessage, _>({
+                let project = project.cloned();
                 move |params, mut cx| {
-                    if let Some((project, this)) = weak_project.upgrade().zip(this.upgrade()) {
+                    if let Some(this) = this.upgrade() {
                         this.update(&mut cx, |this, cx| {
-                            this.add_language_server_log(&project, server_id, &params.message, cx);
+                            this.add_language_server_log(
+                                project.as_ref(),
+                                server_id,
+                                &params.message,
+                                cx,
+                            );
                         })
                         .ok();
                     }
                 }
-            })
-        });
+            }));
         Some(server_state)
     }
 
     fn add_language_server_log(
         &mut self,
-        project: &Model<Project>,
+        project: Option<&WeakModel<Project>>,
         id: LanguageServerId,
         message: &str,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let language_server_state = match self
-            .projects
-            .get_mut(&project.downgrade())?
-            .servers
-            .get_mut(&id)
-        {
-            Some(existing_state) => existing_state,
-            None => self.add_language_server(&project, id, cx)?,
-        };
+        let language_server_state = self.get_language_server_state(project, id, cx)?;
 
         let log_lines = &mut language_server_state.log_messages;
         while log_lines.len() >= MAX_STORED_LOG_ENTRIES {
@@ -293,7 +355,7 @@ impl LogStore {
 
     fn on_io(
         &mut self,
-        project: WeakModel<Project>,
+        project: Option<WeakModel<Project>>,
         language_server_id: LanguageServerId,
         io_kind: IoKind,
         message: &str,
@@ -303,18 +365,14 @@ impl LogStore {
             IoKind::StdOut => true,
             IoKind::StdIn => false,
             IoKind::StdErr => {
-                let project = project.upgrade()?;
                 let message = format!("stderr: {}", message.trim());
-                self.add_language_server_log(&project, language_server_id, &message, cx);
+                self.add_language_server_log(project.as_ref(), language_server_id, &message, cx);
                 return Some(());
             }
         };
 
         let state = self
-            .projects
-            .get_mut(&project)?
-            .servers
-            .get_mut(&language_server_id)?
+            .get_language_server_state(project.as_ref(), language_server_id, cx)?
             .rpc_state
             .as_mut()?;
         let kind = if is_received {

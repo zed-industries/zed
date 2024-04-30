@@ -15,10 +15,12 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+copilot.workspace = true
 editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
+log.workspace = true
 lsp.workspace = true
 project.workspace = true
 serde_json.workspace = true
