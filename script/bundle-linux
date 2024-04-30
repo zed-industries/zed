@@ -68,8 +68,15 @@ cp "crates/zed/resources/zed.desktop" "${temp_dir}/share/applications/zed.deskto
 # Licenses
 cp "assets/licenses.md" "${temp_dir}/licenses.md"
 
-# Create archive
-archive="zed-${channel}-${target_triple}.tar.gz"
+# Create archive out of everything that's in the temp directory
+
+
+if [[ "$channel" == "nightly" ]]; then
+  archive="zed-${channel}-${target_triple}.tar.gz"
+else
+  archive="zed-${version}-${target_triple}.tar.gz"
+fi
+
 rm -rf "${archive}"
 tar -czvf $archive -C ${temp_dir} .
 
