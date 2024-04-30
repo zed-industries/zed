@@ -61,6 +61,7 @@ impl RenderOnce for Composer {
                 v_flex()
                     .size_full()
                     .gap_1()
+                    .pr_4()
                     .child(
                         v_flex()
                             .w_full()
