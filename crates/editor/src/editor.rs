@@ -1199,7 +1199,7 @@ impl CodeActionContents {
         }
     }
 
-    fn iter<'a>(&'a self) -> impl Iterator<Item = CodeActionsItem> + 'a {
+    fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
         self.tasks
             .iter()
             .flat_map(|tasks| {
@@ -1241,6 +1241,7 @@ impl CodeActionContents {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum CodeActionsItem {
     Task(TaskSourceKind, ResolvedTask),
@@ -3899,7 +3900,7 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    pub(crate) fn confirm_code_action(
+    pub fn confirm_code_action(
         &mut self,
         action: &ConfirmCodeAction,
         cx: &mut ViewContext<Self>,
@@ -4451,10 +4452,10 @@ impl Editor {
     }
 
     fn insert_tasks(&mut self, row: u32, tasks: RunnableTasks) {
-        self.tasks.insert(row, tasks).map(|_| {
+        if let Some(_) = self.tasks.insert(row, tasks) {
             // This case should hopefully be rare, but just in case...
             log::error!("multiple different run targets found on a single line, only the last target will be rendered")
-        });
+        }
     }
 
     fn render_run_indicator(

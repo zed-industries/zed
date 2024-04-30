@@ -1343,13 +1343,13 @@ impl EditorElement {
                         .tasks
                         .as_ref()
                         .map(|tasks| tasks.1)
-                        .or_else(|| deployed_from_indicator.clone())
+                        .or_else(|| *deployed_from_indicator)
                 } else {
                     None
                 };
             task_lines
                 .into_iter()
-                .filter_map(|(row, tasks)| {
+                .map(|(row, tasks)| {
                     editor.insert_tasks(row, tasks);
 
                     let button = editor.render_run_indicator(
@@ -1368,7 +1368,7 @@ impl EditorElement {
                         gutter_hitbox,
                         cx,
                     );
-                    Some(button)
+                    button
                 })
                 .collect_vec()
         })
@@ -2334,7 +2334,7 @@ impl EditorElement {
                 }
             });
 
-            cx.with_element_id(Some("gutter_test_indicators"), |cx| {
+            cx.with_element_namespace("gutter_test_indicators", |cx| {
                 for test_indicators in layout.test_indicators.iter_mut() {
                     test_indicators.paint(cx);
                 }
@@ -3939,7 +3939,7 @@ impl Element for EditorElement {
                     }
                 }
 
-                let test_indicators = cx.with_element_id(Some("test-run"), |cx| {
+                let test_indicators = cx.with_element_namespace("test-run", |cx| {
                     self.layout_run_indicators(
                         test_lines,
                         line_height,
