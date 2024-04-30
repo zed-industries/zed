@@ -12,8 +12,8 @@ use crate::{
     RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowMoveState, WindowOptions,
-    WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions, WindowParams,
+    WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -1131,31 +1131,15 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.zoom();
     }
 
-    /// Mark the start of window move when using client side decorations in linux (only wayland)
-    pub fn mark_moving(&self) {
+    /// Tells the compositor to take control of window movement (Wayland only)
+    ///
+    /// Events may not be received during a move operation.
+    pub fn start_system_move(&self) {
         #[cfg(target_os = "linux")]
-        self.window
-            .platform_window
-            .mark_window_move(WindowMoveState::Start)
+        self.window.platform_window.start_system_move()
     }
 
-    /// Mark the start of window move when using client side decorations in linux (only wayland)
-    pub fn start_moving(&self) {
-        #[cfg(target_os = "linux")]
-        self.window
-            .platform_window
-            .mark_window_move(WindowMoveState::Moving)
-    }
-
-    /// Mark the stop of window move when using client side decorations in linux (only wayland)
-    pub fn stop_moving(&self) {
-        #[cfg(target_os = "linux")]
-        self.window
-            .platform_window
-            .mark_window_move(WindowMoveState::Stop)
-    }
-
-    /// Specifies if the title bar window controls need to be rendered in linux (wayland and x11)
+    /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
     pub fn should_render_window_controls(&self) -> bool {
         #[cfg(target_os = "linux")]
         self.window.platform_window.should_render_window_controls()

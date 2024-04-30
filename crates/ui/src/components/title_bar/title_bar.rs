@@ -113,17 +113,17 @@ impl RenderOnce for TitleBar {
                 |title_bar| title_bar.child(WindowsWindowControls::new(height)),
             )
             .when(
-                self.platform_style == PlatformStyle::Linux && !cx.is_fullscreen() && cx.should_render_window_controls(),
+                self.platform_style == PlatformStyle::Linux
+                    && !cx.is_fullscreen()
+                    && cx.should_render_window_controls(),
                 |title_bar| {
                     title_bar
                         .child(LinuxWindowControls::new(height))
-                        .on_mouse_down(gpui::MouseButton::Left, move |_, cx| cx.mark_moving())
                         .on_mouse_move(move |ev, cx| {
                             if ev.dragging() {
-                                cx.start_moving();
+                                cx.start_system_move();
                             }
                         })
-                        .on_mouse_up(gpui::MouseButton::Left, move |_, cx| cx.stop_moving())
                 },
             )
     }

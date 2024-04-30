@@ -721,7 +721,8 @@ impl PlatformWindow for X11Window {
         inner.renderer.sprite_atlas().clone()
     }
 
-    fn mark_window_move(&self, _: WindowMoveState) {}
+    // todo(linux)
+    fn start_system_move(&self) {}
 
     fn should_render_window_controls(&self) -> bool {
         false

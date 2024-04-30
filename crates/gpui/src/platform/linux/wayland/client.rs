@@ -197,7 +197,7 @@ impl WaylandClientStatePtr {
             .expect("The pointer should always be valid when dispatching in wayland")
     }
 
-    pub fn get_event_serial(&self) -> u32 {
+    pub fn get_latest_serial(&self) -> u32 {
         self.0.upgrade().unwrap().borrow().serial
     }
 

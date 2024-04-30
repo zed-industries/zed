@@ -27,8 +27,8 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, Bounds, DevicePixels, Globals, Modifiers, Pixels, PlatformDisplay, PlatformInput,
-    Point, PromptLevel, Size, WaylandClientState, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowMoveState, WindowParams,
+    Point, PromptLevel, Size, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowParams,
 };
 
 #[derive(Default)]
@@ -81,7 +81,6 @@ pub struct WaylandWindowState {
     fullscreen: bool,
     restore_bounds: Bounds<DevicePixels>,
     maximized: bool,
-    window_move_event_serial: u32,
     client: WaylandClientStatePtr,
     callbacks: Callbacks,
 }
@@ -155,7 +154,6 @@ impl WaylandWindowState {
             fullscreen: false,
             restore_bounds: Bounds::default(),
             maximized: false,
-            window_move_event_serial: 0,
             callbacks: Callbacks::default(),
             client,
         }
@@ -756,21 +754,10 @@ impl PlatformWindow for WaylandWindow {
         state.renderer.sprite_atlas().clone()
     }
 
-    fn mark_window_move(&self, move_state: WindowMoveState) {
+    fn start_system_move(&self) {
         let mut state = self.borrow_mut();
-        match move_state {
-            WindowMoveState::Start => {
-                state.window_move_event_serial = state.client.get_event_serial();
-            }
-            WindowMoveState::Moving => {
-                state
-                    .toplevel
-                    ._move(&state.globals.seat, state.window_move_event_serial);
-            }
-            WindowMoveState::Stop => {
-                state.window_move_event_serial = 0;
-            }
-        }
+        let serial = state.client.get_latest_serial();
+        state.toplevel._move(&state.globals.seat, serial);
     }
 
     fn should_render_window_controls(&self) -> bool {

@@ -4,7 +4,6 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
-use crate::WindowMoveState;
 use collections::HashMap;
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -260,10 +259,10 @@ impl PlatformWindow for TestWindow {
     }
 
     #[cfg(target_os = "linux")]
-    fn mark_window_move(&self, _: WindowMoveState) {
-        unimplemented!()   
+    fn start_system_move(&self) {
+        unimplemented!()
     }
-    
+
     #[cfg(target_os = "linux")]
     fn should_render_window_controls(&self) -> bool {
         false
