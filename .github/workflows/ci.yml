@@ -316,7 +316,7 @@ jobs:
         run: script/generate-licenses
 
       - name: Create and upload Linux binary
-        run: script/upload-linux-binary
+        run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
         uses: actions/upload-artifact@v4
