@@ -365,7 +365,7 @@ impl Example {
     ) -> Self {
         Self {
             assistant_panel: cx.new_view(|cx| {
-                AssistantPanel::new(language_registry, tool_registry, user_store, cx)
+                AssistantPanel::new(language_registry, tool_registry, user_store, None, cx)
             }),
         }
     }

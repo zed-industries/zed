@@ -19,7 +19,7 @@ use gpui::{
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use rich_text::RichText;
-use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
+use semantic_index::{CloudEmbeddingProvider, ProjectIndex, SemanticIndex};
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -51,7 +51,7 @@ pub enum SubmitMode {
     Codebase,
 }
 
-gpui::actions!(assistant2, [Cancel, ToggleFocus]);
+gpui::actions!(assistant2, [Cancel, ToggleFocus, DebugProjectIndex]);
 gpui::impl_actions!(assistant2, [Submit]);
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
@@ -131,7 +131,13 @@ impl AssistantPanel {
 
                 let tool_registry = Arc::new(tool_registry);
 
-                Self::new(app_state.languages.clone(), tool_registry, user_store, cx)
+                Self::new(
+                    app_state.languages.clone(),
+                    tool_registry,
+                    user_store,
+                    Some(project_index),
+                    cx,
+                )
             })
         })
     }
@@ -140,6 +146,7 @@ impl AssistantPanel {
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
         user_store: Model<UserStore>,
+        project_index: Option<Model<ProjectIndex>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let chat = cx.new_view(|cx| {
@@ -147,6 +154,7 @@ impl AssistantPanel {
                 language_registry.clone(),
                 tool_registry.clone(),
                 user_store,
+                project_index,
                 cx,
             )
         });
@@ -225,6 +233,7 @@ struct AssistantChat {
     collapsed_messages: HashMap<MessageId, bool>,
     pending_completion: Option<Task<()>>,
     tool_registry: Arc<ToolRegistry>,
+    project_index: Option<Model<ProjectIndex>>,
 }
 
 impl AssistantChat {
@@ -232,6 +241,7 @@ impl AssistantChat {
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
         user_store: Model<UserStore>,
+        project_index: Option<Model<ProjectIndex>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let model = CompletionProvider::get(cx).default_model();
@@ -258,6 +268,7 @@ impl AssistantChat {
             list_state,
             user_store,
             language_registry,
+            project_index,
             next_message_id: MessageId(0),
             collapsed_messages: HashMap::default(),
             pending_completion: None,
@@ -340,6 +351,14 @@ impl AssistantChat {
 
     fn can_submit(&self) -> bool {
         self.pending_completion.is_none()
+    }
+
+    fn debug_project_index(&mut self, _: &DebugProjectIndex, cx: &mut ViewContext<Self>) {
+        if let Some(index) = &self.project_index {
+            index.update(cx, |project_index, cx| {
+                project_index.debug(cx).detach_and_log_err(cx)
+            });
+        }
     }
 
     async fn request_completion(
@@ -686,6 +705,7 @@ impl Render for AssistantChat {
             .key_context("AssistantChat")
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::debug_project_index))
             .text_color(Color::Default.color(cx))
             .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(
