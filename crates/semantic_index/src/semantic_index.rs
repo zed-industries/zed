@@ -311,6 +311,7 @@ impl ProjectIndex {
             .collect::<Vec<_>>();
 
         cx.spawn(|_, mut cx| async move {
+            eprintln!("semantic index contents:");
             for index in indices {
                 index.update(&mut cx, |index, cx| index.debug(cx))?.await?
             }
@@ -873,8 +874,7 @@ impl WorktreeIndex {
                 .context("failed to create read transaction")?;
             for record in db.iter(&tx)? {
                 let (key, _) = record?;
-                eprintln!("path: {}", key);
-                // eprintln!("value: {:?}", value);
+                eprintln!("{}", path_for_db_key(key));
             }
             Ok(())
         })
@@ -973,6 +973,10 @@ impl Drop for IndexingEntryHandle {
 
 fn db_key_for_path(path: &Arc<Path>) -> String {
     path.to_string_lossy().replace('/', "\0")
+}
+
+fn path_for_db_key(key: &str) -> String {
+    key.replace("\0", "/")
 }
 
 #[cfg(test)]
