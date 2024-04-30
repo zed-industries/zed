@@ -260,8 +260,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  bundle-deb:
-    name: Create a *.deb Linux bundle
+  bundle-linux:
+    name: Create a Linux bundle
     runs-on: ubuntu-22.04 # keep the version fixed to avoid libc and dynamic linked library issues
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
@@ -312,19 +312,17 @@ jobs:
             exit 1
           fi
 
-      # TODO linux : Find a way to add licenses to the final bundle
-      # - name: Generate license file
-      #   run: script/generate-licenses
+      - name: Generate license file
+        run: script/generate-licenses
 
-      - name: Create Linux *.deb bundle
-        run: script/bundle-linux
+      - name: Create and upload Linux binary
+        run: script/upload-linux-binary
 
-      - name: Upload app bundle to workflow run if main branch or specific label
+      - name: Upload Linux bundle to workflow run if main branch or specific label
         uses: actions/upload-artifact@v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
-          name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.deb
-          path: target/release/*.deb
+          path: zed-*.tar.gz
 
       # TODO linux : make it stable enough to be uploaded as a release
       # - uses: softprops/action-gh-release@v1
@@ -337,31 +335,3 @@ jobs:
       #     body: ""
       #   env:
       #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  upload-linux-binary:
-    name: Create a Linux binary and upload it
-    runs-on: ubuntu-22.04 # keep the version fixed to avoid libc and dynamic linked library issues
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'upload-linux-binary') }}
-    needs: [linux_tests]
-    env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          clean: false
-          submodules: "recursive"
-
-      - name: Cache dependencies
-        uses: swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Configure linux
-        shell: bash -euxo pipefail {0}
-        run: script/linux
-
-      - name: Create and upload Linux binary
-        run: script/upload-linux-binary

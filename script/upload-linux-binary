@@ -4,7 +4,7 @@ set -euxo pipefail
 source script/lib/blob-store.sh
 
 local_only=false
-channel="nightly" # TODO: this needs to be variable etc.
+channel=$(<RELEASE_CHANNEL)
 
 export ZED_BUNDLE=true
 
@@ -33,7 +33,7 @@ do
     esac
 done
 
-
+version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
 commit=$(git rev-parse HEAD | cut -c 1-7)
 
 version_info=$(rustc --version --verbose)
@@ -64,6 +64,9 @@ cp "crates/zed/resources/app-icon-nightly@2x.png" "${temp_dir}/share/icons/hicol
 # .desktop
 mkdir -p "${temp_dir}/share/applications"
 cp "crates/zed/resources/zed.desktop" "${temp_dir}/share/applications/zed.desktop"
+
+# LICENSEs
+cp "assets/licenses.md" "${temp_dir}/licenses.md"
 
 # Create archive
 archive="zed-${channel}-${target_triple}.tar.gz"
