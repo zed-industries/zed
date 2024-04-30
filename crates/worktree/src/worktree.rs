@@ -2523,10 +2523,14 @@ impl BackgroundScannerState {
         if !ignore_stack.is_abs_path_ignored(&abs_path, true) {
             if let Some((workdir_path, repo)) = self.snapshot.local_repo_for_path(&path) {
                 if let Ok(repo_path) = path.strip_prefix(&workdir_path.0) {
+                    let repo_ptr = repo.repo_ptr.lock();
+                    let staged_statuses = repo_ptr.staged_statuses(repo_path);
+                    let unstaged_statuses = repo_ptr.unstaged_statuses(repo_path);
                     containing_repository = Some((
                         workdir_path,
                         repo.repo_ptr.clone(),
-                        repo.repo_ptr.lock().staged_statuses(repo_path),
+                        staged_statuses,
+                        unstaged_statuses,
                     ));
                 }
             }
@@ -2749,7 +2753,8 @@ impl BackgroundScannerState {
     ) -> Option<(
         RepositoryWorkDirectory,
         Arc<Mutex<dyn GitRepository>>,
-        TreeMap<RepoPath, GitFileStatus>,
+        StagedStatuses,
+        UnstagedStatuses,
     )> {
         let work_dir_path: Arc<Path> = match dot_git_path.parent() {
             Some(parent_dir) => {
@@ -2797,7 +2802,8 @@ impl BackgroundScannerState {
             },
         );
 
-        let staged_statuses = self.update_git_statuses(&work_directory, &*repo_lock);
+        let (staged_statuses, unstaged_statuses) =
+            self.update_git_statuses(&work_directory, &*repo_lock);
         drop(repo_lock);
 
         self.snapshot.git_repositories.insert(
@@ -2809,14 +2815,19 @@ impl BackgroundScannerState {
             },
         );
 
-        Some((work_directory, repository, staged_statuses))
+        Some((
+            work_directory,
+            repository,
+            staged_statuses,
+            unstaged_statuses,
+        ))
     }
 
     fn update_git_statuses(
         &mut self,
         work_directory: &RepositoryWorkDirectory,
         repo: &dyn GitRepository,
-    ) -> TreeMap<RepoPath, GitFileStatus> {
+    ) -> (StagedStatuses, UnstagedStatuses) {
         let start = std::time::Instant::now();
         let staged_statuses = repo.staged_statuses(Path::new(""));
 
@@ -2848,7 +2859,7 @@ impl BackgroundScannerState {
         self.snapshot.entries_by_path.edit(edits, &());
         util::extend_sorted(&mut self.changed_paths, changes, usize::MAX, Ord::cmp);
         dbg!(start.elapsed());
-        staged_statuses
+        (staged_statuses, unstaged_statuses)
     }
 }
 
@@ -3977,15 +3988,15 @@ impl BackgroundScanner {
             } else {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
                 if !child_entry.is_ignored {
-                    if let Some((repository_dir, repository, staged_statuses)) =
+                    if let Some((repository_dir, _, staged_statuses, unstaged_statuses)) =
                         &job.containing_repository
                     {
                         if let Ok(repo_path) = child_entry.path.strip_prefix(&repository_dir.0) {
-                            if let Some(mtime) = child_entry.mtime {
+                            if child_entry.mtime.is_some() {
                                 let repo_path = RepoPath(repo_path.into());
                                 child_entry.git_status = combine_git_statuses(
                                     staged_statuses.get(&repo_path).copied(),
-                                    repository.lock().unstaged_status(&repo_path, mtime),
+                                    unstaged_statuses.get(&repo_path).copied(),
                                 );
                             }
                         }
@@ -4482,6 +4493,9 @@ fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
     result
 }
 
+type StagedStatuses = TreeMap<RepoPath, GitFileStatus>;
+type UnstagedStatuses = TreeMap<RepoPath, GitFileStatus>;
+
 struct ScanJob {
     abs_path: Arc<Path>,
     path: Arc<Path>,
@@ -4492,7 +4506,8 @@ struct ScanJob {
     containing_repository: Option<(
         RepositoryWorkDirectory,
         Arc<Mutex<dyn GitRepository>>,
-        TreeMap<RepoPath, GitFileStatus>,
+        StagedStatuses,
+        UnstagedStatuses,
     )>,
 }
 
