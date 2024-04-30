@@ -3795,15 +3795,31 @@ impl Editor {
                 task = this.update(&mut cx, |this, _| this.code_actions_task.take())?;
             }
 
-            this.update(&mut cx, |this, cx| {
+            let spawned_test_task = this.update(&mut cx, |this, cx| {
                 if this.focus_handle.is_focused(cx) {
                     let row = action
                         .deployed_from_indicator
                         .unwrap_or_else(|| this.selections.newest::<Point>(cx).head().row);
                     let tasks = this.tasks.get(&row).map(|t| Arc::new(t.to_owned()));
-                    let (buffer, code_actions) = this.available_code_actions.clone().unzip();
+                    let (buffer, code_actions) = this
+                        .available_code_actions
+                        .clone()
+                        .map(|(buffer, code_actions)| {
+                            let snapshot = buffer.read(cx).snapshot();
+                            let code_actions: Arc<[CodeAction]> = code_actions
+                                .into_iter()
+                                .filter(|action| {
+                                    text::ToPoint::to_point(&action.range.start, &snapshot).row
+                                        == row
+                                })
+                                .cloned()
+                                .collect();
+                            (buffer, code_actions)
+                        })
+                        .unzip();
+
                     if tasks.is_none() && code_actions.is_none() {
-                        return;
+                        return None;
                     }
                     let buffer = buffer.or_else(|| {
                         let snapshot = this.snapshot(cx);
@@ -3813,7 +3829,7 @@ impl Editor {
                         this.buffer().read(cx).buffer(buffer_id)
                     });
                     let Some(buffer) = buffer else {
-                        return;
+                        return None;
                     };
                     this.completion_tasks.clear();
                     this.discard_inline_completion(cx);
@@ -3843,6 +3859,12 @@ impl Editor {
                                 row,
                             ))
                         });
+                    let spawn_straight_away =
+                        tasks.as_ref().map_or(false, |tasks| tasks.0.len() == 1)
+                            && code_actions
+                                .as_ref()
+                                .map_or(true, |actions| actions.is_empty());
+
                     *this.context_menu.write() = Some(ContextMenu::CodeActions(CodeActionsMenu {
                         buffer,
                         actions: CodeActionContents {
@@ -3853,9 +3875,21 @@ impl Editor {
                         scroll_handle: UniformListScrollHandle::default(),
                         deployed_from_indicator,
                     }));
+                    if spawn_straight_away {
+                        if let Some(task) =
+                            this.confirm_code_action(&ConfirmCodeAction { item_ix: Some(0) }, cx)
+                        {
+                            cx.notify();
+                            return Some(task);
+                        }
+                    }
                     cx.notify();
                 }
+                None
             })?;
+            if let Some(task) = spawned_test_task {
+                task.await?;
+            }
 
             Ok::<_, anyhow::Error>(())
         })
@@ -4427,7 +4461,7 @@ impl Editor {
         row: u32,
         cx: &mut ViewContext<Self>,
     ) -> IconButton {
-        IconButton::new("code_actions_indicator", ui::IconName::Play)
+        IconButton::new("code_actions_test_indicator", ui::IconName::Play)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
             .icon_color(Color::Muted)
