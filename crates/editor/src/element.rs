@@ -1949,6 +1949,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         line_layouts: &[LineWithInvisibles],
         newest_selection_head: DisplayPoint,
+        gutter_overshoot: Pixels,
         cx: &mut WindowContext,
     ) -> bool {
         let max_height = cmp::min(
@@ -1968,9 +1969,23 @@ impl EditorElement {
         let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
         let context_menu_size = context_menu.layout_as_root(available_space, cx);
 
-        let cursor_row_layout = &line_layouts[(position.row() - start_row) as usize].line;
-        let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_pixel_position.x;
-        let y = (position.row() + 1) as f32 * line_height - scroll_pixel_position.y;
+        let (x, y) = match position {
+            crate::ContextMenuOrigin::EditorPoint(point) => {
+                let cursor_row_layout = &line_layouts[(point.row() - start_row) as usize].line;
+                let x = cursor_row_layout.x_for_index(point.column() as usize)
+                    - scroll_pixel_position.x;
+                let y = (point.row() + 1) as f32 * line_height - scroll_pixel_position.y;
+                (x, y)
+            }
+            crate::ContextMenuOrigin::GutterIndicator(row) => {
+                // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
+                // text field.
+                let x = -gutter_overshoot;
+                let y = (row + 1) as f32 * line_height - scroll_pixel_position.y;
+                (x, y)
+            }
+        };
+
         let mut list_origin = content_origin + point(x, y);
         let list_width = context_menu_size.width;
         let list_height = context_menu_size.height;
@@ -3826,6 +3841,7 @@ impl Element for EditorElement {
                             scroll_pixel_position,
                             &line_layouts,
                             newest_selection_head,
+                            gutter_dimensions.width - gutter_dimensions.left_padding,
                             cx,
                         );
                         if gutter_settings.code_actions {
