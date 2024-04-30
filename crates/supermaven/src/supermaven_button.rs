@@ -37,6 +37,26 @@ impl SupermavenButton {
     }
 }
 
+enum SupermavenButtonStatus {
+    Ready,
+    Errored(String),
+    NeedsActivation(String),
+    Disabled,
+    Initializing,
+}
+
+impl SupermavenButtonStatus {
+    fn to_icon(&self) -> IconName {
+        match self {
+            SupermavenButtonStatus::Ready => IconName::Supermaven,
+            SupermavenButtonStatus::Errored(_) => IconName::SupermavenError,
+            SupermavenButtonStatus::NeedsActivation(_) => IconName::SupermavenInit,
+            SupermavenButtonStatus::Disabled => IconName::SupermavenDisabled,
+            SupermavenButtonStatus::Initializing => IconName::SupermavenInit,
+        }
+    }
+}
+
 impl Render for SupermavenButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let all_language_settings = all_language_settings(None, cx);
@@ -52,19 +72,21 @@ impl Render for SupermavenButton {
         let supermaven = supermaven.read(cx);
 
         let status = match supermaven {
-            Supermaven::Starting => AccountStatus::Unknown,
-            Supermaven::FailedDownload { .. } => AccountStatus::Unknown,
-            Supermaven::Spawned(agent) => agent.account_status.clone(),
-        };
+            Supermaven::Starting => SupermavenButtonStatus::Initializing,
+            Supermaven::FailedDownload { error } => {
+                SupermavenButtonStatus::Errored(error.to_string())
+            }
+            Supermaven::Spawned(agent) => {
+                let account_status = agent.account_status.clone();
 
-        let icon = match supermaven {
-            Supermaven::Starting => IconName::SupermavenDisabled,
-            Supermaven::FailedDownload { .. } => IconName::SupermavenError,
-            Supermaven::Spawned(agent) => match agent.account_status {
-                AccountStatus::NeedsActivation { .. } => IconName::SupermavenInit,
-                AccountStatus::Unknown => IconName::SupermavenError,
-                AccountStatus::Ready => IconName::Supermaven,
-            },
+                match account_status {
+                    AccountStatus::NeedsActivation { activate_url } => {
+                        SupermavenButtonStatus::NeedsActivation(activate_url.clone())
+                    }
+                    AccountStatus::Unknown => SupermavenButtonStatus::Initializing,
+                    AccountStatus::Ready => SupermavenButtonStatus::Ready,
+                }
+            }
         };
 
         let this = cx.view().clone();
@@ -72,17 +94,16 @@ impl Render for SupermavenButton {
         div().child(
             popover_menu("supermaven")
                 .menu(move |cx| match &status {
-                    AccountStatus::NeedsActivation { activate_url } => {
+                    SupermavenButtonStatus::NeedsActivation(activate_url) => {
                         Some(this.update(cx, |this, cx| {
                             this.build_activation_menu(activate_url.clone(), cx)
                         }))
                     }
-                    AccountStatus::Unknown => None,
-                    AccountStatus::Ready => None,
+                    _ => None,
                 })
                 .anchor(AnchorCorner::BottomRight)
                 .trigger(
-                    IconButton::new("supermaven-icon", icon)
+                    IconButton::new("supermaven-icon", status.to_icon())
                         .tooltip(|cx| Tooltip::text("Supermaven", cx)),
                 ),
         )
