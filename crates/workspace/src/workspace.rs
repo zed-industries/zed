@@ -631,7 +631,7 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded => {
                     this.update_window_title(cx);
-                    this.serialize_workspace(cx).detach();
+                    this.serialize_workspace(cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -823,15 +823,15 @@ impl Workspace {
                 ThemeSettings::reload_current_theme(cx);
             }),
             cx.observe(&left_dock, |this, _, cx| {
-                this.serialize_workspace(cx).detach();
+                this.serialize_workspace(cx);
                 cx.notify();
             }),
             cx.observe(&bottom_dock, |this, _, cx| {
-                this.serialize_workspace(cx).detach();
+                this.serialize_workspace(cx);
                 cx.notify();
             }),
             cx.observe(&right_dock, |this, _, cx| {
-                this.serialize_workspace(cx).detach();
+                this.serialize_workspace(cx);
                 cx.notify();
             }),
             cx.on_release(|this, window, cx| {
@@ -1897,7 +1897,7 @@ impl Workspace {
         }
 
         cx.notify();
-        self.serialize_workspace(cx).detach();
+        self.serialize_workspace(cx);
     }
 
     pub fn close_all_docks(&mut self, cx: &mut ViewContext<Self>) {
@@ -1911,7 +1911,7 @@ impl Workspace {
 
         cx.focus_self();
         cx.notify();
-        self.serialize_workspace(cx).detach();
+        self.serialize_workspace(cx);
     }
 
     /// Transfer focus to the panel of the given type.
@@ -1934,6 +1934,8 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
         should_focus: impl Fn(&dyn PanelHandle, &mut ViewContext<Dock>) -> bool,
     ) -> Option<Arc<dyn PanelHandle>> {
+        let mut result_panel = None;
+        let mut serialize = false;
         for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let mut focus_center = false;
@@ -1956,12 +1958,18 @@ impl Workspace {
                     self.active_pane.update(cx, |pane, cx| pane.focus(cx))
                 }
 
-                self.serialize_workspace(cx).detach();
-                cx.notify();
-                return panel;
+                result_panel = panel;
+                serialize = true;
+                break;
             }
         }
-        None
+
+        if serialize {
+            self.serialize_workspace(cx);
+        }
+
+        cx.notify();
+        result_panel
     }
 
     /// Open the panel of the given type
@@ -2559,7 +2567,7 @@ impl Workspace {
             }
         }
 
-        self.serialize_workspace(cx).detach();
+        self.serialize_workspace(cx);
     }
 
     pub fn split_pane(
@@ -3511,17 +3519,22 @@ impl Workspace {
         cx.notify();
     }
 
-    fn schedule_serialize(&mut self, cx: &mut ViewContext<Self>) {
-        self._schedule_serialize = Some(cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
-                .timer(Duration::from_millis(100))
-                .await;
-            this.update(&mut cx, |this, cx| this.serialize_workspace(cx).detach())
+    fn serialize_workspace(&mut self, cx: &mut ViewContext<Self>) {
+        if self._schedule_serialize.is_none() {
+            self._schedule_serialize = Some(cx.spawn(|this, mut cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                this.update(&mut cx, |this, cx| {
+                    this.serialize_workspace_internal(cx).detach();
+                    this._schedule_serialize.take();
+                })
                 .log_err();
-        }));
+            }));
+        }
     }
 
-    fn serialize_workspace(&self, cx: &mut WindowContext) -> Task<()> {
+    fn serialize_workspace_internal(&self, cx: &mut WindowContext) -> Task<()> {
         fn serialize_pane_handle(pane_handle: &View<Pane>, cx: &WindowContext) -> SerializedPane {
             let (items, active) = {
                 let pane = pane_handle.read(cx);
@@ -3741,9 +3754,11 @@ impl Workspace {
             })?;
 
             // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-            workspace.update(&mut cx, |workspace, cx| {
-                workspace.serialize_workspace(cx).detach()
-            })?;
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.serialize_workspace_internal(cx).detach();
+                })
+                .ok();
 
             Ok(opened_items)
         })

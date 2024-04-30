@@ -603,7 +603,7 @@ impl<T: Item> ItemHandle for View<T> {
         }
 
         cx.defer(|workspace, cx| {
-            workspace.serialize_workspace(cx).detach();
+            workspace.serialize_workspace(cx);
         });
     }
 

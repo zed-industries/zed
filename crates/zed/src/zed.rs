@@ -2842,11 +2842,12 @@ mod tests {
             handle_keymap_file_changes(keymap_rx, cx);
         });
         workspace
-            .update(cx, |workspace, _| {
+            .update(cx, |workspace, cx| {
                 workspace.register_action(|_, _: &A, _cx| {});
                 workspace.register_action(|_, _: &B, _cx| {});
                 workspace.register_action(|_, _: &ActivatePreviousPane, _cx| {});
                 workspace.register_action(|_, _: &ActivatePrevItem, _cx| {});
+                cx.notify();
             })
             .unwrap();
         executor.run_until_parked();

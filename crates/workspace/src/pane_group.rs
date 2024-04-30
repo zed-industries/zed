@@ -749,7 +749,7 @@ mod element {
             }
 
             workspace
-                .update(cx, |this, cx| this.schedule_serialize(cx))
+                .update(cx, |this, cx| this.serialize_workspace(cx))
                 .log_err();
             cx.stop_propagation();
             cx.refresh();
@@ -935,7 +935,7 @@ mod element {
                                     let mut borrow = flexes.lock();
                                     *borrow = vec![1.; borrow.len()];
                                     workspace
-                                        .update(cx, |this, cx| this.schedule_serialize(cx))
+                                        .update(cx, |this, cx| this.serialize_workspace(cx))
                                         .log_err();
 
                                     cx.refresh();
