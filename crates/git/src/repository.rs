@@ -42,6 +42,7 @@ pub trait GitRepository: Send {
     /// the index stores hashes of trees, so that unchanged directories can be skipped.
     fn staged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus>;
 
+    fn unstaged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus>;
     /// Get the status of a given file in the working directory with respect to
     /// the index. In the common case, when there are no changes, this only requires
     /// an index lookup. The index stores the mtime of each file when it was added,
@@ -135,6 +136,29 @@ impl GitRepository for RealGitRepository {
         let mut options = git2::StatusOptions::new();
         options.pathspec(path_prefix);
         options.show(StatusShow::Index);
+
+        if let Some(statuses) = self.repository.statuses(Some(&mut options)).log_err() {
+            for status in statuses.iter() {
+                let path = RepoPath(PathBuf::try_from_bytes(status.path_bytes()).unwrap());
+                let status = status.status();
+                if !status.contains(git2::Status::IGNORED) {
+                    if let Some(status) = read_status(status) {
+                        map.insert(path, status)
+                    }
+                }
+            }
+        }
+        map
+    }
+
+    fn unstaged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
+        let mut map = TreeMap::default();
+
+        let mut options = git2::StatusOptions::new();
+        options.include_untracked(true);
+        options.recurse_untracked_dirs(true);
+        options.pathspec(path_prefix);
+        options.show(StatusShow::Workdir);
 
         if let Some(statuses) = self.repository.statuses(Some(&mut options)).log_err() {
             for status in statuses.iter() {
@@ -333,6 +357,16 @@ impl GitRepository for FakeGitRepository {
         map
     }
 
+    fn unstaged_statuses(&self, path_prefix: &Path) -> TreeMap<RepoPath, GitFileStatus> {
+        let mut map = TreeMap::default();
+        let state = self.state.lock();
+        for (repo_path, status) in state.worktree_statuses.iter() {
+            if repo_path.0.starts_with(path_prefix) {
+                map.insert(repo_path.to_owned(), status.to_owned());
+            }
+        }
+        map
+    }
     fn unstaged_status(&self, _path: &RepoPath, _mtime: SystemTime) -> Option<GitFileStatus> {
         None
     }

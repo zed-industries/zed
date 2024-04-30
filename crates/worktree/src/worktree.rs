@@ -2817,28 +2817,28 @@ impl BackgroundScannerState {
         work_directory: &RepositoryWorkDirectory,
         repo: &dyn GitRepository,
     ) -> TreeMap<RepoPath, GitFileStatus> {
+        let start = std::time::Instant::now();
         let staged_statuses = repo.staged_statuses(Path::new(""));
 
+        let unstaged_statuses = repo.unstaged_statuses(Path::new(""));
         let mut changes = vec![];
         let mut edits = vec![];
 
-        for mut entry in self
+        for entry in self
             .snapshot
             .descendent_entries(false, false, &work_directory.0)
-            .cloned()
         {
             let Ok(repo_path) = entry.path.strip_prefix(&work_directory.0) else {
-                continue;
-            };
-            let Some(mtime) = entry.mtime else {
                 continue;
             };
             let repo_path = RepoPath(repo_path.to_path_buf());
             let git_file_status = combine_git_statuses(
                 staged_statuses.get(&repo_path).copied(),
-                repo.unstaged_status(&repo_path, mtime),
+                unstaged_statuses.get(&repo_path).copied(),
             );
+
             if entry.git_status != git_file_status {
+                let mut entry = entry.clone();
                 entry.git_status = git_file_status;
                 changes.push(entry.path.clone());
                 edits.push(Edit::Insert(entry));
@@ -2847,6 +2847,7 @@ impl BackgroundScannerState {
 
         self.snapshot.entries_by_path.edit(edits, &());
         util::extend_sorted(&mut self.changed_paths, changes, usize::MAX, Ord::cmp);
+        dbg!(start.elapsed());
         staged_statuses
     }
 }
