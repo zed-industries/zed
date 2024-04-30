@@ -45,15 +45,14 @@ main() {
 linux() {
     echo "Downloading zed.tar.gz"
     # curl "https://zed.dev/api/download/zed.tar.gz?platform=$platform&arch=$arch&channel=$channel" > "$temp/zed.tar.gz"
-    curl "https://zed-nightly-host.nyc3.digitaloceanspaces.com/nightly/zed-nightly-x86_64-unknown-linux-gnu.tar.gz" > "$temp/zed.tar.gz"
+
+    curl "https://zed.dev/api/releases/$channel/latest/zed-linux-$arch.tar.gz" > "$temp/zed-linux-$arch.tar.gz"
 
     mkdir -p "$HOME/.local/zed.app"
-    mkdir -p "$HOME/.local/bin"
-    mkdir -p "$HOME/.local/share/applications"
-
-    tar -xzf "$temp/zed.tar.gz" -C "$HOME/.local/zed.app"
+    tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
 
     # Set up xdg links so that app shows in the dock
+    mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
     ln -sf ~/.local/zed.app/bin/zed ~/.local/bin/
     cp ~/.local/zed.app/share/applications/zed.desktop ~/.local/share/applications/
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/zed.desktop
@@ -70,8 +69,8 @@ linux() {
 
 macos() {
     echo "Downloading Zed.dmg..."
-    curl "https://zed.dev/api/download?asset=Zed.dmg&platform=$platform&arch=$arch&channel=$channel" > "$temp/Zed.dmg"
-    hdiutil attach -quiet "$temp/Zed.dmg" -mountpoint "$temp/mount"
+    curl "https://zed.dev/api/releases/$channel/latest/Zed-$arch.dmg" > "$temp/Zed-$arch.dmg"
+    hdiutil attach -quiet "$temp/Zed-$arch.dmg" -mountpoint "$temp/mount"
     app="$(cd "$temp/mount/"; echo *.app)"
     echo "Installing $app"
     if [[ -d "/Applications/$app" ]]; then
