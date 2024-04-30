@@ -77,7 +77,7 @@ pub trait LanguageModelTool {
     /// tool registry, it should be unique.
     fn name(&self) -> String;
 
-    /// Returns the description of the tool..
+    /// Returns the description of the tool.
     ///
     /// This can be used to _prompt_ the model as to what the tool does.
     fn description(&self) -> String;
