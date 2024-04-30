@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Context, Result};
+use futures::io::BufReader;
 use futures::{AsyncReadExt, Future};
 use serde::{Deserialize, Serialize};
 use smol::fs::{self, File};
-use std::path::PathBuf;
+use smol::stream::StreamExt;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::http::{AsyncBody, HttpClient, Request as HttpRequest};
 use util::paths::SUPERMAVEN_DIR;
@@ -42,7 +44,7 @@ pub struct SupermavenAdminApi {
     http_client: Arc<dyn HttpClient>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SupermavenDownloadResponse {
     pub download_url: String,
@@ -185,8 +187,29 @@ pub async fn latest_release(
         .with_context(|| "Unable to parse Supermaven Agent response".to_string())
 }
 
-pub fn download_latest(client: Arc<dyn HttpClient>) -> impl Future<Output = Result<PathBuf>> {
+pub fn version_path(version: u64) -> PathBuf {
+    SUPERMAVEN_DIR.join(format!("sm-agent-{}", version))
+}
+
+pub async fn has_version(version_path: &Path) -> bool {
+    fs::metadata(version_path)
+        .await
+        .map_or(false, |m| m.is_file())
+}
+
+pub fn get_supermaven_agent_path(
+    client: Arc<dyn HttpClient>,
+) -> impl Future<Output = Result<PathBuf>> {
     async move {
+        fs::create_dir_all(&*SUPERMAVEN_DIR)
+            .await
+            .with_context(|| {
+                format!(
+                    "Could not create Supermaven Agent Directory at {:?}",
+                    &*SUPERMAVEN_DIR
+                )
+            })?;
+
         let platform = match std::env::consts::OS {
             "macos" => "darwin",
             "windows" => "windows",
@@ -201,6 +224,13 @@ pub fn download_latest(client: Arc<dyn HttpClient>) -> impl Future<Output = Resu
         };
 
         let download_info = latest_release(client.clone(), platform, arch).await?;
+
+        let binary_path = version_path(download_info.version);
+
+        if has_version(&binary_path).await {
+            return Ok(binary_path);
+        }
+
         let request = HttpRequest::get(&download_info.download_url);
 
         let mut response = client
@@ -208,38 +238,28 @@ pub fn download_latest(client: Arc<dyn HttpClient>) -> impl Future<Output = Resu
             .await
             .with_context(|| "Unable to download Supermaven Agent".to_string())?;
 
-        let version_dir = SUPERMAVEN_DIR.join(format!("sm-agent-{}", download_info.version));
-        fs::create_dir_all(&version_dir)
-            .await
-            .with_context(|| format!("Could not create version directory at {:?}", version_dir))?;
-
-        let binary_path = version_dir.join("sm-agent");
-
         let mut file = File::create(&binary_path)
             .await
             .with_context(|| format!("Unable to create file at {:?}", binary_path))?;
 
-        smol::io::copy(response.body_mut(), &mut file)
+        futures::io::copy(BufReader::new(response.body_mut()), &mut file)
             .await
             .with_context(|| format!("Unable to write binary to file at {:?}", binary_path))?;
 
         #[cfg(not(windows))]
         {
-            use smol::fs::unix::PermissionsExt as _;
-            let mut permissions = file.metadata().await?.permissions();
-            permissions.set_mode(0o755);
-            file.set_permissions(permissions).await?;
+            file.set_permissions(<fs::Permissions as fs::unix::PermissionsExt>::from_mode(
+                0o755,
+            ))
+            .await?;
         }
-        #[cfg(windows)]
-        {
-            use std::fs::OpenOptions;
-            use std::os::windows::fs::OpenOptionsExt as _;
 
-            let mut options = OpenOptions::new();
-            options.write(true);
-            options.read(true);
-            options.custom_flags(libc::O_BINARY);
-            let file = options.open(&binary_path)?;
+        let mut old_binary_paths = fs::read_dir(&*SUPERMAVEN_DIR).await?;
+        while let Some(old_binary_path) = old_binary_paths.next().await {
+            let old_binary_path = old_binary_path?;
+            if old_binary_path.path() != binary_path {
+                fs::remove_file(old_binary_path.path()).await?;
+            }
         }
 
         Ok(binary_path)

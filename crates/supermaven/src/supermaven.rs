@@ -76,8 +76,7 @@ impl Supermaven {
     pub fn start(&mut self, client: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) {
         if let Self::Starting = self {
             cx.spawn(|this, mut cx| async move {
-                // todo!(): Don't download the most up to date binary every time, check to see if a recent is downloaded
-                let binary_path = supermaven_api::download_latest(client).await?;
+                let binary_path = supermaven_api::get_supermaven_agent_path(client).await?;
 
                 this.update(&mut cx, |this, cx| {
                     if let Self::Starting = this {
@@ -173,6 +172,7 @@ pub struct SupermavenAgent {
     _handle_outgoing_messages: Task<Result<()>>,
     _handle_incoming_messages: Task<Result<()>>,
     account_status: AccountStatus,
+    service_tier: Option<ServiceTier>,
 }
 
 impl SupermavenAgent {
@@ -210,6 +210,7 @@ impl SupermavenAgent {
             _handle_incoming_messages: cx
                 .spawn(|this, cx| Self::handle_incoming_messages(this, stdout, cx)),
             account_status: AccountStatus::Unknown,
+            service_tier: None,
         })
     }
 
@@ -261,13 +262,15 @@ impl SupermavenAgent {
     fn handle_message(&mut self, message: SupermavenMessage) {
         match message {
             SupermavenMessage::ActivationRequest(request) => {
-                let Some(activate_url) = request.activate_url else {
-                    return;
+                self.account_status = match request.activate_url {
+                    Some(activate_url) => AccountStatus::NeedsActivation {
+                        activate_url: activate_url.clone(),
+                    },
+                    None => AccountStatus::Ready,
                 };
-
-                self.account_status = AccountStatus::NeedsActivation {
-                    activate_url: activate_url.clone(),
-                };
+            }
+            SupermavenMessage::ServiceTier { service_tier } => {
+                self.service_tier = Some(service_tier);
             }
             SupermavenMessage::Response(response) => {
                 let state_id = SupermavenCompletionStateId(response.state_id.parse().unwrap());

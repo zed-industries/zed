@@ -14,10 +14,6 @@ use workspace::StatusItemView;
 
 pub struct SupermavenButton {}
 
-// Button that allows you to authenticate with the Supermaven API
-// the signup/auth URL will not be known until the `sm-agent` lets us know what it is
-// We'll be tracking the status for that.
-
 impl SupermavenButton {
     pub fn new() -> Self {
         Self {}
@@ -41,7 +37,6 @@ enum SupermavenButtonStatus {
     Ready,
     Errored(String),
     NeedsActivation(String),
-    Disabled,
     Initializing,
 }
 
@@ -51,8 +46,16 @@ impl SupermavenButtonStatus {
             SupermavenButtonStatus::Ready => IconName::Supermaven,
             SupermavenButtonStatus::Errored(_) => IconName::SupermavenError,
             SupermavenButtonStatus::NeedsActivation(_) => IconName::SupermavenInit,
-            SupermavenButtonStatus::Disabled => IconName::SupermavenDisabled,
             SupermavenButtonStatus::Initializing => IconName::SupermavenInit,
+        }
+    }
+
+    fn to_tooltip(&self) -> String {
+        match self {
+            SupermavenButtonStatus::Ready => "Supermaven is ready".to_string(),
+            SupermavenButtonStatus::Errored(error) => format!("Supermaven error: {}", error),
+            SupermavenButtonStatus::NeedsActivation(_) => "Supermaven needs activation".to_string(),
+            SupermavenButtonStatus::Initializing => "Supermaven initializing".to_string(),
         }
     }
 }
@@ -92,6 +95,7 @@ impl Render for SupermavenButton {
         let this = cx.view().clone();
 
         let icon = status.to_icon();
+        let tooltip_text = status.to_tooltip();
 
         div().child(
             popover_menu("supermaven")
@@ -106,7 +110,7 @@ impl Render for SupermavenButton {
                 .anchor(AnchorCorner::BottomRight)
                 .trigger(
                     IconButton::new("supermaven-icon", icon)
-                        .tooltip(|cx| Tooltip::text("Supermaven", cx)),
+                        .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx)),
                 ),
         )
     }

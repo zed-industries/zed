@@ -112,6 +112,14 @@ pub struct SupermavenSetMessage {
     pub value: serde_json::Value,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum ServiceTier {
+    FreeNoLicense,
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SupermavenMessage {
@@ -129,7 +137,7 @@ pub enum SupermavenMessage {
     TaskStatus(SupermavenTaskUpdateMessage),
     ActiveRepo(SupermavenActiveRepoMessage),
     ServiceTier {
-        service_tier: String,
+        service_tier: ServiceTier,
     },
     Set(SupermavenSetMessage),
     #[serde(other)]
