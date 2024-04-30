@@ -2,10 +2,6 @@
 
 set -euxo pipefail
 
-channel=$(<RELEASE_CHANNEL)
-
-export ZED_BUNDLE=true
-
 # Function for displaying help info
 help_info() {
   echo "
@@ -27,6 +23,9 @@ do
     esac
 done
 
+export ZED_BUNDLE=true
+
+channel=$(<crates/zed/RELEASE_CHANNEL)
 version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
 commit=$(git rev-parse HEAD | cut -c 1-7)
 
