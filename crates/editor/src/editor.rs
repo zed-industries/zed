@@ -397,11 +397,16 @@ impl Default for ScrollbarMarkerState {
 #[derive(Clone)]
 struct RunnableTasks {
     templates: SmallVec<[(TaskSourceKind, TaskTemplate); 1]>,
+    // We need the column at which the task context evaluation should take place.
+    column: u32,
 }
 
 type Row = u32;
 #[derive(Clone)]
-struct ResolvedTasks(SmallVec<[(TaskSourceKind, ResolvedTask); 1]>, Row);
+struct ResolvedTasks {
+    templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
+    position: text::Point,
+}
 
 /// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
 ///
@@ -1183,8 +1188,8 @@ struct CodeActionContents {
 impl CodeActionContents {
     fn len(&self) -> usize {
         match (&self.tasks, &self.actions) {
-            (Some(tasks), Some(actions)) => actions.len() + tasks.0.len(),
-            (Some(tasks), None) => tasks.0.len(),
+            (Some(tasks), Some(actions)) => actions.len() + tasks.templates.len(),
+            (Some(tasks), None) => tasks.templates.len(),
             (None, Some(actions)) => actions.len(),
             (None, None) => 0,
         }
@@ -1192,8 +1197,8 @@ impl CodeActionContents {
 
     fn is_empty(&self) -> bool {
         match (&self.tasks, &self.actions) {
-            (Some(tasks), Some(actions)) => actions.is_empty() && tasks.0.is_empty(),
-            (Some(tasks), None) => tasks.0.is_empty(),
+            (Some(tasks), Some(actions)) => actions.is_empty() && tasks.templates.is_empty(),
+            (Some(tasks), None) => tasks.templates.is_empty(),
             (None, Some(actions)) => actions.is_empty(),
             (None, None) => true,
         }
@@ -1204,7 +1209,7 @@ impl CodeActionContents {
             .iter()
             .flat_map(|tasks| {
                 tasks
-                    .0
+                    .templates
                     .iter()
                     .map(|(kind, task)| CodeActionsItem::Task(kind.clone(), task.clone()))
             })
@@ -1217,21 +1222,21 @@ impl CodeActionContents {
     fn get(&self, index: usize) -> Option<CodeActionsItem> {
         match (&self.tasks, &self.actions) {
             (Some(tasks), Some(actions)) => {
-                if index < tasks.0.len() {
+                if index < tasks.templates.len() {
                     tasks
-                        .0
+                        .templates
                         .get(index)
                         .cloned()
                         .map(|(kind, task)| CodeActionsItem::Task(kind, task))
                 } else {
                     actions
-                        .get(index - tasks.0.len())
+                        .get(index - tasks.templates.len())
                         .cloned()
                         .map(CodeActionsItem::CodeAction)
                 }
             }
             (Some(tasks), None) => tasks
-                .0
+                .templates
                 .get(index)
                 .cloned()
                 .map(|(kind, task)| CodeActionsItem::Task(kind, task)),
@@ -3838,10 +3843,16 @@ impl Editor {
                     this.completion_tasks.clear();
                     this.discard_inline_completion(cx);
                     let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
-                        |(_, (workspace, _))| {
+                        |(tasks, (workspace, _))| {
+                            let position = Point::new(row, tasks.column);
+                            let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
+                            let location = Location {
+                                buffer: buffer.clone(),
+                                range: range_start..range_start,
+                            };
                             workspace
                                 .update(cx, |workspace, cx| {
-                                    tasks::task_context_with_editor(workspace, this, cx)
+                                    tasks::task_context_for_location(workspace, location, cx)
                                 })
                                 .ok()
                                 .flatten()
@@ -3850,8 +3861,8 @@ impl Editor {
                     let tasks = tasks
                         .zip(task_context.as_ref())
                         .map(|(tasks, task_context)| {
-                            Arc::new(ResolvedTasks(
-                                tasks
+                            Arc::new(ResolvedTasks {
+                                templates: tasks
                                     .templates
                                     .iter()
                                     .filter_map(|(kind, template)| {
@@ -3860,14 +3871,15 @@ impl Editor {
                                             .map(|task| (kind.clone(), task))
                                     })
                                     .collect(),
-                                row,
-                            ))
+                                position: Point::new(row, tasks.column),
+                            })
                         });
-                    let spawn_straight_away =
-                        tasks.as_ref().map_or(false, |tasks| tasks.0.len() == 1)
-                            && code_actions
-                                .as_ref()
-                                .map_or(true, |actions| actions.is_empty());
+                    let spawn_straight_away = tasks
+                        .as_ref()
+                        .map_or(false, |tasks| tasks.templates.len() == 1)
+                        && code_actions
+                            .as_ref()
+                            .map_or(true, |actions| actions.is_empty());
 
                     *this.context_menu.write() = Some(ContextMenu::CodeActions(CodeActionsMenu {
                         buffer,
@@ -7670,10 +7682,13 @@ impl Editor {
                 if tasks.is_empty() {
                     return None;
                 }
-
+                let point = multi_buffer_range.start.to_display_point(&snapshot);
                 Some((
-                    multi_buffer_range.start.to_display_point(&snapshot).row(),
-                    RunnableTasks { templates: tasks },
+                    point.row(),
+                    RunnableTasks {
+                        templates: tasks,
+                        column: point.column(),
+                    },
                 ))
             })
             .collect()

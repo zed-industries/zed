@@ -10,40 +10,22 @@ use task::{TaskContext, TaskVariables};
 use util::ResultExt;
 use workspace::Workspace;
 
-pub(crate) fn task_context_with_editor(
+pub(crate) fn task_context_for_location(
     workspace: &Workspace,
-    editor: &mut Editor,
+    location: Location,
     cx: &mut WindowContext<'_>,
 ) -> Option<TaskContext> {
     let cwd = workspace::tasks::task_cwd(workspace, cx)
         .log_err()
         .flatten();
 
-    let (selection, buffer, editor_snapshot) = {
-        let selection = editor.selections.newest::<usize>(cx);
-        let (buffer, _, _) = editor
-            .buffer()
-            .read(cx)
-            .point_to_buffer_offset(selection.start, cx)?;
-        let snapshot = editor.snapshot(cx);
-        Some((selection, buffer, snapshot))
-    }?;
+    let buffer = location.buffer.clone();
     let language_context_provider = buffer
         .read(cx)
         .language()
         .and_then(|language| language.context_provider())
         .unwrap_or_else(|| Arc::new(BasicContextProvider));
-    let selection_range = selection.range();
-    let start = editor_snapshot
-        .display_snapshot
-        .buffer_snapshot
-        .anchor_after(selection_range.start)
-        .text_anchor;
-    let end = editor_snapshot
-        .display_snapshot
-        .buffer_snapshot
-        .anchor_after(selection_range.end)
-        .text_anchor;
+
     let worktree_abs_path = buffer
         .read(cx)
         .file()
@@ -55,10 +37,6 @@ pub(crate) fn task_context_with_editor(
                 .worktree_for_id(worktree_id, cx)
                 .map(|worktree| worktree.read(cx).abs_path())
         });
-    let location = Location {
-        buffer,
-        range: start..end,
-    };
     let task_variables = combine_task_variables(
         worktree_abs_path.as_deref(),
         location,
@@ -70,6 +48,38 @@ pub(crate) fn task_context_with_editor(
         cwd,
         task_variables,
     })
+}
+
+pub(crate) fn task_context_with_editor(
+    workspace: &Workspace,
+    editor: &mut Editor,
+    cx: &mut WindowContext<'_>,
+) -> Option<TaskContext> {
+    let (selection, buffer, editor_snapshot) = {
+        let selection = editor.selections.newest::<usize>(cx);
+        let (buffer, _, _) = editor
+            .buffer()
+            .read(cx)
+            .point_to_buffer_offset(selection.start, cx)?;
+        let snapshot = editor.snapshot(cx);
+        Some((selection, buffer, snapshot))
+    }?;
+    let selection_range = selection.range();
+    let start = editor_snapshot
+        .display_snapshot
+        .buffer_snapshot
+        .anchor_after(selection_range.start)
+        .text_anchor;
+    let end = editor_snapshot
+        .display_snapshot
+        .buffer_snapshot
+        .anchor_after(selection_range.end)
+        .text_anchor;
+    let location = Location {
+        buffer,
+        range: start..end,
+    };
+    task_context_for_location(workspace, location, cx)
 }
 
 pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskContext {

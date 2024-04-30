@@ -1342,7 +1342,7 @@ impl EditorElement {
                     actions
                         .tasks
                         .as_ref()
-                        .map(|tasks| tasks.1)
+                        .map(|tasks| tasks.position.row)
                         .or_else(|| *deployed_from_indicator)
                 } else {
                     None
