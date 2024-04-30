@@ -43,33 +43,34 @@ strip "target/${target_triple}/release/Zed"
 # Move everything that should end up in the final package
 # into a temp directory.
 temp_dir=$(mktemp -d)
+zed_dir="${temp_dir}/zed.app"
 
 # Binary
-mkdir "${temp_dir}/bin"
-cp "target/${target_triple}/release/Zed" "${temp_dir}/bin/zed"
+mkdir -p "${zed_dir}/bin"
+cp "target/${target_triple}/release/Zed" "${zed_dir}/zed"
 
 # Icons
-mkdir -p "${temp_dir}/share/icons/hicolor/512x512/apps"
-cp "crates/zed/resources/app-icon-nightly.png" "${temp_dir}/share/icons/hicolor/512x512/apps/zed.png"
-mkdir -p "${temp_dir}/share/icons/hicolor/1024x1024/apps"
-cp "crates/zed/resources/app-icon-nightly@2x.png" "${temp_dir}/share/icons/hicolor/1024x1024/apps/zed.png"
+mkdir -p "${zed_dir}/share/icons/hicolor/512x512/apps"
+cp "crates/zed/resources/app-icon-nightly.png" "${zed_dir}/share/icons/hicolor/512x512/apps/zed.png"
+mkdir -p "${zed_dir}/share/icons/hicolor/1024x1024/apps"
+cp "crates/zed/resources/app-icon-nightly@2x.png" "${zed_dir}/share/icons/hicolor/1024x1024/apps/zed.png"
 
 # .desktop
-mkdir -p "${temp_dir}/share/applications"
-cp "crates/zed/resources/zed.desktop" "${temp_dir}/share/applications/zed.desktop"
+mkdir -p "${zed_dir}/share/applications"
+cp "crates/zed/resources/zed.desktop" "${zed_dir}/share/applications/zed.desktop"
 
 # Licenses
-cp "assets/licenses.md" "${temp_dir}/licenses.md"
+cp "assets/licenses.md" "${zed_dir}/licenses.md"
 
 # Create archive out of everything that's in the temp directory
-
+target="linux-$(uname -m)"
 
 if [[ "$channel" == "nightly" ]]; then
-  archive="zed-${channel}-${target_triple}.tar.gz"
+  archive="zed-${target}.tar.gz"
 elif  [[ "$channel" == "dev" ]]; then
-  archive="zed-${channel}-${commit}-${target_triple}.tar.gz"
+  archive="zed-${commit}-${target}.tar.gz"
 else
-  archive="zed-${version}-${target_triple}.tar.gz"
+  archive="zed-${target}.tar.gz"
 fi
 
 rm -rf "${archive}"
