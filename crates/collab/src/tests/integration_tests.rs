@@ -2450,7 +2450,8 @@ async fn test_propagate_saves_and_fs_changes(
     });
 
     let new_buffer_a = project_a
-        .update(cx_a, |p, cx| p.create_buffer("", None, cx))
+        .update(cx_a, |p, cx| p.create_buffer(cx))
+        .await
         .unwrap();
 
     let new_buffer_id = new_buffer_a.read_with(cx_a, |buffer, _| buffer.remote_id());

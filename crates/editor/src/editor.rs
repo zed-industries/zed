@@ -1604,18 +1604,21 @@ impl Editor {
         cx: &mut ViewContext<Workspace>,
     ) {
         let project = workspace.project().clone();
-        if project.read(cx).is_remote() {
-            cx.propagate();
-        } else if let Some(buffer) = project
-            .update(cx, |project, cx| project.create_buffer("", None, cx))
-            .log_err()
-        {
-            workspace.add_item_to_active_pane(
-                Box::new(cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
-                None,
-                cx,
-            );
-        }
+        let create = project.update(cx, |project, cx| project.create_buffer(cx));
+
+        cx.spawn(|workspace, mut cx| async move {
+            let buffer = create.await?;
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(
+                    Box::new(
+                        cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                    ),
+                    None,
+                    cx,
+                )
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn new_file_in_direction(
@@ -1624,18 +1627,23 @@ impl Editor {
         cx: &mut ViewContext<Workspace>,
     ) {
         let project = workspace.project().clone();
-        if project.read(cx).is_remote() {
-            cx.propagate();
-        } else if let Some(buffer) = project
-            .update(cx, |project, cx| project.create_buffer("", None, cx))
-            .log_err()
-        {
-            workspace.split_item(
-                action.0,
-                Box::new(cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
-                cx,
-            );
-        }
+        let create = project.update(cx, |project, cx| project.create_buffer(cx));
+        let direction = action.0;
+
+        cx.spawn(|workspace, mut cx| async move {
+            let buffer = create.await?;
+            workspace.update(&mut cx, move |workspace, cx| {
+                workspace.split_item(
+                    direction,
+                    Box::new(
+                        cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                    ),
+                    cx,
+                )
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
