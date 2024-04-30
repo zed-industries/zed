@@ -37,6 +37,7 @@ struct ProjectState {
 }
 
 struct LanguageServerState {
+    name: LanguageServerName,
     log_messages: VecDeque<String>,
     rpc_state: Option<LanguageServerRpcState>,
     _io_logs_subscription: Option<lsp::Subscription>,
@@ -132,7 +133,7 @@ impl LogStore {
                                             }).ok();
                                         },
                                     ));
-                                this.add_language_server(None, server.clone(), cx);
+                                this.add_language_server(None, LanguageServerName(Arc::from("copilot")), server.clone(), cx);
                             } else {
                                 util::debug_panic!("Received Copilot language server started event, but no language server is running")
                             }
@@ -175,8 +176,17 @@ impl LogStore {
                     }),
                     cx.subscribe(project, |this, project, event, cx| match event {
                         project::Event::LanguageServerAdded(id) => {
-                            if let Some(server) = project.read(cx).language_server_for_id(*id) {
-                                this.add_language_server(Some(&project.downgrade()), server, cx);
+                            let read_project = project.read(cx);
+                            if let Some((server, adapter)) = read_project
+                                .language_server_for_id(*id)
+                                .zip(read_project.language_server_adapter_for_id(*id))
+                            {
+                                this.add_language_server(
+                                    Some(&project.downgrade()),
+                                    adapter.name.clone(),
+                                    server,
+                                    cx,
+                                );
                             }
                         }
                         project::Event::LanguageServerRemoved(id) => {
@@ -201,27 +211,19 @@ impl LogStore {
         &mut self,
         project: Option<&WeakModel<Project>>,
         id: LanguageServerId,
-        cx: &mut ModelContext<Self>,
     ) -> Option<&mut LanguageServerState> {
         let servers = if let Some(project) = project {
             &mut self.projects.get_mut(&project)?.servers
         } else {
             &mut self.global_language_servers
         };
-        Some(servers.entry(id).or_insert_with(|| {
-            cx.notify();
-            LanguageServerState {
-                rpc_state: None,
-                log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
-                _io_logs_subscription: None,
-                _lsp_logs_subscription: None,
-            }
-        }))
+        servers.get_mut(&id)
     }
 
     fn add_language_server(
         &mut self,
         project: Option<&WeakModel<Project>>,
+        name: LanguageServerName,
         server: Arc<LanguageServer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<&mut LanguageServerState> {
@@ -233,6 +235,7 @@ impl LogStore {
         let server_state = servers.entry(server.server_id()).or_insert_with(|| {
             cx.notify();
             LanguageServerState {
+                name,
                 rpc_state: None,
                 log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                 _io_logs_subscription: None,
@@ -283,7 +286,7 @@ impl LogStore {
         message: &str,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let language_server_state = self.get_language_server_state(project, id, cx)?;
+        let language_server_state = self.get_language_server_state(project, id)?;
 
         let log_lines = &mut language_server_state.log_messages;
         while log_lines.len() >= MAX_STORED_LOG_ENTRIES {
@@ -318,8 +321,10 @@ impl LogStore {
         server_id: LanguageServerId,
     ) -> Option<&VecDeque<String>> {
         let weak_project = project.downgrade();
-        let project_state = self.projects.get(&weak_project)?;
-        let server_state = project_state.servers.get(&server_id)?;
+        let server_state = self.projects.get(&weak_project)?
+            .servers
+            .get(&server_id)
+            .or_else(|| self.global_language_servers.get(&server_id))?;
         Some(&server_state.log_messages)
     }
 
@@ -329,8 +334,10 @@ impl LogStore {
         server_id: LanguageServerId,
     ) -> Option<&mut LanguageServerRpcState> {
         let weak_project = project.downgrade();
-        let project_state = self.projects.get_mut(&weak_project)?;
-        let server_state = project_state.servers.get_mut(&server_id)?;
+        let server_state = self.projects.get_mut(&weak_project)?
+            .servers
+            .get_mut(&server_id)
+            .or_else(|| self.global_language_servers.get_mut(&server_id))?;
         let rpc_state = server_state
             .rpc_state
             .get_or_insert_with(|| LanguageServerRpcState {
@@ -372,7 +379,7 @@ impl LogStore {
         };
 
         let state = self
-            .get_language_server_state(project.as_ref(), language_server_id, cx)?
+            .get_language_server_state(project.as_ref(), language_server_id)?
             .rpc_state
             .as_mut()?;
         let kind = if is_received {
@@ -570,6 +577,21 @@ impl LspLogView {
                             logs_selected: !self.is_showing_rpc_trace
                                 && self.current_server_id == Some(server_id),
                         })
+                    }),
+            )
+            .chain(
+                log_store
+                    .global_language_servers
+                    .iter()
+                    .map(|(server_id, state)| LogMenuItem {
+                        server_id: *server_id,
+                        server_name: state.name.clone(),
+                        worktree_root_name: "supplementary".to_string(),
+                        rpc_trace_enabled: state.rpc_state.is_some(),
+                        rpc_trace_selected: self.is_showing_rpc_trace
+                            && self.current_server_id == Some(*server_id),
+                        logs_selected: !self.is_showing_rpc_trace
+                            && self.current_server_id == Some(*server_id),
                     }),
             )
             .collect::<Vec<_>>();
