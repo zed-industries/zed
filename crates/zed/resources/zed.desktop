@@ -10,4 +10,10 @@ Exec=zed
 Icon=zed
 Categories=TextEditor;Development;IDE;
 Keywords=zed;
-MimeType=text/plain;
+MimeType=text/plain;inode/directory;
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=zed --new %F
+Icon=zed
