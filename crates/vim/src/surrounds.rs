@@ -1,5 +1,5 @@
 use crate::{motion::Motion, object::Object, state::Mode, Vim};
-use editor::{scroll::Autoscroll, Bias};
+use editor::{movement, scroll::Autoscroll, Bias};
 use gpui::WindowContext;
 use language::BracketPair;
 use serde::Deserialize;
@@ -47,13 +47,32 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                         SurroundsType::Object(object) => {
                             object.range(&display_map, selection.clone(), false)
                         }
-                        SurroundsType::Motion(motion) => motion.range(
-                            &display_map,
-                            selection.clone(),
-                            Some(1),
-                            true,
-                            &text_layout_details,
-                        ),
+                        SurroundsType::Motion(motion) => {
+                            let range = motion
+                                .range(
+                                    &display_map,
+                                    selection.clone(),
+                                    Some(1),
+                                    true,
+                                    &text_layout_details,
+                                )
+                                .map(|mut range| {
+                                    // The Motion::CurrentLine operation will contain the newline of the current line,
+                                    // so we need to deal with this edge case
+                                    if let Motion::CurrentLine = motion {
+                                        let offset = range.end.to_offset(&display_map, Bias::Left);
+                                        if let Some((last_ch, _)) =
+                                            display_map.reverse_buffer_chars_at(offset).next()
+                                        {
+                                            if last_ch == '\n' {
+                                                range.end = movement::left(&display_map, range.end);
+                                            }
+                                        }
+                                    }
+                                    range
+                                });
+                            range
+                        }
                     };
 
                     if let Some(range) = range {
@@ -589,6 +608,23 @@ mod test {
             The quˇ1ick brown1
             fox jumps over
             the laˇ1zy dog.1"},
+            Mode::Normal,
+        );
+
+        // test add surrounds with motion current line
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["y", "s", "s", "{"]);
+        cx.assert_state(
+            indoc! {"
+            ˇ{ The quick brown }
+            fox jumps over
+            the lazy dog."},
             Mode::Normal,
         );
     }

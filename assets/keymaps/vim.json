@@ -436,6 +436,12 @@
     }
   },
   {
+    "context": "Editor && vim_operator == ys",
+    "bindings": {
+      "s": "vim::CurrentLine"
+    }
+  },
+  {
     "context": "Editor && VimObject",
     "bindings": {
       "w": "vim::Word",
