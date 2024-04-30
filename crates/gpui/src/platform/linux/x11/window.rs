@@ -13,10 +13,11 @@ use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use util::ResultExt;
 use x11rb::{
-    connection::Connection,
+    connection::{Connection as _, RequestConnection as _},
     protocol::{
+        render::{self, ConnectionExt as _},
         xinput,
-        xproto::{self, ConnectionExt as _, CreateWindowAux},
+        xproto::{self, ConnectionExt as _},
     },
     resource_manager::Database,
     wrapper::ConnectionExt,
@@ -25,6 +26,7 @@ use x11rb::{
 
 use std::{
     cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
     ffi::c_void,
     iter::Zip,
     mem,
@@ -59,6 +61,79 @@ fn query_render_extent(xcb_connection: &XCBConnection, x_window: xproto::Window)
         width: reply.width as u32,
         height: reply.height as u32,
         depth: 1,
+    }
+}
+
+#[derive(Debug)]
+struct Visual {
+    depth: u8,
+    id: xproto::Visualid,
+}
+
+struct VisualSet {
+    inherit: Visual,
+    opaque: Option<Visual>,
+    transparent: Option<Visual>,
+    root: u32,
+}
+
+impl VisualSet {
+    fn new(xcb_connection: &XCBConnection, screen_index: usize) -> Self {
+        let screen = &xcb_connection.setup().roots[screen_index];
+        let mut this = Self {
+            inherit: Visual {
+                depth: screen.root_depth,
+                id: screen.root_visual,
+            },
+            opaque: None,
+            transparent: None,
+            root: screen.root,
+        };
+
+        let render_ext = xcb_connection
+            .extension_information(render::X11_EXTENSION_NAME)
+            .unwrap();
+        if render_ext.is_some() {
+            let pict_formats = xcb_connection
+                .render_query_pict_formats()
+                .unwrap()
+                .reply()
+                .unwrap();
+
+            let mut format_map = HashMap::new();
+            for depth_info in pict_formats.screens[screen_index].depths.iter() {
+                for visual in depth_info.visuals.iter() {
+                    format_map.insert(
+                        visual.format,
+                        Visual {
+                            depth: depth_info.depth,
+                            id: visual.visual,
+                        },
+                    );
+                }
+            }
+
+            for info in pict_formats.formats.iter() {
+                if info.type_ != render::PictType::DIRECT {
+                    continue;
+                }
+                let d = info.direct;
+                if (d.red_mask, d.green_mask, d.blue_mask) != (0xFF, 0xFF, 0xFF) {
+                    continue;
+                }
+                if (d.red_shift, d.green_shift, d.blue_shift) != (16, 8, 0) {
+                    continue;
+                }
+                if this.opaque.is_none() && d.alpha_mask == 0 {
+                    this.opaque = format_map.remove(&info.id);
+                }
+                if this.transparent.is_none() && d.alpha_mask == 0xFF && d.alpha_shift == 24 {
+                    this.transparent = format_map.remove(&info.id);
+                }
+            }
+        }
+
+        this
     }
 }
 
@@ -107,7 +182,8 @@ pub(crate) struct X11WindowStatePtr {
 impl rwh::HasWindowHandle for RawWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
         let non_zero = NonZeroU32::new(self.window_id).unwrap();
-        let handle = rwh::XcbWindowHandle::new(non_zero);
+        let mut handle = rwh::XcbWindowHandle::new(non_zero);
+        handle.visual_id = NonZeroU32::new(self.visual_id);
         Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
@@ -145,37 +221,57 @@ impl X11WindowState {
         let x_screen_index = params
             .display_id
             .map_or(x_main_screen_index, |did| did.0 as usize);
-        let screen = xcb_connection.setup().roots.get(x_screen_index).unwrap();
 
-        let win_aux = xproto::CreateWindowAux::new().event_mask(
-            xproto::EventMask::EXPOSURE
-                | xproto::EventMask::STRUCTURE_NOTIFY
-                | xproto::EventMask::ENTER_WINDOW
-                | xproto::EventMask::LEAVE_WINDOW
-                | xproto::EventMask::FOCUS_CHANGE
-                | xproto::EventMask::KEY_PRESS
-                | xproto::EventMask::KEY_RELEASE
-                | xproto::EventMask::BUTTON_PRESS
-                | xproto::EventMask::BUTTON_RELEASE
-                | xproto::EventMask::POINTER_MOTION
-                | xproto::EventMask::BUTTON1_MOTION
-                | xproto::EventMask::BUTTON2_MOTION
-                | xproto::EventMask::BUTTON3_MOTION
-                | xproto::EventMask::BUTTON_MOTION,
-        );
+        let visual_set = VisualSet::new(&xcb_connection, x_screen_index);
+        let visual_maybe = match params.window_background {
+            WindowBackgroundAppearance::Opaque => visual_set.opaque,
+            WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
+                visual_set.transparent
+            }
+        };
+        let visual = match visual_maybe {
+            Some(visual) => visual,
+            None => {
+                log::warn!(
+                    "Unable to find a matching visual for {:?}",
+                    params.window_background
+                );
+                visual_set.inherit
+            }
+        };
+        log::info!("Using {:?}", visual);
+
+        let win_aux = xproto::CreateWindowAux::new()
+            .background_pixel(x11rb::NONE)
+            .event_mask(
+                xproto::EventMask::EXPOSURE
+                    | xproto::EventMask::STRUCTURE_NOTIFY
+                    | xproto::EventMask::ENTER_WINDOW
+                    | xproto::EventMask::LEAVE_WINDOW
+                    | xproto::EventMask::FOCUS_CHANGE
+                    | xproto::EventMask::KEY_PRESS
+                    | xproto::EventMask::KEY_RELEASE
+                    | xproto::EventMask::BUTTON_PRESS
+                    | xproto::EventMask::BUTTON_RELEASE
+                    | xproto::EventMask::POINTER_MOTION
+                    | xproto::EventMask::BUTTON1_MOTION
+                    | xproto::EventMask::BUTTON2_MOTION
+                    | xproto::EventMask::BUTTON3_MOTION
+                    | xproto::EventMask::BUTTON_MOTION,
+            );
 
         xcb_connection
             .create_window(
-                x11rb::COPY_FROM_PARENT as _,
+                visual.depth,
                 x_window,
-                screen.root,
+                visual_set.root,
                 params.bounds.origin.x.0 as i16,
                 params.bounds.origin.y.0 as i16,
                 params.bounds.size.width.0 as u16,
                 params.bounds.size.height.0 as u16,
                 0,
                 xproto::WindowClass::INPUT_OUTPUT,
-                screen.root_visual,
+                visual.id,
                 &win_aux,
             )
             .unwrap();
@@ -225,7 +321,7 @@ impl X11WindowState {
             ) as *mut _,
             screen_id: x_screen_index,
             window_id: x_window,
-            visual_id: screen.root_visual,
+            visual_id: visual.id,
         };
         let gpu = Arc::new(
             unsafe {
