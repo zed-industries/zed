@@ -1,6 +1,6 @@
 mod assistant_settings;
 mod completion_provider;
-pub mod tools;
+mod tools;
 mod ui;
 
 use ::ui::{div, prelude::*, Color, ViewContext};
@@ -23,7 +23,6 @@ use semantic_index::{CloudEmbeddingProvider, SemanticIndex};
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use tools::ProjectIndexTool;
 use ui::Composer;
 use util::{paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::{
@@ -33,6 +32,7 @@ use workspace::{
 
 pub use assistant_settings::AssistantSettings;
 
+use crate::tools::ProjectIndexTool;
 use crate::ui::UserOrAssistant;
 
 const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
