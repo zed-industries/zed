@@ -17,7 +17,7 @@ use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
 use gpui::{
-    App, AppContext, AsyncAppContext, Context, SemanticVersion, Task, VisualContext, WeakView,
+    App, AppContext, AsyncAppContext, Context, Task, VisualContext,
 };
 use image_viewer;
 use language::LanguageRegistry;

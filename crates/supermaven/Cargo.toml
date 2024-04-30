@@ -1,5 +1,4 @@
 [package]
-# todo!(): rename this package supermaven-completion or supermaven-agent
 name = "supermaven"
 version = "0.1.0"
 edition = "2021"
