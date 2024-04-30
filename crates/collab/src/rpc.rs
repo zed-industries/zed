@@ -466,7 +466,7 @@ impl Server {
                 forward_mutating_project_request::<proto::ApplyCompletionAdditionalEdits>,
             ))
             .add_request_handler(user_handler(
-                forward_mutating_project_request::<proto::ResolveCompletionItem>,
+                forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             ))
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::GetCodeActions>,

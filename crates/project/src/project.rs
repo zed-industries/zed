@@ -642,7 +642,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_expand_project_entry);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
-        client.add_model_request_handler(Self::handle_resolve_completion_item);
+        client.add_model_request_handler(Self::handle_resolve_completion_documentation);
         client.add_model_request_handler(Self::handle_apply_code_action);
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_inlay_hints);
@@ -5587,6 +5587,7 @@ impl Project {
         let is_remote = self.is_remote();
         let project_id = self.remote_id();
 
+        let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         cx.spawn(move |this, mut cx| async move {
@@ -5613,6 +5614,7 @@ impl Project {
                     Self::resolve_completion_remote(
                         project_id,
                         server_id,
+                        buffer_id,
                         completions.clone(),
                         completion_index,
                         completion,
@@ -5704,6 +5706,10 @@ impl Project {
         }
 
         if let Some(text_edit) = completion_item.text_edit.as_ref() {
+            // Technically we don't have to parse the whole `text_edit`, since the only
+            // language server we currently use that does update `text_edit` in `completionItem/resolve`
+            // is `typescript-language-server` and they only update `text_edit.new_text`.
+            // But we should not rely on that.
             let edit = parse_completion_text_edit(text_edit, snapshot);
 
             if let Some((old_range, mut new_text)) = edit {
@@ -5721,16 +5727,18 @@ impl Project {
     async fn resolve_completion_remote(
         project_id: u64,
         server_id: LanguageServerId,
+        buffer_id: BufferId,
         completions: Arc<RwLock<Box<[Completion]>>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
         client: Arc<Client>,
         language_registry: Arc<LanguageRegistry>,
     ) {
-        let request = proto::ResolveCompletionItem {
+        let request = proto::ResolveCompletionDocumentation {
             project_id,
             language_server_id: server_id.0 as u64,
             lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+            buffer_id: buffer_id.into(),
         };
 
         let Some(response) = client
@@ -8939,12 +8947,12 @@ impl Project {
         })
     }
 
-    async fn handle_resolve_completion_item(
+    async fn handle_resolve_completion_documentation(
         this: Model<Self>,
-        envelope: TypedEnvelope<proto::ResolveCompletionItem>,
+        envelope: TypedEnvelope<proto::ResolveCompletionDocumentation>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> Result<proto::ResolveCompletionItemResponse> {
+    ) -> Result<proto::ResolveCompletionDocumentationResponse> {
         let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
 
         let completion = this
@@ -8970,9 +8978,40 @@ impl Project {
             _ => String::new(),
         };
 
-        Ok(proto::ResolveCompletionItemResponse {
+        // If we have a new buffer_id, that means we're talking to a new client
+        // and want to check for new text_edits in the completion too.
+        let mut old_start = None;
+        let mut old_end = None;
+        let mut new_text = String::default();
+        if let Ok(buffer_id) = BufferId::new(envelope.payload.buffer_id) {
+            let buffer_snapshot = this.update(&mut cx, |this, cx| {
+                let buffer = this
+                    .opened_buffers
+                    .get(&buffer_id)
+                    .and_then(|buffer| buffer.upgrade())
+                    .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
+                anyhow::Ok(buffer.read(cx).snapshot())
+            })??;
+
+            if let Some(text_edit) = completion.text_edit.as_ref() {
+                let edit = parse_completion_text_edit(text_edit, &buffer_snapshot);
+
+                if let Some((old_range, mut text_edit_new_text)) = edit {
+                    LineEnding::normalize(&mut text_edit_new_text);
+
+                    new_text = text_edit_new_text;
+                    old_start = Some(serialize_anchor(&old_range.start));
+                    old_end = Some(serialize_anchor(&old_range.end));
+                }
+            }
+        }
+
+        Ok(proto::ResolveCompletionDocumentationResponse {
             documentation,
             documentation_is_markdown,
+            old_start,
+            old_end,
+            new_text,
         })
     }
 

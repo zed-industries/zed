@@ -99,8 +99,8 @@ message Envelope {
         FormatBuffersResponse format_buffers_response = 70;
         GetCompletions get_completions = 71;
         GetCompletionsResponse get_completions_response = 72;
-        ResolveCompletionItem resolve_completion_item = 73;
-        ResolveCompletionItemResponse resolve_completion_item_response = 74;
+        ResolveCompletionDocumentation resolve_completion_documentation = 73;
+        ResolveCompletionDocumentationResponse resolve_completion_documentation_response = 74;
         ApplyCompletionAdditionalEdits apply_completion_additional_edits = 75;
         ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 76;
         GetCodeActions get_code_actions = 77;
@@ -1018,15 +1018,22 @@ message ResolveState {
     }
 }
 
-message ResolveCompletionItem {
+// This type is used to resolve more than just
+// the documentation, but for backwards-compatibility
+// reasons we can't rename the type.
+message ResolveCompletionDocumentation {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
     bytes lsp_completion = 3;
+    uint64 buffer_id = 4;
 }
 
-message ResolveCompletionItemResponse {
+message ResolveCompletionDocumentationResponse {
     string documentation = 1;
     bool documentation_is_markdown = 2;
+    Anchor old_start = 3;
+    Anchor old_end = 4;
+    string new_text = 5;
 }
 
 message ResolveInlayHint {
