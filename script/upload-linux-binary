@@ -63,6 +63,7 @@ cp "crates/zed/resources/zed.desktop" "${temp_dir}/share/applications/zed.deskto
 
 # Create archive
 archive="zed-${channel}-${target_triple}.tar.gz"
+rm -rf "${archive}"
 tar -czvf $archive -C ${temp_dir} .
 
 # Upload it
