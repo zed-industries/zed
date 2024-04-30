@@ -1,5 +1,5 @@
 use crate::{motion::Motion, object::Object, state::Mode, Vim};
-use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, Bias};
+use editor::{movement, scroll::Autoscroll, Bias};
 use gpui::WindowContext;
 use language::{char_kind, BracketPair, CharKind};
 use serde::Deserialize;
