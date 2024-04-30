@@ -40,10 +40,6 @@ impl ChatMessage {
 
 impl RenderOnce for ChatMessage {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        // TODO: This should be top padding + 1.5x line height
-        // Set the message height to cut off at exactly 1.5 lines when collapsed
-        let collapsed_height = rems(2.875);
-
         let collapse_handle_id = SharedString::from(format!("{}_collapse_handle", self.id.0));
         let collapse_handle = h_flex()
             .id(collapse_handle_id.clone())
@@ -65,11 +61,16 @@ impl RenderOnce for ChatMessage {
                         this.bg(cx.theme().colors().element_hover)
                     }),
             );
+
+        let content_padding = rems(1.);
+        // Clamp the message height to exactly 1.5 lines when collapsed.
+        let collapsed_height = content_padding.to_pixels(cx.rem_size()) + cx.line_height() * 1.5;
+
         let content = self.message.map(|message| {
             div()
                 .overflow_hidden()
                 .w_full()
-                .p_4()
+                .p(content_padding)
                 .rounded_lg()
                 .when(self.collapsed, |this| this.h(collapsed_height))
                 .bg(cx.theme().colors().surface_background)

@@ -61,7 +61,7 @@ impl Render for ChatMessageStory {
                     ChatMessage::new(
                         MessageId(0),
                         UserOrAssistant::Assistant,
-                        Some(div().child("You can talk to me!").into_any_element()),
+                        Some(div().child(MULTI_LINE_MESSAGE).into_any_element()),
                         true,
                         Box::new(|_, _| {}),
                     ),
@@ -97,3 +97,5 @@ impl Render for ChatMessageStory {
         )
     }
 }
+
+const MULTI_LINE_MESSAGE: &str = "In 2010, the movies nominated for the 82nd Academy Awards, for films released in 2009, were as follows. Note that 2010 nominees were announced for the ceremony happening in that year, but they honor movies from the previous year";
