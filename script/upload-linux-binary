@@ -22,5 +22,4 @@ archive="${target_folder}.tar.gz"
 tar -czvf $archive ${target_folder}
 
 # Upload it
-bucket_name="zed-linux-builds"
-upload_to_blob_store_public $bucket_name $archive
+upload_to_blob_store_public "zed-linux-builds" $archive $archive
