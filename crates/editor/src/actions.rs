@@ -1,5 +1,6 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
+use util::serde::default_true;
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct SelectNext {
@@ -15,7 +16,7 @@ pub struct SelectPrevious {
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct MoveToBeginningOfLine {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(super) stop_at_soft_wraps: bool,
 }
 
@@ -39,7 +40,7 @@ pub struct MovePageDown {
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct MoveToEndOfLine {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(super) stop_at_soft_wraps: bool,
 }
 
