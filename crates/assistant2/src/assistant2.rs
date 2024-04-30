@@ -314,6 +314,10 @@ impl AssistantChat {
 
         if let Some(focused_message_id) = self.focused_message_id(cx) {
             self.truncate_messages(focused_message_id, cx);
+            self.composer_editor.focus_handle(cx).focus(cx);
+            if self.editing_message_id == Some(focused_message_id) {
+                self.editing_message_id.take();
+            }
         } else if self.composer_editor.focus_handle(cx).is_focused(cx) {
             let message = self.composer_editor.update(cx, |composer_editor, cx| {
                 let text = composer_editor.text(cx);
@@ -344,9 +348,7 @@ impl AssistantChat {
             .await
             .log_err();
 
-            this.update(&mut cx, |this, cx| {
-                let composer_focus_handle = this.composer_editor.focus_handle(cx);
-                cx.focus(&composer_focus_handle);
+            this.update(&mut cx, |this, _cx| {
                 this.pending_completion = None;
             })
             .context("Failed to push new user message")
@@ -588,9 +590,11 @@ impl AssistantChat {
                         element
                             .on_click(cx.listener({
                                 let id = *id;
-                                move |assistant_chat, event: &ClickEvent, _cx| {
+                                let body = body.clone();
+                                move |assistant_chat, event: &ClickEvent, cx| {
                                     if event.up.click_count == 2 {
                                         assistant_chat.editing_message_id = Some(id);
+                                        body.focus_handle(cx).focus(cx);
                                     }
                                 }
                             }))
