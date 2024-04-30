@@ -5724,6 +5724,7 @@ impl Project {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn resolve_completion_remote(
         project_id: u64,
         server_id: LanguageServerId,
