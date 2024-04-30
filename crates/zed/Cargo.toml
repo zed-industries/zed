@@ -62,6 +62,7 @@ log.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 mimalloc = "0.1"
+nix = {workspace = true, features = ["pthread"] }
 node_runtime.workspace = true
 notifications.workspace = true
 outline.workspace = true
@@ -84,6 +85,7 @@ smol.workspace = true
 tab_switcher.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
+telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
