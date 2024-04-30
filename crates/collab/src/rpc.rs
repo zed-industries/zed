@@ -74,6 +74,8 @@ use tracing::{
 };
 use util::http::IsahcHttpClient;
 
+use self::connection_pool::VersionedMessage;
+
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 // kubernetes gives terminated pods 10s to shutdown gracefully. After they're gone, we can clean up old resources.
@@ -466,6 +468,9 @@ impl Server {
                 forward_mutating_project_request::<proto::ApplyCompletionAdditionalEdits>,
             ))
             .add_request_handler(user_handler(
+                forward_versioned_mutating_project_request::<proto::OpenNewBuffer>,
+            ))
+            .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             ))
             .add_request_handler(user_handler(
@@ -505,7 +510,7 @@ impl Server {
                 forward_mutating_project_request::<proto::OnTypeFormatting>,
             ))
             .add_request_handler(user_handler(
-                forward_mutating_project_request::<proto::SaveBuffer>,
+                forward_versioned_mutating_project_request::<proto::SaveBuffer>,
             ))
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::BlameBuffer>,
@@ -2677,11 +2682,51 @@ where
     T: EntityMessage + RequestMessage,
 {
     let project_id = ProjectId::from_proto(request.remote_entity_id());
+
     let host_connection_id = session
         .db()
         .await
         .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
         .await?;
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, host_connection_id, request)
+        .await?;
+    response.send(payload)?;
+    Ok(())
+}
+
+/// forward a project request to the host. These requests are disallowed
+/// for guests.
+async fn forward_versioned_mutating_project_request<T>(
+    request: T,
+    response: Response<T>,
+    session: UserSession,
+) -> Result<()>
+where
+    T: EntityMessage + RequestMessage + VersionedMessage,
+{
+    let project_id = ProjectId::from_proto(request.remote_entity_id());
+
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
+        .await?;
+    if let Some(host_version) = session
+        .connection_pool()
+        .await
+        .connection(host_connection_id)
+        .map(|c| c.zed_version)
+    {
+        if let Some(min_required_version) = request.required_host_version() {
+            if min_required_version > host_version {
+                return Err(anyhow!(ErrorCode::RemoteUpgradeRequired
+                    .with_tag("required", &min_required_version.to_string())))?;
+            }
+        }
+    }
+
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)

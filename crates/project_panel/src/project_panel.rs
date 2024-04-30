@@ -3394,7 +3394,9 @@ mod tests {
             })
             .unwrap();
 
-        // "Save as"" the buffer, creating a new backing file for it
+        cx.executor().run_until_parked();
+
+        // "Save as" the buffer, creating a new backing file for it
         let save_task = workspace
             .update(cx, |workspace, cx| {
                 workspace.save_active_item(workspace::SaveIntent::Save, cx)

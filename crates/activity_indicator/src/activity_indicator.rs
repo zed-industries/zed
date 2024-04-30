@@ -12,7 +12,6 @@ use project::{LanguageServerProgress, Project};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc};
 use ui::prelude::*;
-use util::ResultExt;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 actions!(activity_indicator, [ShowErrorMessage]);
@@ -82,27 +81,37 @@ impl ActivityIndicator {
             }
         });
 
-        cx.subscribe(&this, move |workspace, _, event, cx| match event {
+        cx.subscribe(&this, move |_, _, event, cx| match event {
             Event::ShowError { lsp_name, error } => {
-                if let Some(buffer) = project
-                    .update(cx, |project, cx| project.create_buffer(error, None, cx))
-                    .log_err()
-                {
-                    buffer.update(cx, |buffer, cx| {
+                let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
+                let project = project.clone();
+                let error = error.clone();
+                let lsp_name = lsp_name.clone();
+                cx.spawn(|workspace, mut cx| async move {
+                    let buffer = create_buffer.await?;
+                    buffer.update(&mut cx, |buffer, cx| {
                         buffer.edit(
-                            [(0..0, format!("Language server error: {}\n\n", lsp_name))],
+                            [(
+                                0..0,
+                                format!("Language server error: {}\n\n{}", lsp_name, error),
+                            )],
                             None,
                             cx,
                         );
-                    });
-                    workspace.add_item_to_active_pane(
-                        Box::new(
-                            cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
-                        ),
-                        None,
-                        cx,
-                    );
-                }
+                    })?;
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.add_item_to_active_pane(
+                            Box::new(cx.new_view(|cx| {
+                                Editor::for_buffer(buffer, Some(project.clone()), cx)
+                            })),
+                            None,
+                            cx,
+                        );
+                    })?;
+
+                    anyhow::Ok(())
+                })
+                .detach();
             }
         })
         .detach();

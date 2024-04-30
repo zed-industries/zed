@@ -235,8 +235,9 @@ message Envelope {
         RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
 
         RemoteProjectsUpdate remote_projects_update = 193;
-        ValidateRemoteProjectRequest validate_remote_project_request = 194; // Current max
+        ValidateRemoteProjectRequest validate_remote_project_request = 194;
         DeleteDevServer delete_dev_server = 195;
+        OpenNewBuffer open_new_buffer = 196; // Current max
     }
 
     reserved 158 to 161;
@@ -275,6 +276,7 @@ enum ErrorCode {
     DevServerAlreadyOnline = 14;
     DevServerOffline = 15;
     RemoteProjectPathDoesNotExist = 16;
+    RemoteUpgradeRequired = 17;
     reserved 6;
 }
 
@@ -734,6 +736,10 @@ message OpenBufferByPath {
 message OpenBufferById {
     uint64 project_id = 1;
     uint64 id = 2;
+}
+
+message OpenNewBuffer {
+    uint64 project_id = 1;
 }
 
 message OpenBufferResponse {

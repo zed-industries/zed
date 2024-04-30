@@ -599,9 +599,9 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
                             return;
                         };
                         let project = workspace.project().clone();
-                        let buffer = project
-                            .update(cx, |project, cx| project.create_buffer(&log, None, cx))
-                            .expect("creating buffers on a local workspace always succeeds");
+                        let buffer = project.update(cx, |project, cx| {
+                            project.create_local_buffer(&log, None, cx)
+                        });
 
                         let buffer = cx.new_model(|cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
@@ -812,8 +812,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
             workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
                 let buffer = project
-                    .update(cx, |project, cx| project.create_buffer("", None, cx))
-                    .expect("creating buffers on a local workspace always succeeds");
+                    .update(cx, |project, cx| project.create_local_buffer("", None, cx));
                 buffer.update(cx, |buffer, cx| {
                     buffer.set_language(json, cx);
                     buffer.edit(
@@ -862,9 +861,7 @@ fn open_bundled_file(
                 workspace.with_local_workspace(cx, |workspace, cx| {
                     let project = workspace.project();
                     let buffer = project.update(cx, move |project, cx| {
-                        project
-                            .create_buffer(text.as_ref(), language, cx)
-                            .expect("creating buffers on a local workspace always succeeds")
+                        project.create_local_buffer(text.as_ref(), language, cx)
                     });
                     let buffer = cx.new_model(|cx| {
                         MultiBuffer::singleton(buffer, cx).with_title(title.into())
@@ -1335,6 +1332,7 @@ mod tests {
             })
         })
         .await;
+        cx.run_until_parked();
 
         let workspace = cx
             .update(|cx| cx.windows().first().unwrap().downcast::<Workspace>())

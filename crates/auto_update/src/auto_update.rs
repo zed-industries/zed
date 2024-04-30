@@ -221,9 +221,9 @@ fn view_release_notes_locally(workspace: &mut Workspace, cx: &mut ViewContext<Wo
                     workspace
                         .update(&mut cx, |workspace, cx| {
                             let project = workspace.project().clone();
-                            let buffer = project
-                                .update(cx, |project, cx| project.create_buffer("", markdown, cx))
-                                .expect("creating buffers on a local workspace always succeeds");
+                            let buffer = project.update(cx, |project, cx| {
+                                project.create_local_buffer("", markdown, cx)
+                            });
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, body.release_notes)], None, cx)
                             });

@@ -16,7 +16,6 @@ dependencies = [
  "project",
  "smallvec",
  "ui",
- "util",
  "workspace",
 ]
 
