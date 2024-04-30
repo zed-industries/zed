@@ -91,6 +91,8 @@ impl Render for SupermavenButton {
 
         let this = cx.view().clone();
 
+        let icon = status.to_icon();
+
         div().child(
             popover_menu("supermaven")
                 .menu(move |cx| match &status {
@@ -103,7 +105,7 @@ impl Render for SupermavenButton {
                 })
                 .anchor(AnchorCorner::BottomRight)
                 .trigger(
-                    IconButton::new("supermaven-icon", status.to_icon())
+                    IconButton::new("supermaven-icon", icon)
                         .tooltip(|cx| Tooltip::text("Supermaven", cx)),
                 ),
         )
