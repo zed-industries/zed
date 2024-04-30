@@ -306,19 +306,20 @@ impl AssistantChat {
     }
 
     fn submit(&mut self, Submit(mode): &Submit, cx: &mut ViewContext<Self>) {
-        // Don't allow multiple concurrent completions.
-        if self.pending_completion.is_some() {
-            cx.propagate();
-            return;
-        }
-
         if let Some(focused_message_id) = self.focused_message_id(cx) {
             self.truncate_messages(focused_message_id, cx);
+            self.pending_completion.take();
             self.composer_editor.focus_handle(cx).focus(cx);
             if self.editing_message_id == Some(focused_message_id) {
                 self.editing_message_id.take();
             }
         } else if self.composer_editor.focus_handle(cx).is_focused(cx) {
+            // Don't allow multiple concurrent completions.
+            if self.pending_completion.is_some() {
+                cx.propagate();
+                return;
+            }
+
             let message = self.composer_editor.update(cx, |composer_editor, cx| {
                 let text = composer_editor.text(cx);
                 let id = self.next_message_id.post_inc();
@@ -574,11 +575,11 @@ impl AssistantChat {
                 .id(SharedString::from(format!("message-{}-container", id.0)))
                 .when(!is_last, |element| element.mb_2())
                 .map(|element| {
-                    if self.editing_message_id.as_ref() == Some(id) {
+                    if self.editing_message_id == Some(*id) {
                         element.child(Composer::new(
                             body.clone(),
                             self.user_store.read(cx).current_user(),
-                            self.can_submit(),
+                            true,
                             self.tool_registry.clone(),
                             crate::ui::ModelSelector::new(
                                 cx.view().downgrade(),
