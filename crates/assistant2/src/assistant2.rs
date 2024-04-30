@@ -32,7 +32,7 @@ use workspace::{
 
 pub use assistant_settings::AssistantSettings;
 
-use crate::tools::ProjectIndexTool;
+use crate::tools::{CreateBufferTool, ProjectIndexTool};
 use crate::ui::UserOrAssistant;
 
 const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
@@ -120,6 +120,13 @@ impl AssistantPanel {
                         cx,
                     )
                     .context("failed to register ProjectIndexTool")
+                    .log_err();
+                tool_registry
+                    .register(
+                        CreateBufferTool::new(workspace.clone(), project.clone()),
+                        cx,
+                    )
+                    .context("failed to register CreateBufferTool")
                     .log_err();
 
                 let tool_registry = Arc::new(tool_registry);
