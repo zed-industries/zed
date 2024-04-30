@@ -313,7 +313,7 @@ jobs:
       - name: Generate license file
         run: script/generate-licenses
 
-      - name: Create and upload Linux binary
+      - name: Create and upload Linux .tar.gz bundle
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
