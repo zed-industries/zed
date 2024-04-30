@@ -2828,7 +2828,6 @@ impl BackgroundScannerState {
         work_directory: &RepositoryWorkDirectory,
         repo: &dyn GitRepository,
     ) -> (StagedStatuses, UnstagedStatuses) {
-        let start = std::time::Instant::now();
         let staged_statuses = repo.staged_statuses(Path::new(""));
 
         let unstaged_statuses = repo.unstaged_statuses(Path::new(""));
@@ -2858,7 +2857,6 @@ impl BackgroundScannerState {
 
         self.snapshot.entries_by_path.edit(edits, &());
         util::extend_sorted(&mut self.changed_paths, changes, usize::MAX, Ord::cmp);
-        dbg!(start.elapsed());
         (staged_statuses, unstaged_statuses)
     }
 }
