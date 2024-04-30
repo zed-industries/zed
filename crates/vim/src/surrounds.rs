@@ -644,6 +644,22 @@ mod test {
             the lazy dog."},
             Mode::Normal,
         );
+
+        cx.set_state(
+            indoc! {"
+                The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["y", "s", "s", "{"]);
+        cx.assert_state(
+            indoc! {"
+                ˇ{ The quick brown }
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]
