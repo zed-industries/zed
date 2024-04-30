@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 
 set -euxo pipefail
-source script/lib/blob-store.sh
 
-local_only=false
 channel=$(<RELEASE_CHANNEL)
 
 export ZED_BUNDLE=true
@@ -12,20 +10,16 @@ export ZED_BUNDLE=true
 help_info() {
   echo "
 Usage: ${0##*/} [options]
-Build the a release .tar.gz for Linux and upload it.
+Build a release .tar.gz for Linux.
 
 Options:
-  -l    Local mode: do not upload the resulting .tar.gz archive.
   -h    Display this help and exit.
   "
 }
 
-while getopts 'lh' flag
+while getopts 'h' flag
 do
     case "${flag}" in
-        l)
-            local_only=true
-            ;;
         h)
            help_info
            exit 0
@@ -73,14 +67,11 @@ cp "assets/licenses.md" "${temp_dir}/licenses.md"
 
 if [[ "$channel" == "nightly" ]]; then
   archive="zed-${channel}-${target_triple}.tar.gz"
+elif  [[ "$channel" == "dev" ]]; then
+  archive="zed-${channel}-${commit}-${target_triple}.tar.gz"
 else
   archive="zed-${version}-${target_triple}.tar.gz"
 fi
 
 rm -rf "${archive}"
 tar -czvf $archive -C ${temp_dir} .
-
-# Upload it
-if [[ "$local_only" = false ]]; then
-    upload_to_blob_store_public "zed-linux-builds" $archive "${channel}/${archive}"
-fi
