@@ -1,6 +1,6 @@
 use anyhow::Result;
 use assistant_tooling::LanguageModelTool;
-use gpui::{prelude::*, AnyView, AppContext, Model, Task};
+use gpui::{prelude::*, AnyView, Model, Task};
 use project::Fs;
 use schemars::JsonSchema;
 use semantic_index::{ProjectIndex, Status};
@@ -138,7 +138,7 @@ impl LanguageModelTool for ProjectIndexTool {
         "Semantic search against the user's current codebase, returning excerpts related to the query by computing a dot product against embeddings of chunks and an embedding of the query".to_string()
     }
 
-    fn execute(&self, query: &Self::Input, cx: &AppContext) -> Task<Result<Self::Output>> {
+    fn execute(&self, query: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>> {
         let project_index = self.project_index.read(cx);
 
         let status = project_index.status();

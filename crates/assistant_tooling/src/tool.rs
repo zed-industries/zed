@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{AnyElement, AnyView, AppContext, IntoElement as _, Render, Task, View, WindowContext};
+use gpui::{AnyElement, AnyView, IntoElement as _, Render, Task, View, WindowContext};
 use schemars::{schema::RootSchema, schema_for, JsonSchema};
 use serde::Deserialize;
 use std::fmt::Display;
@@ -94,7 +94,7 @@ pub trait LanguageModelTool {
     }
 
     /// Executes the tool with the given input.
-    fn execute(&self, input: &Self::Input, cx: &AppContext) -> Task<Result<Self::Output>>;
+    fn execute(&self, input: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>>;
 
     fn format(input: &Self::Input, output: &Result<Self::Output>) -> String;
 

@@ -65,7 +65,6 @@ linux() {
         echo "Run:"
         echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
         echo "   source ~/.bashrc"
-        exit 1
     fi
 
     ~/.local/bin/zed
