@@ -290,6 +290,9 @@ impl AssistantChat {
     }
 
     fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        // If we're currently editing a message, cancel the edit.
+        self.editing_message_id.take();
+
         if self.pending_completion.take().is_none() {
             cx.propagate();
             return;
