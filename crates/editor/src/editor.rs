@@ -764,15 +764,20 @@ impl ContextMenu {
         max_height: Pixels,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, AnyElement) {
+    ) -> (ContextMenuOrigin, AnyElement) {
         match self {
             ContextMenu::Completions(menu) => (
-                cursor_position,
+                ContextMenuOrigin::EditorPoint(cursor_position),
                 menu.render(style, max_height, workspace, cx),
             ),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, max_height, cx),
         }
     }
+}
+
+enum ContextMenuOrigin {
+    EditorPoint(DisplayPoint),
+    GutterIndicator(u32),
 }
 
 #[derive(Clone)]
@@ -1208,11 +1213,11 @@ impl CodeActionsMenu {
 
     fn render(
         &self,
-        mut cursor_position: DisplayPoint,
+        cursor_position: DisplayPoint,
         _style: &EditorStyle,
         max_height: Pixels,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, AnyElement) {
+    ) -> (ContextMenuOrigin, AnyElement) {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
 
@@ -1277,10 +1282,11 @@ impl CodeActionsMenu {
         )
         .into_any_element();
 
-        if self.deployed_from_indicator {
-            *cursor_position.column_mut() = 0;
-        }
-
+        let cursor_position = if self.deployed_from_indicator {
+            ContextMenuOrigin::GutterIndicator(cursor_position.row())
+        } else {
+            ContextMenuOrigin::EditorPoint(cursor_position)
+        };
         (cursor_position, element)
     }
 }
@@ -4247,13 +4253,13 @@ impl Editor {
             .map_or(false, |menu| menu.visible())
     }
 
-    pub fn render_context_menu(
+    fn render_context_menu(
         &self,
         cursor_position: DisplayPoint,
         style: &EditorStyle,
         max_height: Pixels,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(DisplayPoint, AnyElement)> {
+    ) -> Option<(ContextMenuOrigin, AnyElement)> {
         self.context_menu.read().as_ref().map(|menu| {
             menu.render(
                 cursor_position,
