@@ -69,8 +69,7 @@ impl RenderOnce for Composer {
                                 v_flex()
                                     .justify_between()
                                     .w_full()
-                                    .gap_1()
-                                    .min_h(line_height * 4 + px(74.0))
+                                    .gap_2()
                                     .child({
                                         let settings = ThemeSettings::get_global(cx);
                                         let text_style = TextStyle {
