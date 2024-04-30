@@ -8752,7 +8752,7 @@ impl Editor {
             }
 
             for buffer in buffers_affected.into_values() {
-                self.sync_expanded_diff_hunks(&buffer, cx);
+                self.sync_expanded_diff_hunks(buffer, cx);
             }
 
             cx.notify();
@@ -8797,7 +8797,7 @@ impl Editor {
             }
 
             for buffer in buffers_affected.into_values() {
-                self.sync_expanded_diff_hunks(&buffer, cx);
+                self.sync_expanded_diff_hunks(buffer, cx);
             }
 
             cx.notify();
@@ -9669,7 +9669,7 @@ impl Editor {
                 cx.notify();
             }
             multi_buffer::Event::DiffUpdated { buffer } => {
-                self.sync_expanded_diff_hunks(buffer, cx);
+                self.sync_expanded_diff_hunks(buffer.clone(), cx);
                 cx.notify();
             }
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),

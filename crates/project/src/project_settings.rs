@@ -32,8 +32,16 @@ pub struct GitSettings {
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
-    /// Default: off
+    /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
+    /// A delay after which all expanded diff hunk diffs are updated, in milliseconds.
+    /// Default: 30
+    #[serde(default = "hunk_diff_debounce_ms")]
+    pub hunk_diff_debounce_ms: u64,
+}
+
+fn hunk_diff_debounce_ms() -> u64 {
+    30
 }
 
 impl GitSettings {

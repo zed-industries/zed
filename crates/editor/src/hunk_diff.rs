@@ -1,18 +1,20 @@
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc, time::Duration};
 
 use collections::{HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
 use gpui::{AppContext, Hsla, Model, Task, View};
 use language::{Buffer, Language};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
-use text::Point;
+use project::project_settings::ProjectSettings;
+use settings::Settings;
+use text::{BufferId, Point};
 use ui::{div, ActiveTheme, IntoElement, ParentElement, Styled, ViewContext, VisualContext};
 use util::{debug_panic, RangeExt};
 
 use crate::{
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle, DiffRowHighlight,
-    DisplaySnapshot, Editor, ExpandAllHunkDiffs, RangeToAnchorExt, ToDisplayPoint, ToggleHunkDiff,
+    Editor, ExpandAllHunkDiffs, RangeToAnchorExt, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -25,8 +27,7 @@ pub(super) struct HunkToExpand {
 #[derive(Debug, Default)]
 pub(super) struct ExpandedHunks {
     hunks: Vec<ExpandedHunk>,
-    // TODO kb use with async tasks
-    hunk_update_tasks: HashMap<Option<BlockId>, Task<()>>,
+    hunk_update_tasks: HashMap<Option<BufferId>, Task<()>>,
 }
 
 impl ExpandedHunks {
@@ -36,6 +37,8 @@ impl ExpandedHunks {
             .filter(move |hunk| include_folded || !hunk.folded)
     }
 }
+
+const HUNK_OPERATION_BLOCK_TIMEOUT: Duration = Duration::from_millis(3);
 
 #[derive(Debug, Clone)]
 pub(super) struct ExpandedHunk {
@@ -49,11 +52,10 @@ pub(super) struct ExpandedHunk {
 
 impl Editor {
     pub fn toggle_hunk_diff(&mut self, _: &ToggleHunkDiff, cx: &mut ViewContext<Self>) {
-        let snapshot = self.snapshot(cx);
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
         let selections = self.selections.disjoint_anchors();
         self.toggle_hunks_expanded(
-            hunks_for_selections(&snapshot.buffer_snapshot, &selections),
-            &snapshot.display_snapshot,
+            hunks_for_selections(&multi_buffer_snapshot, &selections),
             cx,
         );
     }
@@ -90,90 +92,115 @@ impl Editor {
                     display_rows_with_expanded_hunks.get(&hunk_display_row_range.start.row());
                 row_range_end.is_none() || row_range_end != Some(&hunk_display_row_range.end.row())
             });
-        self.toggle_hunks_expanded(hunks, &snapshot.display_snapshot, cx);
+        self.toggle_hunks_expanded(hunks.collect(), cx);
     }
 
-    // TODO kb make async
     fn toggle_hunks_expanded(
         &mut self,
-        hunks_to_toggle: impl IntoIterator<Item = DiffHunk<u32>>,
-        snapshot: &DisplaySnapshot,
+        hunks_to_toggle: Vec<DiffHunk<u32>>,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut hunks_to_toggle = hunks_to_toggle.into_iter().fuse().peekable();
-        let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.hunks.len());
-        let mut blocks_to_remove = HashSet::default();
-        let mut hunks_to_expand = Vec::new();
-        self.expanded_hunks.hunks.retain(|expanded_hunk| {
-            if expanded_hunk.folded {
-                return true;
+        let previous_toggle_task = self.expanded_hunks.hunk_update_tasks.remove(&None);
+        let new_toggle_task = cx.spawn(move |editor, mut cx| async move {
+            if let Some(task) = previous_toggle_task {
+                task.await;
             }
-            let expanded_hunk_row_range = expanded_hunk
-                .hunk_range
-                .start
-                .to_display_point(snapshot)
-                .row()
-                ..expanded_hunk
-                    .hunk_range
-                    .end
-                    .to_display_point(snapshot)
-                    .row();
-            let mut retain = true;
-            while let Some(hunk_to_toggle) = hunks_to_toggle.peek() {
-                match diff_hunk_to_display(hunk_to_toggle, snapshot) {
-                    DisplayDiffHunk::Folded { .. } => {
-                        hunks_to_toggle.next();
-                        continue;
-                    }
-                    DisplayDiffHunk::Unfolded {
-                        diff_base_byte_range,
-                        display_row_range,
-                        multi_buffer_range,
-                        status,
-                    } => {
-                        let hunk_to_toggle_row_range = display_row_range;
-                        if hunk_to_toggle_row_range.start > expanded_hunk_row_range.end {
-                            break;
-                        } else if expanded_hunk_row_range == hunk_to_toggle_row_range {
-                            highlights_to_remove.push(expanded_hunk.hunk_range.clone());
-                            blocks_to_remove.extend(expanded_hunk.block);
-                            hunks_to_toggle.next();
-                            retain = false;
-                            break;
-                        } else {
-                            hunks_to_expand.push(HunkToExpand {
-                                status,
-                                multi_buffer_range,
-                                diff_base_byte_range,
-                            });
-                            hunks_to_toggle.next();
-                            continue;
+
+            editor
+                .update(&mut cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let mut hunks_to_toggle = hunks_to_toggle.into_iter().fuse().peekable();
+                    let mut highlights_to_remove =
+                        Vec::with_capacity(editor.expanded_hunks.hunks.len());
+                    let mut blocks_to_remove = HashSet::default();
+                    let mut hunks_to_expand = Vec::new();
+                    editor.expanded_hunks.hunks.retain(|expanded_hunk| {
+                        if expanded_hunk.folded {
+                            return true;
                         }
+                        let expanded_hunk_row_range = expanded_hunk
+                            .hunk_range
+                            .start
+                            .to_display_point(&snapshot)
+                            .row()
+                            ..expanded_hunk
+                                .hunk_range
+                                .end
+                                .to_display_point(&snapshot)
+                                .row();
+                        let mut retain = true;
+                        while let Some(hunk_to_toggle) = hunks_to_toggle.peek() {
+                            match diff_hunk_to_display(hunk_to_toggle, &snapshot) {
+                                DisplayDiffHunk::Folded { .. } => {
+                                    hunks_to_toggle.next();
+                                    continue;
+                                }
+                                DisplayDiffHunk::Unfolded {
+                                    diff_base_byte_range,
+                                    display_row_range,
+                                    multi_buffer_range,
+                                    status,
+                                } => {
+                                    let hunk_to_toggle_row_range = display_row_range;
+                                    if hunk_to_toggle_row_range.start > expanded_hunk_row_range.end
+                                    {
+                                        break;
+                                    } else if expanded_hunk_row_range == hunk_to_toggle_row_range {
+                                        highlights_to_remove.push(expanded_hunk.hunk_range.clone());
+                                        blocks_to_remove.extend(expanded_hunk.block);
+                                        hunks_to_toggle.next();
+                                        retain = false;
+                                        break;
+                                    } else {
+                                        hunks_to_expand.push(HunkToExpand {
+                                            status,
+                                            multi_buffer_range,
+                                            diff_base_byte_range,
+                                        });
+                                        hunks_to_toggle.next();
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+
+                        retain
+                    });
+                    for remaining_hunk in hunks_to_toggle {
+                        let remaining_hunk_point_range =
+                            Point::new(remaining_hunk.associated_range.start, 0)
+                                ..Point::new(remaining_hunk.associated_range.end, 0);
+                        hunks_to_expand.push(HunkToExpand {
+                            status: remaining_hunk.status(),
+                            multi_buffer_range: remaining_hunk_point_range
+                                .to_anchors(&snapshot.buffer_snapshot),
+                            diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
+                        });
                     }
-                }
-            }
 
-            retain
+                    for removed_rows in highlights_to_remove {
+                        editor.highlight_rows::<DiffRowHighlight>(removed_rows, None, cx);
+                    }
+                    editor.remove_blocks(blocks_to_remove, None, cx);
+                    for hunk in hunks_to_expand {
+                        editor.expand_diff_hunk(&hunk, cx);
+                    }
+                    cx.notify();
+                })
+                .ok();
         });
-        for remaining_hunk in hunks_to_toggle {
-            let remaining_hunk_point_range = Point::new(remaining_hunk.associated_range.start, 0)
-                ..Point::new(remaining_hunk.associated_range.end, 0);
-            hunks_to_expand.push(HunkToExpand {
-                status: remaining_hunk.status(),
-                multi_buffer_range: remaining_hunk_point_range
-                    .to_anchors(&snapshot.buffer_snapshot),
-                diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
-            });
-        }
 
-        for removed_rows in highlights_to_remove {
-            self.highlight_rows::<DiffRowHighlight>(removed_rows, None, cx);
+        match cx
+            .background_executor()
+            .block_with_timeout(HUNK_OPERATION_BLOCK_TIMEOUT, new_toggle_task)
+        {
+            Ok(()) => {}
+            Err(long_toggle) => {
+                self.expanded_hunks
+                    .hunk_update_tasks
+                    .insert(None, cx.background_executor().spawn(long_toggle));
+            }
         }
-        self.remove_blocks(blocks_to_remove, None, cx);
-        for hunk in hunks_to_expand {
-            self.expand_diff_hunk(&hunk, cx);
-        }
-        cx.notify();
     }
 
     // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
@@ -306,6 +333,7 @@ impl Editor {
     }
 
     pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) {
+        self.expanded_hunks.hunk_update_tasks.clear();
         let to_remove = self
             .expanded_hunks
             .hunks
@@ -316,105 +344,136 @@ impl Editor {
         self.remove_blocks(to_remove, None, cx);
     }
 
-    // TODO kb make async, consider `block_with_timeout` + need to debounce between edits (configurable?)
     pub(super) fn sync_expanded_diff_hunks(
         &mut self,
-        buffer: &Model<Buffer>,
+        buffer: Model<Buffer>,
         cx: &mut ViewContext<'_, Self>,
     ) {
-        let snapshot = self.snapshot(cx);
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let mut recalculated_hunks = buffer_snapshot
-            .git_diff_hunks_in_row_range(0..u32::MAX)
-            .fuse()
-            .peekable();
-        let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.hunks.len());
-        let mut blocks_to_remove = HashSet::default();
-        let mut hunks_to_reexpand = Vec::with_capacity(self.expanded_hunks.hunks.len());
-        self.expanded_hunks.hunks.retain_mut(|expanded_hunk| {
-            if expanded_hunk.hunk_range.start.buffer_id != Some(buffer_snapshot.remote_id()) {
-                return true;
-            }
+        let hunk_diff_debounce_ms =
+            Duration::from_millis(ProjectSettings::get_global(cx).git.hunk_diff_debounce_ms);
+        let buffer_id = buffer.read(cx).remote_id();
+        self.expanded_hunks
+            .hunk_update_tasks
+            .remove(&Some(buffer_id));
+        let new_sync_task = cx.spawn(move |editor, mut cx| async move {
+            cx.background_executor().timer(hunk_diff_debounce_ms).await;
+            editor
+                .update(&mut cx, |editor, cx| {
+                    let snapshot = editor.snapshot(cx);
+                    let buffer_snapshot = buffer.read(cx).snapshot();
+                    let mut recalculated_hunks = buffer_snapshot
+                        .git_diff_hunks_in_row_range(0..u32::MAX)
+                        .fuse()
+                        .peekable();
+                    let mut highlights_to_remove =
+                        Vec::with_capacity(editor.expanded_hunks.hunks.len());
+                    let mut blocks_to_remove = HashSet::default();
+                    let mut hunks_to_reexpand =
+                        Vec::with_capacity(editor.expanded_hunks.hunks.len());
+                    editor.expanded_hunks.hunks.retain_mut(|expanded_hunk| {
+                        if expanded_hunk.hunk_range.start.buffer_id != Some(buffer_id) {
+                            return true;
+                        }
 
-            let expanded_hunk_display_range = expanded_hunk
-                .hunk_range
-                .start
-                .to_display_point(&snapshot)
-                .row()
-                ..expanded_hunk
-                    .hunk_range
-                    .end
-                    .to_display_point(&snapshot)
-                    .row();
-            let mut retain = false;
-            if expanded_hunk.diff_base_version == buffer.read(cx).diff_base_version() {
-                while let Some(buffer_hunk) = recalculated_hunks.peek() {
-                    match diff_hunk_to_display(buffer_hunk, &snapshot) {
-                        DisplayDiffHunk::Folded { display_row } => {
-                            recalculated_hunks.next();
-                            if !expanded_hunk.folded
-                                && expanded_hunk_display_range
-                                    .to_inclusive()
-                                    .contains(&display_row)
-                            {
-                                retain = true;
-                                expanded_hunk.folded = true;
-                                highlights_to_remove.push(expanded_hunk.hunk_range.clone());
-                                if let Some(block) = expanded_hunk.block.take() {
-                                    blocks_to_remove.insert(block);
-                                }
-                                break;
-                            } else {
-                                continue;
-                            }
-                        }
-                        DisplayDiffHunk::Unfolded {
-                            diff_base_byte_range,
-                            display_row_range,
-                            multi_buffer_range,
-                            status,
-                        } => {
-                            let hunk_display_range = display_row_range;
-                            if expanded_hunk_display_range.start > hunk_display_range.end {
-                                recalculated_hunks.next();
-                                continue;
-                            } else if expanded_hunk_display_range.end < hunk_display_range.start {
-                                break;
-                            } else {
-                                if !expanded_hunk.folded
-                                    && expanded_hunk_display_range == hunk_display_range
-                                    && expanded_hunk.status == buffer_hunk.status()
-                                    && expanded_hunk.diff_base_byte_range
-                                        == buffer_hunk.diff_base_byte_range
-                                {
-                                    recalculated_hunks.next();
-                                    retain = true;
-                                } else {
-                                    hunks_to_reexpand.push(HunkToExpand {
-                                        status,
-                                        multi_buffer_range,
+                        let expanded_hunk_display_range = expanded_hunk
+                            .hunk_range
+                            .start
+                            .to_display_point(&snapshot)
+                            .row()
+                            ..expanded_hunk
+                                .hunk_range
+                                .end
+                                .to_display_point(&snapshot)
+                                .row();
+                        let mut retain = false;
+                        if expanded_hunk.diff_base_version == buffer.read(cx).diff_base_version() {
+                            while let Some(buffer_hunk) = recalculated_hunks.peek() {
+                                match diff_hunk_to_display(buffer_hunk, &snapshot) {
+                                    DisplayDiffHunk::Folded { display_row } => {
+                                        recalculated_hunks.next();
+                                        if !expanded_hunk.folded
+                                            && expanded_hunk_display_range
+                                                .to_inclusive()
+                                                .contains(&display_row)
+                                        {
+                                            retain = true;
+                                            expanded_hunk.folded = true;
+                                            highlights_to_remove
+                                                .push(expanded_hunk.hunk_range.clone());
+                                            if let Some(block) = expanded_hunk.block.take() {
+                                                blocks_to_remove.insert(block);
+                                            }
+                                            break;
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                    DisplayDiffHunk::Unfolded {
                                         diff_base_byte_range,
-                                    });
+                                        display_row_range,
+                                        multi_buffer_range,
+                                        status,
+                                    } => {
+                                        let hunk_display_range = display_row_range;
+                                        if expanded_hunk_display_range.start
+                                            > hunk_display_range.end
+                                        {
+                                            recalculated_hunks.next();
+                                            continue;
+                                        } else if expanded_hunk_display_range.end
+                                            < hunk_display_range.start
+                                        {
+                                            break;
+                                        } else {
+                                            if !expanded_hunk.folded
+                                                && expanded_hunk_display_range == hunk_display_range
+                                                && expanded_hunk.status == buffer_hunk.status()
+                                                && expanded_hunk.diff_base_byte_range
+                                                    == buffer_hunk.diff_base_byte_range
+                                            {
+                                                recalculated_hunks.next();
+                                                retain = true;
+                                            } else {
+                                                hunks_to_reexpand.push(HunkToExpand {
+                                                    status,
+                                                    multi_buffer_range,
+                                                    diff_base_byte_range,
+                                                });
+                                            }
+                                            break;
+                                        }
+                                    }
                                 }
-                                break;
                             }
                         }
+                        if !retain {
+                            blocks_to_remove.extend(expanded_hunk.block);
+                            highlights_to_remove.push(expanded_hunk.hunk_range.clone());
+                        }
+                        retain
+                    });
+
+                    for removed_rows in highlights_to_remove {
+                        editor.highlight_rows::<DiffRowHighlight>(removed_rows, None, cx);
                     }
-                }
-            }
-            if !retain {
-                blocks_to_remove.extend(expanded_hunk.block);
-                highlights_to_remove.push(expanded_hunk.hunk_range.clone());
-            }
-            retain
+                    editor.remove_blocks(blocks_to_remove, None, cx);
+                    for hunk in hunks_to_reexpand {
+                        editor.expand_diff_hunk(&hunk, cx);
+                    }
+                })
+                .ok();
         });
 
-        for removed_rows in highlights_to_remove {
-            self.highlight_rows::<DiffRowHighlight>(removed_rows, None, cx);
-        }
-        self.remove_blocks(blocks_to_remove, None, cx);
-        for hunk in hunks_to_reexpand {
-            self.expand_diff_hunk(&hunk, cx);
+        match cx
+            .background_executor()
+            .block_with_timeout(HUNK_OPERATION_BLOCK_TIMEOUT, new_sync_task)
+        {
+            Ok(()) => {}
+            Err(long_sync) => {
+                self.expanded_hunks
+                    .hunk_update_tasks
+                    .insert(Some(buffer_id), cx.background_executor().spawn(long_sync));
+            }
         }
     }
 }
