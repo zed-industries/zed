@@ -421,7 +421,7 @@ impl Telemetry {
             return;
         }
 
-        let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
+        if ZED_CLIENT_CHECKSUM_SEED.is_none() {
             return;
         };
 
@@ -466,15 +466,9 @@ impl Telemetry {
                         serde_json::to_writer(&mut json_bytes, &request_body)?;
                     }
 
-                    let mut summer = Sha256::new();
-                    summer.update(checksum_seed);
-                    summer.update(&json_bytes);
-                    summer.update(checksum_seed);
-                    let mut checksum = String::new();
-                    for byte in summer.finalize().as_slice() {
-                        use std::fmt::Write;
-                        write!(&mut checksum, "{:02x}", byte).unwrap();
-                    }
+                    let Some(checksum) = calculate_json_checksum(&json_bytes) else {
+                        return Ok(());
+                    };
 
                     let request = http::Request::builder()
                         .method(Method::POST)
@@ -656,4 +650,22 @@ mod tests {
             && telemetry.state.lock().flush_events_task.is_none()
             && telemetry.state.lock().first_event_date_time.is_none()
     }
+}
+
+pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
+    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
+        return None;
+    };
+
+    let mut summer = Sha256::new();
+    summer.update(checksum_seed);
+    summer.update(&json);
+    summer.update(checksum_seed);
+    let mut checksum = String::new();
+    for byte in summer.finalize().as_slice() {
+        use std::fmt::Write;
+        write!(&mut checksum, "{:02x}", byte).unwrap();
+    }
+
+    Some(checksum)
 }

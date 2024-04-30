@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use gpui::{Task, WindowContext};
+use gpui::{AnyView, Task, WindowContext};
 use std::collections::HashMap;
 
 use crate::tool::{
@@ -12,6 +12,7 @@ pub struct ToolRegistry {
         Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
     >,
     definitions: Vec<ToolFunctionDefinition>,
+    status_views: Vec<AnyView>,
 }
 
 impl ToolRegistry {
@@ -19,6 +20,7 @@ impl ToolRegistry {
         Self {
             tools: HashMap::new(),
             definitions: Vec::new(),
+            status_views: Vec::new(),
         }
     }
 
@@ -26,8 +28,17 @@ impl ToolRegistry {
         &self.definitions
     }
 
-    pub fn register<T: 'static + LanguageModelTool>(&mut self, tool: T) -> Result<()> {
+    pub fn register<T: 'static + LanguageModelTool>(
+        &mut self,
+        tool: T,
+        cx: &mut WindowContext,
+    ) -> Result<()> {
         self.definitions.push(tool.definition());
+
+        if let Some(tool_view) = tool.status_view(cx) {
+            self.status_views.push(tool_view);
+        }
+
         let name = tool.name();
         let previous = self.tools.insert(
             name.clone(),
@@ -52,7 +63,7 @@ impl ToolRegistry {
                     cx.spawn(move |mut cx| async move {
                         let result: Result<T::Output> = result.await;
                         let for_model = T::format(&input, &result);
-                        let view = cx.update(|cx| T::new_view(id.clone(), input, result, cx))?;
+                        let view = cx.update(|cx| T::output_view(id.clone(), input, result, cx))?;
 
                         Ok(ToolFunctionCall {
                             id,
@@ -99,6 +110,10 @@ impl ToolRegistry {
         };
 
         tool(tool_call, cx)
+    }
+
+    pub fn status_views(&self) -> &[AnyView] {
+        &self.status_views
     }
 }
 
@@ -165,7 +180,7 @@ mod test {
             Task::ready(Ok(weather))
         }
 
-        fn new_view(
+        fn output_view(
             _tool_call_id: String,
             _input: Self::Input,
             result: Result<Self::Output>,
@@ -180,46 +195,6 @@ mod test {
         fn format(_: &Self::Input, output: &Result<Self::Output>) -> String {
             serde_json::to_string(&output.as_ref().unwrap()).unwrap()
         }
-    }
-
-    #[gpui::test]
-    async fn test_function_registry(cx: &mut TestAppContext) {
-        cx.background_executor.run_until_parked();
-
-        let mut registry = ToolRegistry::new();
-
-        let tool = WeatherTool {
-            current_weather: WeatherResult {
-                location: "San Francisco".to_string(),
-                temperature: 21.0,
-                unit: "Celsius".to_string(),
-            },
-        };
-
-        registry.register(tool).unwrap();
-
-        // let _result = cx
-        //     .update(|cx| {
-        //         registry.call(
-        //             &ToolFunctionCall {
-        //                 name: "get_current_weather".to_string(),
-        //                 arguments: r#"{ "location": "San Francisco", "unit": "Celsius" }"#
-        //                     .to_string(),
-        //                 id: "test-123".to_string(),
-        //                 result: None,
-        //             },
-        //             cx,
-        //         )
-        //     })
-        //     .await;
-
-        // assert!(result.is_ok());
-        // let result = result.unwrap();
-
-        // let expected = r#"{"location":"San Francisco","temperature":21.0,"unit":"Celsius"}"#;
-
-        // todo!(): Put this back in after the interface is stabilized
-        // assert_eq!(result, expected);
     }
 
     #[gpui::test]

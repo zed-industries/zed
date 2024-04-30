@@ -3,9 +3,9 @@ use std::sync::Arc;
 use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, Global,
-    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView,
+    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
@@ -62,6 +62,7 @@ pub(crate) struct TasksModalDelegate {
     inventory: Model<Inventory>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     last_used_candidate_index: Option<usize>,
+    divider_index: Option<usize>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
@@ -82,6 +83,7 @@ impl TasksModalDelegate {
             candidates: None,
             matches: Vec::new(),
             last_used_candidate_index: None,
+            divider_index: None,
             selected_index: 0,
             prompt: String::default(),
             task_context,
@@ -254,7 +256,17 @@ impl PickerDelegate for TasksModalDelegate {
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
+                    if let Some(index) = delegate.last_used_candidate_index {
+                        delegate.matches.sort_by_key(|m| m.candidate_id > index);
+                    }
+
                     delegate.prompt = query;
+                    delegate.divider_index = delegate.last_used_candidate_index.and_then(|index| {
+                        let index = delegate
+                            .matches
+                            .partition_point(|matching_task| matching_task.candidate_id <= index);
+                        Some(index).and_then(|index| (index != 0).then(|| index - 1))
+                    });
 
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
@@ -351,7 +363,7 @@ impl PickerDelegate for TasksModalDelegate {
                 })
                 .map(|item| {
                     let item = if matches!(source_kind, TaskSourceKind::UserInput)
-                        || Some(ix) <= self.last_used_candidate_index
+                        || Some(ix) <= self.divider_index
                     {
                         let task_index = hit.candidate_id;
                         let delete_button = div().child(
@@ -411,7 +423,7 @@ impl PickerDelegate for TasksModalDelegate {
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {
-        if let Some(i) = self.last_used_candidate_index {
+        if let Some(i) = self.divider_index {
             vec![i]
         } else {
             Vec::new()

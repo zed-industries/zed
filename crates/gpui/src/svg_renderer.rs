@@ -55,11 +55,12 @@ impl SvgRenderer {
         };
 
         // Render the SVG to a pixmap with the specified width and height.
-        let mut pixmap =
-            resvg::tiny_skia::Pixmap::new(size.width.into(), size.height.into()).unwrap();
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width.into(), size.height.into())
+            .ok_or(usvg::Error::InvalidSize)?;
 
         let transform = tree.view_box().to_transform(
-            resvg::tiny_skia::Size::from_wh(size.width.0 as f32, size.height.0 as f32).unwrap(),
+            resvg::tiny_skia::Size::from_wh(size.width.0 as f32, size.height.0 as f32)
+                .ok_or(usvg::Error::InvalidSize)?,
         );
 
         resvg::render(&tree, transform, &mut pixmap.as_mut());

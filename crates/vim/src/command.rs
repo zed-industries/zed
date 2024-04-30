@@ -8,7 +8,7 @@ use crate::{
     motion::{EndOfDocument, Motion, StartOfDocument},
     normal::{
         move_cursor,
-        search::{FindCommand, ReplaceCommand},
+        search::{range_regex, FindCommand, ReplaceCommand},
         JoinLines,
     },
     state::Mode,
@@ -340,6 +340,14 @@ pub fn command_interceptor(mut query: &str, cx: &AppContext) -> Option<CommandIn
                 )
             } else if let Ok(line) = query.parse::<u32>() {
                 (query, GoToLine { line }.boxed_clone())
+            } else if range_regex().is_match(query) {
+                (
+                    query,
+                    ReplaceCommand {
+                        query: query.to_string(),
+                    }
+                    .boxed_clone(),
+                )
             } else {
                 return None;
             }

@@ -8,8 +8,7 @@ use std::{fmt::Display, ops::Range, path::PathBuf};
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ParsedMarkdownElement {
     Heading(ParsedMarkdownHeading),
-    /// An ordered or unordered list of items.
-    List(ParsedMarkdownList),
+    ListItem(ParsedMarkdownListItem),
     Table(ParsedMarkdownTable),
     BlockQuote(ParsedMarkdownBlockQuote),
     CodeBlock(ParsedMarkdownCodeBlock),
@@ -22,13 +21,17 @@ impl ParsedMarkdownElement {
     pub fn source_range(&self) -> Range<usize> {
         match self {
             Self::Heading(heading) => heading.source_range.clone(),
-            Self::List(list) => list.source_range.clone(),
+            Self::ListItem(list_item) => list_item.source_range.clone(),
             Self::Table(table) => table.source_range.clone(),
             Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
             Self::CodeBlock(code_block) => code_block.source_range.clone(),
             Self::Paragraph(text) => text.source_range.clone(),
             Self::HorizontalRule(range) => range.clone(),
         }
+    }
+
+    pub fn is_list_item(&self) -> bool {
+        matches!(self, Self::ListItem(_))
     }
 }
 
@@ -40,18 +43,12 @@ pub struct ParsedMarkdown {
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-pub struct ParsedMarkdownList {
-    pub source_range: Range<usize>,
-    pub children: Vec<ParsedMarkdownListItem>,
-}
-
-#[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownListItem {
+    pub source_range: Range<usize>,
     /// How many indentations deep this item is.
     pub depth: u16,
     pub item_type: ParsedMarkdownListItemType,
-    pub contents: Vec<Box<ParsedMarkdownElement>>,
+    pub content: Vec<ParsedMarkdownElement>,
 }
 
 #[derive(Debug)]
@@ -129,7 +126,7 @@ impl ParsedMarkdownTableRow {
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownBlockQuote {
     pub source_range: Range<usize>,
-    pub children: Vec<Box<ParsedMarkdownElement>>,
+    pub children: Vec<ParsedMarkdownElement>,
 }
 
 #[derive(Debug)]

@@ -106,6 +106,7 @@ pub fn expand_macro_recursively(
             });
             workspace.add_item_to_active_pane(
                 Box::new(cx.new_view(|cx| Editor::for_multibuffer(buffer, Some(project), cx))),
+                None,
                 cx,
             );
         })

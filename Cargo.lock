@@ -379,9 +379,11 @@ dependencies = [
  "assets",
  "assistant_tooling",
  "client",
+ "collections",
  "editor",
  "env_logger",
  "feature_flags",
+ "fs",
  "futures 0.3.28",
  "gpui",
  "language",
@@ -3181,13 +3183,17 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "ctor",
  "editor",
+ "env_logger",
  "futures 0.3.28",
  "gpui",
  "language",
  "log",
  "lsp",
+ "pretty_assertions",
  "project",
+ "rand 0.8.5",
  "schemars",
  "serde",
  "serde_json",
@@ -3432,6 +3438,20 @@ dependencies = [
  "sec1",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "embed-resource"
+version = "2.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6985554d0688b687c5cb73898a34fbe3ad6c24c58c238a4d91d5e840670ee9d"
+dependencies = [
+ "cc",
+ "memchr",
+ "rustc_version",
+ "toml 0.8.10",
+ "vswhom",
+ "winreg 0.52.0",
 ]
 
 [[package]]
@@ -3811,6 +3831,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger",
+ "futures 0.3.28",
  "fuzzy",
  "gpui",
  "itertools 0.11.0",
@@ -4046,6 +4067,7 @@ dependencies = [
  "anyhow",
  "async-tar",
  "async-trait",
+ "cocoa",
  "collections",
  "fsevent",
  "futures 0.3.28",
@@ -4055,6 +4077,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "notify",
+ "objc",
  "parking_lot",
  "rope",
  "serde",
@@ -4531,6 +4554,7 @@ dependencies = [
  "cosmic-text",
  "ctor",
  "derive_more",
+ "embed-resource",
  "env_logger",
  "etagere",
  "filedescriptor",
@@ -5897,6 +5921,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion 1.0.5",
+ "collections",
  "editor",
  "gpui",
  "language",
@@ -5953,9 +5978,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.6.3"
+version = "2.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f232d6ef707e1956a43342693d2a31e72989554d58299d7a88738cc95b0d35c"
+checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
 
 [[package]]
 name = "memfd"
@@ -7964,7 +7989,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "winreg",
+ "winreg 0.50.0",
 ]
 
 [[package]]
@@ -8668,6 +8693,7 @@ dependencies = [
  "languages",
  "log",
  "open_ai",
+ "parking_lot",
  "project",
  "serde",
  "serde_json",
@@ -9493,7 +9519,6 @@ dependencies = [
  "strum",
  "theme",
  "ui",
- "winresource",
 ]
 
 [[package]]
@@ -10509,7 +10534,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.100"
-source = "git+https://github.com/tree-sitter/tree-sitter?rev=528bcd2274814ca53711a57d71d1e3cf7abd73fe#528bcd2274814ca53711a57d71d1e3cf7abd73fe"
+source = "git+https://github.com/tree-sitter/tree-sitter?rev=7b4894ba2ae81b988846676f54c0988d4027ef4f#7b4894ba2ae81b988846676f54c0988d4027ef4f"
 dependencies = [
  "cc",
  "regex",
@@ -10621,7 +10646,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-jsdoc"
 version = "0.20.0"
-source = "git+https://github.com/tree-sitter/tree-sitter-jsdoc#6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55"
+source = "git+https://github.com/tree-sitter/tree-sitter-jsdoc?rev=6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55#6a6cf9e7341af32d8e2b2e24a37fbfebefc3dc55"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -11126,6 +11151,26 @@ name = "vsimd"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
+
+[[package]]
+name = "vswhom"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be979b7f07507105799e854203b470ff7c78a1639e330a58f183b5fea574608b"
+dependencies = [
+ "libc",
+ "vswhom-sys",
+]
+
+[[package]]
+name = "vswhom-sys"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3b17ae1f6c8a2b28506cd96d412eebf83b4a0ff2cbefeeb952f2f9dfa44ba18"
+dependencies = [
+ "cc",
+ "libc",
+]
 
 [[package]]
 name = "vte"
@@ -12201,6 +12246,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winreg"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
 name = "winresource"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12647,6 +12702,7 @@ dependencies = [
  "markdown_preview",
  "menu",
  "mimalloc",
+ "nix 0.28.0",
  "node_runtime",
  "notifications",
  "outline",
@@ -12669,6 +12725,7 @@ dependencies = [
  "tab_switcher",
  "task",
  "tasks_ui",
+ "telemetry_events",
  "terminal_view",
  "theme",
  "theme_selector",

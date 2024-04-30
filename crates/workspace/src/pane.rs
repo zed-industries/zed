@@ -26,7 +26,7 @@ use std::{
     any::Any,
     cmp, fmt, mem,
     ops::ControlFlow,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -623,21 +623,13 @@ impl Pane {
             self.activate_item(index, focus_item, focus_item, cx);
             existing_item
         } else {
-            let mut destination_index = None;
-            if allow_preview {
-                // If we are opening a new item as preview and we have an existing preview tab, remove it.
-                if let Some(item_idx) = self.preview_item_idx() {
-                    let prev_active_item_index = self.active_item_index;
-                    self.remove_item(item_idx, false, false, cx);
-                    self.active_item_index = prev_active_item_index;
-
-                    // If the item is being opened as preview and we have an existing preview tab,
-                    // open the new item in the position of the existing preview tab.
-                    if item_idx < self.items.len() {
-                        destination_index = Some(item_idx);
-                    }
-                }
-            }
+            // If the item is being opened as preview and we have an existing preview tab,
+            // open the new item in the position of the existing preview tab.
+            let destination_index = if allow_preview {
+                self.close_current_preview_item(cx)
+            } else {
+                None
+            };
 
             let new_item = build_item(cx);
 
@@ -648,6 +640,22 @@ impl Pane {
             self.add_item(new_item.clone(), true, focus_item, destination_index, cx);
 
             new_item
+        }
+    }
+
+    pub fn close_current_preview_item(&mut self, cx: &mut ViewContext<Self>) -> Option<usize> {
+        let Some(item_idx) = self.preview_item_idx() else {
+            return None;
+        };
+
+        let prev_active_item_index = self.active_item_index;
+        self.remove_item(item_idx, false, false, cx);
+        self.active_item_index = prev_active_item_index;
+
+        if item_idx < self.items.len() {
+            Some(item_idx)
+        } else {
+            None
         }
     }
 
@@ -1322,14 +1330,10 @@ impl Pane {
                 pane.update(cx, |_, cx| item.save(should_format, project, cx))?
                     .await?;
             } else if can_save_as {
-                let start_abs_path = project
-                    .update(cx, |project, cx| {
-                        let worktree = project.visible_worktrees(cx).next()?;
-                        Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
-                    })?
-                    .unwrap_or_else(|| Path::new("").into());
-
-                let abs_path = cx.update(|cx| cx.prompt_for_new_path(&start_abs_path))?;
+                let abs_path = pane.update(cx, |pane, cx| {
+                    pane.workspace
+                        .update(cx, |workspace, cx| workspace.prompt_for_new_path(cx))
+                })??;
                 if let Some(abs_path) = abs_path.await.ok().flatten() {
                     pane.update(cx, |_, cx| item.save_as(project, abs_path, cx))?
                         .await?;
