@@ -588,6 +588,9 @@
     "C": {
       "format_on_save": "off"
     },
+    "Elixir": {
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
     "Gleam": {
       "tab_size": 2
     },
@@ -595,6 +598,9 @@
       "code_actions_on_format": {
         "source.organizeImports": true
       }
+    },
+    "HEEX": {
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "Make": {
       "hard_tabs": true
