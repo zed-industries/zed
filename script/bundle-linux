@@ -40,10 +40,15 @@ cargo build --release --target "${target_triple}" --package zed
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
 strip "target/${target_triple}/release/Zed"
 
+suffix=""
+if [ "$channel" != "stable" ]; then
+  suffix="-$channel"
+fi
+
 # Move everything that should end up in the final package
 # into a temp directory.
 temp_dir=$(mktemp -d)
-zed_dir="${temp_dir}/zed.app"
+zed_dir="${temp_dir}/zed$suffix.app"
 
 # Binary
 mkdir -p "${zed_dir}/bin"
@@ -51,13 +56,18 @@ cp "target/${target_triple}/release/Zed" "${zed_dir}/zed"
 
 # Icons
 mkdir -p "${zed_dir}/share/icons/hicolor/512x512/apps"
-cp "crates/zed/resources/app-icon-nightly.png" "${zed_dir}/share/icons/hicolor/512x512/apps/zed.png"
+cp "crates/zed/resources/app-icon$suffix.png" "${zed_dir}/share/icons/hicolor/512x512/apps/zed.png"
 mkdir -p "${zed_dir}/share/icons/hicolor/1024x1024/apps"
-cp "crates/zed/resources/app-icon-nightly@2x.png" "${zed_dir}/share/icons/hicolor/1024x1024/apps/zed.png"
+cp "crates/zed/resources/app-icon$suffix/share/icons/hicolor/1024x1024/apps/zed.png"
 
 # .desktop
 mkdir -p "${zed_dir}/share/applications"
-cp "crates/zed/resources/zed.desktop" "${zed_dir}/share/applications/zed.desktop"
+cp "crates/zed/resources/zed$suffix.desktop" "${zed_dir}/share/applications/zed$suffix.desktop"
+if [[ "$channel" == "preview" ]]; then
+    sed -i "s|Name=Zed|Name=Zed Preview|g" "${zed_dir}/share/applications/zed$suffix.desktop"
+elif [[ "$channel" == "nightly" ]]; then
+    sed -i "s|Name=Zed|Name=Zed Nightly|g" "${zed_dir}/share/applications/zed$suffix.desktop"
+fi
 
 # Licenses
 cp "assets/licenses.md" "${zed_dir}/licenses.md"
@@ -74,4 +84,4 @@ else
 fi
 
 rm -rf "${archive}"
-tar -czvf $archive -C ${temp_dir} .
+tar -czvf $archive -C ${temp_dir} ${zed_dir}
