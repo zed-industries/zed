@@ -62,11 +62,14 @@ impl LanguageModelTool for CreateBufferTool {
                     })?
                     .await?;
 
-                let buffer = cx.update(|cx| {
-                    project.update(cx, |project, cx| {
-                        project.create_buffer(&text, Some(language), cx)
-                    })
-                })??;
+                let buffer = cx
+                    .update(|cx| project.update(cx, |project, cx| project.create_buffer(cx)))?
+                    .await?;
+
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.edit([(0..0, text)], None, cx);
+                    buffer.set_language(Some(language), cx)
+                })?;
 
                 workspace
                     .update(&mut cx, |workspace, cx| {
