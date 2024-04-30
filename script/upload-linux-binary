@@ -43,6 +43,10 @@ target_triple=${host_line#*: }
 # Build binary in release mode
 cargo build --release --target "${target_triple}" --package zed
 
+# Strip the binary of all debug symbols
+# Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
+strip "target/${target_triple}/release/Zed"
+
 # Move everything that should end up in the final package
 # into a temp directory.
 temp_dir=$(mktemp -d)
