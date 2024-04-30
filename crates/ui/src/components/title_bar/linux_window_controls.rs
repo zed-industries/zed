@@ -125,7 +125,8 @@ impl RenderOnce for TitlebarButton {
                     TitlebarButtonType::Minimize => cx.minimize_window(),
                     TitlebarButtonType::Restore => cx.zoom_window(),
                     TitlebarButtonType::Maximize => cx.zoom_window(),
-                    TitlebarButtonType::Close => cx.quit(),
+                    // TODO: trigger unsaved changes dialog
+                    TitlebarButtonType::Close => cx.remove_window(),
                 }
             })
     }
