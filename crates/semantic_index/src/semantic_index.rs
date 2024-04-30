@@ -867,7 +867,7 @@ impl WorktreeIndex {
 
     fn debug(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let connection = self.db_connection.clone();
-        let db = self.db.clone();
+        let db = self.db;
         cx.background_executor().spawn(async move {
             let tx = connection
                 .read_txn()
@@ -976,7 +976,7 @@ fn db_key_for_path(path: &Arc<Path>) -> String {
 }
 
 fn path_for_db_key(key: &str) -> String {
-    key.replace("\0", "/")
+    key.replace('\0', "/")
 }
 
 #[cfg(test)]
