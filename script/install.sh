@@ -60,14 +60,15 @@ linux() {
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/zed$suffix.desktop
     sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" ~/.local/share/applications/zed.desktop
 
-    if ! which zed >/dev/null 2>&1; then
+    if which zed >/dev/null 2>&1; then
+        echo "zed successfully installed. You can run it with 'zed'"
+    else
         echo "To run zed from your terminal, you must add ~/.local/bin to your PATH"
         echo "Run:"
         echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
         echo "   source ~/.bashrc"
+        echo "Otherwise run '~/.local/bin/zed'"
     fi
-
-    ~/.local/bin/zed
 }
 
 macos() {
@@ -82,7 +83,7 @@ macos() {
     fi
     ditto -v "$temp/mount/$app" "/Applications/$app"
     hdiutil detach -quiet "$temp/mount"
-    open "/Applications/$app"
+    echo "Zed is installed. You can run it with 'open /Applications/$app'"
 }
 
 main "$@"
