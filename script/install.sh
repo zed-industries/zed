@@ -43,32 +43,35 @@ main() {
 }
 
 linux() {
-    echo "Downloading zed.tar.gz"
-    # curl "https://zed.dev/api/download/zed.tar.gz?platform=$platform&arch=$arch&channel=$channel" > "$temp/zed.tar.gz"
-
+    echo "Downloading Zed"
     curl "https://zed.dev/api/releases/$channel/latest/zed-linux-$arch.tar.gz" > "$temp/zed-linux-$arch.tar.gz"
 
-    mkdir -p "$HOME/.local/zed.app"
+    suffix=""
+    if [[ $channel != "stable" ]]; then
+        suffix="-$channel"
+    fi
+
+    mkdir -p "$HOME/.local/zed$suffix.app"
     tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
 
-    # Set up xdg links so that app shows in the dock
     mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
-    ln -sf ~/.local/zed.app/bin/zed ~/.local/bin/
-    cp ~/.local/zed.app/share/applications/zed.desktop ~/.local/share/applications/
-    sed -i "s|Icon=zed|Icon=$HOME/.local/zed.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/zed.desktop
-    sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/bin/zed|g" ~/.local/share/applications/zed.desktop
+    ln -sf ~/.local/zed$suffix.app/bin/zed ~/.local/bin/
+    cp ~/.local/zed$suffix.app/share/applications/zed$suffix.desktop ~/.local/share/applications/
+    sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/zed$suffix.desktop
+    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" ~/.local/share/applications/zed.desktop
 
-    if which zed >/dev/null 2>&1; then
-    else
+    if ! which zed >/dev/null 2>&1; then
         echo "To run zed from your terminal, you must add ~/.local/bin to your PATH"
-        exit 1
+        echo "Run:"
+        echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
+        echo "   source ~/.bashrc"
     fi
 
     ~/.local/bin/zed
 }
 
 macos() {
-    echo "Downloading Zed.dmg..."
+    echo "Downloading Zed"
     curl "https://zed.dev/api/releases/$channel/latest/Zed-$arch.dmg" > "$temp/Zed-$arch.dmg"
     hdiutil attach -quiet "$temp/Zed-$arch.dmg" -mountpoint "$temp/mount"
     app="$(cd "$temp/mount/"; echo *.app)"
