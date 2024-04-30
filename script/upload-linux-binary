@@ -3,23 +3,69 @@
 set -euxo pipefail
 source script/lib/blob-store.sh
 
+local_only=false
+channel="nightly" # TODO: this needs to be variable etc.
+
+export ZED_BUNDLE=true
+
+# Function for displaying help info
+help_info() {
+  echo "
+Usage: ${0##*/} [options]
+Build the a release .tar.gz for Linux and upload it.
+
+Options:
+  -l    Local mode: do not upload the resulting .tar.gz archive.
+  -h    Display this help and exit.
+  "
+}
+
+while getopts 'lh' flag
+do
+    case "${flag}" in
+        l)
+            local_only=true
+            ;;
+        h)
+           help_info
+           exit 0
+           ;;
+    esac
+done
+
+
 commit=$(git rev-parse HEAD | cut -c 1-7)
-target="x86_64-unknown-linux-gnu"
-target_short="x86_64"
+
+version_info=$(rustc --version --verbose)
+host_line=$(echo "$version_info" | grep host)
+target_triple=${host_line#*: }
 
 # Build binary in release mode
-cargo build --release --target "${target}" --package zed
+cargo build --release --target "${target_triple}" --package zed
 
-# Copy package directory
-target_folder="zed-linux-${target_short}-$commit"
-mkdir $target_folder
+# Move everything that should end up in the final package
+# into a temp directory.
+temp_dir=$(mktemp -d)
 
-# Copy binary into directory
-cp "target/${target}/release/Zed" "${target_folder}/zed"
+# Binary
+mkdir "${temp_dir}/bin"
+cp "target/${target_triple}/release/Zed" "${temp_dir}/bin/zed"
+
+# Icons
+mkdir -p "${temp_dir}/share/icons/hicolor/512x512/apps"
+cp "crates/zed/resources/app-icon-nightly.png" "${temp_dir}/share/icons/hicolor/512x512/apps/zed.png"
+mkdir -p "${temp_dir}/share/icons/hicolor/1024x1024/apps"
+cp "crates/zed/resources/app-icon-nightly@2x.png" "${temp_dir}/share/icons/hicolor/1024x1024/apps/zed.png"
+
+# .desktop
+mkdir -p "${temp_dir}/share/applications"
+cp "crates/zed/resources/zed.desktop" "${temp_dir}/share/applications/zed.desktop"
 
 # Create archive
-archive="${target_folder}.tar.gz"
-tar -czvf $archive ${target_folder}
+archive="zed-${channel}-${target_triple}.tar.gz"
+tar -czvf $archive ${temp_dir}
 
 # Upload it
-upload_to_blob_store_public "zed-linux-builds" $archive $archive
+if [[ "$local_only" = false ]]; then
+    upload_to_blob_store_public "zed-linux-builds" $archive "${channel}/${archive}"
+fi
