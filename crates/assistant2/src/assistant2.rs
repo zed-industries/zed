@@ -32,7 +32,7 @@ use workspace::{
 
 pub use assistant_settings::AssistantSettings;
 
-use crate::tools::ProjectIndexTool;
+use crate::tools::{CreateBufferTool, ProjectIndexTool};
 use crate::ui::UserOrAssistant;
 
 const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
@@ -120,6 +120,13 @@ impl AssistantPanel {
                         cx,
                     )
                     .context("failed to register ProjectIndexTool")
+                    .log_err();
+                tool_registry
+                    .register(
+                        CreateBufferTool::new(workspace.clone(), project.clone()),
+                        cx,
+                    )
+                    .context("failed to register CreateBufferTool")
                     .log_err();
 
                 let tool_registry = Arc::new(tool_registry);
@@ -542,7 +549,7 @@ impl AssistantChat {
                 .child(crate::ui::ChatMessage::new(
                     *id,
                     UserOrAssistant::User(self.user_store.read(cx).current_user()),
-                    body.clone().into_any_element(),
+                    Some(body.clone().into_any_element()),
                     self.is_message_collapsed(id),
                     Box::new(cx.listener({
                         let id = *id;
@@ -559,10 +566,15 @@ impl AssistantChat {
                 tool_calls,
                 ..
             }) => {
-                let assistant_body = if body.text.is_empty() && !tool_calls.is_empty() {
-                    div()
+                let assistant_body = if body.text.is_empty() {
+                    None
                 } else {
-                    div().p_2().child(body.element(ElementId::from(id.0), cx))
+                    Some(
+                        div()
+                            .p_2()
+                            .child(body.element(ElementId::from(id.0), cx))
+                            .into_any_element(),
+                    )
                 };
 
                 div()
@@ -570,7 +582,7 @@ impl AssistantChat {
                     .child(crate::ui::ChatMessage::new(
                         *id,
                         UserOrAssistant::Assistant,
-                        assistant_body.into_any_element(),
+                        assistant_body,
                         self.is_message_collapsed(id),
                         Box::new(cx.listener({
                             let id = *id;

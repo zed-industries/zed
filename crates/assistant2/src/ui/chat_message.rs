@@ -15,7 +15,7 @@ pub enum UserOrAssistant {
 pub struct ChatMessage {
     id: MessageId,
     player: UserOrAssistant,
-    message: AnyElement,
+    message: Option<AnyElement>,
     collapsed: bool,
     on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
 }
@@ -24,7 +24,7 @@ impl ChatMessage {
     pub fn new(
         id: MessageId,
         player: UserOrAssistant,
-        message: AnyElement,
+        message: Option<AnyElement>,
         collapsed: bool,
         on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
     ) -> Self {
@@ -65,19 +65,21 @@ impl RenderOnce for ChatMessage {
                         this.bg(cx.theme().colors().element_hover)
                     }),
             );
-        let content = div()
-            .overflow_hidden()
-            .w_full()
-            .p_4()
-            .rounded_lg()
-            .when(self.collapsed, |this| this.h(collapsed_height))
-            .bg(cx.theme().colors().surface_background)
-            .child(self.message);
+        let content = self.message.map(|message| {
+            div()
+                .overflow_hidden()
+                .w_full()
+                .p_4()
+                .rounded_lg()
+                .when(self.collapsed, |this| this.h(collapsed_height))
+                .bg(cx.theme().colors().surface_background)
+                .child(message)
+        });
 
         v_flex()
             .gap_1()
             .child(ChatMessageHeader::new(self.player))
-            .child(h_flex().gap_3().child(collapse_handle).child(content))
+            .child(h_flex().gap_3().child(collapse_handle).children(content))
     }
 }
 

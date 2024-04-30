@@ -122,7 +122,11 @@ impl LanguageModelTool for RollDiceTool {
         "Rolls N many dice and returns the results.".to_string()
     }
 
-    fn execute(&self, input: &Self::Input, _cx: &AppContext) -> Task<gpui::Result<Self::Output>> {
+    fn execute(
+        &self,
+        input: &Self::Input,
+        _cx: &mut WindowContext,
+    ) -> Task<gpui::Result<Self::Output>> {
         let rolls = (0..input.num_dice)
             .map(|_| {
                 let die_type = input.die_type.as_ref().unwrap_or(&Die::D6).clone();
@@ -223,7 +227,11 @@ impl LanguageModelTool for FileBrowserTool {
         "A tool for browsing the filesystem.".to_string()
     }
 
-    fn execute(&self, input: &Self::Input, cx: &AppContext) -> Task<gpui::Result<Self::Output>> {
+    fn execute(
+        &self,
+        input: &Self::Input,
+        cx: &mut WindowContext,
+    ) -> Task<gpui::Result<Self::Output>> {
         cx.spawn({
             let fs = self.fs.clone();
             let root_dir = self.root_dir.clone();
