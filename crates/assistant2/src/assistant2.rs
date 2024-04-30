@@ -580,7 +580,6 @@ impl AssistantChat {
                         ))
                     } else {
                         element
-                            .on_action(listener)
                             .on_click(cx.listener({
                                 let id = *id;
                                 move |assistant_chat, event: &ClickEvent, _cx| {
