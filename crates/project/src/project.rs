@@ -5723,13 +5723,9 @@ impl Project {
             return;
         };
 
-        if response.text.is_empty() {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
-
-        let documentation = if response.is_markdown {
+        let documentation = if response.text.is_empty() {
+            Documentation::Undocumented
+        } else if response.is_markdown {
             Documentation::MultiLineMarkdown(
                 markdown::parse_markdown(&response.text, &language_registry, None).await,
             )
