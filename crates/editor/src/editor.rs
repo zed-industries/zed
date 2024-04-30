@@ -72,7 +72,7 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use hunk_diff::ExpandedGitHunk;
+use hunk_diff::ExpandedHunks;
 pub(crate) use hunk_diff::HunkToExpand;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
@@ -233,7 +233,7 @@ impl InlayId {
     }
 }
 
-enum GitRowHighlight {}
+enum DiffRowHighlight {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -463,7 +463,7 @@ pub struct Editor {
     active_inline_completion: Option<Inlay>,
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
-    expanded_hunks: Vec<ExpandedGitHunk>,
+    expanded_hunks: ExpandedHunks,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -1505,7 +1505,7 @@ impl Editor {
             inline_completion_provider: None,
             active_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
-            expanded_hunks: Vec::new(),
+            expanded_hunks: ExpandedHunks::default(),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,

@@ -2015,9 +2015,8 @@ struct Row10;"#};
 
         struct R»ow9;
         struct Row1220;"#});
-    editor_cx_b.update_editor(|editor, cx| {
-        editor.toggle_git_hunk_diff(&editor::actions::ToggleGitHunkDiff, cx)
-    });
+    editor_cx_b
+        .update_editor(|editor, cx| editor.toggle_hunk_diff(&editor::actions::ToggleHunkDiff, cx));
     editor_cx_a.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let all_hunks = editor_hunks(editor, &snapshot, cx);

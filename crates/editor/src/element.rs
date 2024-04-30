@@ -312,8 +312,8 @@ impl EditorElement {
         register_action(view, cx, Editor::open_permalink_to_line);
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
-        register_action(view, cx, Editor::toggle_git_hunk_diff);
-        register_action(view, cx, Editor::expand_all_git_hunk_diffs);
+        register_action(view, cx, Editor::toggle_hunk_diff);
+        register_action(view, cx, Editor::expand_all_hunk_diffs);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
                 task.detach_and_log_err(cx);
@@ -429,7 +429,7 @@ impl EditorElement {
         if gutter_hitbox.is_hovered(cx) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if let Some(hovered_hunk) = hovered_hunk {
-            editor.expand_git_diff_hunk(hovered_hunk, cx);
+            editor.expand_diff_hunk(hovered_hunk, cx);
         } else if !text_hitbox.is_hovered(cx) {
             return;
         }
@@ -1189,8 +1189,7 @@ impl EditorElement {
         let expanded_hunk_display_rows = self.editor.update(cx, |editor, _| {
             editor
                 .expanded_hunks
-                .iter()
-                .filter(|expanded_hunk| !expanded_hunk.folded)
+                .hunks(false)
                 .map(|expanded_hunk| {
                     let start_row = expanded_hunk
                         .hunk_range

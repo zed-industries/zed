@@ -117,8 +117,7 @@ pub fn expanded_hunks(
 ) -> Vec<(String, git::diff::DiffHunkStatus, core::ops::Range<u32>)> {
     editor
         .expanded_hunks
-        .iter()
-        .filter(|hunk| !hunk.folded)
+        .hunks(false)
         .map(|expanded_hunk| {
             let hunk_display_range = expanded_hunk
                 .hunk_range
@@ -157,7 +156,7 @@ pub fn expanded_hunks_background_highlights(
     use itertools::Itertools;
 
     editor
-        .highlighted_rows::<crate::GitRowHighlight>()
+        .highlighted_rows::<crate::DiffRowHighlight>()
         .into_iter()
         .flatten()
         .map(|(range, _)| {

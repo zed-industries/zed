@@ -9391,7 +9391,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         for _ in 0..4 {
             editor.go_to_hunk(&GoToHunk, cx);
-            editor.toggle_git_hunk_diff(&ToggleGitHunkDiff, cx);
+            editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
         }
     });
     cx.assert_editor_state(
@@ -9529,7 +9529,7 @@ async fn test_toggled_diff_base_change(
     });
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_git_hunk_diffs(&ExpandAllGitHunkDiffs, cx);
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
     cx.assert_editor_state(
         &r#"
@@ -9694,7 +9694,7 @@ async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     });
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_git_hunk_diffs(&ExpandAllGitHunkDiffs, cx);
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
     cx.assert_editor_state(
         &r#"
@@ -10048,7 +10048,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
 
     multi_buffer_editor.update(cx, |editor, cx| {
         editor.select_all(&SelectAll, cx);
-        editor.toggle_git_hunk_diff(&ToggleGitHunkDiff, cx);
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
     });
     cx.executor().run_until_parked();
     multi_buffer_editor.update(cx, |editor, cx| {
@@ -10064,7 +10064,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     });
 
     multi_buffer_editor.update(cx, |editor, cx| {
-        editor.toggle_git_hunk_diff(&ToggleGitHunkDiff, cx);
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
     });
     multi_buffer_editor.update(cx, |editor, cx| {
         let snapshot = editor.snapshot(cx);
@@ -10079,7 +10079,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     });
 
     multi_buffer_editor.update(cx, |editor, cx| {
-        editor.toggle_git_hunk_diff(&ToggleGitHunkDiff, cx);
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
     });
     cx.executor().run_until_parked();
     multi_buffer_editor.update(cx, |editor, cx| {
@@ -10095,7 +10095,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
     });
 
     multi_buffer_editor.update(cx, |editor, cx| {
-        editor.toggle_git_hunk_diff(&ToggleGitHunkDiff, cx);
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
     });
     cx.executor().run_until_parked();
     multi_buffer_editor.update(cx, |editor, cx| {
@@ -10164,7 +10164,7 @@ async fn test_edits_around_toggled_additions(
         );
     });
     cx.update_editor(|editor, cx| {
-        editor.expand_all_git_hunk_diffs(&ExpandAllGitHunkDiffs, cx);
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
     cx.assert_editor_state(
         &r#"
@@ -10472,7 +10472,7 @@ async fn test_edits_around_toggled_deletions(
         );
     });
     cx.update_editor(|editor, cx| {
-        editor.expand_all_git_hunk_diffs(&ExpandAllGitHunkDiffs, cx);
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
     cx.assert_editor_state(
         &r#"
@@ -10688,7 +10688,7 @@ async fn test_edits_around_toggled_modifications(
         );
     });
     cx.update_editor(|editor, cx| {
-        editor.expand_all_git_hunk_diffs(&ExpandAllGitHunkDiffs, cx);
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
     cx.assert_editor_state(
         &r#"
@@ -11008,7 +11008,7 @@ async fn test_multiple_expanded_hunks_merge(
         );
     });
     cx.update_editor(|editor, cx| {
-        editor.expand_all_git_hunk_diffs(&ExpandAllGitHunkDiffs, cx);
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
     });
     cx.assert_editor_state(
         &r#"

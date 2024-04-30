@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use collections::{HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
-use gpui::{AppContext, Hsla, Model, View};
+use gpui::{AppContext, Hsla, Model, Task, View};
 use language::{Buffer, Language};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use text::Point;
@@ -11,9 +11,8 @@ use util::{debug_panic, RangeExt};
 
 use crate::{
     git::{diff_hunk_to_display, DisplayDiffHunk},
-    hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle, DisplaySnapshot,
-    Editor, ExpandAllGitHunkDiffs, GitRowHighlight, RangeToAnchorExt, ToDisplayPoint,
-    ToggleGitHunkDiff,
+    hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle, DiffRowHighlight,
+    DisplaySnapshot, Editor, ExpandAllHunkDiffs, RangeToAnchorExt, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -23,8 +22,23 @@ pub(super) struct HunkToExpand {
     pub diff_base_byte_range: Range<usize>,
 }
 
+#[derive(Debug, Default)]
+pub(super) struct ExpandedHunks {
+    hunks: Vec<ExpandedHunk>,
+    // TODO kb use with async tasks
+    hunk_update_tasks: HashMap<Option<BlockId>, Task<()>>,
+}
+
+impl ExpandedHunks {
+    pub fn hunks(&self, include_folded: bool) -> impl Iterator<Item = &ExpandedHunk> {
+        self.hunks
+            .iter()
+            .filter(move |hunk| include_folded || !hunk.folded)
+    }
+}
+
 #[derive(Debug, Clone)]
-pub(super) struct ExpandedGitHunk {
+pub(super) struct ExpandedHunk {
     pub block: Option<BlockId>,
     pub hunk_range: Range<Anchor>,
     pub diff_base_byte_range: Range<usize>,
@@ -34,7 +48,7 @@ pub(super) struct ExpandedGitHunk {
 }
 
 impl Editor {
-    pub fn toggle_git_hunk_diff(&mut self, _: &ToggleGitHunkDiff, cx: &mut ViewContext<Self>) {
+    pub fn toggle_hunk_diff(&mut self, _: &ToggleHunkDiff, cx: &mut ViewContext<Self>) {
         let snapshot = self.snapshot(cx);
         let selections = self.selections.disjoint_anchors();
         self.toggle_hunks_expanded(
@@ -44,16 +58,11 @@ impl Editor {
         );
     }
 
-    pub fn expand_all_git_hunk_diffs(
-        &mut self,
-        _: &ExpandAllGitHunkDiffs,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn expand_all_hunk_diffs(&mut self, _: &ExpandAllHunkDiffs, cx: &mut ViewContext<Self>) {
         let snapshot = self.snapshot(cx);
         let display_rows_with_expanded_hunks = self
             .expanded_hunks
-            .iter()
-            .filter(|hunk| !hunk.folded)
+            .hunks(false)
             .map(|hunk| &hunk.hunk_range)
             .map(|anchor_range| {
                 (
@@ -84,6 +93,7 @@ impl Editor {
         self.toggle_hunks_expanded(hunks, &snapshot.display_snapshot, cx);
     }
 
+    // TODO kb make async
     fn toggle_hunks_expanded(
         &mut self,
         hunks_to_toggle: impl IntoIterator<Item = DiffHunk<u32>>,
@@ -91,10 +101,10 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let mut hunks_to_toggle = hunks_to_toggle.into_iter().fuse().peekable();
-        let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.len());
+        let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.hunks.len());
         let mut blocks_to_remove = HashSet::default();
         let mut hunks_to_expand = Vec::new();
-        self.expanded_hunks.retain(|expanded_hunk| {
+        self.expanded_hunks.hunks.retain(|expanded_hunk| {
             if expanded_hunk.folded {
                 return true;
             }
@@ -157,18 +167,18 @@ impl Editor {
         }
 
         for removed_rows in highlights_to_remove {
-            self.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
+            self.highlight_rows::<DiffRowHighlight>(removed_rows, None, cx);
         }
         self.remove_blocks(blocks_to_remove, None, cx);
         for hunk in hunks_to_expand {
-            self.expand_git_diff_hunk(&hunk, cx);
+            self.expand_diff_hunk(&hunk, cx);
         }
         cx.notify();
     }
 
     // TODO kb consider multibuffer (remove its header) with one excerpt to cache git_diff_base parsing
     // TODO kb display a revert icon in each expanded hunk + somehow make the revert action work?
-    pub(super) fn expand_git_diff_hunk(
+    pub(super) fn expand_diff_hunk(
         &mut self,
         hunk: &HunkToExpand,
         cx: &mut ViewContext<'_, Editor>,
@@ -200,7 +210,7 @@ impl Editor {
             }
         })?;
 
-        let block_insert_index = match self.expanded_hunks.binary_search_by(|probe| {
+        let block_insert_index = match self.expanded_hunks.hunks.binary_search_by(|probe| {
             probe
                 .hunk_range
                 .start
@@ -220,7 +230,7 @@ impl Editor {
                 }
             }
             DiffHunkStatus::Added => {
-                self.highlight_rows::<GitRowHighlight>(
+                self.highlight_rows::<DiffRowHighlight>(
                     hunk_start..hunk_end,
                     Some(added_hunk_color(cx)),
                     cx,
@@ -228,7 +238,7 @@ impl Editor {
                 None
             }
             DiffHunkStatus::Modified => {
-                self.highlight_rows::<GitRowHighlight>(
+                self.highlight_rows::<DiffRowHighlight>(
                     hunk_start..hunk_end,
                     Some(added_hunk_color(cx)),
                     cx,
@@ -241,9 +251,9 @@ impl Editor {
                 }
             }
         };
-        self.expanded_hunks.insert(
+        self.expanded_hunks.hunks.insert(
             block_insert_index,
-            ExpandedGitHunk {
+            ExpandedHunk {
                 block,
                 hunk_range: hunk_start..hunk_end,
                 diff_base_version,
@@ -298,10 +308,11 @@ impl Editor {
     pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) {
         let to_remove = self
             .expanded_hunks
+            .hunks
             .drain(..)
             .filter_map(|expanded_hunk| expanded_hunk.block)
             .collect();
-        self.clear_row_highlights::<GitRowHighlight>();
+        self.clear_row_highlights::<DiffRowHighlight>();
         self.remove_blocks(to_remove, None, cx);
     }
 
@@ -317,10 +328,10 @@ impl Editor {
             .git_diff_hunks_in_row_range(0..u32::MAX)
             .fuse()
             .peekable();
-        let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.len());
+        let mut highlights_to_remove = Vec::with_capacity(self.expanded_hunks.hunks.len());
         let mut blocks_to_remove = HashSet::default();
-        let mut hunks_to_reexpand = Vec::with_capacity(self.expanded_hunks.len());
-        self.expanded_hunks.retain_mut(|expanded_hunk| {
+        let mut hunks_to_reexpand = Vec::with_capacity(self.expanded_hunks.hunks.len());
+        self.expanded_hunks.hunks.retain_mut(|expanded_hunk| {
             if expanded_hunk.hunk_range.start.buffer_id != Some(buffer_snapshot.remote_id()) {
                 return true;
             }
@@ -399,11 +410,11 @@ impl Editor {
         });
 
         for removed_rows in highlights_to_remove {
-            self.highlight_rows::<GitRowHighlight>(removed_rows, None, cx);
+            self.highlight_rows::<DiffRowHighlight>(removed_rows, None, cx);
         }
         self.remove_blocks(blocks_to_remove, None, cx);
         for hunk in hunks_to_reexpand {
-            self.expand_git_diff_hunk(&hunk, cx);
+            self.expand_diff_hunk(&hunk, cx);
         }
     }
 }
@@ -442,7 +453,7 @@ fn editor_with_deleted_text(
             .buffer_snapshot
             .anchor_after(editor.buffer.read(cx).len(cx));
 
-        editor.highlight_rows::<GitRowHighlight>(start..end, Some(deleted_color), cx);
+        editor.highlight_rows::<DiffRowHighlight>(start..end, Some(deleted_color), cx);
         editor
     });
 

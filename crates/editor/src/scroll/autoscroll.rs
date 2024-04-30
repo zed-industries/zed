@@ -4,7 +4,9 @@ use collections::HashSet;
 use gpui::{px, Bounds, Pixels, ViewContext};
 use language::Point;
 
-use crate::{display_map::ToDisplayPoint, Editor, EditorMode, GitRowHighlight, LineWithInvisibles};
+use crate::{
+    display_map::ToDisplayPoint, DiffRowHighlight, Editor, EditorMode, LineWithInvisibles,
+};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
@@ -106,7 +108,7 @@ impl Editor {
         let mut target_bottom;
         if let Some(first_highlighted_row) = &self
             .highlighted_display_rows(
-                HashSet::from_iter(Some(TypeId::of::<GitRowHighlight>())),
+                HashSet::from_iter(Some(TypeId::of::<DiffRowHighlight>())),
                 cx,
             )
             .first_entry()
