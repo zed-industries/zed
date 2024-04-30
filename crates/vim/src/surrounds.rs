@@ -60,30 +60,33 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                                     // The Motion::CurrentLine operation will contain the newline of the current line,
                                     // so we need to deal with this edge case
                                     if let Motion::CurrentLine = motion {
-                                        let mut start_offset =
+                                        let start_offset =
                                             range.start.to_offset(&display_map, Bias::Left);
-                                        let scope = display_map.buffer_snapshot.language_scope_at(
-                                            selection.start.to_point(&display_map),
-                                        );
-                                        for (ch, offset) in
-                                            display_map.buffer_chars_at(start_offset)
+                                        let scope = display_map
+                                            .buffer_snapshot
+                                            .language_scope_at(range.start.to_point(&display_map));
+                                        for (ch, _) in display_map.buffer_chars_at(start_offset) {
+                                            if char_kind(&scope, ch) != CharKind::Whitespace {
+                                                break;
+                                            }
+                                            range.start =
+                                                movement::right(&display_map, range.start);
+                                        }
+
+                                        let end_offset =
+                                            range.end.to_offset(&display_map, Bias::Left);
+                                        let scope = display_map
+                                            .buffer_snapshot
+                                            .language_scope_at(range.end.to_point(&display_map));
+                                        for (ch, _) in
+                                            display_map.reverse_buffer_chars_at(end_offset)
                                         {
-                                            if ch == '\n'
-                                                || char_kind(&scope, ch) != CharKind::Whitespace
+                                            if ch != '\n'
+                                                && char_kind(&scope, ch) != CharKind::Whitespace
                                             {
                                                 break;
                                             }
-                                            start_offset = offset + ch.len_utf8();
-                                        }
-                                        range.start = start_offset.to_display_point(&display_map);
-
-                                        let offset = range.end.to_offset(&display_map, Bias::Left);
-                                        if let Some((last_ch, _)) =
-                                            display_map.reverse_buffer_chars_at(offset).next()
-                                        {
-                                            if last_ch == '\n' {
-                                                range.end = movement::left(&display_map, range.end);
-                                            }
+                                            range.end = movement::left(&display_map, range.end);
                                         }
                                     }
                                     range
