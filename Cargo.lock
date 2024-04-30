@@ -401,6 +401,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "story",
  "theme",
  "ui",
  "util",
@@ -9498,6 +9499,7 @@ name = "storybook"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant2",
  "clap 4.4.4",
  "collab_ui",
  "ctrlc",
