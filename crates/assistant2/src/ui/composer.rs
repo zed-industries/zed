@@ -1,7 +1,7 @@
 use assistant_tooling::ToolRegistry;
 use client::User;
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{FontStyle, FontWeight, TextStyle, View, WeakView, WhiteSpace};
+use gpui::{AnyElement, FontStyle, FontWeight, TextStyle, View, WeakView, WhiteSpace};
 use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
@@ -11,30 +11,27 @@ use crate::{AssistantChat, CompletionProvider, Submit, SubmitMode};
 
 #[derive(IntoElement)]
 pub struct Composer {
-    assistant_chat: WeakView<AssistantChat>,
-    model: String,
     editor: View<Editor>,
     player: Option<Arc<User>>,
     can_submit: bool,
     tool_registry: Arc<ToolRegistry>,
+    model_selector: AnyElement,
 }
 
 impl Composer {
     pub fn new(
-        assistant_chat: WeakView<AssistantChat>,
-        model: String,
         editor: View<Editor>,
         player: Option<Arc<User>>,
         can_submit: bool,
         tool_registry: Arc<ToolRegistry>,
+        model_selector: AnyElement,
     ) -> Self {
         Self {
-            assistant_chat,
-            model,
             editor,
             player,
             can_submit,
             tool_registry,
+            model_selector,
         }
     }
 }
@@ -150,7 +147,7 @@ impl RenderOnce for Composer {
                         h_flex()
                             .w_full()
                             .justify_between()
-                            .child(ModelSelector::new(self.assistant_chat, self.model))
+                            .child(self.model_selector)
                             .children(self.tool_registry.status_views().iter().cloned()),
                     ),
             )
@@ -158,7 +155,7 @@ impl RenderOnce for Composer {
 }
 
 #[derive(IntoElement)]
-struct ModelSelector {
+pub struct ModelSelector {
     assistant_chat: WeakView<AssistantChat>,
     model: String,
 }

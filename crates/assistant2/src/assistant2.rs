@@ -1,7 +1,7 @@
 mod assistant_settings;
 mod completion_provider;
 mod tools;
-mod ui;
+pub mod ui;
 
 use ::ui::{div, prelude::*, Color, ViewContext};
 use anyhow::{Context, Result};
@@ -222,7 +222,7 @@ impl FocusableView for AssistantPanel {
     }
 }
 
-struct AssistantChat {
+pub struct AssistantChat {
     model: String,
     messages: Vec<ChatMessage>,
     list_state: ListState,
@@ -574,12 +574,15 @@ impl AssistantChat {
                 .map(|element| {
                     if self.editing_message_id.as_ref() == Some(id) {
                         element.child(Composer::new(
-                            cx.view().downgrade(),
-                            self.model.clone(),
                             body.clone(),
                             self.user_store.read(cx).current_user(),
                             self.can_submit(),
                             self.tool_registry.clone(),
+                            crate::ui::ModelSelector::new(
+                                cx.view().downgrade(),
+                                self.model.clone(),
+                            )
+                            .into_any_element(),
                         ))
                     } else {
                         element
@@ -744,18 +747,18 @@ impl Render for AssistantChat {
             .text_color(Color::Default.color(cx))
             .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(
-                cx.view().downgrade(),
-                self.model.clone(),
                 self.composer_editor.clone(),
                 self.user_store.read(cx).current_user(),
                 self.can_submit(),
                 self.tool_registry.clone(),
+                crate::ui::ModelSelector::new(cx.view().downgrade(), self.model.clone())
+                    .into_any_element(),
             ))
     }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-struct MessageId(usize);
+pub struct MessageId(usize);
 
 impl MessageId {
     fn post_inc(&mut self) -> Self {
