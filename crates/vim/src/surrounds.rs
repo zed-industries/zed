@@ -78,11 +78,12 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                                         let scope = display_map
                                             .buffer_snapshot
                                             .language_scope_at(range.end.to_point(&display_map));
-                                        for (ch, _) in
+                                        for (last_ch, _) in
                                             display_map.reverse_buffer_chars_at(end_offset)
                                         {
-                                            if ch != '\n'
-                                                && char_kind(&scope, ch) != CharKind::Whitespace
+                                            if last_ch != '\n'
+                                                && char_kind(&scope, last_ch)
+                                                    != CharKind::Whitespace
                                             {
                                                 break;
                                             }
