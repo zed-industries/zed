@@ -37,7 +37,7 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
 )]
 #[serde(rename_all = "snake_case")]
 pub enum UiDensity {
-    /// A denser UI with tigther spacing and smaller elements.
+    /// A denser UI with tighter spacing and smaller elements.
     #[serde(alias = "compact")]
     Compact,
     #[default]

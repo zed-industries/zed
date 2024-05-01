@@ -50,6 +50,7 @@ impl Spacing {
                 Spacing::Medium => 6. / 16.,
                 Spacing::Large => 8. / 16.,
                 Spacing::XLarge => 12. / 16.,
+                #[allow(clippy::eq_op)]
                 Spacing::XXLarge => 16. / 16.,
             },
             UiDensity::Comfortable => match self {
@@ -59,6 +60,7 @@ impl Spacing {
                 Spacing::Small => 6. / 16.,
                 Spacing::Medium => 8. / 16.,
                 Spacing::Large => 10. / 16.,
+                #[allow(clippy::eq_op)]
                 Spacing::XLarge => 16. / 16.,
                 Spacing::XXLarge => 20. / 16.,
             },
