@@ -606,13 +606,21 @@ impl SyntaxSnapshot {
                             LogIncludedRanges(&included_ranges),
                         );
 
-                        tree = parse_text(
+                        let result = parse_text(
                             grammar,
                             text.as_rope(),
                             step_start_byte,
                             included_ranges,
                             Some(old_tree.clone()),
                         );
+                        match result {
+                            Ok(t) => tree = t,
+                            Err(e) => {
+                                log::error!("error parsing text: {:?}", e);
+                                continue;
+                            }
+                        };
+
                         changed_ranges = join_ranges(
                             invalidated_ranges
                                 .iter()
@@ -651,13 +659,20 @@ impl SyntaxSnapshot {
                             LogIncludedRanges(&included_ranges),
                         );
 
-                        tree = parse_text(
+                        let result = parse_text(
                             grammar,
                             text.as_rope(),
                             step_start_byte,
                             included_ranges,
                             None,
                         );
+                        match result {
+                            Ok(t) => tree = t,
+                            Err(e) => {
+                                log::error!("error parsing text: {:?}", e);
+                                continue;
+                            }
+                        };
                         changed_ranges = vec![step_start_byte..step_end_byte];
                     }
 
@@ -1161,16 +1176,12 @@ fn parse_text(
     start_byte: usize,
     ranges: Vec<tree_sitter::Range>,
     old_tree: Option<Tree>,
-) -> Tree {
+) -> anyhow::Result<Tree> {
     PARSER.with(|parser| {
         let mut parser = parser.borrow_mut();
         let mut chunks = text.chunks_in_range(start_byte..text.len());
-        parser
-            .set_included_ranges(&ranges)
-            .expect("overlapping ranges");
-        parser
-            .set_language(&grammar.ts_language)
-            .expect("incompatible grammar");
+        parser.set_included_ranges(&ranges)?;
+        parser.set_language(&grammar.ts_language)?;
         parser
             .parse_with(
                 &mut move |offset, _| {
@@ -1179,7 +1190,7 @@ fn parse_text(
                 },
                 old_tree.as_ref(),
             )
-            .expect("invalid language")
+            .ok_or_else(|| anyhow::anyhow!("failed to parse"))
     })
 }
 

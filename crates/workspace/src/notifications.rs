@@ -263,7 +263,7 @@ impl Render for LanguageServerPrompt {
                                             PromptLevel::Warning => {
                                                 Some(DiagnosticSeverity::WARNING)
                                             }
-                                            PromptLevel::Critical => {
+                                            PromptLevel::Critical | PromptLevel::Destructive => {
                                                 Some(DiagnosticSeverity::ERROR)
                                             }
                                         }

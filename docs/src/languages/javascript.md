@@ -121,3 +121,22 @@ For example, here's how to set `problems.shortenToSingleLine`:
   }
 }
 ```
+
+#### Configure ESLint's `rulesCustomizations`:
+
+You can configure ESLint's `rulesCustomizations` setting:
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "rulesCustomizations": [
+          // set all eslint errors/warnings to show as warnings
+          { "rule": "*", "severity": "warn" }
+        ]
+      }
+    }
+  }
+}
+```

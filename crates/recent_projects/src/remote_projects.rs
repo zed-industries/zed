@@ -216,7 +216,7 @@ impl RemoteProjects {
 
     fn delete_dev_server(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
         let answer = cx.prompt(
-            gpui::PromptLevel::Info,
+            gpui::PromptLevel::Destructive,
             "Are you sure?",
             Some("This will delete the dev server and all of its remote projects."),
             &["Delete", "Cancel"],
@@ -386,7 +386,7 @@ impl RemoteProjects {
             .on_click(cx.listener(move |_, _, cx| {
                 if let Some(project_id) = project_id {
                     if let Some(app_state) = AppState::global(cx).upgrade() {
-                        workspace::join_remote_project(project_id, app_state, cx)
+                        workspace::join_remote_project(project_id, app_state, None, cx)
                             .detach_and_prompt_err("Could not join project", cx, |_, _| None)
                     }
                 } else {

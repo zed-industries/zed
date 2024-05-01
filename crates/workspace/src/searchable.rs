@@ -57,6 +57,10 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
 
     fn search_bar_visibility_changed(&mut self, _visible: bool, _cx: &mut ViewContext<Self>) {}
 
+    fn has_filtered_search_ranges(&mut self) -> bool {
+        false
+    }
+
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>);
     fn update_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>);
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String;

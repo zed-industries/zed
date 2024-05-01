@@ -88,7 +88,10 @@ impl RenderOnce for TitleBar {
                 } else if self.platform_style == PlatformStyle::Mac {
                     // Use pixels here instead of a rem-based size because the macOS traffic
                     // lights are a static size, and don't scale with the rest of the UI.
-                    this.pl(px(80.))
+                    //
+                    // Magic number: There is one extra pixel of padding on the left side due to
+                    // the 1px border around the window on macOS apps.
+                    this.pl(px(71.))
                 } else {
                     this.pl_2()
                 }

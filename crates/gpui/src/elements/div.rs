@@ -17,7 +17,7 @@
 
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
-    ClickEvent, DispatchPhase, Element, ElementContext, ElementId, FocusHandle, Global, Hitbox,
+    ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Global, GlobalElementId, Hitbox,
     HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
@@ -1123,26 +1123,37 @@ impl Element for Div {
     type RequestLayoutState = DivFrameState;
     type PrepaintState = Option<Hitbox>;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
+    fn id(&self) -> Option<ElementId> {
+        self.interactivity.element_id.clone()
+    }
+
+    fn request_layout(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
         let mut child_layout_ids = SmallVec::new();
-        let layout_id = self.interactivity.request_layout(cx, |style, cx| {
-            cx.with_text_style(style.text_style().cloned(), |cx| {
-                child_layout_ids = self
-                    .children
-                    .iter_mut()
-                    .map(|child| child.request_layout(cx))
-                    .collect::<SmallVec<_>>();
-                cx.request_layout(&style, child_layout_ids.iter().copied())
-            })
-        });
+        let layout_id = self
+            .interactivity
+            .request_layout(global_id, cx, |style, cx| {
+                cx.with_text_style(style.text_style().cloned(), |cx| {
+                    child_layout_ids = self
+                        .children
+                        .iter_mut()
+                        .map(|child| child.request_layout(cx))
+                        .collect::<SmallVec<_>>();
+                    cx.request_layout(&style, child_layout_ids.iter().copied())
+                })
+            });
         (layout_id, DivFrameState { child_layout_ids })
     }
 
     fn prepaint(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Option<Hitbox> {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
@@ -1178,6 +1189,7 @@ impl Element for Div {
         };
 
         self.interactivity.prepaint(
+            global_id,
             bounds,
             content_size,
             cx,
@@ -1194,13 +1206,14 @@ impl Element for Div {
 
     fn paint(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         self.interactivity
-            .paint(bounds, hitbox.as_ref(), cx, |_style, cx| {
+            .paint(global_id, bounds, hitbox.as_ref(), cx, |_style, cx| {
                 for child in &mut self.children {
                     child.paint(cx);
                 }
@@ -1220,7 +1233,7 @@ impl IntoElement for Div {
 /// interactivity in the `Div` element.
 #[derive(Default)]
 pub struct Interactivity {
-    /// The element ID of the element
+    /// The element ID of the element. In id is required to support a stateful subset of the interactivity such as on_click.
     pub element_id: Option<ElementId>,
     /// Whether the element was clicked. This will only be present after layout.
     pub active: Option<bool>,
@@ -1276,11 +1289,12 @@ impl Interactivity {
     /// Layout this element according to this interactivity state's configured styles
     pub fn request_layout(
         &mut self,
-        cx: &mut ElementContext,
-        f: impl FnOnce(Style, &mut ElementContext) -> LayoutId,
+        global_id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+        f: impl FnOnce(Style, &mut WindowContext) -> LayoutId,
     ) -> LayoutId {
-        cx.with_element_state::<InteractiveElementState, _>(
-            self.element_id.clone(),
+        cx.with_optional_element_state::<InteractiveElementState, _>(
+            global_id,
             |element_state, cx| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
@@ -1339,14 +1353,15 @@ impl Interactivity {
     /// Commit the bounds of this element according to this interactivity state's configured styles.
     pub fn prepaint<R>(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
-        cx: &mut ElementContext,
-        f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut ElementContext) -> R,
+        cx: &mut WindowContext,
+        f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut WindowContext) -> R,
     ) -> R {
         self.content_size = content_size;
-        cx.with_element_state::<InteractiveElementState, _>(
-            self.element_id.clone(),
+        cx.with_optional_element_state::<InteractiveElementState, _>(
+            global_id,
             |element_state, cx| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
@@ -1406,7 +1421,7 @@ impl Interactivity {
         &mut self,
         bounds: Bounds<Pixels>,
         style: &Style,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Point<Pixels> {
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             if let Some(scroll_handle) = &self.tracked_scroll_handle {
@@ -1454,14 +1469,15 @@ impl Interactivity {
     /// with the current scroll offset
     pub fn paint(
         &mut self,
+        global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         hitbox: Option<&Hitbox>,
-        cx: &mut ElementContext,
-        f: impl FnOnce(&Style, &mut ElementContext),
+        cx: &mut WindowContext,
+        f: impl FnOnce(&Style, &mut WindowContext),
     ) {
         self.hovered = hitbox.map(|hitbox| hitbox.is_hovered(cx));
-        cx.with_element_state::<InteractiveElementState, _>(
-            self.element_id.clone(),
+        cx.with_optional_element_state::<InteractiveElementState, _>(
+            global_id,
             |element_state, cx| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
@@ -1482,12 +1498,12 @@ impl Interactivity {
                     return ((), element_state);
                 }
 
-                style.paint(bounds, cx, |cx: &mut ElementContext| {
+                style.paint(bounds, cx, |cx: &mut WindowContext| {
                     cx.with_text_style(style.text_style().cloned(), |cx| {
                         cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
                             if let Some(hitbox) = hitbox {
                                 #[cfg(debug_assertions)]
-                                self.paint_debug_info(hitbox, &style, cx);
+                                self.paint_debug_info(global_id, hitbox, &style, cx);
 
                                 if !cx.has_active_drag() {
                                     if let Some(mouse_cursor) = style.mouse_cursor {
@@ -1521,16 +1537,22 @@ impl Interactivity {
     }
 
     #[cfg(debug_assertions)]
-    fn paint_debug_info(&mut self, hitbox: &Hitbox, style: &Style, cx: &mut ElementContext) {
-        if self.element_id.is_some()
+    fn paint_debug_info(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
+        hitbox: &Hitbox,
+        style: &Style,
+        cx: &mut WindowContext,
+    ) {
+        if global_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
             && hitbox.is_hovered(cx)
         {
             const FONT_SIZE: crate::Pixels = crate::Pixels(10.);
-            let element_id = format!("{:?}", self.element_id.as_ref().unwrap());
+            let element_id = format!("{:?}", global_id.unwrap());
             let str_len = element_id.len();
 
-            let render_debug_text = |cx: &mut ElementContext| {
+            let render_debug_text = |cx: &mut WindowContext| {
                 if let Some(text) = cx
                     .text_system()
                     .shape_text(
@@ -1629,7 +1651,7 @@ impl Interactivity {
         &mut self,
         hitbox: &Hitbox,
         element_state: Option<&mut InteractiveElementState>,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         // If this element can be focused, register a mouse down listener
         // that will automatically transfer focus when hitting the element.
@@ -1712,11 +1734,11 @@ impl Interactivity {
 
                                     let mut can_drop = true;
                                     if let Some(predicate) = &can_drop_predicate {
-                                        can_drop = predicate(drag.value.as_ref(), cx.deref_mut());
+                                        can_drop = predicate(drag.value.as_ref(), cx);
                                     }
 
                                     if can_drop {
-                                        listener(drag.value.as_ref(), cx.deref_mut());
+                                        listener(drag.value.as_ref(), cx);
                                         cx.refresh();
                                         cx.stop_propagation();
                                     }
@@ -1840,7 +1862,7 @@ impl Interactivity {
                         *was_hovered = is_hovered;
                         drop(was_hovered);
 
-                        hover_listener(&is_hovered, cx.deref_mut());
+                        hover_listener(&is_hovered, cx);
                     }
                 });
             }
@@ -1969,7 +1991,7 @@ impl Interactivity {
         }
     }
 
-    fn paint_keyboard_listeners(&mut self, cx: &mut ElementContext) {
+    fn paint_keyboard_listeners(&mut self, cx: &mut WindowContext) {
         let key_down_listeners = mem::take(&mut self.key_down_listeners);
         let key_up_listeners = mem::take(&mut self.key_up_listeners);
         let modifiers_changed_listeners = mem::take(&mut self.modifiers_changed_listeners);
@@ -2004,7 +2026,7 @@ impl Interactivity {
         }
     }
 
-    fn paint_hover_group_handler(&self, cx: &mut ElementContext) {
+    fn paint_hover_group_handler(&self, cx: &mut WindowContext) {
         let group_hitbox = self
             .group_hover_style
             .as_ref()
@@ -2021,7 +2043,7 @@ impl Interactivity {
         }
     }
 
-    fn paint_scroll_listener(&self, hitbox: &Hitbox, style: &Style, cx: &mut ElementContext) {
+    fn paint_scroll_listener(&self, hitbox: &Hitbox, style: &Style, cx: &mut WindowContext) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let overflow = style.overflow;
             let line_height = cx.line_height();
@@ -2064,8 +2086,13 @@ impl Interactivity {
     }
 
     /// Compute the visual style for this element, based on the current bounds and the element's state.
-    pub fn compute_style(&self, hitbox: Option<&Hitbox>, cx: &mut ElementContext) -> Style {
-        cx.with_element_state(self.element_id.clone(), |element_state, cx| {
+    pub fn compute_style(
+        &self,
+        global_id: Option<&GlobalElementId>,
+        hitbox: Option<&Hitbox>,
+        cx: &mut WindowContext,
+    ) -> Style {
+        cx.with_optional_element_state(global_id, |element_state, cx| {
             let mut element_state =
                 element_state.map(|element_state| element_state.unwrap_or_default());
             let style = self.compute_style_internal(hitbox, element_state.as_mut(), cx);
@@ -2078,7 +2105,7 @@ impl Interactivity {
         &self,
         hitbox: Option<&Hitbox>,
         element_state: Option<&mut InteractiveElementState>,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Style {
         let mut style = Style::default();
         style.refine(&self.base_style);
@@ -2119,7 +2146,7 @@ impl Interactivity {
             if let Some(drag) = cx.active_drag.take() {
                 let mut can_drop = true;
                 if let Some(can_drop_predicate) = &self.can_drop_predicate {
-                    can_drop = can_drop_predicate(drag.value.as_ref(), cx.deref_mut());
+                    can_drop = can_drop_predicate(drag.value.as_ref(), cx);
                 }
 
                 if can_drop {
@@ -2264,27 +2291,37 @@ where
     type RequestLayoutState = E::RequestLayoutState;
     type PrepaintState = E::PrepaintState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(cx)
+    fn id(&self) -> Option<ElementId> {
+        self.element.id()
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        self.element.request_layout(id, cx)
     }
 
     fn prepaint(
         &mut self,
+        id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> E::PrepaintState {
-        self.element.prepaint(bounds, state, cx)
+        self.element.prepaint(id, bounds, state, cx)
     }
 
     fn paint(
         &mut self,
+        id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
-        self.element.paint(bounds, request_layout, prepaint, cx)
+        self.element.paint(id, bounds, request_layout, prepaint, cx)
     }
 }
 
@@ -2347,27 +2384,37 @@ where
     type RequestLayoutState = E::RequestLayoutState;
     type PrepaintState = E::PrepaintState;
 
-    fn request_layout(&mut self, cx: &mut ElementContext) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(cx)
+    fn id(&self) -> Option<ElementId> {
+        self.element.id()
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        self.element.request_layout(id, cx)
     }
 
     fn prepaint(
         &mut self,
+        id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> E::PrepaintState {
-        self.element.prepaint(bounds, state, cx)
+        self.element.prepaint(id, bounds, state, cx)
     }
 
     fn paint(
         &mut self,
+        id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
-        self.element.paint(bounds, request_layout, prepaint, cx);
+        self.element.paint(id, bounds, request_layout, prepaint, cx);
     }
 }
 

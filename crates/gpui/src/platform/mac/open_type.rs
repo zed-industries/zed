@@ -107,7 +107,7 @@ const kTypographicExtrasType: i32 = 14;
 const kVerticalFractionsSelector: i32 = 1;
 const kVerticalPositionType: i32 = 10;
 
-pub fn apply_features(font: &mut Font, features: FontFeatures) {
+pub fn apply_features(font: &mut Font, features: &FontFeatures) {
     // See https://chromium.googlesource.com/chromium/src/+/66.0.3359.158/third_party/harfbuzz-ng/src/hb-coretext.cc
     // for a reference implementation.
     toggle_open_type_feature(

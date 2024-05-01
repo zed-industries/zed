@@ -39,17 +39,15 @@ impl<'a> CommitAvatar<'a> {
 
         let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha);
 
-        let element = cx.with_element_context(|cx| {
-            match cx.use_cached_asset::<CommitAvatarAsset>(&avatar_url) {
-                // Loading or no avatar found
-                None | Some(None) => Icon::new(IconName::Person)
-                    .color(Color::Muted)
-                    .into_element()
-                    .into_any(),
-                // Found
-                Some(Some(url)) => Avatar::new(url.to_string()).into_element().into_any(),
-            }
-        });
+        let element = match cx.use_cached_asset::<CommitAvatarAsset>(&avatar_url) {
+            // Loading or no avatar found
+            None | Some(None) => Icon::new(IconName::Person)
+                .color(Color::Muted)
+                .into_element()
+                .into_any(),
+            // Found
+            Some(Some(url)) => Avatar::new(url.to_string()).into_element().into_any(),
+        };
         Some(element)
     }
 }

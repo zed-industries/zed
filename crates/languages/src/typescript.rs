@@ -286,6 +286,11 @@ impl LspAdapter for EsLintLspAdapter {
             .cloned()
             .unwrap_or_else(|| json!({}));
 
+        let rules_customizations = eslint_user_settings
+            .get("rulesCustomizations")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+
         let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
@@ -294,7 +299,7 @@ impl LspAdapter for EsLintLspAdapter {
         Ok(json!({
             "": {
                 "validate": "on",
-                "rulesCustomizations": [],
+                "rulesCustomizations": rules_customizations,
                 "run": "onType",
                 "nodePath": node_path,
                 "workingDirectory": {"mode": "auto"},

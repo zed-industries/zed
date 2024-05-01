@@ -155,6 +155,8 @@
     // 4. Never show the scrollbar:
     //    "never"
     "show": "auto",
+    // Whether to show cursor positions in the scrollbar.
+    "cursors": true,
     // Whether to show git diff indicators in the scrollbar.
     "git_diff": true,
     // Whether to show buffer search results in the scrollbar.
@@ -329,8 +331,10 @@
     // when you switch to another file unless you explicitly pin them.
     // This is useful for quickly viewing files without cluttering your workspace.
     "enabled": true,
-    // Whether to open files in preview mode when selected from the file finder.
-    "enable_preview_from_file_finder": false
+    // Whether to open tabs in preview mode when selected from the file finder.
+    "enable_preview_from_file_finder": false,
+    // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
+    "enable_preview_from_code_navigation": false
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -555,27 +559,6 @@
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
   },
-  // Settings specific to our elixir integration
-  "elixir": {
-    // Change the LSP zed uses for elixir.
-    // Note that changing this setting requires a restart of Zed
-    // to take effect.
-    //
-    // May take 3 values:
-    //  1. Use the standard ElixirLS, this is the default
-    //         "lsp": "elixir_ls"
-    //  2. Use the experimental NextLs
-    //         "lsp": "next_ls",
-    //  3. Use a language server installed locally on your machine:
-    //         "lsp": {
-    //           "local": {
-    //             "path": "~/next-ls/bin/start",
-    //             "arguments": ["--stdio"]
-    //            }
-    //          },
-    //
-    "lsp": "elixir_ls"
-  },
   "code_actions_on_format": {},
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
@@ -605,6 +588,9 @@
     "C": {
       "format_on_save": "off"
     },
+    "Elixir": {
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
     "Gleam": {
       "tab_size": 2
     },
@@ -612,6 +598,9 @@
       "code_actions_on_format": {
         "source.organizeImports": true
       }
+    },
+    "HEEX": {
+      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "Make": {
       "hard_tabs": true

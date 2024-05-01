@@ -1,12 +1,15 @@
 use refineable::Refineable as _;
 
-use crate::{Bounds, Element, ElementContext, IntoElement, Pixels, Style, StyleRefinement, Styled};
+use crate::{
+    Bounds, Element, ElementId, GlobalElementId, IntoElement, Pixels, Style, StyleRefinement,
+    Styled, WindowContext,
+};
 
 /// Construct a canvas element with the given paint callback.
 /// Useful for adding short term custom drawing to a view.
 pub fn canvas<T>(
-    prepaint: impl 'static + FnOnce(Bounds<Pixels>, &mut ElementContext) -> T,
-    paint: impl 'static + FnOnce(Bounds<Pixels>, T, &mut ElementContext),
+    prepaint: impl 'static + FnOnce(Bounds<Pixels>, &mut WindowContext) -> T,
+    paint: impl 'static + FnOnce(Bounds<Pixels>, T, &mut WindowContext),
 ) -> Canvas<T> {
     Canvas {
         prepaint: Some(Box::new(prepaint)),
@@ -18,8 +21,8 @@ pub fn canvas<T>(
 /// A canvas element, meant for accessing the low level paint API without defining a whole
 /// custom element
 pub struct Canvas<T> {
-    prepaint: Option<Box<dyn FnOnce(Bounds<Pixels>, &mut ElementContext) -> T>>,
-    paint: Option<Box<dyn FnOnce(Bounds<Pixels>, T, &mut ElementContext)>>,
+    prepaint: Option<Box<dyn FnOnce(Bounds<Pixels>, &mut WindowContext) -> T>>,
+    paint: Option<Box<dyn FnOnce(Bounds<Pixels>, T, &mut WindowContext)>>,
     style: StyleRefinement,
 }
 
@@ -35,9 +38,14 @@ impl<T: 'static> Element for Canvas<T> {
     type RequestLayoutState = Style;
     type PrepaintState = Option<T>;
 
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
     fn request_layout(
         &mut self,
-        cx: &mut ElementContext,
+        _id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.refine(&self.style);
@@ -47,19 +55,21 @@ impl<T: 'static> Element for Canvas<T> {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Style,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) -> Option<T> {
         Some(self.prepaint.take().unwrap()(bounds, cx))
     }
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         style: &mut Style,
         prepaint: &mut Self::PrepaintState,
-        cx: &mut ElementContext,
+        cx: &mut WindowContext,
     ) {
         let prepaint = prepaint.take().unwrap();
         style.paint(bounds, cx, |cx| {

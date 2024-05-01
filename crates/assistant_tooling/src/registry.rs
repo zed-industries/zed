@@ -1,14 +1,18 @@
 use anyhow::{anyhow, Result};
-use gpui::{AnyElement, AppContext, Task, WindowContext};
-use std::{any::Any, collections::HashMap};
+use gpui::{AnyView, Task, WindowContext};
+use std::collections::HashMap;
 
 use crate::tool::{
     LanguageModelTool, ToolFunctionCall, ToolFunctionCallResult, ToolFunctionDefinition,
 };
 
 pub struct ToolRegistry {
-    tools: HashMap<String, Box<dyn Fn(&ToolFunctionCall, &AppContext) -> Task<ToolFunctionCall>>>,
+    tools: HashMap<
+        String,
+        Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+    >,
     definitions: Vec<ToolFunctionDefinition>,
+    status_views: Vec<AnyView>,
 }
 
 impl ToolRegistry {
@@ -16,6 +20,7 @@ impl ToolRegistry {
         Self {
             tools: HashMap::new(),
             definitions: Vec::new(),
+            status_views: Vec::new(),
         }
     }
 
@@ -23,78 +28,55 @@ impl ToolRegistry {
         &self.definitions
     }
 
-    pub fn register<T: 'static + LanguageModelTool>(&mut self, tool: T) -> Result<()> {
-        fn render<T: 'static + LanguageModelTool>(
-            tool_call_id: &str,
-            input: &Box<dyn Any>,
-            output: &Box<dyn Any>,
-            cx: &mut WindowContext,
-        ) -> AnyElement {
-            T::render(
-                tool_call_id,
-                input.as_ref().downcast_ref::<T::Input>().unwrap(),
-                output.as_ref().downcast_ref::<T::Output>().unwrap(),
-                cx,
-            )
-        }
-
-        fn format<T: 'static + LanguageModelTool>(
-            input: &Box<dyn Any>,
-            output: &Box<dyn Any>,
-        ) -> String {
-            T::format(
-                input.as_ref().downcast_ref::<T::Input>().unwrap(),
-                output.as_ref().downcast_ref::<T::Output>().unwrap(),
-            )
-        }
-
+    pub fn register<T: 'static + LanguageModelTool>(
+        &mut self,
+        tool: T,
+        cx: &mut WindowContext,
+    ) -> Result<()> {
         self.definitions.push(tool.definition());
+
+        if let Some(tool_view) = tool.status_view(cx) {
+            self.status_views.push(tool_view);
+        }
+
         let name = tool.name();
         let previous = self.tools.insert(
             name.clone(),
-            Box::new(move |tool_call: &ToolFunctionCall, cx: &AppContext| {
-                let name = tool_call.name.clone();
-                let arguments = tool_call.arguments.clone();
-                let id = tool_call.id.clone();
+            // registry.call(tool_call, cx)
+            Box::new(
+                move |tool_call: &ToolFunctionCall, cx: &mut WindowContext| {
+                    let name = tool_call.name.clone();
+                    let arguments = tool_call.arguments.clone();
+                    let id = tool_call.id.clone();
 
-                let Ok(input) = serde_json::from_str::<T::Input>(arguments.as_str()) else {
-                    return Task::ready(ToolFunctionCall {
-                        id,
-                        name: name.clone(),
-                        arguments,
-                        result: Some(ToolFunctionCallResult::ParsingFailed),
-                    });
-                };
-
-                let result = tool.execute(&input, cx);
-
-                cx.spawn(move |_cx| async move {
-                    match result.await {
-                        Ok(result) => {
-                            let result: T::Output = result;
-                            ToolFunctionCall {
-                                id,
-                                name: name.clone(),
-                                arguments,
-                                result: Some(ToolFunctionCallResult::Finished {
-                                    input: Box::new(input),
-                                    output: Box::new(result),
-                                    render_fn: render::<T>,
-                                    format_fn: format::<T>,
-                                }),
-                            }
-                        }
-                        Err(_error) => ToolFunctionCall {
+                    let Ok(input) = serde_json::from_str::<T::Input>(arguments.as_str()) else {
+                        return Task::ready(Ok(ToolFunctionCall {
                             id,
                             name: name.clone(),
                             arguments,
-                            result: Some(ToolFunctionCallResult::ExecutionFailed {
-                                input: Box::new(input),
+                            result: Some(ToolFunctionCallResult::ParsingFailed),
+                        }));
+                    };
+
+                    let result = tool.execute(&input, cx);
+
+                    cx.spawn(move |mut cx| async move {
+                        let result: Result<T::Output> = result.await;
+                        let for_model = T::format(&input, &result);
+                        let view = cx.update(|cx| T::output_view(id.clone(), input, result, cx))?;
+
+                        Ok(ToolFunctionCall {
+                            id,
+                            name: name.clone(),
+                            arguments,
+                            result: Some(ToolFunctionCallResult::Finished {
+                                view: view.into(),
+                                for_model,
                             }),
-                        },
-                    }
-                })
-            }),
+                        })
+                    })
+                },
+            ),
         );
 
         if previous.is_some() {
@@ -104,7 +86,12 @@ impl ToolRegistry {
         Ok(())
     }
 
-    pub fn call(&self, tool_call: &ToolFunctionCall, cx: &AppContext) -> Task<ToolFunctionCall> {
+    /// Task yields an error if the window for the given WindowContext is closed before the task completes.
+    pub fn call(
+        &self,
+        tool_call: &ToolFunctionCall,
+        cx: &mut WindowContext,
+    ) -> Task<Result<ToolFunctionCall>> {
         let name = tool_call.name.clone();
         let arguments = tool_call.arguments.clone();
         let id = tool_call.id.clone();
@@ -113,27 +100,29 @@ impl ToolRegistry {
             Some(tool) => tool,
             None => {
                 let name = name.clone();
-                return Task::ready(ToolFunctionCall {
+                return Task::ready(Ok(ToolFunctionCall {
                     id,
                     name: name.clone(),
                     arguments,
                     result: Some(ToolFunctionCallResult::NoSuchTool),
-                });
+                }));
             }
         };
 
         tool(tool_call, cx)
     }
+
+    pub fn status_views(&self) -> &[AnyView] {
+        &self.status_views
+    }
 }
 
 #[cfg(test)]
 mod test {
-
     use super::*;
-
+    use gpui::{div, prelude::*, Render, TestAppContext};
+    use gpui::{EmptyView, View};
     use schemars::schema_for;
-
-    use gpui::{div, AnyElement, Element, ParentElement, TestAppContext, WindowContext};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
@@ -155,9 +144,20 @@ mod test {
         unit: String,
     }
 
+    struct WeatherView {
+        result: WeatherResult,
+    }
+
+    impl Render for WeatherView {
+        fn render(&mut self, _cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+            div().child(format!("temperature: {}", self.result.temperature))
+        }
+    }
+
     impl LanguageModelTool for WeatherTool {
         type Input = WeatherQuery;
         type Output = WeatherResult;
+        type View = WeatherView;
 
         fn name(&self) -> String {
             "get_current_weather".to_string()
@@ -167,7 +167,11 @@ mod test {
             "Fetches the current weather for a given location.".to_string()
         }
 
-        fn execute(&self, input: &WeatherQuery, _cx: &AppContext) -> Task<Result<Self::Output>> {
+        fn execute(
+            &self,
+            input: &Self::Input,
+            _cx: &mut WindowContext,
+        ) -> Task<Result<Self::Output>> {
             let _location = input.location.clone();
             let _unit = input.unit.clone();
 
@@ -176,71 +180,27 @@ mod test {
             Task::ready(Ok(weather))
         }
 
-        fn render(
-            _tool_call_id: &str,
-            _input: &Self::Input,
-            output: &Self::Output,
-            _cx: &mut WindowContext,
-        ) -> AnyElement {
-            div()
-                .child(format!(
-                    "The current temperature in {} is {} {}",
-                    output.location, output.temperature, output.unit
-                ))
-                .into_any()
-        }
-
-        fn format(_input: &Self::Input, output: &Self::Output) -> String {
-            format!(
-                "The current temperature in {} is {} {}",
-                output.location, output.temperature, output.unit
-            )
-        }
-    }
-
-    #[gpui::test]
-    async fn test_function_registry(cx: &mut TestAppContext) {
-        cx.background_executor.run_until_parked();
-
-        let mut registry = ToolRegistry::new();
-
-        let tool = WeatherTool {
-            current_weather: WeatherResult {
-                location: "San Francisco".to_string(),
-                temperature: 21.0,
-                unit: "Celsius".to_string(),
-            },
-        };
-
-        registry.register(tool).unwrap();
-
-        let _result = cx
-            .update(|cx| {
-                registry.call(
-                    &ToolFunctionCall {
-                        name: "get_current_weather".to_string(),
-                        arguments: r#"{ "location": "San Francisco", "unit": "Celsius" }"#
-                            .to_string(),
-                        id: "test-123".to_string(),
-                        result: None,
-                    },
-                    cx,
-                )
+        fn output_view(
+            _tool_call_id: String,
+            _input: Self::Input,
+            result: Result<Self::Output>,
+            cx: &mut WindowContext,
+        ) -> View<Self::View> {
+            cx.new_view(|_cx| {
+                let result = result.unwrap();
+                WeatherView { result }
             })
-            .await;
+        }
 
-        // assert!(result.is_ok());
-        // let result = result.unwrap();
-
-        // let expected = r#"{"location":"San Francisco","temperature":21.0,"unit":"Celsius"}"#;
-
-        // todo!(): Put this back in after the interface is stabilized
-        // assert_eq!(result, expected);
+        fn format(_: &Self::Input, output: &Result<Self::Output>) -> String {
+            serde_json::to_string(&output.as_ref().unwrap()).unwrap()
+        }
     }
 
     #[gpui::test]
     async fn test_openai_weather_example(cx: &mut TestAppContext) {
         cx.background_executor.run_until_parked();
+        let (_, cx) = cx.add_window_view(|_cx| EmptyView);
 
         let tool = WeatherTool {
             current_weather: WeatherResult {
