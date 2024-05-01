@@ -1,4 +1,9 @@
-use crate::{motion::Motion, object::Object, state::Mode, Vim};
+use crate::{
+    motion::{self, Motion},
+    object::Object,
+    state::Mode,
+    Vim,
+};
 use editor::{movement, scroll::Autoscroll, Bias};
 use gpui::WindowContext;
 use language::BracketPair;
@@ -23,6 +28,7 @@ impl<'de> Deserialize<'de> for SurroundsType {
 pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowContext) {
     Vim::update(cx, |vim, cx| {
         vim.stop_recording();
+        let count = vim.take_count(cx);
         vim.update_active_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
@@ -52,22 +58,26 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                                 .range(
                                     &display_map,
                                     selection.clone(),
-                                    Some(1),
+                                    count,
                                     true,
                                     &text_layout_details,
                                 )
                                 .map(|mut range| {
-                                    // The Motion::CurrentLine operation will contain the newline of the current line,
-                                    // so we need to deal with this edge case
+                                    // The Motion::CurrentLine operation will contain the newline of the current line and leading/trailing whitespace
                                     if let Motion::CurrentLine = motion {
-                                        let offset = range.end.to_offset(&display_map, Bias::Left);
-                                        if let Some((last_ch, _)) =
-                                            display_map.reverse_buffer_chars_at(offset).next()
-                                        {
-                                            if last_ch == '\n' {
-                                                range.end = movement::left(&display_map, range.end);
-                                            }
-                                        }
+                                        range.start = motion::first_non_whitespace(
+                                            &display_map,
+                                            false,
+                                            range.start,
+                                        );
+                                        range.end = movement::saturating_right(
+                                            &display_map,
+                                            motion::last_non_whitespace(
+                                                &display_map,
+                                                movement::left(&display_map, range.end),
+                                                1,
+                                            ),
+                                        );
                                     }
                                     range
                                 });
@@ -624,6 +634,30 @@ mod test {
             indoc! {"
             ˇ{ The quick brown }
             fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+                The quˇick brown•
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["y", "s", "s", "{"]);
+        cx.assert_state(
+            indoc! {"
+                ˇ{ The quick brown }•
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes(["2", "y", "s", "s", ")"]);
+        cx.assert_state(
+            indoc! {"
+                ˇ({ The quick brown }•
+            fox jumps over)
             the lazy dog."},
             Mode::Normal,
         );
