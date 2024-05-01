@@ -99,7 +99,7 @@ use project::{
     CodeAction, Completion, FormatTrigger, Item, Location, Project, ProjectPath, ProjectTransaction,
 };
 use rand::prelude::*;
-use rpc::proto::*;
+use rpc::{proto::*, ErrorExt};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
@@ -131,9 +131,11 @@ use ui::{
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
-    item::ItemHandle, notifications::NotificationId, searchable::SearchEvent, ItemNavHistory,
-    OpenInTerminal, OpenTerminal, SplitDirection, TabBarPlacement, TabBarSettings, Toast, ViewId,
-    Workspace, WorkspaceId,
+    item::{ItemHandle, PreviewTabsSettings},
+    notifications::{DetachAndPromptErr, NotificationId},
+    searchable::SearchEvent,
+    ItemNavHistory, OpenInTerminal, OpenTerminal, SplitDirection, TabBarPlacement, TabBarSettings,
+    Toast, ViewId, Workspace, WorkspaceId,
 };
 
 use crate::hover_links::find_url;
@@ -276,6 +278,8 @@ pub fn init(cx: &mut AppContext) {
         }
     });
 }
+
+pub struct SearchWithinRange;
 
 trait InvalidationRegion {
     fn ranges(&self) -> &[Range<Anchor>];
@@ -762,15 +766,20 @@ impl ContextMenu {
         max_height: Pixels,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, AnyElement) {
+    ) -> (ContextMenuOrigin, AnyElement) {
         match self {
             ContextMenu::Completions(menu) => (
-                cursor_position,
+                ContextMenuOrigin::EditorPoint(cursor_position),
                 menu.render(style, max_height, workspace, cx),
             ),
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, max_height, cx),
         }
     }
+}
+
+enum ContextMenuOrigin {
+    EditorPoint(DisplayPoint),
+    GutterIndicator(u32),
 }
 
 #[derive(Clone)]
@@ -1206,11 +1215,11 @@ impl CodeActionsMenu {
 
     fn render(
         &self,
-        mut cursor_position: DisplayPoint,
+        cursor_position: DisplayPoint,
         _style: &EditorStyle,
         max_height: Pixels,
         cx: &mut ViewContext<Editor>,
-    ) -> (DisplayPoint, AnyElement) {
+    ) -> (ContextMenuOrigin, AnyElement) {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
 
@@ -1275,10 +1284,11 @@ impl CodeActionsMenu {
         )
         .into_any_element();
 
-        if self.deployed_from_indicator {
-            *cursor_position.column_mut() = 0;
-        }
-
+        let cursor_position = if self.deployed_from_indicator {
+            ContextMenuOrigin::GutterIndicator(cursor_position.row())
+        } else {
+            ContextMenuOrigin::EditorPoint(cursor_position)
+        };
         (cursor_position, element)
     }
 }
@@ -1603,17 +1613,27 @@ impl Editor {
         cx: &mut ViewContext<Workspace>,
     ) {
         let project = workspace.project().clone();
-        if project.read(cx).is_remote() {
-            cx.propagate();
-        } else if let Some(buffer) = project
-            .update(cx, |project, cx| project.create_buffer("", None, cx))
-            .log_err()
-        {
-            workspace.add_item_to_active_pane(
-                Box::new(cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
-                cx,
-            );
-        }
+        let create = project.update(cx, |project, cx| project.create_buffer(cx));
+
+        cx.spawn(|workspace, mut cx| async move {
+            let buffer = create.await?;
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(
+                    Box::new(
+                        cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                    ),
+                    None,
+                    cx,
+                )
+            })
+        })
+        .detach_and_prompt_err("Failed to create buffer", cx, |e, _| match e.error_code() {
+            ErrorCode::RemoteUpgradeRequired => Some(format!(
+                "The remote instance of Zed does not support this yet. It must be upgraded to {}",
+                e.error_tag("required").unwrap_or("the latest version")
+            )),
+            _ => None,
+        });
     }
 
     pub fn new_file_in_direction(
@@ -1622,18 +1642,29 @@ impl Editor {
         cx: &mut ViewContext<Workspace>,
     ) {
         let project = workspace.project().clone();
-        if project.read(cx).is_remote() {
-            cx.propagate();
-        } else if let Some(buffer) = project
-            .update(cx, |project, cx| project.create_buffer("", None, cx))
-            .log_err()
-        {
-            workspace.split_item(
-                action.0,
-                Box::new(cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx))),
-                cx,
-            );
-        }
+        let create = project.update(cx, |project, cx| project.create_buffer(cx));
+        let direction = action.0;
+
+        cx.spawn(|workspace, mut cx| async move {
+            let buffer = create.await?;
+            workspace.update(&mut cx, move |workspace, cx| {
+                workspace.split_item(
+                    direction,
+                    Box::new(
+                        cx.new_view(|cx| Editor::for_buffer(buffer, Some(project.clone()), cx)),
+                    ),
+                    cx,
+                )
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_prompt_err("Failed to create buffer", cx, |e, _| match e.error_code() {
+            ErrorCode::RemoteUpgradeRequired => Some(format!(
+                "The remote instance of Zed does not support this yet. It must be upgraded to {}",
+                e.error_tag("required").unwrap_or("the latest version")
+            )),
+            _ => None,
+        });
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
@@ -3782,7 +3813,7 @@ impl Editor {
             let project = workspace.project().clone();
             let editor =
                 cx.new_view(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), cx));
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), cx);
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
                     &ranges_to_highlight,
@@ -4245,13 +4276,13 @@ impl Editor {
             .map_or(false, |menu| menu.visible())
     }
 
-    pub fn render_context_menu(
+    fn render_context_menu(
         &self,
         cursor_position: DisplayPoint,
         style: &EditorStyle,
         max_height: Pixels,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<(DisplayPoint, AnyElement)> {
+    ) -> Option<(ContextMenuOrigin, AnyElement)> {
         self.context_menu.read().as_ref().map(|menu| {
             menu.render(
                 cursor_position,
@@ -7527,13 +7558,14 @@ impl Editor {
         } else {
             selection.head()
         };
-
+        let snapshot = self.snapshot(cx);
         loop {
             let mut diagnostics = if direction == Direction::Prev {
                 buffer.diagnostics_in_range::<_, usize>(0..search_start, true)
             } else {
                 buffer.diagnostics_in_range::<_, usize>(search_start..buffer.len(), false)
-            };
+            }
+            .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start));
             let group = diagnostics.find_map(|entry| {
                 if entry.diagnostic.is_primary
                     && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
@@ -8103,14 +8135,23 @@ impl Editor {
                 cx,
             );
         });
+
         let item = Box::new(editor);
+        let item_id = item.item_id();
+
         if split {
             workspace.split_item(SplitDirection::Right, item.clone(), cx);
         } else {
-            workspace.add_item_to_active_pane(item.clone(), cx);
+            let destination_index = workspace.active_pane().update(cx, |pane, cx| {
+                if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
+                    pane.close_current_preview_item(cx)
+                } else {
+                    None
+                }
+            });
+            workspace.add_item_to_active_pane(item.clone(), destination_index, cx);
         }
-        workspace.active_pane().clone().update(cx, |pane, cx| {
-            let item_id = item.item_id();
+        workspace.active_pane().update(cx, |pane, cx| {
             pane.set_preview_item_id(Some(item_id), cx);
         });
     }
@@ -8484,6 +8525,7 @@ impl Editor {
 
     fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) -> bool {
         self.dismiss_diagnostics(cx);
+        let snapshot = self.snapshot(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
 
@@ -8492,7 +8534,13 @@ impl Editor {
             let mut group_end = Point::zero();
             let diagnostic_group = buffer
                 .diagnostic_group::<Point>(group_id)
-                .map(|entry| {
+                .filter_map(|entry| {
+                    if snapshot.is_line_folded(entry.range.start.row)
+                        && (entry.range.start.row == entry.range.end.row
+                            || snapshot.is_line_folded(entry.range.end.row))
+                    {
+                        return None;
+                    }
                     if entry.range.end > group_end {
                         group_end = entry.range.end;
                     }
@@ -8500,7 +8548,7 @@ impl Editor {
                         primary_range = Some(entry.range.clone());
                         primary_message = Some(entry.diagnostic.message.clone());
                     }
-                    entry
+                    Some(entry)
                 })
                 .collect::<Vec<_>>();
             let primary_range = primary_range?;
@@ -8729,6 +8777,18 @@ impl Editor {
             }
 
             cx.notify();
+
+            if let Some(active_diagnostics) = self.active_diagnostics.take() {
+                // Clear diagnostics block when folding a range that contains it.
+                let snapshot = self.snapshot(cx);
+                if snapshot.intersects_fold(active_diagnostics.primary_range.start) {
+                    drop(snapshot);
+                    self.active_diagnostics = Some(active_diagnostics);
+                    self.dismiss_diagnostics(cx);
+                } else {
+                    self.active_diagnostics = Some(active_diagnostics);
+                }
+            }
         }
     }
 
@@ -9233,6 +9293,18 @@ impl Editor {
                     unique_rows
                 },
             )
+    }
+
+    pub fn set_search_within_ranges(
+        &mut self,
+        ranges: &[Range<Anchor>],
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.highlight_background::<SearchWithinRange>(
+            ranges,
+            |colors| colors.editor_document_highlight_read_background,
+            cx,
+        )
     }
 
     pub fn highlight_background<T: 'static>(

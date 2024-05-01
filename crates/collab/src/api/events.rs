@@ -18,11 +18,15 @@ use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, CallEvent, CopilotEvent, CpuEvent, EditEvent,
     EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent, SettingEvent,
 };
+use uuid::Uuid;
+
+static CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
 
 pub fn router() -> Router {
     Router::new()
         .route("/telemetry/events", post(post_events))
         .route("/telemetry/crashes", post(post_crash))
+        .route("/telemetry/hangs", post(post_hang))
 }
 
 pub struct ZedChecksumHeader(Vec<u8>);
@@ -85,8 +89,6 @@ pub async fn post_crash(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<()> {
-    static CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
-
     let report = IpsFile::parse(&body)?;
     let version_threshold = SemanticVersion::new(0, 123, 0);
 
@@ -222,6 +224,107 @@ pub async fn post_crash(
     Ok(())
 }
 
+pub async fn post_hang(
+    Extension(app): Extension<Arc<AppState>>,
+    TypedHeader(ZedChecksumHeader(checksum)): TypedHeader<ZedChecksumHeader>,
+    body: Bytes,
+) -> Result<()> {
+    let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
+        return Err(Error::Http(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "events not enabled".into(),
+        ))?;
+    };
+
+    if checksum != expected {
+        return Err(Error::Http(
+            StatusCode::BAD_REQUEST,
+            "invalid checksum".into(),
+        ))?;
+    }
+
+    let incident_id = Uuid::new_v4().to_string();
+
+    // dump JSON into S3 so we can get frame offsets if we need to.
+    if let Some(blob_store_client) = app.blob_store_client.as_ref() {
+        blob_store_client
+            .put_object()
+            .bucket(CRASH_REPORTS_BUCKET)
+            .key(incident_id.clone() + ".hang.json")
+            .acl(aws_sdk_s3::types::ObjectCannedAcl::PublicRead)
+            .body(ByteStream::from(body.to_vec()))
+            .send()
+            .await
+            .map_err(|e| log::error!("Failed to upload crash: {}", e))
+            .ok();
+    }
+
+    let report: telemetry_events::HangReport = serde_json::from_slice(&body).map_err(|err| {
+        log::error!("can't parse report json: {err}");
+        Error::Internal(anyhow!(err))
+    })?;
+
+    let mut backtrace = "Possible hang detected on main threadL".to_string();
+    let unknown = "<unknown>".to_string();
+    for frame in report.backtrace.iter() {
+        backtrace.push_str(&format!("\n{}", frame.symbols.first().unwrap_or(&unknown)));
+    }
+
+    tracing::error!(
+        service = "client",
+        version = %report.app_version.unwrap_or_default().to_string(),
+        os_name = %report.os_name,
+        os_version = report.os_version.unwrap_or_default().to_string(),
+        incident_id = %incident_id,
+        installation_id = %report.installation_id.unwrap_or_default(),
+        backtrace = %backtrace,
+        "hang report");
+
+    if let Some(slack_panics_webhook) = app.config.slack_panics_webhook.clone() {
+        let payload = slack::WebhookBody::new(|w| {
+            w.add_section(|s| s.text(slack::Text::markdown("Possible Hang".to_string())))
+                .add_section(|s| {
+                    s.add_field(slack::Text::markdown(format!(
+                        "*Version:*\n {} ",
+                        report.app_version.unwrap_or_default()
+                    )))
+                    .add_field({
+                        let hostname = app.config.blob_store_url.clone().unwrap_or_default();
+                        let hostname = hostname.strip_prefix("https://").unwrap_or_else(|| {
+                            hostname.strip_prefix("http://").unwrap_or_default()
+                        });
+
+                        slack::Text::markdown(format!(
+                            "*Incident:*\n<https://{}.{}/{}.hang.json|{}…>",
+                            CRASH_REPORTS_BUCKET,
+                            hostname,
+                            incident_id,
+                            incident_id.chars().take(8).collect::<String>(),
+                        ))
+                    })
+                })
+                .add_rich_text(|r| r.add_preformatted(|p| p.add_text(backtrace)))
+        });
+        let payload_json = serde_json::to_string(&payload).map_err(|err| {
+            log::error!("Failed to serialize payload to JSON: {err}");
+            Error::Internal(anyhow!(err))
+        })?;
+
+        reqwest::Client::new()
+            .post(slack_panics_webhook)
+            .header("Content-Type", "application/json")
+            .body(payload_json)
+            .send()
+            .await
+            .map_err(|err| {
+                log::error!("Failed to send payload to Slack: {err}");
+                Error::Internal(anyhow!(err))
+            })?;
+    }
+
+    Ok(())
+}
+
 pub async fn post_events(
     Extension(app): Extension<Arc<AppState>>,
     TypedHeader(ZedChecksumHeader(checksum)): TypedHeader<ZedChecksumHeader>,
@@ -235,19 +338,14 @@ pub async fn post_events(
         ))?
     };
 
-    let Some(checksum_seed) = app.config.zed_client_checksum_seed.as_ref() else {
+    let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
         return Err(Error::Http(
             StatusCode::INTERNAL_SERVER_ERROR,
             "events not enabled".into(),
         ))?;
     };
 
-    let mut summer = Sha256::new();
-    summer.update(checksum_seed);
-    summer.update(&body);
-    summer.update(checksum_seed);
-
-    if &checksum != &summer.finalize()[..] {
+    if checksum != expected {
         return Err(Error::Http(
             StatusCode::BAD_REQUEST,
             "invalid checksum".into(),
@@ -1060,4 +1158,16 @@ impl ActionEventRow {
             action: event.action,
         }
     }
+}
+
+pub fn calculate_json_checksum(app: Arc<AppState>, json: &impl AsRef<[u8]>) -> Option<Vec<u8>> {
+    let Some(checksum_seed) = app.config.zed_client_checksum_seed.as_ref() else {
+        return None;
+    };
+
+    let mut summer = Sha256::new();
+    summer.update(checksum_seed);
+    summer.update(&json);
+    summer.update(checksum_seed);
+    Some(summer.finalize().into_iter().collect())
 }

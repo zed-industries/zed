@@ -1,6 +1,9 @@
 use refineable::Refineable as _;
 
-use crate::{Bounds, Element, IntoElement, Pixels, Style, StyleRefinement, Styled, WindowContext};
+use crate::{
+    Bounds, Element, ElementId, GlobalElementId, IntoElement, Pixels, Style, StyleRefinement,
+    Styled, WindowContext,
+};
 
 /// Construct a canvas element with the given paint callback.
 /// Useful for adding short term custom drawing to a view.
@@ -35,8 +38,13 @@ impl<T: 'static> Element for Canvas<T> {
     type RequestLayoutState = Style;
     type PrepaintState = Option<T>;
 
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
     fn request_layout(
         &mut self,
+        _id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
@@ -47,6 +55,7 @@ impl<T: 'static> Element for Canvas<T> {
 
     fn prepaint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Style,
         cx: &mut WindowContext,
@@ -56,6 +65,7 @@ impl<T: 'static> Element for Canvas<T> {
 
     fn paint(
         &mut self,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         style: &mut Style,
         prepaint: &mut Self::PrepaintState,

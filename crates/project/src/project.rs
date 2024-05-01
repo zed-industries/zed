@@ -665,6 +665,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_model_request_handler(Self::handle_open_buffer_by_id);
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_request_handler(Self::handle_save_buffer);
         client.add_model_message_handler(Self::handle_update_diff_base);
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
@@ -1513,6 +1514,7 @@ impl Project {
     pub fn delete_entry(
         &mut self,
         entry_id: ProjectEntryId,
+        trash: bool,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
@@ -1521,7 +1523,10 @@ impl Project {
 
         if self.is_local() {
             worktree.update(cx, |worktree, cx| {
-                worktree.as_local_mut().unwrap().delete_entry(entry_id, cx)
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .delete_entry(entry_id, trash, cx)
             })
         } else {
             let client = self.client.clone();
@@ -1531,6 +1536,7 @@ impl Project {
                     .request(proto::DeleteProjectEntry {
                         project_id,
                         entry_id: entry_id.to_proto(),
+                        use_trash: trash,
                     })
                     .await?;
                 worktree
@@ -1950,21 +1956,41 @@ impl Project {
         !self.is_local()
     }
 
-    pub fn create_buffer(
+    pub fn create_buffer(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<Model<Buffer>>> {
+        if self.is_remote() {
+            let create = self.client.request(proto::OpenNewBuffer {
+                project_id: self.remote_id().unwrap(),
+            });
+            cx.spawn(|this, mut cx| async move {
+                let response = create.await?;
+                let buffer_id = BufferId::new(response.buffer_id)?;
+
+                this.update(&mut cx, |this, cx| {
+                    this.wait_for_remote_buffer(buffer_id, cx)
+                })?
+                .await
+            })
+        } else {
+            Task::ready(Ok(self.create_local_buffer("", None, cx)))
+        }
+    }
+
+    pub fn create_local_buffer(
         &mut self,
         text: &str,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Model<Buffer>> {
+    ) -> Model<Buffer> {
         if self.is_remote() {
-            return Err(anyhow!("creating buffers as a guest is not supported yet"));
+            panic!("called create_local_buffer on a remote project")
         }
         let buffer = cx.new_model(|cx| {
             Buffer::local(text, cx)
                 .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
         });
-        self.register_buffer(&buffer, cx)?;
-        Ok(buffer)
+        self.register_buffer(&buffer, cx)
+            .expect("creating local buffers always succeeds");
+        buffer
     }
 
     pub fn open_path(
@@ -5718,13 +5744,9 @@ impl Project {
             return;
         };
 
-        if response.text.is_empty() {
-            let mut completions = completions.write();
-            let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
-        }
-
-        let documentation = if response.is_markdown {
+        let documentation = if response.text.is_empty() {
+            Documentation::Undocumented
+        } else if response.is_markdown {
             Documentation::MultiLineMarkdown(
                 markdown::parse_markdown(&response.text, &language_registry, None).await,
             )
@@ -8341,6 +8363,7 @@ impl Project {
         mut cx: AsyncAppContext,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let trash = envelope.payload.use_trash;
 
         this.update(&mut cx, |_, cx| cx.emit(Event::DeletedEntry(entry_id)))?;
 
@@ -8354,7 +8377,7 @@ impl Project {
                 worktree
                     .as_local_mut()
                     .unwrap()
-                    .delete_entry(entry_id, cx)
+                    .delete_entry(entry_id, trash, cx)
                     .ok_or_else(|| anyhow!("invalid entry"))
             })??
             .await?;
@@ -8523,11 +8546,13 @@ impl Project {
                     OpenBuffer::Weak(_) => {}
                 },
                 hash_map::Entry::Vacant(e) => {
-                    assert!(
-                        is_remote,
-                        "received buffer update from {:?}",
-                        envelope.original_sender_id
-                    );
+                    if !is_remote {
+                        debug_panic!(
+                            "received buffer update from {:?}",
+                            envelope.original_sender_id
+                        );
+                        return Err(anyhow!("received buffer update for non-remote project"));
+                    }
                     e.insert(OpenBuffer::Operations(ops));
                 }
             }
@@ -9408,6 +9433,18 @@ impl Project {
         })?;
 
         let buffer = open_buffer.await?;
+        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
+    }
+
+    async fn handle_open_new_buffer(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::OpenNewBuffer>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        let buffer = this.update(&mut cx, |this, cx| this.create_local_buffer("", None, cx))?;
+        let peer_id = envelope.original_sender_id()?;
+
         Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
     }
 

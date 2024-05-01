@@ -8,6 +8,10 @@ use std::process::Command;
 use std::os::windows::process::CommandExt;
 
 pub fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<HashMap<Oid, String>> {
+    if shas.is_empty() {
+        return Ok(HashMap::default());
+    }
+
     const MARKER: &'static str = "<MARKER>";
 
     let mut command = Command::new("git");

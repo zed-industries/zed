@@ -28,6 +28,7 @@ use futures::channel::oneshot;
 use parking_lot::Mutex;
 use time::UtcOffset;
 use wayland_client::Connection;
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::platform::linux::wayland::WaylandClient;
@@ -499,6 +500,58 @@ pub(super) unsafe fn read_fd(mut fd: FileDescriptor) -> Result<String> {
     // lines, and that is super annoying.
     let result = buffer.replace("\r\n", "\n");
     Ok(result)
+}
+
+impl CursorStyle {
+    pub(super) fn to_shape(&self) -> Shape {
+        match self {
+            CursorStyle::Arrow => Shape::Default,
+            CursorStyle::IBeam => Shape::Text,
+            CursorStyle::Crosshair => Shape::Crosshair,
+            CursorStyle::ClosedHand => Shape::Grabbing,
+            CursorStyle::OpenHand => Shape::Grab,
+            CursorStyle::PointingHand => Shape::Pointer,
+            CursorStyle::ResizeLeft => Shape::WResize,
+            CursorStyle::ResizeRight => Shape::EResize,
+            CursorStyle::ResizeLeftRight => Shape::EwResize,
+            CursorStyle::ResizeUp => Shape::NResize,
+            CursorStyle::ResizeDown => Shape::SResize,
+            CursorStyle::ResizeUpDown => Shape::NsResize,
+            CursorStyle::DisappearingItem => Shape::Grabbing, // todo(linux) - couldn't find equivalent icon in linux
+            CursorStyle::IBeamCursorForVerticalLayout => Shape::VerticalText,
+            CursorStyle::OperationNotAllowed => Shape::NotAllowed,
+            CursorStyle::DragLink => Shape::Alias,
+            CursorStyle::DragCopy => Shape::Copy,
+            CursorStyle::ContextualMenu => Shape::ContextMenu,
+        }
+    }
+
+    pub(super) fn to_icon_name(&self) -> String {
+        // Based on cursor names from https://gitlab.gnome.org/GNOME/adwaita-icon-theme (GNOME)
+        // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
+        // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
+        match self {
+            CursorStyle::Arrow => "arrow",
+            CursorStyle::IBeam => "text",
+            CursorStyle::Crosshair => "crosshair",
+            CursorStyle::ClosedHand => "grabbing",
+            CursorStyle::OpenHand => "grab",
+            CursorStyle::PointingHand => "pointer",
+            CursorStyle::ResizeLeft => "w-resize",
+            CursorStyle::ResizeRight => "e-resize",
+            CursorStyle::ResizeLeftRight => "ew-resize",
+            CursorStyle::ResizeUp => "n-resize",
+            CursorStyle::ResizeDown => "s-resize",
+            CursorStyle::ResizeUpDown => "ns-resize",
+            CursorStyle::DisappearingItem => "grabbing", // todo(linux) - couldn't find equivalent icon in linux
+            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
+            CursorStyle::OperationNotAllowed => "not-allowed",
+            CursorStyle::DragLink => "alias",
+            CursorStyle::DragCopy => "copy",
+            CursorStyle::ContextualMenu => "context-menu",
+        }
+        .to_string()
+    }
 }
 
 impl Keystroke {

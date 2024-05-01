@@ -190,6 +190,8 @@ impl PlatformWindow for TestWindow {
         self.0.lock().title = Some(title.to_owned());
     }
 
+    fn set_app_id(&mut self, _app_id: &str) {}
+
     fn set_background_appearance(&mut self, _background: WindowBackgroundAppearance) {
         unimplemented!()
     }
