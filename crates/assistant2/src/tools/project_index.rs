@@ -276,7 +276,13 @@ impl Render for ProjectIndexStatusView {
         let indicator = match status {
             Status::Idle => Some(Indicator::dot().color(Color::Success)),
             Status::Scanning { .. } => Some(Indicator::dot().color(Color::Warning)),
-            _ => None,
+            Status::Loading => Some(Indicator::icon(
+                Icon::new(IconName::ArrowCircle).with_animation(
+                    "arrow-circle",
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                ),
+            )),
         };
 
         ButtonLike::new("project-index")
