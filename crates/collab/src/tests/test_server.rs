@@ -271,6 +271,12 @@ impl TestServer {
             node_runtime: FakeNodeRuntime::new(),
         });
 
+        let os_keymap = if cfg!(target_os = "linux") {
+            "keymaps/default-linux.json"
+        } else {
+            "keymaps/default-macos.json"
+        };
+
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
             Project::init(&client, cx);
@@ -285,7 +291,7 @@ impl TestServer {
             file_finder::init(cx);
             menu::init();
             remote_projects::init(client.clone(), cx);
-            settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
+            settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
         });
 
         client

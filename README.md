@@ -23,8 +23,7 @@ brew install --cask zed
 Alternatively, to install the Preview release:
 
 ```sh
-brew tap homebrew/cask-versions
-brew install zed-preview
+brew install --cask zed@preview
 ```
 
 ## Developing Zed

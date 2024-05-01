@@ -109,6 +109,7 @@ pub struct Buffer {
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
     has_conflict: bool,
+    diff_base_version: usize,
 }
 
 /// An immutable, cheaply cloneable representation of a fixed
@@ -304,6 +305,8 @@ pub enum Event {
     Reloaded,
     /// The buffer's diff_base changed.
     DiffBaseChanged,
+    /// Buffer's excerpts for a certain diff base were recalculated.
+    DiffUpdated,
     /// The buffer's language was changed.
     LanguageChanged,
     /// The buffer's syntax trees were updated.
@@ -643,6 +646,7 @@ impl Buffer {
             was_dirty_before_starting_transaction: None,
             text: buffer,
             diff_base,
+            diff_base_version: 0,
             git_diff: git::diff::BufferDiff::new(),
             file,
             capability,
@@ -872,6 +876,7 @@ impl Buffer {
     /// against the buffer text.
     pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
         self.diff_base = diff_base;
+        self.diff_base_version += 1;
         if let Some(recalc_task) = self.git_diff_recalc(cx) {
             cx.spawn(|buffer, mut cx| async move {
                 recalc_task.await;
@@ -883,6 +888,11 @@ impl Buffer {
             })
             .detach();
         }
+    }
+
+    /// Returns a number, unique per diff base set to the buffer.
+    pub fn diff_base_version(&self) -> usize {
+        self.diff_base_version
     }
 
     /// Recomputes the Git diff status.
@@ -898,9 +908,10 @@ impl Buffer {
 
         Some(cx.spawn(|this, mut cx| async move {
             let buffer_diff = diff.await;
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, cx| {
                 this.git_diff = buffer_diff;
                 this.git_diff_update_count += 1;
+                cx.emit(Event::DiffUpdated);
             })
             .ok();
         }))
