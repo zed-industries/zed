@@ -243,10 +243,10 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
 
-    /// EXPERIMENTAL: Expect many elements to be broken.
+    /// UNSTABLE: Expect many elements to be broken.
     ///
     // Controls the density of the UI.
-    #[serde(rename = "experimental.ui_density", default)]
+    #[serde(rename = "unstable.ui_density", default)]
     pub ui_density: Option<UiDensity>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
