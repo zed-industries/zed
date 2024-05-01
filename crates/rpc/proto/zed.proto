@@ -239,7 +239,9 @@ message Envelope {
         DeleteDevServer delete_dev_server = 195;
         OpenNewBuffer open_new_buffer = 196;
         DeleteDevServerProject delete_dev_server_project = 197;
-        GetSupermavenAPIKey get_supermaven_api_key = 198; // current max
+
+        GetSupermavenApiKey get_supermaven_api_key = 198;
+        GetSupermavenApiKeyResponse get_supermaven_api_key_response = 199; // current max
     }
 
     reserved 158 to 161;
@@ -2086,4 +2088,8 @@ message LspResponse {
     }
 }
 
-message GetSupermavenAPIKey {}
+message GetSupermavenApiKey {}
+
+message GetSupermavenApiKeyResponse {
+    string api_key = 1;
+}

@@ -154,6 +154,29 @@ impl SupermavenAdminApi {
 
         Ok(())
     }
+
+    pub async fn try_get_or_create_user(
+        &self,
+        request: CreateExternalUserRequest,
+    ) -> Result<CreateExternalUserResponse> {
+        let get_user_request = GetExternalUserRequest {
+            user_id: request.user_id.clone(),
+        };
+
+        match self.try_get_user(get_user_request).await? {
+            SupermavenUser::NotFound => {
+                let create_request = CreateExternalUserRequest {
+                    user_id: request.user_id.clone(),
+                    email: request.email.clone(),
+                };
+                let create_response = self.try_create_user(create_request).await?;
+                Ok(CreateExternalUserResponse {
+                    api_key: create_response.api_key,
+                })
+            }
+            SupermavenUser::Found { api_key, .. } => Ok(CreateExternalUserResponse { api_key }),
+        }
+    }
 }
 
 pub async fn latest_release(
