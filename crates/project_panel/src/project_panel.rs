@@ -905,7 +905,7 @@ impl ProjectPanel {
             let answer = (!skip_prompt).then(|| {
                 cx.prompt(
                     PromptLevel::Destructive,
-                    &format!("{operation:?} {file_name:?}?",),
+                    &format!("{operation} {file_name:?}?",),
                     None,
                     &["Delete", "Cancel"],
                 )
