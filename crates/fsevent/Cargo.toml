@@ -17,6 +17,7 @@ bitflags.workspace = true
 parking_lot.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+core-foundation.workspace = true
 fsevent-sys = "3.0.2"
 
 [dev-dependencies]
