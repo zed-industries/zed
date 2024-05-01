@@ -118,7 +118,7 @@ impl RenderOnce for ChatMessageHeader {
                 h_flex()
                     .gap_3()
                     .map(|this| {
-                        let avatar_size = rems(20.0 / 16.0);
+                        let avatar_size = rems_from_px(20.);
                         if let Some(avatar_uri) = avatar_uri {
                             this.child(Avatar::new(avatar_uri).size(avatar_size))
                         } else {

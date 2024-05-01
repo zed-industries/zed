@@ -38,10 +38,10 @@ impl Composer {
 
 impl RenderOnce for Composer {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let mut player_avatar = div().size(rems(20.0 / 16.0)).into_any_element();
+        let mut player_avatar = div().size(rems_from_px(20.)).into_any_element();
         if let Some(player) = self.player.clone() {
             player_avatar = Avatar::new(player.avatar_uri.clone())
-                .size(rems(20.0 / 16.0))
+                .size(rems_from_px(20.))
                 .into_any_element();
         }
 
