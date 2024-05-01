@@ -522,6 +522,9 @@ impl X11Client {
                 }));
             }
             Event::LeaveNotify(event) => {
+                self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
+                self.0.borrow_mut().scroll_y = None;
+
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
                 let pressed_button = super::button_from_state(event.state);
