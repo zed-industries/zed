@@ -1,8 +1,6 @@
 mod messages;
-mod supermaven_button;
 mod supermaven_completion_provider;
 
-pub use supermaven_button::*;
 pub use supermaven_completion_provider::*;
 
 use anyhow::{Context as _, Result};
@@ -171,7 +169,7 @@ pub struct SupermavenAgent {
     outgoing_tx: mpsc::UnboundedSender<OutboundMessage>,
     _handle_outgoing_messages: Task<Result<()>>,
     _handle_incoming_messages: Task<Result<()>>,
-    account_status: AccountStatus,
+    pub account_status: AccountStatus,
     service_tier: Option<ServiceTier>,
 }
 

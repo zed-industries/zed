@@ -20,6 +20,7 @@ fs.workspace = true
 gpui.workspace = true
 language.workspace = true
 settings.workspace = true
+supermaven.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

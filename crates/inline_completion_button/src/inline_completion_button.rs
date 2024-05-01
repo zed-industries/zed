@@ -1,5 +1,5 @@
 use anyhow::Result;
-use copilot::{Copilot, CopilotCodeVerification, SignOut, Status};
+use copilot::{Copilot, CopilotCodeVerification, Status};
 use editor::{scroll::Autoscroll, Editor};
 use fs::Fs;
 use gpui::{
@@ -14,6 +14,7 @@ use language::{
 };
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
+use supermaven::{AccountStatus, Supermaven};
 use util::{paths, ResultExt};
 use workspace::{
     create_and_open_local_file,
@@ -40,84 +41,146 @@ pub struct InlineCompletionButton {
     fs: Arc<dyn Fs>,
 }
 
+enum SupermavenButtonStatus {
+    Ready,
+    Errored(String),
+    NeedsActivation(String),
+    Initializing,
+}
+
 impl Render for InlineCompletionButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let all_language_settings = all_language_settings(None, cx);
-        if all_language_settings.inline_completions.provider != InlineCompletionProvider::Copilot {
-            return div();
-        }
 
-        let Some(copilot) = Copilot::global(cx) else {
-            return div();
-        };
-        let status = copilot.read(cx).status();
+        match all_language_settings.inline_completions.provider {
+            InlineCompletionProvider::None => return div(),
 
-        let enabled = self
-            .editor_enabled
-            .unwrap_or_else(|| all_language_settings.inline_completions_enabled(None, None));
+            InlineCompletionProvider::Copilot => {
+                let Some(copilot) = Copilot::global(cx) else {
+                    return div();
+                };
+                let status = copilot.read(cx).status();
 
-        let icon = match status {
-            Status::Error(_) => IconName::CopilotError,
-            Status::Authorized => {
-                if enabled {
-                    IconName::Copilot
-                } else {
-                    IconName::CopilotDisabled
-                }
-            }
-            _ => IconName::CopilotInit,
-        };
+                let enabled = self.editor_enabled.unwrap_or_else(|| {
+                    all_language_settings.inline_completions_enabled(None, None)
+                });
 
-        if let Status::Error(e) = status {
-            return div().child(
-                IconButton::new("copilot-error", icon)
-                    .icon_size(IconSize::Small)
-                    .on_click(cx.listener(move |_, _, cx| {
-                        if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    workspace.show_toast(
-                                        Toast::new(
-                                            NotificationId::unique::<CopilotErrorToast>(),
-                                            format!("Copilot can't be started: {}", e),
-                                        )
-                                        .on_click(
-                                            "Reinstall Copilot",
-                                            |cx| {
-                                                if let Some(copilot) = Copilot::global(cx) {
-                                                    copilot
-                                                        .update(cx, |copilot, cx| {
-                                                            copilot.reinstall(cx)
-                                                        })
-                                                        .detach();
-                                                }
-                                            },
-                                        ),
-                                        cx,
-                                    );
-                                })
-                                .ok();
-                        }
-                    }))
-                    .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
-            );
-        }
-        let this = cx.view().clone();
-
-        div().child(
-            popover_menu("copilot")
-                .menu(move |cx| match status {
+                let icon = match status {
+                    Status::Error(_) => IconName::CopilotError,
                     Status::Authorized => {
-                        Some(this.update(cx, |this, cx| this.build_copilot_menu(cx)))
+                        if enabled {
+                            IconName::Copilot
+                        } else {
+                            IconName::CopilotDisabled
+                        }
                     }
-                    _ => Some(this.update(cx, |this, cx| this.build_copilot_start_menu(cx))),
-                })
-                .anchor(AnchorCorner::BottomRight)
-                .trigger(
-                    IconButton::new("copilot-icon", icon)
-                        .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
-                ),
-        )
+                    _ => IconName::CopilotInit,
+                };
+
+                if let Status::Error(e) = status {
+                    return div().child(
+                        IconButton::new("copilot-error", icon)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(move |_, _, cx| {
+                                if let Some(workspace) = cx.window_handle().downcast::<Workspace>()
+                                {
+                                    workspace
+                                        .update(cx, |workspace, cx| {
+                                            workspace.show_toast(
+                                                Toast::new(
+                                                    NotificationId::unique::<CopilotErrorToast>(),
+                                                    format!("Copilot can't be started: {}", e),
+                                                )
+                                                .on_click("Reinstall Copilot", |cx| {
+                                                    if let Some(copilot) = Copilot::global(cx) {
+                                                        copilot
+                                                            .update(cx, |copilot, cx| {
+                                                                copilot.reinstall(cx)
+                                                            })
+                                                            .detach();
+                                                    }
+                                                }),
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            }))
+                            .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
+                    );
+                }
+                let this = cx.view().clone();
+
+                div().child(
+                    popover_menu("copilot")
+                        .menu(move |cx| {
+                            Some(match status {
+                                Status::Authorized => {
+                                    this.update(cx, |this, cx| this.build_copilot_context_menu(cx))
+                                }
+                                _ => this.update(cx, |this, cx| this.build_copilot_start_menu(cx)),
+                            })
+                        })
+                        .anchor(AnchorCorner::BottomRight)
+                        .trigger(
+                            IconButton::new("copilot-icon", icon)
+                                .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
+                        ),
+                )
+            }
+
+            InlineCompletionProvider::Supermaven => {
+                let Some(supermaven) = Supermaven::global(cx) else {
+                    return div();
+                };
+
+                let supermaven = supermaven.read(cx);
+
+                let status = match supermaven {
+                    Supermaven::Starting => SupermavenButtonStatus::Initializing,
+                    Supermaven::FailedDownload { error } => {
+                        SupermavenButtonStatus::Errored(error.to_string())
+                    }
+                    Supermaven::Spawned(agent) => {
+                        let account_status = agent.account_status.clone();
+                        match account_status {
+                            AccountStatus::NeedsActivation { activate_url } => {
+                                SupermavenButtonStatus::NeedsActivation(activate_url.clone())
+                            }
+                            AccountStatus::Unknown => SupermavenButtonStatus::Initializing,
+                            AccountStatus::Ready => SupermavenButtonStatus::Ready,
+                        }
+                    }
+                };
+
+                let icon = status.to_icon();
+                let tooltip_text = status.to_tooltip();
+                let this = cx.view().clone();
+
+                return div().child(
+                    popover_menu("supermaven")
+                        .menu(move |cx| match &status {
+                            SupermavenButtonStatus::NeedsActivation(activate_url) => {
+                                Some(ContextMenu::build(cx, |menu, _| {
+                                    let activate_url = activate_url.clone();
+                                    menu.entry("Sign In", None, move |cx| {
+                                        cx.open_url(activate_url.as_str())
+                                    })
+                                }))
+                            }
+                            SupermavenButtonStatus::Ready => Some(
+                                this.update(cx, |this, cx| this.build_supermaven_context_menu(cx)),
+                            ),
+                            _ => None,
+                        })
+                        .anchor(AnchorCorner::BottomRight)
+                        .trigger(
+                            IconButton::new("supermaven-icon", icon)
+                                .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx)),
+                        ),
+                );
+            }
+        }
     }
 }
 
@@ -150,78 +213,89 @@ impl InlineCompletionButton {
         })
     }
 
-    pub fn build_copilot_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    pub fn build_language_settings_menu(
+        &self,
+        mut menu: ContextMenu,
+        cx: &mut WindowContext,
+    ) -> ContextMenu {
         let fs = self.fs.clone();
 
-        ContextMenu::build(cx, move |mut menu, cx| {
-            if let Some(language) = self.language.clone() {
-                let fs = fs.clone();
-                let language_enabled =
-                    language_settings::language_settings(Some(&language), None, cx)
-                        .show_inline_completions;
+        if let Some(language) = self.language.clone() {
+            let fs = fs.clone();
+            let language_enabled = language_settings::language_settings(Some(&language), None, cx)
+                .show_inline_completions;
 
-                menu = menu.entry(
-                    format!(
-                        "{} Inline Completions for {}",
-                        if language_enabled { "Hide" } else { "Show" },
-                        language.name()
-                    ),
-                    None,
-                    move |cx| {
-                        toggle_inline_completions_for_language(language.clone(), fs.clone(), cx)
-                    },
-                );
-            }
-
-            let settings = AllLanguageSettings::get_global(cx);
-
-            if let Some(file) = &self.file {
-                let path = file.path().clone();
-                let path_enabled = settings.inline_completions_enabled_for_path(&path);
-
-                menu = menu.entry(
-                    format!(
-                        "{} Inline Completions for This Path",
-                        if path_enabled { "Hide" } else { "Show" }
-                    ),
-                    None,
-                    move |cx| {
-                        if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
-                            if let Ok(workspace) = workspace.root_view(cx) {
-                                let workspace = workspace.downgrade();
-                                cx.spawn(|cx| {
-                                    configure_disabled_globs(
-                                        workspace,
-                                        path_enabled.then_some(path.clone()),
-                                        cx,
-                                    )
-                                })
-                                .detach_and_log_err(cx);
-                            }
-                        }
-                    },
-                );
-            }
-
-            let globally_enabled = settings.inline_completions_enabled(None, None);
-            menu.entry(
-                if globally_enabled {
-                    "Hide Inline Completions for All Files"
-                } else {
-                    "Show Inline Completions for All Files"
-                },
+            menu = menu.entry(
+                format!(
+                    "{} Inline Completions for {}",
+                    if language_enabled { "Hide" } else { "Show" },
+                    language.name()
+                ),
                 None,
-                move |cx| toggle_inline_completions_globally(fs.clone(), cx),
-            )
-            .separator()
-            .link(
-                "Copilot Settings",
-                OpenBrowser {
-                    url: COPILOT_SETTINGS_URL.to_string(),
-                }
-                .boxed_clone(),
-            )
-            .action("Sign Out", SignOut.boxed_clone())
+                move |cx| toggle_inline_completions_for_language(language.clone(), fs.clone(), cx),
+            );
+        }
+
+        let settings = AllLanguageSettings::get_global(cx);
+
+        if let Some(file) = &self.file {
+            let path = file.path().clone();
+            let path_enabled = settings.inline_completions_enabled_for_path(&path);
+
+            menu = menu.entry(
+                format!(
+                    "{} Inline Completions for This Path",
+                    if path_enabled { "Hide" } else { "Show" }
+                ),
+                None,
+                move |cx| {
+                    if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
+                        if let Ok(workspace) = workspace.root_view(cx) {
+                            let workspace = workspace.downgrade();
+                            cx.spawn(|cx| {
+                                configure_disabled_globs(
+                                    workspace,
+                                    path_enabled.then_some(path.clone()),
+                                    cx,
+                                )
+                            })
+                            .detach_and_log_err(cx);
+                        }
+                    }
+                },
+            );
+        }
+
+        let globally_enabled = settings.inline_completions_enabled(None, None);
+        menu.entry(
+            if globally_enabled {
+                "Hide Inline Completions for All Files"
+            } else {
+                "Show Inline Completions for All Files"
+            },
+            None,
+            move |cx| toggle_inline_completions_globally(fs.clone(), cx),
+        )
+    }
+
+    fn build_copilot_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+        ContextMenu::build(cx, |menu, cx| {
+            self.build_language_settings_menu(menu, cx)
+                .separator()
+                .link(
+                    "Copilot Settings",
+                    OpenBrowser {
+                        url: COPILOT_SETTINGS_URL.to_string(),
+                    }
+                    .boxed_clone(),
+                )
+                .action("Sign Out", copilot::SignOut.boxed_clone())
+        })
+    }
+
+    fn build_supermaven_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+        ContextMenu::build(cx, |menu, cx| {
+            self.build_language_settings_menu(menu, cx).separator()
         })
     }
 
@@ -262,6 +336,26 @@ impl StatusItemView for InlineCompletionButton {
             self.editor_enabled = None;
         }
         cx.notify();
+    }
+}
+
+impl SupermavenButtonStatus {
+    fn to_icon(&self) -> IconName {
+        match self {
+            SupermavenButtonStatus::Ready => IconName::Supermaven,
+            SupermavenButtonStatus::Errored(_) => IconName::SupermavenError,
+            SupermavenButtonStatus::NeedsActivation(_) => IconName::SupermavenInit,
+            SupermavenButtonStatus::Initializing => IconName::SupermavenInit,
+        }
+    }
+
+    fn to_tooltip(&self) -> String {
+        match self {
+            SupermavenButtonStatus::Ready => "Supermaven is ready".to_string(),
+            SupermavenButtonStatus::Errored(error) => format!("Supermaven error: {}", error),
+            SupermavenButtonStatus::NeedsActivation(_) => "Supermaven needs activation".to_string(),
+            SupermavenButtonStatus::Initializing => "Supermaven initializing".to_string(),
+        }
     }
 }
 

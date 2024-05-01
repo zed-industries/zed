@@ -5144,6 +5144,7 @@ dependencies = [
  "project",
  "serde_json",
  "settings",
+ "supermaven",
  "theme",
  "ui",
  "util",
