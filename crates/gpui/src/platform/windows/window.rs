@@ -952,17 +952,17 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_activate_msg(&self, wparam: WPARAM) -> Option<isize> {
+    fn handle_activate_msg(&self, _wparam: WPARAM) -> Option<isize> {
         if self.hide_title_bar {
             if let Some(titlebar_rect) = self.get_titlebar_rect().log_err() {
                 unsafe { InvalidateRect(self.hwnd, Some(&titlebar_rect), FALSE) };
             }
         }
-        let activated = wparam.loword() > 0;
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
-            cb(activated);
-        }
+        // let activated = wparam.loword() > 0;
+        // let mut callbacks = self.callbacks.borrow_mut();
+        // if let Some(mut cb) = callbacks.active_status_change.as_mut() {
+        //     cb(activated);
+        // }
         None
     }
 
