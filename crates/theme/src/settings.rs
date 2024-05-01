@@ -242,7 +242,11 @@ pub struct ThemeSettingsContent {
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
-    #[serde(default)]
+
+    /// EXPERIMENTAL: Expect many elements to be broken.
+    ///
+    // Controls the density of the UI.
+    #[serde(rename = "experimental.ui_density", default)]
     pub ui_density: Option<UiDensity>,
 
     /// EXPERIMENTAL: Overrides for the current theme.

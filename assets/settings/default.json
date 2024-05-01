@@ -44,10 +44,7 @@
   },
   // The default font size for text in the UI
   "ui_font_size": 16,
-  // Controls the density of the UI.
-  //
-  // Can be set to "tight", "normal", "loose" or "default"
-  "ui_density": "default",
+  "experimental.ui_density": "default",
   // The factor to grow the active pane by. Defaults to 1.0
   // which gives the same size as all other panes.
   "active_pane_magnification": 1.0,
