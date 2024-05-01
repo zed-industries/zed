@@ -37,7 +37,7 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
 )]
 #[serde(rename_all = "snake_case")]
 pub enum UiDensity {
-    /// A denser UI with tigher spacing and smaller elements.
+    /// A denser UI with tigther spacing and smaller elements.
     #[serde(alias = "compact")]
     Compact,
     #[default]
@@ -409,7 +409,7 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&one_dark().name))
                 .unwrap(),
             theme_overrides: None,
-            ui_density: defaults.ui_density.unwrap().into(),
+            ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
         };
 
         for value in sources.user.into_iter().chain(sources.release_channel) {
