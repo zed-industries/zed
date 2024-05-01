@@ -32,7 +32,7 @@ pub struct GitSettings {
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
-    /// Default: off
+    /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
 }
 

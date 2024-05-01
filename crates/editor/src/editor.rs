@@ -18,6 +18,7 @@ mod blink_manager;
 pub mod display_map;
 mod editor_settings;
 mod element;
+mod hunk_diff;
 mod inlay_hint_cache;
 
 mod debounced_delay;
@@ -71,6 +72,8 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
+use hunk_diff::ExpandedHunks;
+pub(crate) use hunk_diff::HunkToExpand;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
@@ -230,6 +233,7 @@ impl InlayId {
     }
 }
 
+enum DiffRowHighlight {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -325,6 +329,7 @@ pub enum EditorMode {
 #[derive(Clone, Debug)]
 pub enum SoftWrap {
     None,
+    PreferLine,
     EditorWidth,
     Column(u32),
 }
@@ -458,6 +463,7 @@ pub struct Editor {
     active_inline_completion: Option<Inlay>,
     show_inline_completions: bool,
     inlay_hint_cache: InlayHintCache,
+    expanded_hunks: ExpandedHunks,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -1410,7 +1416,7 @@ impl Editor {
         let blink_manager = cx.new_model(|cx| BlinkManager::new(CURSOR_BLINK_INTERVAL, cx));
 
         let soft_wrap_mode_override =
-            (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::None);
+            (mode == EditorMode::SingleLine).then(|| language_settings::SoftWrap::PreferLine);
 
         let mut project_subscriptions = Vec::new();
         if mode == EditorMode::Full {
@@ -1499,6 +1505,7 @@ impl Editor {
             inline_completion_provider: None,
             active_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
+            expanded_hunks: ExpandedHunks::default(),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
@@ -2379,6 +2386,7 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        self.clear_expanded_diff_hunks(cx);
         if self.dismiss_menus_and_popups(cx) {
             return;
         }
@@ -5000,48 +5008,8 @@ impl Editor {
         let mut revert_changes = HashMap::default();
         self.buffer.update(cx, |multi_buffer, cx| {
             let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-            let selected_multi_buffer_rows = selections.iter().map(|selection| {
-                let head = selection.head();
-                let tail = selection.tail();
-                let start = tail.to_point(&multi_buffer_snapshot).row;
-                let end = head.to_point(&multi_buffer_snapshot).row;
-                if start > end {
-                    end..start
-                } else {
-                    start..end
-                }
-            });
-
-            let mut processed_buffer_rows =
-                HashMap::<BufferId, HashSet<Range<text::Anchor>>>::default();
-            for selected_multi_buffer_rows in selected_multi_buffer_rows {
-                let query_rows =
-                    selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
-                for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
-                    // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
-                    // when the caret is just above or just below the deleted hunk.
-                    let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
-                    let related_to_selection = if allow_adjacent {
-                        hunk.associated_range.overlaps(&query_rows)
-                            || hunk.associated_range.start == query_rows.end
-                            || hunk.associated_range.end == query_rows.start
-                    } else {
-                        // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
-                        // `hunk.associated_range` is exclusive (e.g. [2..3] means 2nd row is selected)
-                        hunk.associated_range.overlaps(&selected_multi_buffer_rows)
-                            || selected_multi_buffer_rows.end == hunk.associated_range.start
-                    };
-                    if related_to_selection {
-                        if !processed_buffer_rows
-                            .entry(hunk.buffer_id)
-                            .or_default()
-                            .insert(hunk.buffer_range.start..hunk.buffer_range.end)
-                        {
-                            continue;
-                        }
-                        Self::prepare_revert_change(&mut revert_changes, &multi_buffer, &hunk, cx);
-                    }
-                }
+            for hunk in hunks_for_selections(&multi_buffer_snapshot, selections) {
+                Self::prepare_revert_change(&mut revert_changes, &multi_buffer, &hunk, cx);
             }
         });
         revert_changes
@@ -7674,7 +7642,7 @@ impl Editor {
     ) -> bool {
         let display_point = initial_point.to_display_point(snapshot);
         let mut hunks = hunks
-            .map(|hunk| diff_hunk_to_display(hunk, &snapshot))
+            .map(|hunk| diff_hunk_to_display(&hunk, &snapshot))
             .filter(|hunk| {
                 if is_wrapped {
                     true
@@ -8765,12 +8733,26 @@ impl Editor {
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut ranges = ranges.into_iter().peekable();
+        let mut fold_ranges = Vec::new();
+        let mut buffers_affected = HashMap::default();
+        let multi_buffer = self.buffer().read(cx);
+        for range in ranges {
+            if let Some((_, buffer, _)) = multi_buffer.excerpt_containing(range.start.clone(), cx) {
+                buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
+            };
+            fold_ranges.push(range);
+        }
+
+        let mut ranges = fold_ranges.into_iter().peekable();
         if ranges.peek().is_some() {
             self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
 
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
+            }
+
+            for buffer in buffers_affected.into_values() {
+                self.sync_expanded_diff_hunks(buffer, cx);
             }
 
             cx.notify();
@@ -8796,12 +8778,26 @@ impl Editor {
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut ranges = ranges.into_iter().peekable();
+        let mut unfold_ranges = Vec::new();
+        let mut buffers_affected = HashMap::default();
+        let multi_buffer = self.buffer().read(cx);
+        for range in ranges {
+            if let Some((_, buffer, _)) = multi_buffer.excerpt_containing(range.start.clone(), cx) {
+                buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
+            };
+            unfold_ranges.push(range);
+        }
+
+        let mut ranges = unfold_ranges.into_iter().peekable();
         if ranges.peek().is_some() {
             self.display_map
                 .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
+            }
+
+            for buffer in buffers_affected.into_values() {
+                self.sync_expanded_diff_hunks(buffer, cx);
             }
 
             cx.notify();
@@ -8925,6 +8921,7 @@ impl Editor {
             .unwrap_or_else(|| settings.soft_wrap);
         match mode {
             language_settings::SoftWrap::None => SoftWrap::None,
+            language_settings::SoftWrap::PreferLine => SoftWrap::PreferLine,
             language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
             language_settings::SoftWrap::PreferredLineLength => {
                 SoftWrap::Column(settings.preferred_line_length)
@@ -8969,8 +8966,10 @@ impl Editor {
             self.soft_wrap_mode_override.take();
         } else {
             let soft_wrap = match self.soft_wrap_mode(cx) {
-                SoftWrap::None => language_settings::SoftWrap::EditorWidth,
-                SoftWrap::EditorWidth | SoftWrap::Column(_) => language_settings::SoftWrap::None,
+                SoftWrap::None | SoftWrap::PreferLine => language_settings::SoftWrap::EditorWidth,
+                SoftWrap::EditorWidth | SoftWrap::Column(_) => {
+                    language_settings::SoftWrap::PreferLine
+                }
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
@@ -9266,13 +9265,19 @@ impl Editor {
         )
     }
 
-    // Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
-    // Rerturns a map of display rows that are highlighted and their corresponding highlight color.
-    pub fn highlighted_display_rows(&mut self, cx: &mut WindowContext) -> BTreeMap<u32, Hsla> {
+    /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
+    /// Rerturns a map of display rows that are highlighted and their corresponding highlight color.
+    /// Allows to ignore certain kinds of highlights.
+    pub fn highlighted_display_rows(
+        &mut self,
+        exclude_highlights: HashSet<TypeId>,
+        cx: &mut WindowContext,
+    ) -> BTreeMap<u32, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
+            .filter(|(type_id, _)| !exclude_highlights.contains(type_id))
             .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
             .fold(
                 BTreeMap::<u32, Hsla>::new(),
@@ -9661,6 +9666,10 @@ impl Editor {
             multi_buffer::Event::DiffBaseChanged => {
                 self.scrollbar_marker_state.dirty = true;
                 cx.emit(EditorEvent::DiffBaseChanged);
+                cx.notify();
+            }
+            multi_buffer::Event::DiffUpdated { buffer } => {
+                self.sync_expanded_diff_hunks(buffer.clone(), cx);
                 cx.notify();
             }
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
@@ -10102,6 +10111,57 @@ impl Editor {
     }
 }
 
+fn hunks_for_selections(
+    multi_buffer_snapshot: &MultiBufferSnapshot,
+    selections: &[Selection<Anchor>],
+) -> Vec<DiffHunk<u32>> {
+    let mut hunks = Vec::with_capacity(selections.len());
+    let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
+        HashMap::default();
+    let display_rows_for_selections = selections.iter().map(|selection| {
+        let head = selection.head();
+        let tail = selection.tail();
+        let start = tail.to_point(&multi_buffer_snapshot).row;
+        let end = head.to_point(&multi_buffer_snapshot).row;
+        if start > end {
+            end..start
+        } else {
+            start..end
+        }
+    });
+
+    for selected_multi_buffer_rows in display_rows_for_selections {
+        let query_rows = selected_multi_buffer_rows.start..selected_multi_buffer_rows.end + 1;
+        for hunk in multi_buffer_snapshot.git_diff_hunks_in_range(query_rows.clone()) {
+            // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
+            // when the caret is just above or just below the deleted hunk.
+            let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
+            let related_to_selection = if allow_adjacent {
+                hunk.associated_range.overlaps(&query_rows)
+                    || hunk.associated_range.start == query_rows.end
+                    || hunk.associated_range.end == query_rows.start
+            } else {
+                // `selected_multi_buffer_rows` are inclusive (e.g. [2..2] means 2nd row is selected)
+                // `hunk.associated_range` is exclusive (e.g. [2..3] means 2nd row is selected)
+                hunk.associated_range.overlaps(&selected_multi_buffer_rows)
+                    || selected_multi_buffer_rows.end == hunk.associated_range.start
+            };
+            if related_to_selection {
+                if !processed_buffer_rows
+                    .entry(hunk.buffer_id)
+                    .or_default()
+                    .insert(hunk.buffer_range.start..hunk.buffer_range.end)
+                {
+                    continue;
+                }
+                hunks.push(hunk);
+            }
+        }
+    }
+
+    hunks
+}
+
 pub trait CollaborationHub {
     fn collaborators<'a>(&self, cx: &'a AppContext) -> &'a HashMap<PeerId, Collaborator>;
     fn user_participant_indices<'a>(
@@ -10300,8 +10360,8 @@ impl EditorSnapshot {
             Some(GitGutterSetting::TrackedFiles)
         );
         let gutter_settings = EditorSettings::get_global(cx).gutter;
-
-        let line_gutter_width = if gutter_settings.line_numbers {
+        let gutter_lines_enabled = gutter_settings.line_numbers;
+        let line_gutter_width = if gutter_lines_enabled {
             // Avoid flicker-like gutter resizes when the line number gains another digit and only resize the gutter on files with N*10^5 lines.
             let min_width_for_number_on_gutter = em_width * 4.0;
             max_line_number_width.max(min_width_for_number_on_gutter)
@@ -10316,19 +10376,19 @@ impl EditorSnapshot {
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
         left_padding += if gutter_settings.code_actions {
             em_width * 3.0
-        } else if show_git_gutter && gutter_settings.line_numbers {
+        } else if show_git_gutter && gutter_lines_enabled {
             em_width * 2.0
-        } else if show_git_gutter || gutter_settings.line_numbers {
+        } else if show_git_gutter || gutter_lines_enabled {
             em_width
         } else {
             px(0.)
         };
 
-        let right_padding = if gutter_settings.folds && gutter_settings.line_numbers {
+        let right_padding = if gutter_settings.folds && gutter_lines_enabled {
             em_width * 4.0
         } else if gutter_settings.folds {
             em_width * 3.0
-        } else if gutter_settings.line_numbers {
+        } else if gutter_lines_enabled {
             em_width
         } else {
             px(0.)

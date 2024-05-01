@@ -335,6 +335,8 @@ pub struct FeaturesContent {
 pub enum SoftWrap {
     /// Do not soft wrap.
     None,
+    /// Prefer a single line generally, unless an overly long line is encountered.
+    PreferLine,
     /// Soft wrap lines that overflow the editor
     EditorWidth,
     /// Soft wrap lines at the preferred line length
