@@ -16,9 +16,7 @@ use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
-use gpui::{
-    App, AppContext, AsyncAppContext, Context, Task, VisualContext,
-};
+use gpui::{App, AppContext, AsyncAppContext, Context, Task, VisualContext};
 use image_viewer;
 use language::LanguageRegistry;
 use log::LevelFilter;
