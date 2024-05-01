@@ -430,6 +430,7 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             let is_local = project.is_local();
             let is_read_only = project.is_read_only();
+            let is_remote = project.is_remote();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
                 menu.context(self.focus_handle.clone()).when_else(
@@ -476,10 +477,12 @@ impl ProjectPanel {
                             })
                             .when(is_local & is_root, |menu| {
                                 menu.separator()
-                                    .action(
-                                        "Add Folder to Project…",
-                                        Box::new(workspace::AddFolderToProject),
-                                    )
+                                    .when(!is_remote, |menu| {
+                                        menu.action(
+                                            "Add Folder to Project…",
+                                            Box::new(workspace::AddFolderToProject),
+                                        )
+                                    })
                                     .entry(
                                         "Remove from Project",
                                         None,
