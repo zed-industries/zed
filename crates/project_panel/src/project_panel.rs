@@ -907,7 +907,7 @@ impl ProjectPanel {
                     PromptLevel::Destructive,
                     &format!("{operation} {file_name:?}?",),
                     None,
-                    &["Delete", "Cancel"],
+                    &[operation, "Cancel"],
                 )
             });
 
