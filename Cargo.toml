@@ -20,7 +20,6 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/copilot",
-    "crates/copilot_ui",
     "crates/db",
     "crates/diagnostics",
     "crates/editor",
@@ -42,6 +41,7 @@ members = [
     "crates/gpui_macros",
     "crates/headless",
     "crates/image_viewer",
+    "crates/inline_completion_button",
     "crates/install_cli",
     "crates/journal",
     "crates/language",
@@ -161,7 +161,6 @@ color = { path = "crates/color" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
-copilot_ui = { path = "crates/copilot_ui" }
 db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
@@ -182,6 +181,7 @@ gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
 install_cli = { path = "crates/install_cli" }
 image_viewer = { path = "crates/image_viewer" }
+inline_completion_button = { path = "crates/inline_completion_button" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_selector = { path = "crates/language_selector" }

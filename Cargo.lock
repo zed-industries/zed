@@ -2540,29 +2540,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "copilot_ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "copilot",
- "editor",
- "fs",
- "futures 0.3.28",
- "gpui",
- "indoc",
- "language",
- "lsp",
- "project",
- "serde_json",
- "settings",
- "theme",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "copypasta"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5149,6 +5126,29 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.59",
+]
+
+[[package]]
+name = "inline_completion_button"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot",
+ "editor",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "indoc",
+ "language",
+ "lsp",
+ "project",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -11843,12 +11843,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "copilot_ui",
  "db",
  "editor",
  "extensions_ui",
  "fuzzy",
  "gpui",
+ "inline_completion_button",
  "install_cli",
  "picker",
  "project",
@@ -12728,7 +12728,6 @@ dependencies = [
  "collections",
  "command_palette",
  "copilot",
- "copilot_ui",
  "db",
  "dev_server_projects",
  "diagnostics",
@@ -12745,6 +12744,7 @@ dependencies = [
  "gpui",
  "headless",
  "image_viewer",
+ "inline_completion_button",
  "install_cli",
  "isahc",
  "journal",

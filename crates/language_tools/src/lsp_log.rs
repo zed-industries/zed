@@ -114,32 +114,40 @@ impl LogStore {
     pub fn new(cx: &mut ModelContext<Self>) -> Self {
         let (io_tx, mut io_rx) = mpsc::unbounded();
 
-        let copilot_subscription =
-            Copilot::global(cx).map(|copilot| {
-                let copilot = &copilot;
-                cx.subscribe(
-                    copilot,
-                    |this, copilot, copilot_event, cx| match copilot_event {
-                        copilot::Event::CopilotLanguageServerStarted => {
-                            if let Some(server) = copilot.read(cx).language_server() {
-                                let server_id = server.server_id();
-                                let weak_this = cx.weak_model();
-                                this.copilot_log_subscription = Some(server
-                                    .on_notification::<copilot::request::LogMessage, _>(
-                                        move |params, mut cx| {
-                                            weak_this.update(&mut cx, |this, cx| {
-                                                this.add_language_server_log(server_id, &params.message, cx);
-                                            }).ok();
-                                        },
-                                    ));
-                                this.add_language_server(None, LanguageServerName(Arc::from("copilot")), server.clone(), cx);
-                            } else {
-                                util::debug_panic!("Received Copilot language server started event, but no language server is running")
-                            }
+        let copilot_subscription = Copilot::global(cx).map(|copilot| {
+            let copilot = &copilot;
+            cx.subscribe(
+                copilot,
+                |this, copilot, copilot_event, cx| match copilot_event {
+                    copilot::Event::CopilotLanguageServerStarted => {
+                        if let Some(server) = copilot.read(cx).language_server() {
+                            let server_id = server.server_id();
+                            let weak_this = cx.weak_model();
+                            this.copilot_log_subscription =
+                                Some(server.on_notification::<copilot::request::LogMessage, _>(
+                                    move |params, mut cx| {
+                                        weak_this
+                                            .update(&mut cx, |this, cx| {
+                                                this.add_language_server_log(
+                                                    server_id,
+                                                    &params.message,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    },
+                                ));
+                            this.add_language_server(
+                                None,
+                                LanguageServerName(Arc::from("copilot")),
+                                server.clone(),
+                                cx,
+                            );
                         }
-                    },
-                )
-            });
+                    }
+                },
+            )
+        });
 
         let this = Self {
             copilot_log_subscription: None,

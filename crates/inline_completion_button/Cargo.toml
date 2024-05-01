@@ -1,5 +1,5 @@
 [package]
-name = "copilot_ui"
+name = "inline_completion_button"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/copilot_ui.rs"
+path = "src/inline_completion_button.rs"
 doctest = false
 
 [dependencies]

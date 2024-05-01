@@ -32,7 +32,7 @@ struct CopilotStartingToast;
 
 struct CopilotErrorToast;
 
-pub struct CopilotButton {
+pub struct InlineCompletionButton {
     editor_subscription: Option<(Subscription, usize)>,
     editor_enabled: Option<bool>,
     language: Option<Arc<Language>>,
@@ -40,7 +40,7 @@ pub struct CopilotButton {
     fs: Arc<dyn Fs>,
 }
 
-impl Render for CopilotButton {
+impl Render for InlineCompletionButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let all_language_settings = all_language_settings(None, cx);
         if all_language_settings.inline_completions.provider != InlineCompletionProvider::Copilot {
@@ -121,7 +121,7 @@ impl Render for CopilotButton {
     }
 }
 
-impl CopilotButton {
+impl InlineCompletionButton {
     pub fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<Self>) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
@@ -248,7 +248,7 @@ impl CopilotButton {
     }
 }
 
-impl StatusItemView for CopilotButton {
+impl StatusItemView for InlineCompletionButton {
     fn set_active_pane_item(&mut self, item: Option<&dyn ItemHandle>, cx: &mut ViewContext<Self>) {
         if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
             self.editor_subscription = Some((
