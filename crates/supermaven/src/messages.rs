@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 // Outbound messages
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OutboundMessage {
