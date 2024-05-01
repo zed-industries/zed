@@ -149,18 +149,9 @@ impl X11WindowState {
         let win_aux = xproto::CreateWindowAux::new().event_mask(
             xproto::EventMask::EXPOSURE
                 | xproto::EventMask::STRUCTURE_NOTIFY
-                | xproto::EventMask::ENTER_WINDOW
-                | xproto::EventMask::LEAVE_WINDOW
                 | xproto::EventMask::FOCUS_CHANGE
                 | xproto::EventMask::KEY_PRESS
-                | xproto::EventMask::KEY_RELEASE
-                | xproto::EventMask::BUTTON_PRESS
-                | xproto::EventMask::BUTTON_RELEASE
-                | xproto::EventMask::POINTER_MOTION
-                | xproto::EventMask::BUTTON1_MOTION
-                | xproto::EventMask::BUTTON2_MOTION
-                | xproto::EventMask::BUTTON3_MOTION
-                | xproto::EventMask::BUTTON_MOTION,
+                | xproto::EventMask::KEY_RELEASE,
         );
 
         xcb_connection
@@ -184,7 +175,12 @@ impl X11WindowState {
             x_window,
             &[xinput::EventMask {
                 deviceid: 1,
-                mask: vec![xinput::XIEventMask::MOTION],
+                mask: vec![
+                    xinput::XIEventMask::MOTION
+                        | xinput::XIEventMask::BUTTON_PRESS
+                        | xinput::XIEventMask::BUTTON_RELEASE
+                        | xinput::XIEventMask::LEAVE,
+                ],
             }],
         )
         .unwrap()

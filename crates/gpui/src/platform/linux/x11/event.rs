@@ -37,12 +37,12 @@ pub(crate) fn modifiers_from_xinput_info(modifier_info: xinput::ModifierInfo) ->
     }
 }
 
-pub(crate) fn button_from_state(state: xproto::KeyButMask) -> Option<MouseButton> {
-    Some(if state.contains(xproto::KeyButMask::BUTTON1) {
+pub(crate) fn button_from_mask(button_mask: u32) -> Option<MouseButton> {
+    Some(if button_mask & 2 == 2 {
         MouseButton::Left
-    } else if state.contains(xproto::KeyButMask::BUTTON2) {
+    } else if button_mask & 4 == 4 {
         MouseButton::Middle
-    } else if state.contains(xproto::KeyButMask::BUTTON3) {
+    } else if button_mask & 8 == 8 {
         MouseButton::Right
     } else {
         return None;
