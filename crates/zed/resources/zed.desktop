@@ -10,4 +10,4 @@ Exec=zed
 Icon=zed
 Categories=TextEditor;Development;IDE;
 Keywords=zed;
-MimeType=text/plain;
+MimeType=text/plain;inode/directory;
