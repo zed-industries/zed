@@ -8,7 +8,7 @@ Supported versions: Catalina (10.15) - Sonoma (14.x).
 
 ## Linux, Windows, and Web
 
-_Not offficially supported at this time. See our_ [_Platform Support_](https://github.com/zed-industries/zed/issues/5391) _issue._
+_Not officially supported at this time. See our_ [_Platform Support_](https://github.com/zed-industries/zed/issues/5391) _issue._
 
 However, you are welcome to [build Zed from source](developing_zed_building_zed.md) for your platform in the meantime.
 
