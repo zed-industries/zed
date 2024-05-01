@@ -60,6 +60,12 @@ impl RemoteProjects {
         .detach();
     }
 
+    pub fn open(workspace: View<Workspace>, cx: &mut WindowContext) {
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(cx, |cx| Self::new(cx))
+        })
+    }
+
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         let remote_project_path_input = cx.new_view(|cx| TextField::new(cx, "", "Project path"));
         let dev_server_name_input =

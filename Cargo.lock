@@ -2359,6 +2359,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "remote_projects",
  "rich_text",
  "rpc",
  "schemars",

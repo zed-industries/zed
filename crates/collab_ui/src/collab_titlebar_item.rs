@@ -9,12 +9,12 @@ use gpui::{
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::RecentProjects;
-use rpc::proto;
+use rpc::proto::{self, DevServerStatus};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
-    ButtonStyle, ContextMenu, Icon, IconButton, IconName, TintColor, TitleBar, Tooltip,
+    ButtonStyle, ContextMenu, Icon, IconButton, IconName, Indicator, TintColor, TitleBar, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};
@@ -375,7 +375,41 @@ impl CollabTitlebarItem {
     // resolve if you are in a room -> render_project_owner
     // render_project_owner -> resolve if you are in a room -> Option<foo>
 
-    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        if let Some(dev_server) =
+            self.project
+                .read(cx)
+                .remote_project_id()
+                .and_then(|remote_project_id| {
+                    remote_projects::Store::global(cx)
+                        .read(cx)
+                        .dev_server_for_project(remote_project_id)
+                })
+        {
+            return Some(
+                ButtonLike::new("dev_server_trigger")
+                    .child(Indicator::dot().color(
+                        if dev_server.status == DevServerStatus::Online {
+                            Color::Created
+                        } else {
+                            Color::Disabled
+                        },
+                    ))
+                    .child(
+                        Label::new(dev_server.name.clone())
+                            .size(LabelSize::Small)
+                            .line_height_style(LineHeightStyle::UiLabel),
+                    )
+                    .tooltip(move |cx| Tooltip::text("Project is hosted on a dev server", cx))
+                    .on_click(cx.listener(|this, _, cx| {
+                        if let Some(workspace) = this.workspace.upgrade() {
+                            recent_projects::RemoteProjects::open(workspace, cx)
+                        }
+                    }))
+                    .into_any_element(),
+            );
+        }
+
         let host = self.project.read(cx).host()?;
         let host_user = self.user_store.read(cx).get_cached_user(host.user_id)?;
         let participant_index = self
@@ -406,7 +440,8 @@ impl CollabTitlebarItem {
                             })
                             .log_err();
                     })
-                }),
+                })
+                .into_any_element(),
         )
     }
 
