@@ -351,9 +351,6 @@ pub(crate) struct Highlights<'a> {
 pub struct HighlightStyles {
     pub inlay_hint: Option<HighlightStyle>,
     pub suggestion: Option<HighlightStyle>,
-    pub git_created: Option<HighlightStyle>,
-    pub git_modified: Option<HighlightStyle>,
-    pub git_deleted: Option<HighlightStyle>,
 }
 
 pub struct HighlightedChunk<'a> {
@@ -558,18 +555,6 @@ impl DisplaySnapshot {
             HighlightStyles {
                 inlay_hint: Some(editor_style.inlay_hints_style),
                 suggestion: Some(editor_style.suggestions_style),
-                git_created: Some(HighlightStyle {
-                    background_color: Some(editor_style.status.git().created),
-                    ..HighlightStyle::default()
-                }),
-                git_modified: Some(HighlightStyle {
-                    background_color: Some(editor_style.status.git().modified),
-                    ..HighlightStyle::default()
-                }),
-                git_deleted: Some(HighlightStyle {
-                    background_color: Some(editor_style.status.git().deleted),
-                    ..HighlightStyle::default()
-                }),
             },
         )
         .map(|chunk| {

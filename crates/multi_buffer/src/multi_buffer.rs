@@ -278,19 +278,19 @@ impl MultiBuffer {
                 show_headers: true,
                 ..MultiBufferSnapshot::default()
             }),
-            buffers: Default::default(),
-            subscriptions: Default::default(),
+            buffers: RefCell::default(),
+            subscriptions: Topic::default(),
             singleton: false,
             capability,
             replica_id,
+            title: None,
             history: History {
-                next_transaction_id: Default::default(),
-                undo_stack: Default::default(),
-                redo_stack: Default::default(),
+                next_transaction_id: clock::Lamport::default(),
+                undo_stack: Vec::new(),
+                redo_stack: Vec::new(),
                 transaction_depth: 0,
                 group_interval: Duration::from_millis(300),
             },
-            title: Default::default(),
         }
     }
 

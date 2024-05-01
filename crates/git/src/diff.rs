@@ -5,28 +5,6 @@ use text::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, Point};
 pub use git2 as libgit;
 use libgit::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 
-pub fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
-    let mut options = GitOptions::default();
-    options.context_lines(0);
-
-    let patch = GitPatch::from_buffers(
-        head.as_bytes(),
-        None,
-        current.as_bytes(),
-        None,
-        Some(&mut options),
-    );
-
-    match patch {
-        Ok(patch) => Some(patch),
-
-        Err(err) => {
-            log::error!("`GitPatch::from_buffers` failed: {}", err);
-            None
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiffHunkStatus {
     Added,
@@ -205,7 +183,7 @@ impl BufferDiff {
         let mut tree = SumTree::new();
 
         let buffer_text = buffer.as_rope().to_string();
-        let patch = diff(diff_base, &buffer_text);
+        let patch = Self::diff(diff_base, &buffer_text);
 
         if let Some(patch) = patch {
             let mut divergence = 0;
@@ -224,6 +202,28 @@ impl BufferDiff {
         let start = text.anchor_before(Point::new(0, 0));
         let end = text.anchor_after(Point::new(u32::MAX, u32::MAX));
         self.hunks_intersecting_range(start..end, text)
+    }
+
+    fn diff<'a>(head: &'a str, current: &'a str) -> Option<GitPatch<'a>> {
+        let mut options = GitOptions::default();
+        options.context_lines(0);
+
+        let patch = GitPatch::from_buffers(
+            head.as_bytes(),
+            None,
+            current.as_bytes(),
+            None,
+            Some(&mut options),
+        );
+
+        match patch {
+            Ok(patch) => Some(patch),
+
+            Err(err) => {
+                log::error!("`GitPatch::from_buffers` failed: {}", err);
+                None
+            }
+        }
     }
 
     fn process_patch_hunk(

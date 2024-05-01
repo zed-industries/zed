@@ -2354,7 +2354,11 @@ impl EditorElement {
         });
     }
 
-    fn paint_diff_hunks(bounds: Bounds<Pixels>, layout: &EditorLayout, cx: &mut WindowContext) {
+    fn paint_diff_hunks(
+        gutter_bounds: Bounds<Pixels>,
+        layout: &EditorLayout,
+        cx: &mut WindowContext,
+    ) {
         if layout.display_hunks.is_empty() {
             return;
         }
@@ -2367,7 +2371,7 @@ impl EditorElement {
                         let hunk_bounds = Self::diff_hunk_bounds(
                             &layout.position_map.snapshot,
                             line_height,
-                            bounds,
+                            gutter_bounds,
                             &hunk,
                         );
                         Some((

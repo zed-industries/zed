@@ -8729,7 +8729,7 @@ impl Editor {
 
     pub fn fold_ranges<T: ToOffset + Clone>(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>> + Clone,
+        ranges: impl IntoIterator<Item = Range<T>>,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
