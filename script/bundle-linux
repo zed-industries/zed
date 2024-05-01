@@ -62,7 +62,7 @@ cp "crates/zed/resources/app-icon$suffix@2x.png" "${zed_dir}/share/icons/hicolor
 
 # .desktop
 mkdir -p "${zed_dir}/share/applications"
-cp "crates/zed/resources/zed$suffix.desktop" "${zed_dir}/share/applications/zed$suffix.desktop"
+cp "crates/zed/resources/zed.desktop" "${zed_dir}/share/applications/zed$suffix.desktop"
 if [[ "$channel" == "preview" ]]; then
     sed -i "s|Name=Zed|Name=Zed Preview|g" "${zed_dir}/share/applications/zed$suffix.desktop"
 elif [[ "$channel" == "nightly" ]]; then
