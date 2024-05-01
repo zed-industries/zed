@@ -105,9 +105,11 @@ fn assign_inline_completion_provider(
         language::language_settings::InlineCompletionProvider::Copilot => {
             if let Some(copilot) = Copilot::global(cx) {
                 if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                    copilot.update(cx, |copilot, cx| {
-                        copilot.register_buffer(&buffer, cx);
-                    });
+                    if buffer.read(cx).file().is_some() {
+                        copilot.update(cx, |copilot, cx| {
+                            copilot.register_buffer(&buffer, cx);
+                        });
+                    }
                 }
                 let provider = cx.new_model(|_| {
                     CopilotCompletionProvider::new(copilot).with_telemetry(telemetry.clone())
