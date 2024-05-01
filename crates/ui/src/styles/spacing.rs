@@ -1,6 +1,8 @@
-use gpui::*;
+use gpui::{px, rems, Pixels, Rems, WindowContext};
 use settings::Settings;
 use theme::{ThemeSettings, UiDensity};
+
+use crate::{rems_from_px, BASE_REM_SIZE_IN_PX};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Spacing {
@@ -33,36 +35,34 @@ impl Spacing {
     pub fn spacing_ratio(self, cx: &WindowContext) -> f32 {
         match ThemeSettings::get_global(cx).ui_density {
             UiDensity::Compact => match self {
-                Spacing::None => 0.0,
-                Spacing::XXSmall => 1. / 16.,
-                Spacing::XSmall => 1. / 16.,
-                Spacing::Small => 2. / 16.,
-                Spacing::Medium => 3. / 16.,
-                Spacing::Large => 4. / 16.,
-                Spacing::XLarge => 8. / 16.,
-                Spacing::XXLarge => 12. / 16.,
+                Spacing::None => 0.,
+                Spacing::XXSmall => 1. / BASE_REM_SIZE_IN_PX,
+                Spacing::XSmall => 1. / BASE_REM_SIZE_IN_PX,
+                Spacing::Small => 2. / BASE_REM_SIZE_IN_PX,
+                Spacing::Medium => 3. / BASE_REM_SIZE_IN_PX,
+                Spacing::Large => 4. / BASE_REM_SIZE_IN_PX,
+                Spacing::XLarge => 8. / BASE_REM_SIZE_IN_PX,
+                Spacing::XXLarge => 12. / BASE_REM_SIZE_IN_PX,
             },
             UiDensity::Default => match self {
-                Spacing::None => 0.0,
-                Spacing::XXSmall => 1. / 16.,
-                Spacing::XSmall => 2. / 16.,
-                Spacing::Small => 4. / 16.,
-                Spacing::Medium => 6. / 16.,
-                Spacing::Large => 8. / 16.,
-                Spacing::XLarge => 12. / 16.,
-                #[allow(clippy::eq_op)]
-                Spacing::XXLarge => 16. / 16.,
+                Spacing::None => 0.,
+                Spacing::XXSmall => 1. / BASE_REM_SIZE_IN_PX,
+                Spacing::XSmall => 2. / BASE_REM_SIZE_IN_PX,
+                Spacing::Small => 4. / BASE_REM_SIZE_IN_PX,
+                Spacing::Medium => 6. / BASE_REM_SIZE_IN_PX,
+                Spacing::Large => 8. / BASE_REM_SIZE_IN_PX,
+                Spacing::XLarge => 12. / BASE_REM_SIZE_IN_PX,
+                Spacing::XXLarge => 16. / BASE_REM_SIZE_IN_PX,
             },
             UiDensity::Comfortable => match self {
-                Spacing::None => 0.0,
-                Spacing::XXSmall => 2. / 16.,
-                Spacing::XSmall => 3. / 16.,
-                Spacing::Small => 6. / 16.,
-                Spacing::Medium => 8. / 16.,
-                Spacing::Large => 10. / 16.,
-                #[allow(clippy::eq_op)]
-                Spacing::XLarge => 16. / 16.,
-                Spacing::XXLarge => 20. / 16.,
+                Spacing::None => 0.,
+                Spacing::XXSmall => 2. / BASE_REM_SIZE_IN_PX,
+                Spacing::XSmall => 3. / BASE_REM_SIZE_IN_PX,
+                Spacing::Small => 6. / BASE_REM_SIZE_IN_PX,
+                Spacing::Medium => 8. / BASE_REM_SIZE_IN_PX,
+                Spacing::Large => 10. / BASE_REM_SIZE_IN_PX,
+                Spacing::XLarge => 16. / BASE_REM_SIZE_IN_PX,
+                Spacing::XXLarge => 20. / BASE_REM_SIZE_IN_PX,
             },
         }
     }
@@ -83,5 +83,5 @@ pub fn user_spacing_style(cx: &WindowContext) -> UiDensity {
 }
 
 pub fn custom_spacing(cx: &WindowContext, size: f32) -> Rems {
-    crate::rems_from_px(size * user_spacing_style(cx).spacing_ratio())
+    rems_from_px(size * user_spacing_style(cx).spacing_ratio())
 }
