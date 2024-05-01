@@ -50,6 +50,7 @@ parking_lot.workspace = true
 picker.workspace = true
 project.workspace = true
 recent_projects.workspace = true
+remote_projects.workspace = true
 rich_text.workspace = true
 rpc.workspace = true
 schemars.workspace = true

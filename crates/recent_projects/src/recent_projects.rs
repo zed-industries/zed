@@ -11,7 +11,7 @@ use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
     Picker, PickerDelegate,
 };
-use remote_projects::RemoteProjects;
+pub use remote_projects::RemoteProjects;
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
 use std::{

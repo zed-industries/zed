@@ -114,6 +114,11 @@ impl Store {
         self.remote_projects.get(&id)
     }
 
+    pub fn dev_server_for_project(&self, id: RemoteProjectId) -> Option<&DevServer> {
+        self.remote_project(id)
+            .and_then(|project| self.dev_server(project.dev_server_id))
+    }
+
     async fn handle_remote_projects_update(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::RemoteProjectsUpdate>,
