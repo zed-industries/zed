@@ -28,9 +28,9 @@ impl CheckboxWithLabel {
 }
 
 impl RenderOnce for CheckboxWithLabel {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
-            .gap_2()
+            .gap(Spacing::Large.rems(cx))
             .child(Checkbox::new(self.id.clone(), self.checked).on_click({
                 let on_click = self.on_click.clone();
                 move |checked, cx| {
