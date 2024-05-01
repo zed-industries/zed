@@ -179,18 +179,6 @@ impl X11WindowState {
             )
             .unwrap();
 
-        xinput::ConnectionExt::xinput_xi_select_events(
-            &xcb_connection,
-            x_window,
-            &[xinput::EventMask {
-                deviceid: 1,
-                mask: vec![xinput::XIEventMask::MOTION],
-            }],
-        )
-        .unwrap()
-        .check()
-        .unwrap();
-
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
                 xcb_connection
@@ -217,6 +205,18 @@ impl X11WindowState {
 
         xcb_connection.map_window(x_window).unwrap();
         xcb_connection.flush().unwrap();
+
+        xinput::ConnectionExt::xinput_xi_select_events(
+            &xcb_connection,
+            x_window,
+            &[xinput::EventMask {
+                deviceid: 1,
+                mask: vec![xinput::XIEventMask::MOTION],
+            }],
+        )
+        .unwrap()
+        .check()
+        .unwrap();
 
         let raw = RawWindow {
             connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
