@@ -875,10 +875,13 @@ impl EditorElement {
         &self,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
-    ) -> Vec<(Anchor, Hsla)> {
+    ) -> Vec<(DisplayPoint, Hsla)> {
         let editor = self.editor.read(cx);
-        let mut cursors = Vec::<(Anchor, Hsla)>::new();
+        let mut cursors = Vec::new();
         let mut skip_local = false;
+        let mut add_cursor = |anchor: Anchor, color| {
+            cursors.push((anchor.to_display_point(&snapshot.display_snapshot), color));
+        };
         // Remote cursors
         if let Some(collaboration_hub) = &editor.collaboration_hub {
             for remote_selection in snapshot.remote_selections_in_range(
@@ -887,7 +890,7 @@ impl EditorElement {
                 cx,
             ) {
                 let color = Self::get_participant_color(remote_selection.participant_index, cx);
-                cursors.push((remote_selection.selection.head(), color.cursor));
+                add_cursor(remote_selection.selection.head(), color.cursor);
                 if Some(remote_selection.peer_id) == editor.leader_peer_id {
                     skip_local = true;
                 }
@@ -895,11 +898,12 @@ impl EditorElement {
         }
         // Local cursors
         if !skip_local {
+            let color = cx.theme().players().local().cursor;
             editor.selections.disjoint.iter().for_each(|selection| {
-                cursors.push((selection.head(), cx.theme().players().local().cursor));
+                add_cursor(selection.head(), color);
             });
             if let Some(ref selection) = editor.selections.pending_anchor() {
-                cursors.push((selection.head(), cx.theme().players().local().cursor));
+                add_cursor(selection.head(), color);
             }
         }
         cursors
@@ -920,9 +924,8 @@ impl EditorElement {
         em_width: Pixels,
         autoscroll_containing_element: bool,
         cx: &mut WindowContext,
-    ) -> (Vec<CursorLayout>, bool) {
+    ) -> Vec<CursorLayout> {
         let mut autoscroll_bounds = None;
-        let mut non_visible_cursors = false;
         let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
             for (player_color, selections) in selections {
@@ -930,10 +933,6 @@ impl EditorElement {
                     let cursor_position = selection.head;
 
                     let in_range = visible_display_row_range.contains(&cursor_position.row());
-                    if !in_range {
-                        non_visible_cursors |= true;
-                    }
-
                     if (selection.is_local && !editor.show_local_cursors(cx)) || !in_range {
                         continue;
                     }
@@ -1041,7 +1040,7 @@ impl EditorElement {
             cx.request_autoscroll(bounds);
         }
 
-        (cursor_layouts, non_visible_cursors)
+        cursor_layouts
     }
 
     fn layout_scrollbar(
@@ -2699,15 +2698,10 @@ impl EditorElement {
         let cursor_ranges = layout
             .cursors
             .iter()
-            .map(|cursor| {
-                let point = cursor
-                    .0
-                    .to_display_point(&layout.position_map.snapshot.display_snapshot);
-                ColoredRange {
-                    start: point.row(),
-                    end: point.row(),
-                    color: cursor.1,
-                }
+            .map(|(point, color)| ColoredRange {
+                start: point.row(),
+                end: point.row(),
+                color: *color,
             })
             .collect_vec();
         scrollbar_layout.marker_quads_for_ranges(cursor_ranges, None)
@@ -3788,8 +3782,12 @@ impl Element for EditorElement {
                 });
 
                 let cursors = self.collect_cursors(&snapshot, cx);
+                let visible_row_range = start_row..end_row;
+                let non_visible_cursors = cursors
+                    .iter()
+                    .any(move |c| !visible_row_range.contains(&c.0.row()));
 
-                let (visible_cursors, non_visible_cursors) = self.layout_visible_cursors(
+                let visible_cursors = self.layout_visible_cursors(
                     &snapshot,
                     &selections,
                     start_row..end_row,
@@ -4044,7 +4042,7 @@ pub struct EditorLayout {
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
-    cursors: Vec<(Anchor, Hsla)>,
+    cursors: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     max_row: u32,
