@@ -76,7 +76,7 @@ impl PlatformDispatcher for MacDispatcher {
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
         unsafe {
             let queue =
-                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT.try_into().unwrap(), 0);
+                dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.try_into().unwrap(), 0);
             let when = dispatch_time(DISPATCH_TIME_NOW as u64, duration.as_nanos() as i64);
             dispatch_after_f(
                 when,
