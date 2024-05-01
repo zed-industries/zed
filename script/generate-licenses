@@ -19,9 +19,12 @@ echo -e "# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
 echo "Generating cargo licenses"
 cargo about generate --fail -c script/licenses/zed-licenses.toml script/licenses/template.hbs.md >> $OUTPUT_FILE
 
-sed -i '' 's/&quot;/"/g' $OUTPUT_FILE
-sed -i '' 's/&#x27;/'\''/g' $OUTPUT_FILE # The ` '\'' ` thing ends the string, appends a single quote, and re-opens the string
-sed -i '' 's/&#x3D;/=/g' $OUTPUT_FILE
-sed -i '' 's/&#x60;/`/g' $OUTPUT_FILE
-sed -i '' 's/&lt;/</g' $OUTPUT_FILE
-sed -i '' 's/&gt;/>/g' $OUTPUT_FILE
+
+sed -i.bak 's/&quot;/"/g' $OUTPUT_FILE
+sed -i.bak 's/&#x27;/'\''/g' $OUTPUT_FILE # The ` '\'' ` thing ends the string, appends a single quote, and re-opens the string
+sed -i.bak 's/&#x3D;/=/g' $OUTPUT_FILE
+sed -i.bak 's/&#x60;/`/g' $OUTPUT_FILE
+sed -i.bak 's/&lt;/</g' $OUTPUT_FILE
+sed -i.bak 's/&gt;/>/g' $OUTPUT_FILE
+
+rm -rf "${OUTPUT_FILE}.bak"

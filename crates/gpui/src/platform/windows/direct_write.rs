@@ -367,7 +367,10 @@ impl DirectWriteState {
 
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         if font_runs.is_empty() {
-            return LineLayout::default();
+            return LineLayout {
+                font_size,
+                ..Default::default()
+            };
         }
         unsafe {
             let text_renderer = self.components.text_renderer.clone();

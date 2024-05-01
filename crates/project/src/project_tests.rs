@@ -2931,9 +2931,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     let languages = project.update(cx, |project, _| project.languages().clone());
     languages.add(rust_lang());
 
-    let buffer = project.update(cx, |project, cx| {
-        project.create_buffer("", None, cx).unwrap()
-    });
+    let buffer = project.update(cx, |project, cx| project.create_local_buffer("", None, cx));
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());
@@ -2942,7 +2940,12 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     });
     project
         .update(cx, |project, cx| {
-            project.save_buffer_as(buffer.clone(), "/dir/file1.rs".into(), cx)
+            let worktree_id = project.worktrees().next().unwrap().read(cx).id();
+            let path = ProjectPath {
+                worktree_id,
+                path: Arc::from(Path::new("file1.rs")),
+            };
+            project.save_buffer_as(buffer.clone(), path, cx)
         })
         .await
         .unwrap();

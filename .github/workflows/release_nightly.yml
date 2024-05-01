@@ -94,7 +94,7 @@ jobs:
         run: script/upload-nightly macos
 
   bundle-deb:
-    name: Create a *.deb Linux bundle
+    name: Create a Linux *.tar.gz bundle
     if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-22.04 # keep the version fixed to avoid libc and dynamic linked library issues
     needs: tests
@@ -125,12 +125,11 @@ jobs:
           echo "Publishing version: ${version} on release channel nightly"
           echo "nightly" > crates/zed/RELEASE_CHANNEL
 
-      # TODO linux : find a way to add licenses to the final bundle
-      # - name: Generate license file
-      #   run: script/generate-licenses
+      - name: Generate license file
+        run: script/generate-licenses
 
-      - name: Create Linux *.deb bundle
+      - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
 
       - name: Upload Zed Nightly
-        run: script/upload-nightly linux-deb
+        run: script/upload-nightly linux-targz

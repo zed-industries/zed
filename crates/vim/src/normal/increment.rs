@@ -117,13 +117,16 @@ fn find_number(
 ) -> Option<(Range<Point>, String, u32)> {
     let mut offset = start.to_offset(snapshot);
 
-    // go backwards to the start of any number the selection is within
-    for ch in snapshot.reversed_chars_at(offset) {
-        if ch.is_ascii_digit() || ch == '-' || ch == 'b' || ch == 'x' {
-            offset -= ch.len_utf8();
-            continue;
+    let ch0 = snapshot.chars_at(offset).next();
+    if ch0.as_ref().is_some_and(char::is_ascii_digit) || matches!(ch0, Some('-' | 'b' | 'x')) {
+        // go backwards to the start of any number the selection is within
+        for ch in snapshot.reversed_chars_at(offset) {
+            if ch.is_ascii_digit() || ch == '-' || ch == 'b' || ch == 'x' {
+                offset -= ch.len_utf8();
+                continue;
+            }
+            break;
         }
-        break;
     }
 
     let mut begin = None;
@@ -213,6 +216,48 @@ mod test {
         cx.simulate_shared_keystrokes(["."]).await;
         cx.assert_shared_state(indoc! {"
             -11ˇ1
+            "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_increment_with_dot(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            1ˇ.2
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes(["ctrl-a"]).await;
+        cx.assert_shared_state(indoc! {"
+            1.ˇ3
+            "})
+            .await;
+        cx.simulate_shared_keystrokes(["ctrl-x"]).await;
+        cx.assert_shared_state(indoc! {"
+            1.ˇ2
+            "})
+            .await;
+    }
+
+    #[gpui::test]
+    async fn test_increment_with_two_dots(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            111.ˇ.2
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes(["ctrl-a"]).await;
+        cx.assert_shared_state(indoc! {"
+            111..ˇ3
+            "})
+            .await;
+        cx.simulate_shared_keystrokes(["ctrl-x"]).await;
+        cx.assert_shared_state(indoc! {"
+            111..ˇ2
             "})
             .await;
     }
