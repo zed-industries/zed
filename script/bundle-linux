@@ -58,7 +58,7 @@ cp "target/${target_triple}/release/Zed" "${zed_dir}/zed"
 mkdir -p "${zed_dir}/share/icons/hicolor/512x512/apps"
 cp "crates/zed/resources/app-icon$suffix.png" "${zed_dir}/share/icons/hicolor/512x512/apps/zed.png"
 mkdir -p "${zed_dir}/share/icons/hicolor/1024x1024/apps"
-cp "crates/zed/resources/app-icon$suffix.png" "${zed_dir}/share/icons/hicolor/1024x1024/apps/zed.png"
+cp "crates/zed/resources/app-icon$suffix@2x.png" "${zed_dir}/share/icons/hicolor/1024x1024/apps/zed.png"
 
 # .desktop
 mkdir -p "${zed_dir}/share/applications"
