@@ -98,12 +98,9 @@ fn chunk_lines(text: &str) -> Vec<Chunk> {
 
     chunk_ranges
         .into_iter()
-        .map(|range| {
-            let mut hasher = Sha256::new();
-            hasher.update(&text[range.clone()]);
-            let mut digest = [0u8; 32];
-            digest.copy_from_slice(hasher.finalize().as_slice());
-            Chunk { range, digest }
+        .map(|range| Chunk {
+            digest: Sha256::digest(&text[range.clone()]).into(),
+            range,
         })
         .collect()
 }
