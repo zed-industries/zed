@@ -2513,30 +2513,10 @@ dependencies = [
  "async-compression",
  "async-std",
  "async-tar",
+ "client",
  "clock",
  "collections",
  "command_palette_hooks",
- "fs",
- "futures 0.3.28",
- "gpui",
- "language",
- "lsp",
- "node_runtime",
- "parking_lot",
- "rpc",
- "serde",
- "settings",
- "smol",
- "util",
-]
-
-[[package]]
-name = "copilot_ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "copilot",
  "editor",
  "fs",
  "futures 0.3.28",
@@ -2545,6 +2525,33 @@ dependencies = [
  "language",
  "lsp",
  "menu",
+ "node_runtime",
+ "parking_lot",
+ "project",
+ "rpc",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
+name = "copilot_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot",
+ "editor",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "indoc",
+ "language",
+ "lsp",
  "project",
  "serde_json",
  "settings",
@@ -5555,7 +5562,6 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "language",
- "log",
  "lsp",
  "project",
  "release_channel",

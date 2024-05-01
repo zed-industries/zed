@@ -2,8 +2,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use client::telemetry::Telemetry;
 use collections::HashMap;
-use copilot::Copilot;
-use copilot_ui::CopilotCompletionProvider;
+use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use gpui::{AnyWindowHandle, AppContext, Context, ViewContext, WeakView};
 use language::language_settings::all_language_settings;

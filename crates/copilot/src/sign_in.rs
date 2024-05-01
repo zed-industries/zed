@@ -1,4 +1,4 @@
-use copilot::{request::PromptUserDeviceFlow, Copilot, Status};
+use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
     div, svg, AppContext, ClipboardItem, DismissEvent, Element, EventEmitter, FocusHandle,
     FocusableView, InteractiveElement, IntoElement, Model, MouseDownEvent, ParentElement, Render,
@@ -26,7 +26,7 @@ impl EventEmitter<DismissEvent> for CopilotCodeVerification {}
 impl ModalView for CopilotCodeVerification {}
 
 impl CopilotCodeVerification {
-    pub(crate) fn new(copilot: &Model<Copilot>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(copilot: &Model<Copilot>, cx: &mut ViewContext<Self>) -> Self {
         let status = copilot.read(cx).status();
         Self {
             status,

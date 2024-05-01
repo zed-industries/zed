@@ -1,6 +1,5 @@
-use crate::sign_in::CopilotCodeVerification;
 use anyhow::Result;
-use copilot::{Copilot, SignOut, Status};
+use copilot::{Copilot, CopilotCodeVerification, SignOut, Status};
 use editor::{scroll::Autoscroll, Editor};
 use fs::Fs;
 use gpui::{
@@ -16,10 +15,10 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc};
 use util::{paths, ResultExt};
-use workspace::notifications::NotificationId;
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
+    notifications::NotificationId,
     ui::{
         popover_menu, ButtonCommon, Clickable, ContextMenu, IconButton, IconName, IconSize, Tooltip,
     },

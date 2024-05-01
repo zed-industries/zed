@@ -1,4 +1,7 @@
+mod copilot_completion_provider;
 pub mod request;
+mod sign_in;
+
 use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -31,6 +34,9 @@ use std::{
 use util::{
     fs::remove_matching, github::latest_github_release, http::HttpClient, maybe, paths, ResultExt,
 };
+
+pub use copilot_completion_provider::CopilotCompletionProvider;
+pub use sign_in::CopilotCodeVerification;
 
 actions!(
     copilot,
