@@ -120,7 +120,7 @@ pub enum ParsedMarkdownTableAlignment {
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownTableRow {
-    pub children: Vec<ParsedMarkdownText>,
+    pub children: Vec<Vec<ParsedMarkdownElement>>,
 }
 
 impl ParsedMarkdownTableRow {
@@ -130,7 +130,7 @@ impl ParsedMarkdownTableRow {
         }
     }
 
-    pub fn with_children(children: Vec<ParsedMarkdownText>) -> Self {
+    pub fn with_children(children: Vec<Vec<ParsedMarkdownElement>>) -> Self {
         Self { children }
     }
 }

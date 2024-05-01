@@ -309,7 +309,7 @@ fn render_markdown_table_row(
             .copied()
             .unwrap_or(ParsedMarkdownTableAlignment::None);
 
-        let contents = render_markdown_text(cell, cx);
+        let contents = v_flex().children(cell.iter().map(|c| render_markdown_block(c, cx)));
 
         let container = match alignment {
             ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => div(),

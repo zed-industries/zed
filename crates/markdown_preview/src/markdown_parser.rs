@@ -494,7 +494,31 @@ impl<'a> MarkdownParser<'a> {
                 }
                 Event::Start(Tag::TableCell) => {
                     self.cursor += 1;
-                    let cell_contents = self.parse_text(false, Some(source_range));
+                    let mut cell_contents = vec![ParsedMarkdownElement::Paragraph(
+                        self.parse_text(false, Some(source_range)),
+                    )];
+                    while let Some(Event::Start(Tag::Image {
+                        link_type: _,
+                        dest_url,
+                        id: _,
+                        title,
+                    })) = self.current_event().cloned()
+                    {
+                        let url = dest_url.to_string();
+                        let title = title.to_string();
+                        self.cursor += 1;
+                        cell_contents
+                            .push(ParsedMarkdownElement::Image(self.parse_image(url, title)));
+
+                        if !self.eof()
+                            && self.current_event() != Some(&Event::End(TagEnd::TableCell))
+                        {
+                            self.cursor += 1;
+                            cell_contents.push(ParsedMarkdownElement::Paragraph(
+                                self.parse_text(false, None),
+                            ));
+                        }
+                    }
                     current_row.push(cell_contents);
                 }
                 Event::End(TagEnd::TableHead) | Event::End(TagEnd::TableRow) => {
@@ -988,7 +1012,7 @@ Some other content
 
         let expected_table = table(
             0..48,
-            row(vec![text("Header 1", 1..11), text("Header 2", 12..22)]),
+            text_row(vec![text("Header 1", 1..11), text("Header 2", 12..22)]),
             vec![],
         );
 
@@ -1008,16 +1032,50 @@ Some other content
 
         let expected_table = table(
             0..95,
-            row(vec![text("Header 1", 1..11), text("Header 2", 12..22)]),
+            text_row(vec![text("Header 1", 1..11), text("Header 2", 12..22)]),
             vec![
-                row(vec![text("Cell 1", 49..59), text("Cell 2", 60..70)]),
-                row(vec![text("Cell 3", 73..83), text("Cell 4", 84..94)]),
+                text_row(vec![text("Cell 1", 49..59), text("Cell 2", 60..70)]),
+                text_row(vec![text("Cell 3", 73..83), text("Cell 4", 84..94)]),
             ],
         );
 
         assert_eq!(
             parse(markdown).await.children[0],
             ParsedMarkdownElement::Table(expected_table)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_table_with_image() {
+        let parsed = parse(
+            "\
+| Header | Body                                           |
+| ------ | ---------------------------------------------- |
+| Cell 1 | Cell![Contact](https://zed.dev/someimage.png)2 |
+",
+        )
+        .await;
+
+        let expected_table = table(
+            0..180,
+            text_row(vec![text("Header", 1..9), text("Body", 10..58)]),
+            vec![row(vec![
+                vec![ParsedMarkdownElement::Paragraph(text("Cell 1", 121..129))],
+                vec![
+                    ParsedMarkdownElement::Paragraph(text("Cell", 130..178)),
+                    image(
+                        Some(text("Contact", 137..144)),
+                        "https://zed.dev/someimage.png",
+                        135..176,
+                    ),
+                    ParsedMarkdownElement::Paragraph(text("2", 176..177)),
+                ],
+            ])],
+        );
+
+        assert_eq!(
+            parsed.children,
+            vec![ParsedMarkdownElement::Table(expected_table)]
         );
     }
 
@@ -1377,6 +1435,22 @@ fn main() {
         }
     }
 
+    fn image(
+        alt_text: Option<ParsedMarkdownText>,
+        url: &str,
+        source_range: Range<usize>,
+    ) -> ParsedMarkdownElement {
+        ParsedMarkdownElement::Image(ParsedMarkdownImage {
+            source_range,
+            alt_text,
+            url: url.to_string(),
+            title: "".to_string(),
+            link: Some(Link::Web {
+                url: url.to_string(),
+            }),
+        })
+    }
+
     fn block_quote(
         children: Vec<ParsedMarkdownElement>,
         source_range: Range<usize>,
@@ -1428,7 +1502,15 @@ fn main() {
         }
     }
 
-    fn row(children: Vec<ParsedMarkdownText>) -> ParsedMarkdownTableRow {
+    fn row(children: Vec<Vec<ParsedMarkdownElement>>) -> ParsedMarkdownTableRow {
+        ParsedMarkdownTableRow { children }
+    }
+
+    fn text_row(children: Vec<ParsedMarkdownText>) -> ParsedMarkdownTableRow {
+        let children = children
+            .into_iter()
+            .map(|c| vec![ParsedMarkdownElement::Paragraph(c)])
+            .collect();
         ParsedMarkdownTableRow { children }
     }
 
