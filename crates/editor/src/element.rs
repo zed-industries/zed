@@ -2679,10 +2679,10 @@ impl EditorElement {
         let cursor_ranges = layout
             .cursors
             .iter()
-            .map(|cursor| ColoredRange {
-                start: cursor.0.row(),
-                end: cursor.0.row(),
-                color: cursor.1,
+            .map(|(point, color)| ColoredRange {
+                start: point.row(),
+                end: point.row(),
+                color: *color,
             })
             .collect_vec();
         scrollbar_layout.marker_quads_for_ranges(cursor_ranges, None)
