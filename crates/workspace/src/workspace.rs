@@ -1693,6 +1693,13 @@ impl Workspace {
     }
 
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
+        if self.project.read(cx).is_remote() {
+            self.show_error(
+                &anyhow!("Folders cannot yet be added to remote projects"),
+                cx,
+            );
+            return;
+        }
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
