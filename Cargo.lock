@@ -11795,6 +11795,7 @@ dependencies = [
  "copilot_ui",
  "db",
  "editor",
+ "extensions_ui",
  "fuzzy",
  "gpui",
  "install_cli",
