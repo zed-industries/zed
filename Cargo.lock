@@ -2272,6 +2272,7 @@ dependencies = [
  "collections",
  "ctor",
  "dashmap",
+ "dev_server_projects",
  "editor",
  "env_logger",
  "envy",
@@ -2301,7 +2302,6 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "release_channel",
- "remote_projects",
  "reqwest",
  "rpc",
  "rustc-demangle",
@@ -3174,6 +3174,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "dev_server_projects"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "rpc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7790,6 +7802,7 @@ name = "recent_projects"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dev_server_projects",
  "editor",
  "feature_flags",
  "fuzzy",
@@ -7799,7 +7812,6 @@ dependencies = [
  "ordered-float 2.10.0",
  "picker",
  "project",
- "remote_projects",
  "rpc",
  "serde",
  "serde_json",
@@ -7932,18 +7944,6 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "once_cell",
-]
-
-[[package]]
-name = "remote_projects"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "gpui",
- "rpc",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -12403,6 +12403,7 @@ dependencies = [
  "collections",
  "db",
  "derive_more",
+ "dev_server_projects",
  "env_logger",
  "fs",
  "futures 0.3.28",
@@ -12415,7 +12416,6 @@ dependencies = [
  "parking_lot",
  "postage",
  "project",
- "remote_projects",
  "schemars",
  "serde",
  "serde_json",
@@ -12678,6 +12678,7 @@ dependencies = [
  "copilot",
  "copilot_ui",
  "db",
+ "dev_server_projects",
  "diagnostics",
  "editor",
  "env_logger",
@@ -12715,7 +12716,6 @@ dependencies = [
  "quick_action_bar",
  "recent_projects",
  "release_channel",
- "remote_projects",
  "rope",
  "search",
  "serde",

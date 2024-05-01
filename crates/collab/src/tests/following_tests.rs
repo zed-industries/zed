@@ -73,7 +73,7 @@ async fn test_basic_following(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -161,7 +161,7 @@ async fn test_basic_following(
 
     executor.run_until_parked();
     let active_call_c = cx_c.read(ActiveCall::global);
-    let project_c = client_c.build_remote_project(project_id, cx_c).await;
+    let project_c = client_c.build_dev_server_project(project_id, cx_c).await;
     let (workspace_c, cx_c) = client_c.build_workspace(&project_c, cx_c);
     active_call_c
         .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
@@ -174,7 +174,7 @@ async fn test_basic_following(
 
     cx_d.executor().run_until_parked();
     let active_call_d = cx_d.read(ActiveCall::global);
-    let project_d = client_d.build_remote_project(project_id, cx_d).await;
+    let project_d = client_d.build_dev_server_project(project_id, cx_d).await;
     let (workspace_d, cx_d) = client_d.build_workspace(&project_d, cx_d);
     active_call_d
         .update(cx_d, |call, cx| call.set_location(Some(&project_d), cx))
@@ -567,7 +567,7 @@ async fn test_following_tab_order(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -684,7 +684,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
         .unwrap();
 
     // Client B joins the project.
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -1197,7 +1197,7 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await
@@ -1333,7 +1333,7 @@ async fn test_peers_simultaneously_following_each_other(
         .await
         .unwrap();
 
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
     executor.run_until_parked();
@@ -1683,7 +1683,7 @@ async fn test_following_into_excluded_file(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
         .await

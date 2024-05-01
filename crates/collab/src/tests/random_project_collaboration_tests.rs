@@ -217,19 +217,20 @@ impl RandomizedTest for ProjectCollaborationTest {
                     0..=70 => {
                         // Open a remote project
                         if let Some(room) = call.read_with(cx, |call, _| call.room().cloned()) {
-                            let existing_remote_project_ids = cx.read(|cx| {
+                            let existing_dev_server_project_ids = cx.read(|cx| {
                                 client
-                                    .remote_projects()
+                                    .dev_server_projects()
                                     .iter()
                                     .map(|p| p.read(cx).remote_id().unwrap())
                                     .collect::<Vec<_>>()
                             });
-                            let new_remote_projects = room.read_with(cx, |room, _| {
+                            let new_dev_server_projects = room.read_with(cx, |room, _| {
                                 room.remote_participants()
                                     .values()
                                     .flat_map(|participant| {
                                         participant.projects.iter().filter_map(|project| {
-                                            if existing_remote_project_ids.contains(&project.id) {
+                                            if existing_dev_server_project_ids.contains(&project.id)
+                                            {
                                                 None
                                             } else {
                                                 Some((
@@ -241,9 +242,9 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     })
                                     .collect::<Vec<_>>()
                             });
-                            if !new_remote_projects.is_empty() {
+                            if !new_dev_server_projects.is_empty() {
                                 let (host_id, first_root_name) =
-                                    new_remote_projects.choose(rng).unwrap().clone();
+                                    new_dev_server_projects.choose(rng).unwrap().clone();
                                 break ClientOperation::OpenRemoteProject {
                                     host_id,
                                     first_root_name,
@@ -259,8 +260,8 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     // Close a remote project
                     71..=80 => {
-                        if !client.remote_projects().is_empty() {
-                            let project = client.remote_projects().choose(rng).unwrap().clone();
+                        if !client.dev_server_projects().is_empty() {
+                            let project = client.dev_server_projects().choose(rng).unwrap().clone();
                             let first_root_name = root_name_for_project(&project, cx);
                             break ClientOperation::CloseRemoteProject {
                                 project_root_name: first_root_name,
@@ -595,12 +596,12 @@ impl RandomizedTest for ProjectCollaborationTest {
                 );
 
                 let ix = client
-                    .remote_projects()
+                    .dev_server_projects()
                     .iter()
                     .position(|p| p == &project)
                     .unwrap();
                 cx.update(|_| {
-                    client.remote_projects_mut().remove(ix);
+                    client.dev_server_projects_mut().remove(ix);
                     client.buffers().retain(|p, _| *p != project);
                     drop(project);
                 });
@@ -642,7 +643,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 );
 
                 let project = project.await?;
-                client.remote_projects_mut().push(project.clone());
+                client.dev_server_projects_mut().push(project.clone());
             }
 
             ClientOperation::CreateWorktreeEntry {
@@ -1142,7 +1143,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
     async fn on_quiesce(_: &mut TestServer, clients: &mut [(Rc<TestClient>, TestAppContext)]) {
         for (client, client_cx) in clients.iter() {
-            for guest_project in client.remote_projects().iter() {
+            for guest_project in client.dev_server_projects().iter() {
                 guest_project.read_with(client_cx, |guest_project, cx| {
                         let host_project = clients.iter().find_map(|(client, cx)| {
                             let project = client
@@ -1487,8 +1488,9 @@ fn project_for_root_name(
     if let Some(ix) = project_ix_for_root_name(client.local_projects().deref(), root_name, cx) {
         return Some(client.local_projects()[ix].clone());
     }
-    if let Some(ix) = project_ix_for_root_name(client.remote_projects().deref(), root_name, cx) {
-        return Some(client.remote_projects()[ix].clone());
+    if let Some(ix) = project_ix_for_root_name(client.dev_server_projects().deref(), root_name, cx)
+    {
+        return Some(client.dev_server_projects()[ix].clone());
     }
     None
 }
@@ -1578,7 +1580,7 @@ fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<Model<
         .local_projects()
         .deref()
         .iter()
-        .chain(client.remote_projects().iter())
+        .chain(client.dev_server_projects().iter())
         .choose(rng)
         .cloned()
 }
