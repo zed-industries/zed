@@ -1,17 +1,17 @@
-use gpui::Position;
+use gpui::Transformation;
 
-use crate::prelude::*;
+use crate::{prelude::*, AnyIcon};
 
 #[derive(Default)]
 pub enum IndicatorStyle {
     #[default]
     Dot,
     Bar,
+    Icon(AnyIcon),
 }
 
 #[derive(IntoElement)]
 pub struct Indicator {
-    position: Position,
     style: IndicatorStyle,
     pub color: Color,
 }
@@ -19,7 +19,6 @@ pub struct Indicator {
 impl Indicator {
     pub fn dot() -> Self {
         Self {
-            position: Position::Relative,
             style: IndicatorStyle::Dot,
             color: Color::Default,
         }
@@ -27,8 +26,14 @@ impl Indicator {
 
     pub fn bar() -> Self {
         Self {
-            position: Position::Relative,
             style: IndicatorStyle::Dot,
+            color: Color::Default,
+        }
+    }
+
+    pub fn icon(icon: impl Into<AnyIcon>) -> Self {
+        Self {
+            style: IndicatorStyle::Icon(icon.into()),
             color: Color::Default,
         }
     }
@@ -37,22 +42,55 @@ impl Indicator {
         self.color = color;
         self
     }
-
-    pub fn absolute(mut self) -> Self {
-        self.position = Position::Absolute;
-        self
-    }
 }
 
 impl RenderOnce for Indicator {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        div()
-            .flex_none()
-            .map(|this| match self.style {
-                IndicatorStyle::Dot => this.w_1p5().h_1p5().rounded_full(),
-                IndicatorStyle::Bar => this.w_full().h_1p5().rounded_t_md(),
+        let container = div().flex_none();
+
+        match self.style {
+            IndicatorStyle::Icon(icon) => container
+                .child(icon.map(|icon| icon.custom_size(rems_from_px(8.)).color(self.color))),
+            IndicatorStyle::Dot => container
+                .w_1p5()
+                .h_1p5()
+                .rounded_full()
+                .bg(self.color.color(cx)),
+            IndicatorStyle::Bar => container
+                .w_full()
+                .h_1p5()
+                .rounded_t_md()
+                .bg(self.color.color(cx)),
+        }
+    }
+}
+
+#[derive(IntoElement)]
+pub struct IndicatorIcon {
+    icon: Icon,
+    transformation: Option<Transformation>,
+}
+
+impl IndicatorIcon {
+    pub fn new(icon: Icon) -> Self {
+        Self {
+            icon,
+            transformation: None,
+        }
+    }
+
+    pub fn transformation(mut self, transformation: Transformation) -> Self {
+        self.transformation = Some(transformation);
+        self
+    }
+}
+
+impl RenderOnce for IndicatorIcon {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        self.icon
+            .custom_size(rems_from_px(8.))
+            .when_some(self.transformation, |this, transformation| {
+                this.transform(transformation)
             })
-            .when(self.position == Position::Absolute, |this| this.absolute())
-            .bg(self.color.color(cx))
     }
 }
