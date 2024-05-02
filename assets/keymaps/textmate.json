@@ -39,13 +39,13 @@
       "cmd-shift-left": "editor::SelectToBeginningOfLine",
       "cmd-shift-right": "editor::SelectToEndOfLine",
       "alt-shift-left": [
-        "editor::SelectToBeginningOfLine",
+        "editor::SelectToPreviousWordStart",
         {
           "stop_at_soft_wraps": true
         }
       ],
       "alt-shift-right": [
-        "editor::SelectToEndOfLine",
+        "editor::SelectToNextWordEnd",
         {
           "stop_at_soft_wraps": true
         }
