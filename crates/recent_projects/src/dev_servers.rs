@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerProjectId};
+use editor::Editor;
 use feature_flags::FeatureFlagViewExt;
 use gpui::{
     percentage, Action, Animation, AnimationExt, AppContext, ClipboardItem, DismissEvent,
@@ -25,7 +26,7 @@ pub struct DevServerProjects {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
     dev_server_store: Model<dev_server_projects::Store>,
-    project_path_input: View<TextField>,
+    project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
     _subscription: gpui::Subscription,
 }
@@ -36,15 +37,14 @@ struct CreateDevServer {
     dev_server: Option<CreateDevServerResponse>,
 }
 
+#[derive(Clone)]
 struct CreateDevServerProject {
     dev_server_id: DevServerId,
     creating: bool,
-    dev_server_project: Option<proto::DevServerProject>,
 }
 
 enum Mode {
-    Default,
-    CreateDevServerProject(CreateDevServerProject),
+    Default(Option<CreateDevServerProject>),
     CreateDevServer(CreateDevServer),
 }
 
@@ -67,7 +67,11 @@ impl DevServerProjects {
     }
 
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let project_path_input = cx.new_view(|cx| TextField::new(cx, "", "Project path"));
+        let project_path_input = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("Project path", cx);
+            editor
+        });
         let dev_server_name_input =
             cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Stacked));
 
@@ -79,7 +83,7 @@ impl DevServerProjects {
         });
 
         Self {
-            mode: Mode::Default,
+            mode: Mode::Default(None),
             focus_handle,
             scroll_handle: ScrollHandle::new(),
             dev_server_store,
@@ -94,14 +98,7 @@ impl DevServerProjects {
         dev_server_id: DevServerId,
         cx: &mut ViewContext<Self>,
     ) {
-        let path = self
-            .project_path_input
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
+        let path = self.project_path_input.read(cx).text(cx).trim().to_string();
 
         if path == "" {
             return;
@@ -138,17 +135,20 @@ impl DevServerProjects {
         };
 
         cx.spawn(|this, mut cx| async move {
+            cx.background_executor().timer(Duration::from_secs(5)).await;
             let result = create.await;
-            let dev_server_project = result
-                .as_ref()
-                .ok()
-                .and_then(|r| r.dev_server_project.clone());
-            this.update(&mut cx, |this, _| {
-                this.mode = Mode::CreateDevServerProject(CreateDevServerProject {
-                    dev_server_id,
-                    creating: false,
-                    dev_server_project,
-                });
+            this.update(&mut cx, |this, cx| {
+                if result.is_ok() {
+                    this.project_path_input.update(cx, |editor, cx| {
+                        editor.set_text("", cx);
+                    });
+                    this.mode = Mode::Default(None);
+                } else {
+                    this.mode = Mode::Default(Some(CreateDevServerProject {
+                        dev_server_id,
+                        creating: false,
+                    }));
+                }
             })
             .log_err();
             result
@@ -166,17 +166,10 @@ impl DevServerProjects {
             }
         });
 
-        self.project_path_input.update(cx, |input, cx| {
-            input.editor().update(cx, |editor, cx| {
-                editor.set_text("", cx);
-            });
-        });
-
-        self.mode = Mode::CreateDevServerProject(CreateDevServerProject {
+        self.mode = Mode::Default(Some(CreateDevServerProject {
             dev_server_id,
             creating: true,
-            dev_server_project: None,
-        });
+        }));
     }
 
     pub fn create_dev_server(&mut self, cx: &mut ViewContext<Self>) {
@@ -248,10 +241,10 @@ impl DevServerProjects {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        match self.mode {
-            Mode::Default => {}
-            Mode::CreateDevServerProject(CreateDevServerProject { dev_server_id, .. }) => {
-                self.create_dev_server_project(dev_server_id, cx);
+        match &self.mode {
+            Mode::Default(None) => {}
+            Mode::Default(Some(create_project)) => {
+                self.create_dev_server_project(create_project.dev_server_id, cx);
             }
             Mode::CreateDevServer(_) => {
                 self.create_dev_server(cx);
@@ -261,9 +254,9 @@ impl DevServerProjects {
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         match self.mode {
-            Mode::Default => cx.emit(DismissEvent),
-            Mode::CreateDevServerProject(_) | Mode::CreateDevServer(_) => {
-                self.mode = Mode::Default;
+            Mode::Default(None) => cx.emit(DismissEvent),
+            _ => {
+                self.mode = Mode::Default(None);
                 self.focus_handle(cx).focus(cx);
                 cx.notify();
             }
@@ -273,10 +266,17 @@ impl DevServerProjects {
     fn render_dev_server(
         &mut self,
         dev_server: &DevServer,
+        mut create_project: Option<CreateDevServerProject>,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let dev_server_id = dev_server.id;
         let status = dev_server.status;
+        if create_project
+            .as_ref()
+            .is_some_and(|cp| cp.dev_server_id != dev_server.id)
+        {
+            create_project = None;
+        }
 
         v_flex()
             .w_full()
@@ -341,12 +341,12 @@ impl DevServerProjects {
                             .tooltip(|cx| Tooltip::text("Add a remote project", cx))
                             .on_click(cx.listener(
                                 move |this, _, cx| {
-                                    this.mode =
-                                        Mode::CreateDevServerProject(CreateDevServerProject {
+                                    if let Mode::Default(project) = &mut this.mode {
+                                        *project = Some(CreateDevServerProject {
                                             dev_server_id,
                                             creating: false,
-                                            dev_server_project: None,
                                         });
+                                    }
                                     this.project_path_input.read(cx).focus_handle(cx).focus(cx);
                                     cx.notify();
                                 },
@@ -365,14 +365,46 @@ impl DevServerProjects {
                     .py_0p5()
                     .px_3()
                     .child(
-                        List::new().empty_message("No projects.").children(
-                            self.dev_server_store
-                                .read(cx)
-                                .projects_for_server(dev_server.id)
-                                .iter()
-                                .map(|p| self.render_dev_server_project(p, cx)),
-                        ),
+                        List::new()
+                            .empty_message("No projects.")
+                            .children(
+                                self.dev_server_store
+                                    .read(cx)
+                                    .projects_for_server(dev_server.id)
+                                    .iter()
+                                    .map(|p| self.render_dev_server_project(p, cx)),
+                            )
+                            .when_some(create_project, |el, create_project| {
+                                el.child(self.render_create_new_project(&create_project, cx))
+                            }),
                     ),
+            )
+    }
+
+    fn render_create_new_project(
+        &mut self,
+        create_project: &CreateDevServerProject,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        ListItem::new("create-remote-project")
+            .start_slot(Icon::new(IconName::FileTree).color(Color::Muted))
+            .child(self.project_path_input.clone())
+            .child(
+                div()
+                    .w(IconSize::Medium.rems())
+                    .when(create_project.creating, |el| {
+                        el.child(
+                            Icon::new(IconName::ArrowCircle)
+                                .size(IconSize::Medium)
+                                .with_animation(
+                                    "arrow-circle",
+                                    Animation::new(Duration::from_secs(2)).repeat(),
+                                    |icon, delta| {
+                                        icon.transform(Transformation::rotate(percentage(delta)))
+                                    },
+                                ),
+                        )
+                    }),
             )
     }
 
@@ -559,6 +591,11 @@ impl DevServerProjects {
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let dev_servers = self.dev_server_store.read(cx).dev_servers();
 
+        let Mode::Default(create_dev_server_project) = &self.mode else {
+            unreachable!()
+        };
+        let create_dev_server_project = create_dev_server_project.clone();
+
         v_flex()
             .id("scroll-container")
             .h_full()
@@ -597,126 +634,131 @@ impl DevServerProjects {
                             ),
                         ))
                         .children(dev_servers.iter().map(|dev_server| {
-                            self.render_dev_server(dev_server, cx).into_any_element()
+                            self.render_dev_server(
+                                dev_server,
+                                create_dev_server_project.clone(),
+                                cx,
+                            )
+                            .into_any_element()
                         })),
                 ),
             )
     }
 
-    fn render_create_dev_server_project(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let Mode::CreateDevServerProject(CreateDevServerProject {
-            dev_server_id,
-            creating,
-            dev_server_project,
-        }) = &self.mode
-        else {
-            unreachable!()
-        };
+    // fn render_create_dev_server_project(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    //     let Mode::CreateDevServerProject(CreateDevServerProject {
+    //         dev_server_id,
+    //         creating,
+    //         dev_server_project,
+    //     }) = &self.mode
+    //     else {
+    //         unreachable!()
+    //     };
 
-        let dev_server = self
-            .dev_server_store
-            .read(cx)
-            .dev_server(*dev_server_id)
-            .cloned();
+    //     let dev_server = self
+    //         .dev_server_store
+    //         .read(cx)
+    //         .dev_server(*dev_server_id)
+    //         .cloned();
 
-        let (dev_server_name, dev_server_status) = dev_server
-            .map(|server| (server.name, server.status))
-            .unwrap_or((SharedString::from(""), DevServerStatus::Offline));
+    //     let (dev_server_name, dev_server_status) = dev_server
+    //         .map(|server| (server.name, server.status))
+    //         .unwrap_or((SharedString::from(""), DevServerStatus::Offline));
 
-        v_flex()
-            .px_1()
-            .pt_0p5()
-            .gap_px()
-            .child(
-                v_flex().py_0p5().px_1().child(
-                    h_flex()
-                        .px_1()
-                        .py_0p5()
-                        .child(
-                            IconButton::new("back", IconName::ArrowLeft)
-                                .style(ButtonStyle::Transparent)
-                                .on_click(cx.listener(|_, _: &gpui::ClickEvent, cx| {
-                                    cx.dispatch_action(menu::Cancel.boxed_clone())
-                                })),
-                        )
-                        .child(Headline::new("Add remote project").size(HeadlineSize::Small)),
-                ),
-            )
-            .child(
-                h_flex()
-                    .ml_5()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id(("status", dev_server_id.0))
-                            .relative()
-                            .child(Icon::new(IconName::Server))
-                            .child(div().absolute().bottom_0().left(rems_from_px(12.0)).child(
-                                Indicator::dot().color(match dev_server_status {
-                                    DevServerStatus::Online => Color::Created,
-                                    DevServerStatus::Offline => Color::Hidden,
-                                }),
-                            ))
-                            .tooltip(move |cx| {
-                                Tooltip::text(
-                                    match dev_server_status {
-                                        DevServerStatus::Online => "Online",
-                                        DevServerStatus::Offline => "Offline",
-                                    },
-                                    cx,
-                                )
-                            }),
-                    )
-                    .child(dev_server_name.clone()),
-            )
-            .child(
-                h_flex()
-                    .ml_5()
-                    .gap_2()
-                    .child(self.project_path_input.clone())
-                    .when(!*creating && dev_server_project.is_none(), |div| {
-                        div.child(Button::new("create-remote-server", "Create").on_click({
-                            let dev_server_id = *dev_server_id;
-                            cx.listener(move |this, _, cx| {
-                                this.create_dev_server_project(dev_server_id, cx)
-                            })
-                        }))
-                    })
-                    .when(*creating, |div| {
-                        div.child(Button::new("create-dev-server", "Creating...").disabled(true))
-                    }),
-            )
-            .when_some(dev_server_project.clone(), |div, dev_server_project| {
-                let status = self
-                    .dev_server_store
-                    .read(cx)
-                    .dev_server_project(DevServerProjectId(dev_server_project.id))
-                    .map(|project| {
-                        if project.project_id.is_some() {
-                            DevServerStatus::Online
-                        } else {
-                            DevServerStatus::Offline
-                        }
-                    })
-                    .unwrap_or(DevServerStatus::Offline);
-                div.child(
-                    v_flex()
-                        .ml_5()
-                        .ml_8()
-                        .gap_2()
-                        .when(status == DevServerStatus::Offline, |this| {
-                            this.child(Label::new("Waiting for project..."))
-                        })
-                        .when(status == DevServerStatus::Online, |this| {
-                            this.child(Label::new("Project online! 🎊")).child(
-                                Button::new("done", "Done").on_click(cx.listener(|_, _, cx| {
-                                    cx.dispatch_action(menu::Cancel.boxed_clone())
-                                })),
-                            )
-                        }),
-                )
-            })
-    }
+    //     v_flex()
+    //         .px_1()
+    //         .pt_0p5()
+    //         .gap_px()
+    //         .child(
+    //             v_flex().py_0p5().px_1().child(
+    //                 h_flex()
+    //                     .px_1()
+    //                     .py_0p5()
+    //                     .child(
+    //                         IconButton::new("back", IconName::ArrowLeft)
+    //                             .style(ButtonStyle::Transparent)
+    //                             .on_click(cx.listener(|_, _: &gpui::ClickEvent, cx| {
+    //                                 cx.dispatch_action(menu::Cancel.boxed_clone())
+    //                             })),
+    //                     )
+    //                     .child(Headline::new("Add remote project").size(HeadlineSize::Small)),
+    //             ),
+    //         )
+    //         .child(
+    //             h_flex()
+    //                 .ml_5()
+    //                 .gap_2()
+    //                 .child(
+    //                     div()
+    //                         .id(("status", dev_server_id.0))
+    //                         .relative()
+    //                         .child(Icon::new(IconName::Server))
+    //                         .child(div().absolute().bottom_0().left(rems_from_px(12.0)).child(
+    //                             Indicator::dot().color(match dev_server_status {
+    //                                 DevServerStatus::Online => Color::Created,
+    //                                 DevServerStatus::Offline => Color::Hidden,
+    //                             }),
+    //                         ))
+    //                         .tooltip(move |cx| {
+    //                             Tooltip::text(
+    //                                 match dev_server_status {
+    //                                     DevServerStatus::Online => "Online",
+    //                                     DevServerStatus::Offline => "Offline",
+    //                                 },
+    //                                 cx,
+    //                             )
+    //                         }),
+    //                 )
+    //                 .child(dev_server_name.clone()),
+    //         )
+    //         .child(
+    //             h_flex()
+    //                 .ml_5()
+    //                 .gap_2()
+    //                 .child(self.project_path_input.clone())
+    //                 .when(!*creating && dev_server_project.is_none(), |div| {
+    //                     div.child(Button::new("create-remote-server", "Create").on_click({
+    //                         let dev_server_id = *dev_server_id;
+    //                         cx.listener(move |this, _, cx| {
+    //                             this.create_dev_server_project(dev_server_id, cx)
+    //                         })
+    //                     }))
+    //                 })
+    //                 .when(*creating, |div| {
+    //                     div.child(Button::new("create-dev-server", "Creating...").disabled(true))
+    //                 }),
+    //         )
+    //         .when_some(dev_server_project.clone(), |div, dev_server_project| {
+    //             let status = self
+    //                 .dev_server_store
+    //                 .read(cx)
+    //                 .dev_server_project(DevServerProjectId(dev_server_project.id))
+    //                 .map(|project| {
+    //                     if project.project_id.is_some() {
+    //                         DevServerStatus::Online
+    //                     } else {
+    //                         DevServerStatus::Offline
+    //                     }
+    //                 })
+    //                 .unwrap_or(DevServerStatus::Offline);
+    //             div.child(
+    //                 v_flex()
+    //                     .ml_5()
+    //                     .ml_8()
+    //                     .gap_2()
+    //                     .when(status == DevServerStatus::Offline, |this| {
+    //                         this.child(Label::new("Waiting for project..."))
+    //                     })
+    //                     .when(status == DevServerStatus::Online, |this| {
+    //                         this.child(Label::new("Project online! 🎊")).child(
+    //                             Button::new("done", "Done").on_click(cx.listener(|_, _, cx| {
+    //                                 cx.dispatch_action(menu::Cancel.boxed_clone())
+    //                             })),
+    //                         )
+    //                     }),
+    //             )
+    //         })
+    // }
 }
 impl ModalView for DevServerProjects {}
 
@@ -737,7 +779,7 @@ impl Render for DevServerProjects {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_mouse_down_out(cx.listener(|this, _, cx| {
-                if matches!(this.mode, Mode::Default) {
+                if matches!(this.mode, Mode::Default(None)) {
                     cx.emit(DismissEvent)
                 }
             }))
@@ -746,10 +788,7 @@ impl Render for DevServerProjects {
             .min_h(rems(20.))
             .max_h(rems(40.))
             .child(match &self.mode {
-                Mode::Default => self.render_default(cx).into_any_element(),
-                Mode::CreateDevServerProject(_) => {
-                    self.render_create_dev_server_project(cx).into_any_element()
-                }
+                Mode::Default(_) => self.render_default(cx).into_any_element(),
                 Mode::CreateDevServer(_) => self.render_create_dev_server(cx).into_any_element(),
             })
     }
