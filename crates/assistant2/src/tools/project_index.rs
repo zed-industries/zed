@@ -276,17 +276,22 @@ impl Render for ProjectIndexStatusView {
             Status::Idle => Some(Indicator::dot().color(Color::Success)),
             Status::Scanning { .. } => Some(Indicator::dot().color(Color::Warning)),
             Status::Loading => Some(Indicator::icon(
-                Icon::new(IconName::ArrowCircle).with_animation(
-                    "arrow-circle",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                ),
+                Icon::new(IconName::Spinner)
+                    .color(Color::Accent)
+                    .with_animation(
+                        "arrow-circle",
+                        Animation::new(Duration::from_secs(2)).repeat(),
+                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    ),
             )),
         };
 
         ButtonLike::new("project-index")
             .disabled(!is_enabled)
-            .child(ui::IconWithIndicator::new(icon, indicator))
+            .child(
+                ui::IconWithIndicator::new(icon, indicator)
+                    .indicator_border_color(Some(gpui::transparent_black())),
+            )
             .tooltip({
                 move |cx| {
                     let (tooltip, meta) = match status {
