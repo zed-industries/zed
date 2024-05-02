@@ -5183,6 +5183,24 @@ impl Editor {
         self.manipulate_text(cx, |text| text.to_case(Case::Camel))
     }
 
+    pub fn convert_to_swapped_case(
+        &mut self,
+        _: &ConvertToSwappedCase,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.manipulate_text(cx, |text| {
+            text.chars()
+                .map(|c| {
+                    if c.is_uppercase() {
+                        c.to_lowercase().to_string()
+                    } else {
+                        c.to_uppercase().to_string()
+                    }
+                })
+                .collect()
+        })
+    }
+
     fn manipulate_text<Fn>(&mut self, cx: &mut ViewContext<Self>, mut callback: Fn)
     where
         Fn: FnMut(&str) -> String,

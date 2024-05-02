@@ -140,6 +140,7 @@ gpui::actions!(
         ConvertToKebabCase,
         ConvertToLowerCamelCase,
         ConvertToLowerCase,
+        ConvertToSwappedCase,
         ConvertToSnakeCase,
         ConvertToTitleCase,
         ConvertToUpperCamelCase,
@@ -160,8 +161,8 @@ gpui::actions!(
         DeleteToPreviousSubwordStart,
         DeleteToPreviousWordStart,
         DisplayCursorNames,
-        DuplicateLineUp,
         DuplicateLineDown,
+        DuplicateLineUp,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
@@ -262,7 +263,7 @@ gpui::actions!(
         Undo,
         UndoSelection,
         UnfoldLines,
-        UniqueLinesCaseSensitive,
         UniqueLinesCaseInsensitive,
+        UniqueLinesCaseSensitive,
     ]
 );
