@@ -1,11 +1,9 @@
 use crate::{ui::ProjectIndexButton, AssistantChat, CompletionProvider};
-use client::User;
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AnyElement, FontStyle, FontWeight, TextStyle, View, WeakView, WhiteSpace};
 use settings::Settings;
-use std::sync::Arc;
 use theme::ThemeSettings;
-use ui::{popover_menu, prelude::*, Avatar, ButtonLike, ContextMenu, Tooltip};
+use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Tooltip};
 
 #[derive(IntoElement)]
 pub struct Composer {
