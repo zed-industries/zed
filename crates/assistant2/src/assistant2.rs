@@ -269,7 +269,7 @@ impl AssistantChat {
             composer_editor: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(80, cx);
                 editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-                editor.set_placeholder_text("Type a message to the assistant", cx);
+                editor.set_placeholder_text("Send a message…", cx);
                 editor
             }),
             list_state,
@@ -370,10 +370,6 @@ impl AssistantChat {
             .context("Failed to push new user message")
             .log_err();
         }));
-    }
-
-    fn can_submit(&self) -> bool {
-        self.pending_completion.is_none()
     }
 
     fn debug_project_index(&mut self, _: &DebugProjectIndex, cx: &mut ViewContext<Self>) {
@@ -594,7 +590,6 @@ impl AssistantChat {
                         element.child(Composer::new(
                             body.clone(),
                             self.user_store.read(cx).current_user(),
-                            true,
                             self.tool_registry.clone(),
                             crate::ui::ModelSelector::new(
                                 cx.view().downgrade(),
@@ -773,7 +768,6 @@ impl Render for AssistantChat {
             .child(Composer::new(
                 self.composer_editor.clone(),
                 self.user_store.read(cx).current_user(),
-                self.can_submit(),
                 self.tool_registry.clone(),
                 crate::ui::ModelSelector::new(cx.view().downgrade(), self.model.clone())
                     .into_any_element(),
