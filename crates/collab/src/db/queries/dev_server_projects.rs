@@ -38,9 +38,8 @@ impl Database {
         dev_server_id: DevServerId,
     ) -> crate::Result<Vec<proto::DevServerProject>> {
         self.transaction(|tx| async move {
-            Ok(self
-                .get_projects_for_dev_server_internal(dev_server_id, &tx)
-                .await?)
+            self.get_projects_for_dev_server_internal(dev_server_id, &tx)
+                .await
         })
         .await
     }
@@ -53,7 +52,7 @@ impl Database {
         let servers = dev_server_project::Entity::find()
             .filter(dev_server_project::Column::DevServerId.eq(dev_server_id))
             .find_also_related(project::Entity)
-            .all(&*tx)
+            .all(tx)
             .await?;
         Ok(servers
             .into_iter()

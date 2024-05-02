@@ -231,7 +231,7 @@ impl DevServerProjects {
             }
 
             let project_ids: Vec<DevServerProjectId> = this.update(&mut cx, |this, cx| {
-                this.dev_server_store.update(cx, |store, cx| {
+                this.dev_server_store.update(cx, |store, _| {
                     store
                         .projects_for_server(id)
                         .into_iter()
