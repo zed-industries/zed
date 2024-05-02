@@ -3238,6 +3238,14 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         «aaaBbbˇ» «bbbCccˇ» «cccDddˇ»
     "});
+
+    cx.set_state(indoc! {"
+        «hElLo, WoRld!ˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_opposite_case(&ConvertToOppositeCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «HeLlO, wOrLD!ˇ»
+    "});
 }
 
 #[gpui::test]
