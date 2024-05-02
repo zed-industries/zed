@@ -8704,6 +8704,8 @@ dependencies = [
  "sha2 0.10.7",
  "smol",
  "tempfile",
+ "tree-sitter",
+ "unindent",
  "util",
  "worktree",
 ]
