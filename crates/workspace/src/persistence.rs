@@ -576,6 +576,22 @@ impl WorkspaceDb {
         }
     }
 
+    pub async fn delete_workspace_by_dev_server_project_id(
+        &self,
+        id: DevServerProjectId,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                DELETE FROM dev_server_projects WHERE id = ?
+            ))?(id.0)?;
+            conn.exec_bound(sql!(
+                DELETE FROM workspaces
+                WHERE dev_server_project_id IS ?
+            ))?(id.0)
+        })
+        .await
+    }
+
     // Returns the recent locations which are still valid on disk and deletes ones which no longer
     // exist.
     pub async fn recent_workspaces_on_disk(

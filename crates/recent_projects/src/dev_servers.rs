@@ -17,7 +17,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
 use ui_text_field::{FieldLabelLayout, TextField};
 use util::ResultExt;
-use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace};
+use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
 use crate::OpenRemote;
 
@@ -230,11 +230,29 @@ impl DevServerProjects {
                 return Ok(());
             }
 
+            let project_ids: Vec<DevServerProjectId> = this.update(&mut cx, |this, cx| {
+                this.dev_server_store.update(cx, |store, cx| {
+                    store
+                        .projects_for_server(id)
+                        .into_iter()
+                        .map(|project| project.id)
+                        .collect()
+                })
+            })?;
+
             this.update(&mut cx, |this, cx| {
                 this.dev_server_store
                     .update(cx, |store, cx| store.delete_dev_server(id, cx))
             })?
-            .await
+            .await?;
+
+            for id in project_ids {
+                WORKSPACE_DB
+                    .delete_workspace_by_dev_server_project_id(id)
+                    .await
+                    .log_err();
+            }
+            Ok(())
         })
         .detach_and_prompt_err("Failed to delete dev server", cx, |_, _| None);
     }
@@ -263,7 +281,14 @@ impl DevServerProjects {
                 this.dev_server_store
                     .update(cx, |store, cx| store.delete_dev_server_project(id, cx))
             })?
-            .await
+            .await?;
+
+            WORKSPACE_DB
+                .delete_workspace_by_dev_server_project_id(id)
+                .await
+                .log_err();
+
+            Ok(())
         })
         .detach_and_prompt_err("Failed to delete dev server project", cx, |_, _| None);
     }
