@@ -12,7 +12,7 @@ use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
+use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
 use telemetry_events::{
     ActionEvent, AppEvent, AssistantEvent, AssistantKind, CallEvent, CopilotEvent, CpuEvent,
     EditEvent, EditorEvent, Event, EventRequestBody, EventWrapper, ExtensionEvent, MemoryEvent,
@@ -171,40 +171,38 @@ impl Telemetry {
         drop(state);
 
         let this = self.clone();
-        cx.spawn(|_| async move {
-            // Avoiding calling `System::new_all()`, as there have been crashes related to it
-            let refresh_kind = RefreshKind::new()
-                .with_memory(MemoryRefreshKind::everything()) // For memory usage
-                .with_processes(ProcessRefreshKind::everything()) // For process usage
-                .with_cpu(CpuRefreshKind::everything()); // For core count
+        cx.background_executor()
+            .spawn(async move {
+                let mut system = System::new_with_specifics(
+                    RefreshKind::new().with_cpu(CpuRefreshKind::everything()),
+                );
 
-            let mut system = System::new_with_specifics(refresh_kind);
-
-            // Avoiding calling `refresh_all()`, just update what we need
-            system.refresh_specifics(refresh_kind);
-
-            // Waiting some amount of time before the first query is important to get a reasonable value
-            // https://docs.rs/sysinfo/0.29.10/sysinfo/trait.ProcessExt.html#tymethod.cpu_usage
-            const DURATION_BETWEEN_SYSTEM_EVENTS: Duration = Duration::from_secs(4 * 60);
-
-            loop {
-                smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
-
-                system.refresh_specifics(refresh_kind);
-
+                let refresh_kind = ProcessRefreshKind::new().with_cpu().with_memory();
                 let current_process = Pid::from_u32(std::process::id());
-                let Some(process) = system.processes().get(&current_process) else {
-                    let process = current_process;
-                    log::error!("Failed to find own process {process:?} in system process table");
-                    // TODO: Fire an error telemetry event
-                    return;
-                };
+                system.refresh_process_specifics(current_process, refresh_kind);
 
-                this.report_memory_event(process.memory(), process.virtual_memory());
-                this.report_cpu_event(process.cpu_usage(), system.cpus().len() as u32);
-            }
-        })
-        .detach();
+                // Waiting some amount of time before the first query is important to get a reasonable value
+                // https://docs.rs/sysinfo/0.29.10/sysinfo/trait.ProcessExt.html#tymethod.cpu_usage
+                const DURATION_BETWEEN_SYSTEM_EVENTS: Duration = Duration::from_secs(4 * 60);
+
+                loop {
+                    smol::Timer::after(DURATION_BETWEEN_SYSTEM_EVENTS).await;
+
+                    let current_process = Pid::from_u32(std::process::id());
+                    system.refresh_process_specifics(current_process, refresh_kind);
+                    let Some(process) = system.process(current_process) else {
+                        log::error!(
+                            "Failed to find own process {current_process:?} in system process table"
+                        );
+                        // TODO: Fire an error telemetry event
+                        return;
+                    };
+
+                    this.report_memory_event(process.memory(), process.virtual_memory());
+                    this.report_cpu_event(process.cpu_usage(), system.cpus().len() as u32);
+                }
+            })
+            .detach();
     }
 
     pub fn set_authenticated_user_info(
