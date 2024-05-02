@@ -6105,7 +6105,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_cmd_k_left(cx: &mut TestAppContext) {
+async fn test_pane_split_left(cx: &mut TestAppContext) {
     let (_, client) = TestServer::start1(cx).await;
     let (workspace, cx) = client.build_test_workspace(cx).await;
 
