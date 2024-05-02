@@ -1288,14 +1288,14 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
         // next display line.
         view.move_to_end_of_line(&move_to_end, cx);
         assert_eq!(
-            vec![DisplayPoint::new(2, 6)..DisplayPoint::new(2, 6),],
+            vec![DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),],
             view.selections.display_ranges(cx)
         );
 
         // Moving to the end of the line again should be a no-op.
         view.move_to_end_of_line(&move_to_end, cx);
         assert_eq!(
-            vec![DisplayPoint::new(2, 6)..DisplayPoint::new(2, 6),],
+            vec![DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),],
             view.selections.display_ranges(cx)
         );
     });
