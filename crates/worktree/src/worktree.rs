@@ -1065,7 +1065,7 @@ impl LocalWorktree {
         &self,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<(File, String, Option<String>)>> {
+    ) -> Task<Result<(File, String, Option<Rope>)>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
@@ -1096,7 +1096,7 @@ impl LocalWorktree {
                                 if abs_path_metadata.is_dir || abs_path_metadata.is_symlink {
                                     None
                                 } else {
-                                    git_repo.lock().load_index_text(&repo_path)
+                                    git_repo.lock().load_index_text(&repo_path).map(Rope::from)
                                 }
                             }
                         }));

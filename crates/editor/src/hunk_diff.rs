@@ -226,13 +226,14 @@ impl Editor {
                         .or_else(|| self.current_diff_base_buffer(&buffer, cx))
                         .or_else(|| create_diff_base_buffer(&buffer, cx));
                     let buffer = buffer.read(cx);
-                    let deleted_text_lines = buffer.diff_base().and_then(|diff_base| {
-                        Some(
-                            diff_base
-                                .get(hunk.diff_base_byte_range.clone())?
-                                .lines()
-                                .count(),
-                        )
+                    let deleted_text_lines = buffer.diff_base().map(|diff_base| {
+                        let diff_start_row = diff_base
+                            .offset_to_point(hunk.diff_base_byte_range.start)
+                            .row;
+                        let diff_end_row =
+                            diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
+                        let line_count = diff_end_row - diff_start_row;
+                        line_count as usize
                     });
                     Some((
                         diff_base_buffer?,
@@ -542,12 +543,12 @@ fn create_diff_base_buffer(buffer: &Model<Buffer>, cx: &mut AppContext) -> Optio
     buffer
         .update(cx, |buffer, _| {
             let language = buffer.language().cloned();
-            let diff_base = buffer.diff_base().map(|s| s.to_owned());
-            Some((diff_base?, language))
+            let diff_base = buffer.diff_base()?.clone();
+            Some((buffer.line_ending(), diff_base, language))
         })
-        .map(|(diff_base, language)| {
+        .map(|(line_ending, diff_base, language)| {
             cx.new_model(|cx| {
-                let buffer = Buffer::local(diff_base, cx);
+                let buffer = Buffer::local_normalized(diff_base, line_ending, cx);
                 match language {
                     Some(language) => buffer.with_language(language, cx),
                     None => buffer,

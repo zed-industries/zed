@@ -2570,7 +2570,10 @@ async fn test_git_diff_base_change(
     // Smoke test diffing
 
     buffer_local_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        assert_eq!(
+            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            Some(diff_base.as_str())
+        );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
@@ -2591,7 +2594,10 @@ async fn test_git_diff_base_change(
     // Smoke test diffing
 
     buffer_remote_a.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        assert_eq!(
+            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            Some(diff_base.as_str())
+        );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
@@ -2611,7 +2617,10 @@ async fn test_git_diff_base_change(
     // Smoke test new diffing
 
     buffer_local_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+        assert_eq!(
+            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            Some(new_diff_base.as_str())
+        );
 
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
@@ -2624,7 +2633,10 @@ async fn test_git_diff_base_change(
     // Smoke test B
 
     buffer_remote_a.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+        assert_eq!(
+            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            Some(new_diff_base.as_str())
+        );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
@@ -2664,7 +2676,10 @@ async fn test_git_diff_base_change(
     // Smoke test diffing
 
     buffer_local_b.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        assert_eq!(
+            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            Some(diff_base.as_str())
+        );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
@@ -2685,7 +2700,10 @@ async fn test_git_diff_base_change(
     // Smoke test diffing
 
     buffer_remote_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.diff_base(), Some(diff_base.as_ref()));
+        assert_eq!(
+            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            Some(diff_base.as_str())
+        );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,
@@ -2705,7 +2723,10 @@ async fn test_git_diff_base_change(
     // Smoke test new diffing
 
     buffer_local_b.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+        assert_eq!(
+            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            Some(new_diff_base.as_str())
+        );
         println!("{:?}", buffer.as_rope().to_string());
         println!("{:?}", buffer.diff_base());
         println!(
@@ -2727,7 +2748,10 @@ async fn test_git_diff_base_change(
     // Smoke test B
 
     buffer_remote_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.diff_base(), Some(new_diff_base.as_ref()));
+        assert_eq!(
+            buffer.diff_base().map(|rope| rope.to_string()).as_deref(),
+            Some(new_diff_base.as_str())
+        );
         git::diff::assert_hunks(
             buffer.snapshot().git_diff_hunks_in_row_range(0..4),
             &buffer,

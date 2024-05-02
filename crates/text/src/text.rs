@@ -520,8 +520,16 @@ impl Buffer {
     pub fn new(replica_id: u16, remote_id: BufferId, mut base_text: String) -> Buffer {
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
+        Self::new_normalized(replica_id, remote_id, line_ending, Rope::from(base_text))
+    }
 
-        let history = History::new(Rope::from(base_text.as_ref()));
+    pub fn new_normalized(
+        replica_id: u16,
+        remote_id: BufferId,
+        line_ending: LineEnding,
+        normalized: Rope,
+    ) -> Buffer {
+        let history = History::new(normalized);
         let mut fragments = SumTree::new();
         let mut insertions = SumTree::new();
 
