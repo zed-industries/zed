@@ -13,6 +13,7 @@ use schemars::{
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsLocation, SettingsSources};
 use std::{num::NonZeroU32, path::Path, sync::Arc};
+use util::serde::default_true;
 
 impl<'a> Into<SettingsLocation<'a>> for &'a dyn File {
     fn into(self) -> SettingsLocation<'a> {
@@ -335,6 +336,8 @@ pub struct FeaturesContent {
 pub enum SoftWrap {
     /// Do not soft wrap.
     None,
+    /// Prefer a single line generally, unless an overly long line is encountered.
+    PreferLine,
     /// Soft wrap lines that overflow the editor
     EditorWidth,
     /// Soft wrap lines at the preferred line length
@@ -434,10 +437,6 @@ pub struct InlayHintSettings {
     /// Default: 50
     #[serde(default = "scroll_debounce_ms")]
     pub scroll_debounce_ms: u64,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn edit_debounce_ms() -> u64 {

@@ -2344,6 +2344,7 @@ dependencies = [
  "clock",
  "collections",
  "db",
+ "dev_server_projects",
  "editor",
  "emojis",
  "extensions_ui",
@@ -4479,6 +4480,7 @@ name = "go_to_line"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "editor",
  "gpui",
  "indoc",
@@ -5688,9 +5690,9 @@ checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 
 [[package]]
 name = "libmimalloc-sys"
-version = "0.1.35"
+version = "0.1.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3979b5c37ece694f1f5e51e7ecc871fdb0f517ed04ee45f88d15d6d553cb9664"
+checksum = "81eb4061c0582dedea1cbc7aff2240300dd6982e0239d1c99e65c1dbf4a30ba7"
 dependencies = [
  "cc",
  "libc",
@@ -6055,9 +6057,9 @@ dependencies = [
 
 [[package]]
 name = "mimalloc"
-version = "0.1.39"
+version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa01922b5ea280a911e323e4d2fd24b7fe5cc4042e0d2cda3c40775cdc4bdc9c"
+checksum = "9f41a2280ded0da56c8cf898babb86e8f10651a34adcfff190ae9a1159c6908d"
 dependencies = [
  "libmimalloc-sys",
 ]
@@ -6799,6 +6801,7 @@ dependencies = [
 name = "outline"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "editor",
  "fuzzy",
  "gpui",
@@ -11795,6 +11798,7 @@ dependencies = [
  "copilot_ui",
  "db",
  "editor",
+ "extensions_ui",
  "fuzzy",
  "gpui",
  "install_cli",
@@ -12786,7 +12790,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

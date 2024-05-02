@@ -145,6 +145,16 @@ impl Render for WelcomePage {
                                         );
                                         copilot_ui::initiate_sign_in(cx);
                                     })),
+                            )
+                            .child(
+                                Button::new("explore extensions", "Explore extensions")
+                                    .full_width()
+                                    .on_click(cx.listener(|this, _, cx| {
+                                        this.telemetry.report_app_event(
+                                            "welcome page: open extensions".to_string(),
+                                        );
+                                        cx.dispatch_action(Box::new(extensions_ui::Extensions));
+                                    })),
                             ),
                     )
                     .child(

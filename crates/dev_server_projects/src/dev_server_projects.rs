@@ -114,6 +114,11 @@ impl Store {
         self.dev_server_projects.get(&id)
     }
 
+    pub fn dev_server_for_project(&self, id: DevServerProjectId) -> Option<&DevServer> {
+        self.dev_server_project(id)
+            .and_then(|project| self.dev_server(project.dev_server_id))
+    }
+
     async fn handle_dev_server_projects_update(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::DevServerProjectsUpdate>,

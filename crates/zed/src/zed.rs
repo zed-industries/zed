@@ -215,7 +215,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
             workspace_handle.update(&mut cx, |workspace, cx| {
                 workspace.add_panel(assistant_panel, cx);
                 workspace.add_panel(project_panel, cx);
-                workspace.add_panel(terminal_panel, cx);
+                if !workspace.project().read(cx).is_remote() {
+                    workspace.add_panel(terminal_panel, cx);
+                }
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);

@@ -1,6 +1,6 @@
 mod dev_servers;
 
-use dev_servers::DevServerProjects;
+pub use dev_servers::DevServerProjects;
 use feature_flags::FeatureFlagAppExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{

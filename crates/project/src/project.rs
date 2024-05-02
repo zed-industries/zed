@@ -98,7 +98,7 @@ use std::{
 };
 use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
-use text::{Anchor, BufferId};
+use text::{Anchor, BufferId, LineEnding};
 use util::{
     debug_panic, defer,
     http::{HttpClient, Url},
@@ -5597,6 +5597,7 @@ impl Project {
 
     pub fn resolve_completions(
         &self,
+        buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
@@ -5606,6 +5607,9 @@ impl Project {
 
         let is_remote = self.is_remote();
         let project_id = self.remote_id();
+
+        let buffer_id = buffer.read(cx).remote_id();
+        let buffer_snapshot = buffer.read(cx).snapshot();
 
         cx.spawn(move |this, mut cx| async move {
             let mut did_resolve = false;
@@ -5628,9 +5632,10 @@ impl Project {
                         (server_id, completion)
                     };
 
-                    Self::resolve_completion_documentation_remote(
+                    Self::resolve_completion_remote(
                         project_id,
                         server_id,
+                        buffer_id,
                         completions.clone(),
                         completion_index,
                         completion,
@@ -5665,8 +5670,9 @@ impl Project {
                     };
 
                     did_resolve = true;
-                    Self::resolve_completion_documentation_local(
+                    Self::resolve_completion_local(
                         server,
+                        &buffer_snapshot,
                         completions.clone(),
                         completion_index,
                         completion,
@@ -5680,8 +5686,9 @@ impl Project {
         })
     }
 
-    async fn resolve_completion_documentation_local(
+    async fn resolve_completion_local(
         server: Arc<lsp::LanguageServer>,
+        snapshot: &BufferSnapshot,
         completions: Arc<RwLock<Box<[Completion]>>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
@@ -5702,9 +5709,9 @@ impl Project {
             return;
         };
 
-        if let Some(lsp_documentation) = completion_item.documentation {
+        if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
             let documentation = language::prepare_completion_documentation(
-                &lsp_documentation,
+                lsp_documentation,
                 &language_registry,
                 None, // TODO: Try to reasonably work out which language the completion is for
             )
@@ -5718,11 +5725,31 @@ impl Project {
             let completion = &mut completions[completion_index];
             completion.documentation = Some(Documentation::Undocumented);
         }
+
+        if let Some(text_edit) = completion_item.text_edit.as_ref() {
+            // Technically we don't have to parse the whole `text_edit`, since the only
+            // language server we currently use that does update `text_edit` in `completionItem/resolve`
+            // is `typescript-language-server` and they only update `text_edit.new_text`.
+            // But we should not rely on that.
+            let edit = parse_completion_text_edit(text_edit, snapshot);
+
+            if let Some((old_range, mut new_text)) = edit {
+                LineEnding::normalize(&mut new_text);
+
+                let mut completions = completions.write();
+                let completion = &mut completions[completion_index];
+
+                completion.new_text = new_text;
+                completion.old_range = old_range;
+            }
+        }
     }
 
-    async fn resolve_completion_documentation_remote(
+    #[allow(clippy::too_many_arguments)]
+    async fn resolve_completion_remote(
         project_id: u64,
         server_id: LanguageServerId,
+        buffer_id: BufferId,
         completions: Arc<RwLock<Box<[Completion]>>>,
         completion_index: usize,
         completion: lsp::CompletionItem,
@@ -5733,6 +5760,7 @@ impl Project {
             project_id,
             language_server_id: server_id.0 as u64,
             lsp_completion: serde_json::to_string(&completion).unwrap().into_bytes(),
+            buffer_id: buffer_id.into(),
         };
 
         let Some(response) = client
@@ -5744,21 +5772,32 @@ impl Project {
             return;
         };
 
-        let documentation = if response.text.is_empty() {
+        let documentation = if response.documentation.is_empty() {
             Documentation::Undocumented
-        } else if response.is_markdown {
+        } else if response.documentation_is_markdown {
             Documentation::MultiLineMarkdown(
-                markdown::parse_markdown(&response.text, &language_registry, None).await,
+                markdown::parse_markdown(&response.documentation, &language_registry, None).await,
             )
-        } else if response.text.lines().count() <= 1 {
-            Documentation::SingleLine(response.text)
+        } else if response.documentation.lines().count() <= 1 {
+            Documentation::SingleLine(response.documentation)
         } else {
-            Documentation::MultiLinePlainText(response.text)
+            Documentation::MultiLinePlainText(response.documentation)
         };
 
         let mut completions = completions.write();
         let completion = &mut completions[completion_index];
         completion.documentation = Some(documentation);
+
+        let old_range = response
+            .old_start
+            .and_then(deserialize_anchor)
+            .zip(response.old_end.and_then(deserialize_anchor));
+        if let Some((old_start, old_end)) = old_range {
+            if !response.new_text.is_empty() {
+                completion.new_text = response.new_text;
+                completion.old_range = old_start..old_end;
+            }
+        }
     }
 
     pub fn apply_additional_edits_for_completion(
@@ -8962,19 +9001,53 @@ impl Project {
             })??
             .await?;
 
-        let mut is_markdown = false;
-        let text = match completion.documentation {
+        let mut documentation_is_markdown = false;
+        let documentation = match completion.documentation {
             Some(lsp::Documentation::String(text)) => text,
 
             Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value })) => {
-                is_markdown = kind == lsp::MarkupKind::Markdown;
+                documentation_is_markdown = kind == lsp::MarkupKind::Markdown;
                 value
             }
 
             _ => String::new(),
         };
 
-        Ok(proto::ResolveCompletionDocumentationResponse { text, is_markdown })
+        // If we have a new buffer_id, that means we're talking to a new client
+        // and want to check for new text_edits in the completion too.
+        let mut old_start = None;
+        let mut old_end = None;
+        let mut new_text = String::default();
+        if let Ok(buffer_id) = BufferId::new(envelope.payload.buffer_id) {
+            let buffer_snapshot = this.update(&mut cx, |this, cx| {
+                let buffer = this
+                    .opened_buffers
+                    .get(&buffer_id)
+                    .and_then(|buffer| buffer.upgrade())
+                    .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
+                anyhow::Ok(buffer.read(cx).snapshot())
+            })??;
+
+            if let Some(text_edit) = completion.text_edit.as_ref() {
+                let edit = parse_completion_text_edit(text_edit, &buffer_snapshot);
+
+                if let Some((old_range, mut text_edit_new_text)) = edit {
+                    LineEnding::normalize(&mut text_edit_new_text);
+
+                    new_text = text_edit_new_text;
+                    old_start = Some(serialize_anchor(&old_range.start));
+                    old_end = Some(serialize_anchor(&old_range.end));
+                }
+            }
+        }
+
+        Ok(proto::ResolveCompletionDocumentationResponse {
+            documentation,
+            documentation_is_markdown,
+            old_start,
+            old_end,
+            new_text,
+        })
     }
 
     async fn handle_apply_code_action(
