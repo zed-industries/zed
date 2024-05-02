@@ -329,7 +329,7 @@ jobs:
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
-          files: target/release/zed-linux-x86_64.tar.gz
+          files: zed-linux-x86_64.tar.gz
           body: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
