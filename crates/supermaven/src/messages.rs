@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OutboundMessage {
+    SetApiKey { api_key: String },
     StateUpdate(StateUpdateMessage),
     UseFreeVersion,
 }
@@ -138,6 +139,7 @@ pub enum SupermavenMessage {
     ServiceTier {
         service_tier: ServiceTier,
     },
+
     Set(SupermavenSetMessage),
     #[serde(other)]
     Unknown,

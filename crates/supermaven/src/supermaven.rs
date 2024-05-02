@@ -4,8 +4,10 @@ mod supermaven_completion_provider;
 pub use supermaven_completion_provider::*;
 
 use anyhow::{Context as _, Result};
+#[allow(unused_imports)]
+use client::{proto, Client};
 use collections::BTreeMap;
-use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
+use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, SinkExt as _, StreamExt};
 use gpui::{AppContext, AsyncAppContext, EntityId, Global, Model, ModelContext, Task, WeakModel};
 use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
 use messages::*;
@@ -18,9 +20,9 @@ use smol::{
 };
 use std::{ops::Range, path::PathBuf, process::Stdio, sync::Arc};
 use ui::prelude::*;
-use util::{http::HttpClient, ResultExt};
+use util::ResultExt;
 
-pub fn init(client: Arc<dyn HttpClient>, cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let supermaven = cx.new_model(|_| Supermaven::Starting);
     Supermaven::set_global(supermaven.clone(), cx);
 
@@ -47,6 +49,7 @@ pub enum Supermaven {
     Starting,
     FailedDownload { error: anyhow::Error },
     Spawned(SupermavenAgent),
+    Error { error: anyhow::Error },
 }
 
 #[derive(Clone)]
@@ -71,19 +74,21 @@ impl Supermaven {
         cx.set_global(SupermavenGlobal(supermaven));
     }
 
-    pub fn start(&mut self, client: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) {
+    pub fn start(&mut self, client: Arc<Client>, cx: &mut ModelContext<Self>) {
         if let Self::Starting = self {
             cx.spawn(|this, mut cx| async move {
-                let binary_path = supermaven_api::get_supermaven_agent_path(client).await?;
+                let binary_path =
+                    supermaven_api::get_supermaven_agent_path(client.http_client()).await?;
 
                 this.update(&mut cx, |this, cx| {
                     if let Self::Starting = this {
-                        *this = Self::Spawned(SupermavenAgent::new(binary_path, cx)?);
+                        *this =
+                            Self::Spawned(SupermavenAgent::new(binary_path, client.clone(), cx)?);
                     }
                     anyhow::Ok(())
                 })
             })
-            .detach_and_log_err(cx);
+            .detach_and_log_err(cx)
         }
     }
 
@@ -171,10 +176,18 @@ pub struct SupermavenAgent {
     _handle_incoming_messages: Task<Result<()>>,
     pub account_status: AccountStatus,
     service_tier: Option<ServiceTier>,
+    #[allow(dead_code)]
+    api_key: Option<String>,
+    #[allow(dead_code)]
+    client: Arc<Client>,
 }
 
 impl SupermavenAgent {
-    fn new(binary_path: PathBuf, cx: &mut ModelContext<Supermaven>) -> Result<Self> {
+    fn new(
+        binary_path: PathBuf,
+        client: Arc<Client>,
+        cx: &mut ModelContext<Supermaven>,
+    ) -> Result<Self> {
         let mut process = Command::new(&binary_path)
             .arg("stdio")
             .stdin(Stdio::piped())
@@ -194,9 +207,6 @@ impl SupermavenAgent {
             .context("failed to get stdout for process")?;
 
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
-        outgoing_tx
-            .unbounded_send(OutboundMessage::UseFreeVersion)
-            .unwrap();
 
         Ok(Self {
             _process: process,
@@ -209,6 +219,8 @@ impl SupermavenAgent {
                 .spawn(|this, cx| Self::handle_incoming_messages(this, stdout, cx)),
             account_status: AccountStatus::Unknown,
             service_tier: None,
+            api_key: None,
+            client,
         })
     }
 
@@ -247,11 +259,26 @@ impl SupermavenAgent {
                 continue;
             };
 
-            this.update(&mut cx, |this, _cx| {
+            this.update(&mut cx, |this, cx| {
                 if let Supermaven::Spawned(this) = this {
-                    this.handle_message(message)
+                    this.handle_message(message);
+
+                    if let AccountStatus::NeedsActivation { .. } = &this.account_status {
+                        let client = this.client.clone();
+                        let mut outgoing_tx = this.outgoing_tx.clone();
+                        return cx.spawn(|_, _| async move {
+                            let api_key =
+                                client.request(proto::GetSupermavenApiKey {}).await?.api_key;
+                            outgoing_tx
+                                .send(OutboundMessage::SetApiKey { api_key })
+                                .await?;
+                            anyhow::Ok(())
+                        });
+                    }
                 }
-            })?;
+                Task::ready(Ok(()))
+            })?
+            .await?;
         }
 
         Ok(())

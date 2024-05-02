@@ -278,7 +278,7 @@ fn init_ui(args: Args) {
             node_runtime.clone(),
             cx,
         );
-        supermaven::init(client.http_client(), cx);
+        supermaven::init(client.clone(), cx);
 
         assistant::init(client.clone(), cx);
         assistant2::init(client.clone(), cx);

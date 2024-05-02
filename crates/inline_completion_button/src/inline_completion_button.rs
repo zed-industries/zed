@@ -151,6 +151,9 @@ impl Render for InlineCompletionButton {
                             AccountStatus::Ready => SupermavenButtonStatus::Ready,
                         }
                     }
+                    Supermaven::Error { error } => {
+                        SupermavenButtonStatus::Errored(error.to_string())
+                    }
                 };
 
                 let icon = status.to_icon();
