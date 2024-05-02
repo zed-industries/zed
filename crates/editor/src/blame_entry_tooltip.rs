@@ -171,9 +171,13 @@ impl Render for BlameEntryTooltip {
                                 .child(author)
                                 .when_some(author_email, |this, author_email| {
                                     this.child(
-                                        div()
-                                            .text_color(cx.theme().colors().text_muted)
-                                            .child(author_email),
+                                        Button::new("author-email", author_email.clone())
+                                            .color(Color::Muted)
+                                            .style(ButtonStyle::Transparent)
+                                            .on_click(move |_, cx| {
+                                                cx.stop_propagation();
+                                                cx.open_url(&format!("mailto:{}", author_email))
+                                            }),
                                     )
                                 })
                                 .border_b_1()
