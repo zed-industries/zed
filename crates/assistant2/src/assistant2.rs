@@ -595,7 +595,6 @@ impl AssistantChat {
                     if self.editing_message_id() == Some(*id) {
                         element.child(Composer::new(
                             body.clone(),
-                            self.user_store.read(cx).current_user(),
                             self.project_index_button.clone(),
                             crate::ui::ModelSelector::new(
                                 cx.view().downgrade(),
@@ -773,7 +772,6 @@ impl Render for AssistantChat {
             .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(
                 self.composer_editor.clone(),
-                self.user_store.read(cx).current_user(),
                 self.project_index_button.clone(),
                 crate::ui::ModelSelector::new(cx.view().downgrade(), self.model.clone())
                     .into_any_element(),
