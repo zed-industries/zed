@@ -6,8 +6,8 @@ use call::ActiveCall;
 use collections::HashMap;
 use editor::{
     actions::{
-        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Redo, Rename, RevertSelectedHunks,
-        ToggleCodeActions, Undo,
+        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
+        RevertSelectedHunks, ToggleCodeActions, Undo,
     },
     test::{
         editor_hunks,
@@ -442,6 +442,93 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         assert_eq!(
             buffer.text(),
             "use d::SomeTrait;\nfn main() { a.first_method() }"
+        );
+    });
+
+    // Now we do a second completion, this time to ensure that documentation/snippets are
+    // resolved
+    editor_b.update(cx_b, |editor, cx| {
+        editor.change_selections(None, cx, |s| s.select_ranges([46..46]));
+        editor.handle_input("; a", cx);
+        editor.handle_input(".", cx);
+    });
+
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "use d::SomeTrait;\nfn main() { a.first_method(); a. }"
+        );
+    });
+
+    let mut completion_response = fake_language_server
+        .handle_request::<lsp::request::Completion, _, _>(|params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(1, 32),
+            );
+
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "third_method(…)".into(),
+                    detail: Some("fn(&mut self, B, C, D) -> E".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        // no snippet placehodlers
+                        new_text: "third_method".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(1, 32),
+                            lsp::Position::new(1, 32),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    documentation: None,
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    // The completion now gets a new `text_edit.new_text` when resolving the completion item
+    let mut resolve_completion_response = fake_language_server
+        .handle_request::<lsp::request::ResolveCompletionItem, _, _>(|params, _| async move {
+            assert_eq!(params.label, "third_method(…)");
+            Ok(lsp::CompletionItem {
+                label: "third_method(…)".into(),
+                detail: Some("fn(&mut self, B, C, D) -> E".into()),
+                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                    // Now it's a snippet
+                    new_text: "third_method($1, $2, $3)".to_string(),
+                    range: lsp::Range::new(lsp::Position::new(1, 32), lsp::Position::new(1, 32)),
+                })),
+                insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                documentation: Some(lsp::Documentation::String(
+                    "this is the documentation".into(),
+                )),
+                ..Default::default()
+            })
+        });
+
+    cx_b.executor().run_until_parked();
+
+    completion_response.next().await.unwrap();
+
+    editor_b.update(cx_b, |editor, cx| {
+        assert!(editor.context_menu_visible());
+        editor.context_menu_first(&ContextMenuFirst {}, cx);
+    });
+
+    resolve_completion_response.next().await.unwrap();
+    cx_b.executor().run_until_parked();
+
+    // When accepting the completion, the snippet is insert.
+    editor_b.update(cx_b, |editor, cx| {
+        assert!(editor.context_menu_visible());
+        editor.confirm_completion(&ConfirmCompletion { item_ix: Some(0) }, cx);
+        assert_eq!(
+            editor.text(cx),
+            "use d::SomeTrait;\nfn main() { a.first_method(); a.third_method(, , ) }"
         );
     });
 }

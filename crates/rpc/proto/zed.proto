@@ -1024,15 +1024,22 @@ message ResolveState {
     }
 }
 
+// This type is used to resolve more than just
+// the documentation, but for backwards-compatibility
+// reasons we can't rename the type.
 message ResolveCompletionDocumentation {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
     bytes lsp_completion = 3;
+    uint64 buffer_id = 4;
 }
 
 message ResolveCompletionDocumentationResponse {
-    string text = 1;
-    bool is_markdown = 2;
+    string documentation = 1;
+    bool documentation_is_markdown = 2;
+    Anchor old_start = 3;
+    Anchor old_end = 4;
+    string new_text = 5;
 }
 
 message ResolveInlayHint {
