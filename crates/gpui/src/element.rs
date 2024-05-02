@@ -225,6 +225,8 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 #[derive(Deref, DerefMut, Default, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
 
+pub struct GlobalElementIndex(pub(crate) SmallVec<[u32; 64]>);
+
 trait ElementObject {
     fn inner_element(&mut self) -> &mut dyn Any;
 

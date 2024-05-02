@@ -351,6 +351,19 @@ pub(crate) struct TooltipRequest {
     tooltip: AnyTooltip,
 }
 
+/// todo!
+pub trait SelectionTarget {
+    /// todo!
+    fn index_for_point(&self, point: Point<Pixels>) -> usize;
+    /// todo!
+    fn append_text(&self, range: Range<usize>, text: &mut String);
+}
+
+struct AnySelectionTarget {
+    bounds: Bounds<Pixels>,
+    source: Box<dyn SelectionTarget>,
+}
+
 pub(crate) struct DeferredDraw {
     priority: usize,
     parent_node: DispatchNodeId,
@@ -480,6 +493,7 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root_view: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
+    pub(crate) element_index_stack: SmallVec<[ElementIndexStackFrame; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
@@ -558,6 +572,11 @@ pub(crate) struct ElementStateBox {
     pub(crate) inner: Box<dyn Any>,
     #[cfg(debug_assertions)]
     pub(crate) type_name: &'static str,
+}
+
+pub(crate) struct ElementIndexStackFrame {
+    index: u32,
+    child_count: u32,
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<DevicePixels> {
@@ -753,6 +772,7 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root_view: None,
             element_id_stack: SmallVec::default(),
+            element_index_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
@@ -2024,6 +2044,25 @@ impl<'a> WindowContext<'a> {
         }
     }
 
+    pub(crate) fn push_element_index(&mut self) {
+        let mut index = 0;
+        if let Some(parent) = self.window.element_index_stack.last_mut() {
+            index = parent.child_count;
+            parent.child_count += 1;
+        }
+
+        self.window
+            .element_index_stack
+            .push(ElementIndexStackFrame {
+                index,
+                child_count: 0,
+            })
+    }
+
+    pub(crate) fn pop_element_index(&mut self) {
+        self.window.element_index_stack.pop();
+    }
+
     /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree
     /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
@@ -2605,6 +2644,15 @@ impl<'a> WindowContext<'a> {
         };
         window.next_frame.hitboxes.push(hitbox.clone());
         hitbox
+    }
+
+    /// todo!
+    pub fn insert_selection_target(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        target: impl SelectionTarget,
+    ) {
+        todo!()
     }
 
     /// Sets the key context for the current element. This context will be used to translate
