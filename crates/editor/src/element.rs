@@ -3644,7 +3644,7 @@ impl Element for EditorElement {
 
                 snapshot = self.editor.update(cx, |editor, cx| {
                     editor.last_bounds = Some(bounds);
-                    editor.gutter_width = gutter_dimensions.width;
+                    editor.gutter_dimensions = gutter_dimensions;
                     editor.set_visible_line_count(bounds.size.height / line_height, cx);
 
                     let editor_width =
@@ -5157,7 +5157,7 @@ fn compute_auto_height_layout(
     let gutter_dimensions =
         snapshot.gutter_dimensions(font_id, font_size, em_width, max_line_number_width, cx);
 
-    editor.gutter_width = gutter_dimensions.width;
+    editor.gutter_dimensions = gutter_dimensions;
     let text_width = width - gutter_dimensions.width;
     let overscroll = size(em_width, px(0.));
 
