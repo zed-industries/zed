@@ -397,7 +397,7 @@ impl AssistantChat {
                     {
                         this.tool_registry.definitions()
                     } else {
-                        &[]
+                        Vec::new()
                     };
                     call_count += 1;
 

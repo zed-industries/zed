@@ -10,15 +10,21 @@ use crate::tool::{
 pub struct Tool {
     enabled: bool,
     call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+    definition: ToolFunctionDefinition,
+    status_view: Option<AnyView>,
 }
 
 impl Tool {
     fn new(
         call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+        definition: ToolFunctionDefinition,
+        status_view: Option<AnyView>,
     ) -> Self {
         Self {
             enabled: true,
             call,
+            definition,
+            status_view,
         }
     }
 
@@ -29,21 +35,21 @@ impl Tool {
 
 pub struct ToolRegistry {
     tools: HashMap<String, Tool>,
-    definitions: Vec<ToolFunctionDefinition>,
-    status_views: Vec<AnyView>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
-            definitions: Vec::new(),
-            status_views: Vec::new(),
         }
     }
 
-    pub fn definitions(&self) -> &[ToolFunctionDefinition] {
-        &self.definitions
+    pub fn definitions(&self) -> Vec<ToolFunctionDefinition> {
+        self.tools
+            .values()
+            .filter(|tool| tool.enabled)
+            .map(|tool| tool.definition.clone())
+            .collect()
     }
 
     pub fn register<T: 'static + LanguageModelTool>(
@@ -51,50 +57,51 @@ impl ToolRegistry {
         tool: T,
         cx: &mut WindowContext,
     ) -> Result<()> {
-        self.definitions.push(tool.definition());
-
-        if let Some(tool_view) = tool.status_view(cx) {
-            self.status_views.push(tool_view);
-        }
+        let definition = tool.definition();
+        let status_view = tool.status_view(cx);
 
         let name = tool.name();
         let previous = self.tools.insert(
             name.clone(),
-            // registry.call(tool_call, cx)
-            Tool::new(Box::new(
-                move |tool_call: &ToolFunctionCall, cx: &mut WindowContext| {
-                    let name = tool_call.name.clone();
-                    let arguments = tool_call.arguments.clone();
-                    let id = tool_call.id.clone();
+            Tool::new(
+                Box::new(
+                    move |tool_call: &ToolFunctionCall, cx: &mut WindowContext| {
+                        let name = tool_call.name.clone();
+                        let arguments = tool_call.arguments.clone();
+                        let id = tool_call.id.clone();
 
-                    let Ok(input) = serde_json::from_str::<T::Input>(arguments.as_str()) else {
-                        return Task::ready(Ok(ToolFunctionCall {
-                            id,
-                            name: name.clone(),
-                            arguments,
-                            result: Some(ToolFunctionCallResult::ParsingFailed),
-                        }));
-                    };
+                        let Ok(input) = serde_json::from_str::<T::Input>(arguments.as_str()) else {
+                            return Task::ready(Ok(ToolFunctionCall {
+                                id,
+                                name: name.clone(),
+                                arguments,
+                                result: Some(ToolFunctionCallResult::ParsingFailed),
+                            }));
+                        };
 
-                    let result = tool.execute(&input, cx);
+                        let result = tool.execute(&input, cx);
 
-                    cx.spawn(move |mut cx| async move {
-                        let result: Result<T::Output> = result.await;
-                        let for_model = T::format(&input, &result);
-                        let view = cx.update(|cx| T::output_view(id.clone(), input, result, cx))?;
+                        cx.spawn(move |mut cx| async move {
+                            let result: Result<T::Output> = result.await;
+                            let for_model = T::format(&input, &result);
+                            let view =
+                                cx.update(|cx| T::output_view(id.clone(), input, result, cx))?;
 
-                        Ok(ToolFunctionCall {
-                            id,
-                            name: name.clone(),
-                            arguments,
-                            result: Some(ToolFunctionCallResult::Finished {
-                                view: view.into(),
-                                for_model,
-                            }),
+                            Ok(ToolFunctionCall {
+                                id,
+                                name: name.clone(),
+                                arguments,
+                                result: Some(ToolFunctionCallResult::Finished {
+                                    view: view.into(),
+                                    for_model,
+                                }),
+                            })
                         })
-                    })
-                },
-            )),
+                    },
+                ),
+                definition,
+                status_view,
+            ),
         );
 
         if previous.is_some() {
@@ -130,8 +137,11 @@ impl ToolRegistry {
         (tool.call)(tool_call, cx)
     }
 
-    pub fn status_views(&self) -> &[AnyView] {
-        &self.status_views
+    pub fn status_views(&self) -> Vec<AnyView> {
+        self.tools
+            .values()
+            .filter_map(|tool| tool.status_view.as_ref().cloned())
+            .collect::<Vec<AnyView>>()
     }
 }
 
