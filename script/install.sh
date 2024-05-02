@@ -4,14 +4,14 @@ set -euo pipefail
 main() {
     platform="$(uname -s)"
     arch="$(uname -m)"
-    channel="stable"
+    channel="${ZED_CHANNEL:-stable}"
     temp="$(mktemp -d "/tmp/zed-XXXXX")"
 
     if [[ $platform == "Darwin" ]]; then
         platform="macos"
     elif [[ $platform == "Linux" ]]; then
         platform="linux"
-        channel="preview"
+        channel="${ZED_CHANNEL:-preview}"
     else
         echo "Unsupported platform $platform"
         exit 1
@@ -82,7 +82,7 @@ macos() {
         echo "Removing existing $app"
         rm -rf "/Applications/$app"
     fi
-    ditto -v "$temp/mount/$app" "/Applications/$app"
+    ditto "$temp/mount/$app" "/Applications/$app"
     hdiutil detach -quiet "$temp/mount"
 
     echo "Zed has been installed. Run with 'open /Applications/$app'"
