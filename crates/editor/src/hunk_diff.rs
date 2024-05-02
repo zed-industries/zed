@@ -332,7 +332,7 @@ impl Editor {
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_text_range, deleted_hunk_color, cx);
-        let parent_gutter_width = self.gutter_width;
+        let parent_gutter_offset = self.gutter_dimensions.width + self.gutter_dimensions.margin;
         let mut new_block_ids = self.insert_blocks(
             Some(BlockProperties {
                 position,
@@ -342,7 +342,7 @@ impl Editor {
                     div()
                         .bg(deleted_hunk_color)
                         .size_full()
-                        .pl(parent_gutter_width)
+                        .pl(parent_gutter_offset)
                         .child(editor_with_deleted_text.clone())
                         .into_any_element()
                 }),

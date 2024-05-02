@@ -467,7 +467,7 @@ pub struct Editor {
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
-    gutter_width: Pixels,
+    gutter_dimensions: GutterDimensions,
     pub vim_replace_map: HashMap<Range<usize>, String>,
     style: Option<EditorStyle>,
     editor_actions: Vec<Box<dyn Fn(&mut ViewContext<Self>)>>,
@@ -503,6 +503,7 @@ pub struct EditorSnapshot {
 
 const GIT_BLAME_GUTTER_WIDTH_CHARS: f32 = 53.;
 
+#[derive(Debug, Clone, Copy)]
 pub struct GutterDimensions {
     pub left_padding: Pixels,
     pub right_padding: Pixels,
@@ -1517,7 +1518,7 @@ impl Editor {
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
             expect_bounds_change: None,
-            gutter_width: Default::default(),
+            gutter_dimensions: GutterDimensions::default(),
             style: None,
             show_cursor_names: false,
             hovered_cursors: Default::default(),
@@ -10807,7 +10808,7 @@ impl ViewInputHandler for Editor {
 
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
         let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
-            + self.gutter_width;
+            + self.gutter_dimensions.width;
         let y = line_height * (start.row() as f32 - scroll_position.y);
 
         Some(Bounds {
