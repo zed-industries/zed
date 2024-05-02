@@ -49,9 +49,19 @@ impl LineWrapper {
                     continue;
                 }
 
-                if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = ix;
-                    last_candidate_width = width;
+                // '⋯' is special for Editor fold indicator, to keep it in the same line.
+                // https://github.com/zed-industries/zed/blob/6cf62a5b02ba0aa59e25984182fb6535820a9365/crates/editor/src/display_map.rs#L1329
+                if c.is_ascii_alphanumeric() || c == '⋯' {
+                    if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
+                        last_candidate_ix = ix;
+                        last_candidate_width = width;
+                    }
+                } else {
+                    // CJK may no space separated, e.g.: Hello world你好世界
+                    if c != ' ' && first_non_whitespace_ix.is_some() {
+                        last_candidate_ix = ix;
+                        last_candidate_width = width;
+                    }
                 }
 
                 if c != ' ' && first_non_whitespace_ix.is_none() {
