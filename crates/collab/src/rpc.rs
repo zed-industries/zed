@@ -4501,7 +4501,7 @@ impl RateLimit for ComputeEmbeddingsRateLimit {
         std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(120) // Picked arbitrarily
+            .unwrap_or(5000) // Picked arbitrarily
     }
 
     fn refill_duration() -> chrono::Duration {
