@@ -1,12 +1,13 @@
 mod assistant_settings;
+mod attachments;
 mod completion_provider;
-mod contexts;
 mod tools;
 pub mod ui;
 
 use ::ui::{div, prelude::*, Color, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{ToolFunctionCall, ToolRegistry};
+use attachments::{ActiveEditorAttachmentTool, UserAttachment, UserAttachmentStore};
 use client::{proto, Client, UserStore};
 use collections::HashMap;
 use completion_provider::*;
@@ -25,7 +26,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
 use ui::{Composer, ProjectIndexButton};
-use util::{paths::EMBEDDINGS_DIR, ResultExt};
+use util::{maybe, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
@@ -114,6 +115,10 @@ impl AssistantPanel {
                     semantic_index.project_index(project.clone(), cx)
                 });
 
+                let mut attachment_store = UserAttachmentStore::new();
+
+                attachment_store.register(ActiveEditorAttachmentTool::new(workspace.clone(), cx));
+
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry
                     .register(
@@ -130,11 +135,10 @@ impl AssistantPanel {
                     .context("failed to register CreateBufferTool")
                     .log_err();
 
-                let tool_registry = Arc::new(tool_registry);
-
                 Self::new(
                     app_state.languages.clone(),
-                    tool_registry,
+                    Arc::new(attachment_store),
+                    Arc::new(tool_registry),
                     user_store,
                     Some(project_index),
                     cx,
@@ -145,6 +149,7 @@ impl AssistantPanel {
 
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
+        attachment_store: Arc<UserAttachmentStore>,
         tool_registry: Arc<ToolRegistry>,
         user_store: Model<UserStore>,
         project_index: Option<Model<ProjectIndex>>,
@@ -153,6 +158,7 @@ impl AssistantPanel {
         let chat = cx.new_view(|cx| {
             AssistantChat::new(
                 language_registry.clone(),
+                attachment_store.clone(),
                 tool_registry.clone(),
                 user_store,
                 project_index,
@@ -235,6 +241,7 @@ pub struct AssistantChat {
     collapsed_messages: HashMap<MessageId, bool>,
     editing_message: Option<EditingMessage>,
     pending_completion: Option<Task<()>>,
+    attachment_store: Arc<UserAttachmentStore>,
     tool_registry: Arc<ToolRegistry>,
     project_index: Option<Model<ProjectIndex>>,
 }
@@ -248,6 +255,7 @@ struct EditingMessage {
 impl AssistantChat {
     fn new(
         language_registry: Arc<LanguageRegistry>,
+        attachment_store: Arc<UserAttachmentStore>,
         tool_registry: Arc<ToolRegistry>,
         user_store: Model<UserStore>,
         project_index: Option<Model<ProjectIndex>>,
@@ -287,6 +295,7 @@ impl AssistantChat {
             editing_message: None,
             collapsed_messages: HashMap::default(),
             pending_completion: None,
+            attachment_store,
             tool_registry,
         }
     }
@@ -352,7 +361,14 @@ impl AssistantChat {
                     editor
                 });
                 composer_editor.clear(cx);
-                ChatMessage::User(UserMessage { id, body })
+
+                // self.attachment_store.
+
+                ChatMessage::User(UserMessage {
+                    id,
+                    body,
+                    attachments: Vec::new(),
+                })
             });
             self.push_message(message, cx);
         } else {
@@ -362,6 +378,30 @@ impl AssistantChat {
 
         let mode = *mode;
         self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
+            let attachments_task = this.update(&mut cx, |this, cx| {
+                let attachment_store = this.attachment_store.clone();
+                attachment_store.call_all_attachments(cx)
+            });
+
+            let attachments = maybe!(async {
+                let attachments_task = attachments_task?;
+                let attachments = attachments_task.await?;
+
+                anyhow::Ok(attachments)
+            })
+            .await
+            .log_err()
+            .unwrap_or_default();
+
+            // Set the attachments to the _last_ user message
+
+            this.update(&mut cx, |this, _cx| {
+                if let Some(ChatMessage::User(message)) = this.messages.last_mut() {
+                    message.attachments = attachments;
+                }
+            })
+            .log_err();
+
             Self::request_completion(
                 this.clone(),
                 mode,
@@ -589,7 +629,11 @@ impl AssistantChat {
         let is_last = ix == self.messages.len() - 1;
 
         match &self.messages[ix] {
-            ChatMessage::User(UserMessage { id, body }) => div()
+            ChatMessage::User(UserMessage {
+                id,
+                body,
+                attachments,
+            }) => div()
                 .id(SharedString::from(format!("message-{}-container", id.0)))
                 .when(!is_last, |element| element.mb_2())
                 .map(|element| {
@@ -637,6 +681,9 @@ impl AssistantChat {
                                         assistant_chat.toggle_message_collapsed(id)
                                     }
                                 })),
+                            ))
+                            .child(v_flex().gap_2().debug_bg_magenta().children(
+                                attachments.iter().map(|attachment| attachment.view.clone()),
                             ))
                     }
                 })
@@ -699,11 +746,15 @@ impl AssistantChat {
 
         for message in &self.messages {
             match message {
-                ChatMessage::User(UserMessage { body, .. }) => {
-                    // When we re-introduce contexts like active file, we'll inject them here instead of relying on the model to request them
-                    // contexts.iter().for_each(|context| {
-                    //     completion_messages.extend(context.completion_messages(cx))
-                    // });
+                ChatMessage::User(UserMessage {
+                    body, attachments, ..
+                }) => {
+                    completion_messages.extend(
+                        attachments
+                            .into_iter()
+                            .filter_map(|attachment| attachment.message.clone())
+                            .map(|content| CompletionMessage::System { content }),
+                    );
 
                     // Show user's message last so that the assistant is grounded in the user's request
                     completion_messages.push(CompletionMessage::User {
@@ -808,6 +859,7 @@ impl ChatMessage {
 struct UserMessage {
     id: MessageId,
     body: View<Editor>,
+    attachments: Vec<UserAttachment>,
 }
 
 struct AssistantMessage {

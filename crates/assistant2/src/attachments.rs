@@ -1,24 +1,24 @@
 use std::{
     any::TypeId,
-    sync::{mpsc, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
+    },
 };
 
-use crate::completion_provider::CompletionMessage;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
-use editor::{Editor, MultiBuffer};
-use gpui::{
-    AnyView, AppContext, EventEmitter, Model, ModelContext, Render, Subscription, Task, View,
-    WeakView,
-};
+use editor::Editor;
+use futures::future::join_all;
+use gpui::{AnyView, Render, Task, View, WeakView};
 use ui::{prelude::*, WindowContext};
-use util::maybe;
+use util::{maybe, ResultExt};
 use workspace::Workspace;
 
 // Immutable already done attached sometime ago
 pub struct UserAttachment {
-    message: Option<CompletionMessage>,
-    view: AnyView,
+    pub message: Option<String>,
+    pub view: AnyView,
 }
 
 pub struct UserAttachmentStore {
@@ -26,19 +26,24 @@ pub struct UserAttachmentStore {
 }
 
 struct DynamicAttachment {
+    enabled: AtomicBool,
     call: Box<dyn Fn(&mut WindowContext) -> Task<Result<UserAttachment>>>,
 }
 
-// ToolRegistry had the constraint of a name, but we don't have that here
-
 impl UserAttachmentStore {
+    pub fn new() -> Self {
+        Self {
+            attachments: HashMap::default(),
+        }
+    }
+
     pub fn register<A: AttachmentTool + 'static>(&mut self, attachment: A) {
         let call = Box::new(move |cx: &mut WindowContext| {
             let result = attachment.run(cx);
 
             cx.spawn(move |mut cx| async move {
                 let result = result.await;
-                let message = A::message(&result);
+                let message = A::format(&result);
                 let view = cx.update(|cx| A::view(result, cx))?;
 
                 Ok(UserAttachment {
@@ -48,8 +53,27 @@ impl UserAttachmentStore {
             })
         });
 
-        self.attachments
-            .insert(TypeId::of::<A>(), DynamicAttachment { call });
+        self.attachments.insert(
+            TypeId::of::<A>(),
+            DynamicAttachment {
+                call,
+                enabled: AtomicBool::new(true),
+            },
+        );
+    }
+
+    pub fn set_attachment_enabled<A: AttachmentTool + 'static>(&self, is_enabled: bool) {
+        if let Some(attachment) = self.attachments.get(&TypeId::of::<A>()) {
+            attachment.enabled.store(is_enabled, SeqCst);
+        }
+    }
+
+    pub fn is_attachment_enabled<A: AttachmentTool + 'static>(&self) -> bool {
+        if let Some(attachment) = self.attachments.get(&TypeId::of::<A>()) {
+            attachment.enabled.load(SeqCst)
+        } else {
+            false
+        }
     }
 
     pub fn call<A: AttachmentTool + 'static>(
@@ -62,6 +86,34 @@ impl UserAttachmentStore {
 
         (attachment.call)(cx)
     }
+
+    pub fn call_all_attachments(
+        self: Arc<Self>,
+        cx: &mut WindowContext<'_>,
+    ) -> Task<Result<Vec<UserAttachment>>> {
+        let this = self.clone();
+        cx.spawn(|mut cx| async move {
+            let attachment_tasks = cx.update(|cx| {
+                let mut tasks = Vec::new();
+                for attachment in this
+                    .attachments
+                    .values()
+                    .filter(|attachment| attachment.enabled.load(SeqCst))
+                {
+                    tasks.push((attachment.call)(cx))
+                }
+
+                tasks
+            })?;
+
+            let attachments = join_all(attachment_tasks.into_iter()).await;
+
+            Ok(attachments
+                .into_iter()
+                .filter_map(|attachment| attachment.log_err())
+                .collect())
+        })
+    }
 }
 
 pub trait AttachmentTool {
@@ -70,18 +122,18 @@ pub trait AttachmentTool {
 
     fn run(&self, cx: &mut WindowContext) -> Task<Result<Self::Output>>;
 
-    fn message(output: &Result<Self::Output>) -> Option<CompletionMessage>;
+    fn format(output: &Result<Self::Output>) -> Option<String>;
 
     fn view(output: Result<Self::Output>, cx: &mut WindowContext) -> View<Self::View>;
 }
 
-struct ActiveEditorAttachment {
+pub struct ActiveEditorAttachment {
     filename: Arc<str>,
     language: Arc<str>,
     text: Arc<str>,
 }
 
-struct FileAttachmentView {
+pub struct FileAttachmentView {
     output: Result<ActiveEditorAttachment>,
 }
 
@@ -97,7 +149,7 @@ impl Render for FileAttachmentView {
     }
 }
 
-struct ActiveEditorAttachmentTool {
+pub struct ActiveEditorAttachmentTool {
     workspace: WeakView<Workspace>,
 }
 
@@ -153,19 +205,16 @@ impl AttachmentTool for ActiveEditorAttachmentTool {
         }))
     }
 
-    fn message(output: &Result<Self::Output>) -> Option<CompletionMessage> {
+    fn format(output: &Result<Self::Output>) -> Option<String> {
         let output = output.as_ref().ok()?;
 
         let filename = &output.filename;
         let language = &output.language;
         let text = &output.text;
 
-        let markdown_content =
-            format!("User's active file `{filename}`:\n\n```{language}\n{text}```\n\n");
-
-        return Some(CompletionMessage::System {
-            content: markdown_content,
-        });
+        Some(format!(
+            "User's active file `{filename}`:\n\n```{language}\n{text}```\n\n"
+        ))
     }
 
     fn view(output: Result<Self::Output>, cx: &mut WindowContext) -> View<Self::View> {
