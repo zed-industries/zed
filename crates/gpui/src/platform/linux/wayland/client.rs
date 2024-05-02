@@ -199,18 +199,6 @@ impl WaylandClientStatePtr {
             }
         }
         if state.windows.is_empty() {
-            // Drop the clipboard to prevent a seg fault after we've closed all Wayland connections.
-            state.clipboard = None;
-            state.primary = None;
-            if let Some(wl_pointer) = &state.wl_pointer {
-                wl_pointer.release();
-            }
-            if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                cursor_shape_device.destroy();
-            }
-            if let Some(data_device) = &state.data_device {
-                data_device.release();
-            }
             state.common.signal.stop();
         }
     }
@@ -218,6 +206,26 @@ impl WaylandClientStatePtr {
 
 #[derive(Clone)]
 pub struct WaylandClient(Rc<RefCell<WaylandClientState>>);
+
+impl Drop for WaylandClient {
+    fn drop(&mut self) {
+        let mut state = self.0.borrow_mut();
+        state.windows.clear();
+
+        // Drop the clipboard to prevent a seg fault after we've closed all Wayland connections.
+        state.primary = None;
+        state.clipboard = None;
+        if let Some(wl_pointer) = &state.wl_pointer {
+            wl_pointer.release();
+        }
+        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+            cursor_shape_device.destroy();
+        }
+        if let Some(data_device) = &state.data_device {
+            data_device.release();
+        }
+    }
+}
 
 const WL_DATA_DEVICE_MANAGER_VERSION: u32 = 3;
 const WL_OUTPUT_VERSION: u32 = 2;
