@@ -1629,15 +1629,6 @@ impl ToolbarItemView for ProjectSearchBar {
             ToolbarItemLocation::Hidden
         }
     }
-
-    fn row_count(&self, cx: &WindowContext<'_>) -> usize {
-        if let Some(search) = self.active_project_search.as_ref() {
-            if search.read(cx).filters_enabled {
-                return 2;
-            }
-        }
-        1
-    }
 }
 
 fn register_workspace_action<A: Action>(

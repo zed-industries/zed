@@ -1,9 +1,9 @@
 use super::{events::key_to_native, BoolExt};
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu,
-    MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformInput, PlatformTextSystem,
-    PlatformWindow, Result, SemanticVersion, Task, WindowAppearance, WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
+    SemanticVersion, Task, WindowAppearance, WindowParams,
 };
 use anyhow::{anyhow, bail};
 use block::ConcreteBlock;
@@ -487,10 +487,6 @@ impl Platform for MacPlatform {
             .collect()
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        MacDisplay::find_by_id(id).map(|screen| Rc::new(screen) as Rc<_>)
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         MacWindow::active_window()
     }
@@ -679,24 +675,12 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().become_active = Some(callback);
-    }
-
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.0.lock().resign_active = Some(callback);
-    }
-
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().reopen = Some(callback);
-    }
-
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.0.lock().event = Some(callback);
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
