@@ -1,5 +1,6 @@
 mod assistant_settings;
 mod completion_provider;
+mod contexts;
 mod tools;
 pub mod ui;
 
