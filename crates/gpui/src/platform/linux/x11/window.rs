@@ -66,8 +66,9 @@ fn query_render_extent(xcb_connection: &XCBConnection, x_window: xproto::Window)
 
 #[derive(Debug)]
 struct Visual {
-    depth: u8,
     id: xproto::Visualid,
+    colormap: u32,
+    depth: u8,
 }
 
 struct VisualSet {
@@ -75,66 +76,62 @@ struct VisualSet {
     opaque: Option<Visual>,
     transparent: Option<Visual>,
     root: u32,
+    black_pixel: u32,
 }
 
-impl VisualSet {
-    fn new(xcb_connection: &XCBConnection, screen_index: usize) -> Self {
-        let screen = &xcb_connection.setup().roots[screen_index];
-        let mut this = Self {
-            inherit: Visual {
-                depth: screen.root_depth,
-                id: screen.root_visual,
-            },
-            opaque: None,
-            transparent: None,
-            root: screen.root,
-        };
+fn find_visuals(xcb_connection: &XCBConnection, screen_index: usize) -> VisualSet {
+    let screen = &xcb_connection.setup().roots[screen_index];
+    let mut set = VisualSet {
+        inherit: Visual {
+            id: screen.root_visual,
+            colormap: screen.default_colormap,
+            depth: screen.root_depth,
+        },
+        opaque: None,
+        transparent: None,
+        root: screen.root,
+        black_pixel: screen.black_pixel,
+    };
 
-        let render_ext = xcb_connection
-            .extension_information(render::X11_EXTENSION_NAME)
-            .unwrap();
-        if render_ext.is_some() {
-            let pict_formats = xcb_connection
-                .render_query_pict_formats()
-                .unwrap()
-                .reply()
-                .unwrap();
+    for depth_info in screen.allowed_depths.iter() {
+        for visual_type in depth_info.visuals.iter() {
+            let visual = Visual {
+                id: visual_type.visual_id,
+                colormap: 0,
+                depth: depth_info.depth,
+            };
+            log::debug!("Visual id: {}, class: {:?}, depth: {}, bits_per_value: {}, masks: 0x{:x} 0x{:x} 0x{:x}",
+                visual_type.visual_id,
+                visual_type.class,
+                depth_info.depth,
+                visual_type.bits_per_rgb_value,
+                visual_type.red_mask, visual_type.green_mask, visual_type.blue_mask,
+            );
 
-            let mut format_map = HashMap::new();
-            for depth_info in pict_formats.screens[screen_index].depths.iter() {
-                for visual in depth_info.visuals.iter() {
-                    format_map.insert(
-                        visual.format,
-                        Visual {
-                            depth: depth_info.depth,
-                            id: visual.visual,
-                        },
-                    );
-                }
+            if (
+                visual_type.red_mask,
+                visual_type.green_mask,
+                visual_type.blue_mask,
+            ) != (0xFF0000, 0xFF00, 0xFF)
+            {
+                continue;
             }
+            let color_mask = visual_type.red_mask | visual_type.green_mask | visual_type.blue_mask;
+            let alpha_mask = color_mask as usize ^ ((1usize << depth_info.depth) - 1);
 
-            for info in pict_formats.formats.iter() {
-                if info.type_ != render::PictType::DIRECT {
-                    continue;
+            if alpha_mask == 0 {
+                if set.opaque.is_none() {
+                    set.opaque = Some(visual);
                 }
-                let d = info.direct;
-                if (d.red_mask, d.green_mask, d.blue_mask) != (0xFF, 0xFF, 0xFF) {
-                    continue;
-                }
-                if (d.red_shift, d.green_shift, d.blue_shift) != (16, 8, 0) {
-                    continue;
-                }
-                if this.opaque.is_none() && d.alpha_mask == 0 {
-                    this.opaque = format_map.remove(&info.id);
-                }
-                if this.transparent.is_none() && d.alpha_mask == 0xFF && d.alpha_shift == 24 {
-                    this.transparent = format_map.remove(&info.id);
+            } else {
+                if set.transparent.is_none() {
+                    set.transparent = Some(visual);
                 }
             }
         }
-
-        this
     }
+
+    set
 }
 
 struct RawWindow {
@@ -166,7 +163,6 @@ pub(crate) struct X11WindowState {
     scale_factor: f32,
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
-
     input_handler: Option<PlatformInputHandler>,
 }
 
@@ -222,7 +218,7 @@ impl X11WindowState {
             .display_id
             .map_or(x_main_screen_index, |did| did.0 as usize);
 
-        let visual_set = VisualSet::new(&xcb_connection, x_screen_index);
+        let visual_set = find_visuals(&xcb_connection, x_screen_index);
         let visual_maybe = match params.window_background {
             WindowBackgroundAppearance::Opaque => visual_set.opaque,
             WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
@@ -241,8 +237,24 @@ impl X11WindowState {
         };
         log::info!("Using {:?}", visual);
 
+        let colormap = if visual.colormap != 0 {
+            visual.colormap
+        } else {
+            let id = xcb_connection.generate_id().unwrap();
+            log::info!("Creating colormap {}", id);
+            xcb_connection
+                .create_colormap(xproto::ColormapAlloc::NONE, id, visual_set.root, visual.id)
+                .unwrap()
+                .check()
+                .unwrap();
+            id
+        };
+
         let win_aux = xproto::CreateWindowAux::new()
             .background_pixel(x11rb::NONE)
+            // https://stackoverflow.com/questions/43218127/x11-xlib-xcb-creating-a-window-requires-border-pixel-if-specifying-colormap-wh
+            .border_pixel(visual_set.black_pixel)
+            .colormap(colormap)
             .event_mask(
                 xproto::EventMask::EXPOSURE
                     | xproto::EventMask::STRUCTURE_NOTIFY
@@ -274,6 +286,8 @@ impl X11WindowState {
                 visual.id,
                 &win_aux,
             )
+            .unwrap()
+            .check()
             .unwrap();
 
         xinput::ConnectionExt::xinput_xi_select_events(
