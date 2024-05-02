@@ -223,6 +223,14 @@ fn parse_alter_table(remaining_sql_str: &str) -> Option<(String, String)> {
                             .skip_while(|c| c.is_whitespace())
                             .take_while(|c| !c.is_whitespace())
                             .collect::<String>()
+                    } else if let Some(drop_offset) = remaining_sql_str.find("drop column") {
+                        let after_drop_offset = drop_offset + "drop column".len();
+                        remaining_sql_str
+                            .chars()
+                            .skip(after_drop_offset)
+                            .skip_while(|c| c.is_whitespace())
+                            .take_while(|c| !c.is_whitespace())
+                            .collect::<String>()
                     } else {
                         "__place_holder_column_for_syntax_checking".to_string()
                     };

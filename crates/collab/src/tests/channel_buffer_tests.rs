@@ -246,7 +246,7 @@ async fn test_channel_notes_participant_indices(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_remote_project(project_id, cx_b).await;
+    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
     // Clients A and B open the same file.
