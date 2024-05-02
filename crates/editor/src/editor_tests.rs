@@ -1045,6 +1045,13 @@ fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
 #[gpui::test]
 fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
+    let move_to_beg = MoveToBeginningOfLine {
+        stop_at_soft_wraps: true,
+    };
+
+    let move_to_end = MoveToEndOfLine {
+        stop_at_soft_wraps: true,
+    };
 
     let view = cx.add_window(|cx| {
         let buffer = MultiBuffer::build_simple("abc\n  def", cx);
@@ -1060,7 +1067,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine::default(), cx);
+        view.move_to_beginning_of_line(&move_to_beg, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1071,7 +1078,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine::default(), cx);
+        view.move_to_beginning_of_line(&move_to_beg, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1082,7 +1089,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine::default(), cx);
+        view.move_to_beginning_of_line(&move_to_beg, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1093,7 +1100,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_end_of_line(&MoveToEndOfLine::default(), cx);
+        view.move_to_end_of_line(&move_to_end, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1105,7 +1112,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
 
     // Moving to the end of line again is a no-op.
     _ = view.update(cx, |view, cx| {
-        view.move_to_end_of_line(&MoveToEndOfLine::default(), cx);
+        view.move_to_end_of_line(&move_to_end, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1232,7 +1239,7 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
         // ```
         // The final `gs` was soft-wrapped onto a new line.
         assert_eq!(
-            "thequickbrownfox\njumpedoverthelazydo\ngs",
+            "thequickbrownfox\njumpedoverthelaz\nydogs",
             view.display_text(cx),
         );
 
@@ -1241,7 +1248,7 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7)]);
         });
-        //
+
         // Moving to the beginning of the line should put us at the beginning of the line.
         view.move_to_beginning_of_line(&move_to_beg, cx);
         assert_eq!(
@@ -1257,7 +1264,7 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
         );
 
         // Now, let's assert behavior on the second line, that ended up being soft-wrapped.
-        // Start the cursor at the last line (`g` that was wrapped to a new line)
+        // Start the cursor at the last line (`y` that was wrapped to a new line)
         view.change_selections(None, cx, |s| {
             s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0)]);
         });
@@ -1281,14 +1288,14 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
         // next display line.
         view.move_to_end_of_line(&move_to_end, cx);
         assert_eq!(
-            vec![DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),],
+            vec![DisplayPoint::new(2, 6)..DisplayPoint::new(2, 6),],
             view.selections.display_ranges(cx)
         );
 
         // Moving to the end of the line again should be a no-op.
         view.move_to_end_of_line(&move_to_end, cx);
         assert_eq!(
-            vec![DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),],
+            vec![DisplayPoint::new(2, 6)..DisplayPoint::new(2, 6),],
             view.selections.display_ranges(cx)
         );
     });
