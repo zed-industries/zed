@@ -551,7 +551,6 @@ pub struct WindowOptions {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub(crate) struct WindowParams {
-    ///
     pub bounds: Bounds<DevicePixels>,
 
     /// The titlebar configuration of the window

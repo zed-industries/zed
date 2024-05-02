@@ -678,23 +678,6 @@ mod tests {
     use crate::{font, px, FontRun, GlyphId, MacTextSystem, PlatformTextSystem};
 
     #[test]
-    fn test_wrap_line() {
-        let fonts = MacTextSystem::new();
-        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
-
-        let line = "one two three four five\n";
-        let wrap_boundaries = fonts.wrap_line(line, font_id, px(16.), px(64.0));
-        assert_eq!(wrap_boundaries, &["one two ".len(), "one two three ".len()]);
-
-        let line = "aaa ααα ✋✋✋ 🎉🎉🎉\n";
-        let wrap_boundaries = fonts.wrap_line(line, font_id, px(16.), px(64.0));
-        assert_eq!(
-            wrap_boundaries,
-            &["aaa ααα ".len(), "aaa ααα ✋✋✋ ".len(),]
-        );
-    }
-
-    #[test]
     fn test_layout_line_bom_char() {
         let fonts = MacTextSystem::new();
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();

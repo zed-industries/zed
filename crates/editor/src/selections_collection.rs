@@ -69,7 +69,7 @@ impl SelectionsCollection {
         self.next_selection_id = other.next_selection_id;
         self.line_mode = other.line_mode;
         self.disjoint = other.disjoint.clone();
-        self.pending = other.pending.clone();
+        self.pending.clone_from(&other.pending);
     }
 
     pub fn count(&self) -> usize {

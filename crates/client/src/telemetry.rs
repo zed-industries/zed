@@ -217,7 +217,7 @@ impl Telemetry {
         }
 
         let metrics_id: Option<Arc<str>> = metrics_id.map(|id| id.into());
-        state.metrics_id = metrics_id.clone();
+        state.metrics_id.clone_from(&metrics_id);
         state.is_staff = Some(is_staff);
         drop(state);
     }

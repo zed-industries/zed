@@ -100,7 +100,7 @@ impl Settings for ClientSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         let mut result = sources.json_merge::<Self>()?;
         if let Some(server_url) = &*ZED_SERVER_URL {
-            result.server_url = server_url.clone()
+            result.server_url.clone_from(&server_url)
         }
         Ok(result)
     }

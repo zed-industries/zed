@@ -1,7 +1,7 @@
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId, ForegroundExecutor,
-    Keymap, Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestWindow,
-    WindowAppearance, WindowParams,
+    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
+    Platform, PlatformDisplay, PlatformTextSystem, Task, TestDisplay, TestWindow, WindowAppearance,
+    WindowParams,
 };
 use anyhow::{anyhow, Result};
 use collections::VecDeque;
@@ -90,7 +90,7 @@ impl TestPlatform {
     pub(crate) fn set_active_window(&self, window: Option<TestWindow>) {
         let executor = self.foreground_executor().clone();
         let previous_window = self.active_window.borrow_mut().take();
-        *self.active_window.borrow_mut() = window.clone();
+        self.active_window.borrow_mut().clone_from(&window);
 
         executor
             .spawn(async move {
@@ -168,10 +168,6 @@ impl Platform for TestPlatform {
         Some(self.active_display.clone())
     }
 
-    fn display(&self, id: DisplayId) -> Option<std::rc::Rc<dyn crate::PlatformDisplay>> {
-        self.displays().iter().find(|d| d.id() == id).cloned()
-    }
-
     fn active_window(&self) -> Option<crate::AnyWindowHandle> {
         self.active_window
             .borrow()
@@ -228,17 +224,9 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn on_become_active(&self, _callback: Box<dyn FnMut()>) {}
-
-    fn on_resign_active(&self, _callback: Box<dyn FnMut()>) {}
-
     fn on_quit(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
-
-    fn on_event(&self, _callback: Box<dyn FnMut(crate::PlatformInput) -> bool>) {
         unimplemented!()
     }
 

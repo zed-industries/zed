@@ -708,10 +708,7 @@ pub trait InteractiveElement: Sized {
     fn on_drag_move<T: 'static>(
         mut self,
         listener: impl Fn(&DragMoveEvent<T>, &mut WindowContext) + 'static,
-    ) -> Self
-    where
-        T: 'static,
-    {
+    ) -> Self {
         self.interactivity().on_drag_move(listener);
         self
     }

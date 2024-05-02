@@ -116,13 +116,6 @@ struct CreateUserParams {
     invite_count: i32,
 }
 
-#[derive(Serialize, Debug)]
-struct CreateUserResponse {
-    user: User,
-    signup_device_id: Option<String>,
-    metrics_id: String,
-}
-
 async fn get_rpc_server_snapshot(
     Extension(rpc_server): Extension<Option<Arc<rpc::Server>>>,
 ) -> Result<ErasedJson> {
