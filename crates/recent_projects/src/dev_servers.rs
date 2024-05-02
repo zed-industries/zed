@@ -1,14 +1,15 @@
 use std::time::Duration;
 
+use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerProjectId};
+use editor::Editor;
 use feature_flags::FeatureFlagViewExt;
 use gpui::{
-    percentage, Action, Animation, AnimationExt, AppContext, ClipboardItem, DismissEvent,
-    EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Transformation, View,
-    ViewContext,
+    percentage, Action, Animation, AnimationExt, AnyElement, AppContext, ClipboardItem,
+    DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Transformation,
+    View, ViewContext,
 };
-use remote_projects::{DevServer, DevServerId, RemoteProject, RemoteProjectId};
 use rpc::{
-    proto::{self, CreateDevServerResponse, DevServerStatus},
+    proto::{CreateDevServerResponse, DevServerStatus},
     ErrorCode, ErrorExt,
 };
 use settings::Settings;
@@ -16,16 +17,16 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Indicator, List, ListHeader, ListItem, ModalContent, ModalHeader, Tooltip};
 use ui_text_field::{FieldLabelLayout, TextField};
 use util::ResultExt;
-use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace};
+use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace, WORKSPACE_DB};
 
 use crate::OpenRemote;
 
-pub struct RemoteProjects {
+pub struct DevServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
-    remote_project_store: Model<remote_projects::Store>,
-    remote_project_path_input: View<TextField>,
+    dev_server_store: Model<dev_server_projects::Store>,
+    project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
     _subscription: gpui::Subscription,
 }
@@ -36,19 +37,18 @@ struct CreateDevServer {
     dev_server: Option<CreateDevServerResponse>,
 }
 
-struct CreateRemoteProject {
+#[derive(Clone)]
+struct CreateDevServerProject {
     dev_server_id: DevServerId,
     creating: bool,
-    remote_project: Option<proto::RemoteProject>,
 }
 
 enum Mode {
-    Default,
-    CreateRemoteProject(CreateRemoteProject),
+    Default(Option<CreateDevServerProject>),
     CreateDevServer(CreateDevServer),
 }
 
-impl RemoteProjects {
+impl DevServerProjects {
     pub fn register(_: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         cx.observe_flag::<feature_flags::Remoting, _>(|enabled, workspace, _| {
             if enabled {
@@ -67,50 +67,47 @@ impl RemoteProjects {
     }
 
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let remote_project_path_input = cx.new_view(|cx| TextField::new(cx, "", "Project path"));
+        let project_path_input = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("Project path", cx);
+            editor
+        });
         let dev_server_name_input =
             cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Stacked));
 
         let focus_handle = cx.focus_handle();
-        let remote_project_store = remote_projects::Store::global(cx);
+        let dev_server_store = dev_server_projects::Store::global(cx);
 
-        let subscription = cx.observe(&remote_project_store, |_, _, cx| {
+        let subscription = cx.observe(&dev_server_store, |_, _, cx| {
             cx.notify();
         });
 
         Self {
-            mode: Mode::Default,
+            mode: Mode::Default(None),
             focus_handle,
             scroll_handle: ScrollHandle::new(),
-            remote_project_store,
-            remote_project_path_input,
+            dev_server_store,
+            project_path_input,
             dev_server_name_input,
             _subscription: subscription,
         }
     }
 
-    pub fn create_remote_project(
+    pub fn create_dev_server_project(
         &mut self,
         dev_server_id: DevServerId,
         cx: &mut ViewContext<Self>,
     ) {
-        let path = self
-            .remote_project_path_input
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
+        let path = self.project_path_input.read(cx).text(cx).trim().to_string();
 
         if path == "" {
             return;
         }
 
         if self
-            .remote_project_store
+            .dev_server_store
             .read(cx)
-            .remote_projects_for_server(dev_server_id)
+            .projects_for_server(dev_server_id)
             .iter()
             .any(|p| p.path == path)
         {
@@ -132,20 +129,25 @@ impl RemoteProjects {
 
         let create = {
             let path = path.clone();
-            self.remote_project_store.update(cx, |store, cx| {
-                store.create_remote_project(dev_server_id, path, cx)
+            self.dev_server_store.update(cx, |store, cx| {
+                store.create_dev_server_project(dev_server_id, path, cx)
             })
         };
 
         cx.spawn(|this, mut cx| async move {
             let result = create.await;
-            let remote_project = result.as_ref().ok().and_then(|r| r.remote_project.clone());
-            this.update(&mut cx, |this, _| {
-                this.mode = Mode::CreateRemoteProject(CreateRemoteProject {
-                    dev_server_id,
-                    creating: false,
-                    remote_project,
-                });
+            this.update(&mut cx, |this, cx| {
+                if result.is_ok() {
+                    this.project_path_input.update(cx, |editor, cx| {
+                        editor.set_text("", cx);
+                    });
+                    this.mode = Mode::Default(None);
+                } else {
+                    this.mode = Mode::Default(Some(CreateDevServerProject {
+                        dev_server_id,
+                        creating: false,
+                    }));
+                }
             })
             .log_err();
             result
@@ -156,24 +158,17 @@ impl RemoteProjects {
                     "The dev server is offline. Please log in and check it is connected."
                         .to_string(),
                 ),
-                ErrorCode::RemoteProjectPathDoesNotExist => {
+                ErrorCode::DevServerProjectPathDoesNotExist => {
                     Some(format!("The path `{}` does not exist on the server.", path))
                 }
                 _ => None,
             }
         });
 
-        self.remote_project_path_input.update(cx, |input, cx| {
-            input.editor().update(cx, |editor, cx| {
-                editor.set_text("", cx);
-            });
-        });
-
-        self.mode = Mode::CreateRemoteProject(CreateRemoteProject {
+        self.mode = Mode::Default(Some(CreateDevServerProject {
             dev_server_id,
             creating: true,
-            remote_project: None,
-        });
+        }));
     }
 
     pub fn create_dev_server(&mut self, cx: &mut ViewContext<Self>) {
@@ -191,7 +186,7 @@ impl RemoteProjects {
         }
 
         let dev_server = self
-            .remote_project_store
+            .dev_server_store
             .update(cx, |store, cx| store.create_dev_server(name.clone(), cx));
 
         cx.spawn(|this, mut cx| async move {
@@ -235,20 +230,74 @@ impl RemoteProjects {
                 return Ok(());
             }
 
+            let project_ids: Vec<DevServerProjectId> = this.update(&mut cx, |this, cx| {
+                this.dev_server_store.update(cx, |store, _| {
+                    store
+                        .projects_for_server(id)
+                        .into_iter()
+                        .map(|project| project.id)
+                        .collect()
+                })
+            })?;
+
             this.update(&mut cx, |this, cx| {
-                this.remote_project_store
+                this.dev_server_store
                     .update(cx, |store, cx| store.delete_dev_server(id, cx))
             })?
-            .await
+            .await?;
+
+            for id in project_ids {
+                WORKSPACE_DB
+                    .delete_workspace_by_dev_server_project_id(id)
+                    .await
+                    .log_err();
+            }
+            Ok(())
         })
         .detach_and_prompt_err("Failed to delete dev server", cx, |_, _| None);
     }
 
+    fn delete_dev_server_project(
+        &mut self,
+        id: DevServerProjectId,
+        path: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let answer = cx.prompt(
+            gpui::PromptLevel::Destructive,
+            format!("Delete \"{}\"?", path).as_str(),
+            Some("This will delete the remote project. You can always re-add it later."),
+            &["Delete", "Cancel"],
+        );
+
+        cx.spawn(|this, mut cx| async move {
+            let answer = answer.await?;
+
+            if answer != 0 {
+                return Ok(());
+            }
+
+            this.update(&mut cx, |this, cx| {
+                this.dev_server_store
+                    .update(cx, |store, cx| store.delete_dev_server_project(id, cx))
+            })?
+            .await?;
+
+            WORKSPACE_DB
+                .delete_workspace_by_dev_server_project_id(id)
+                .await
+                .log_err();
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to delete dev server project", cx, |_, _| None);
+    }
+
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        match self.mode {
-            Mode::Default => {}
-            Mode::CreateRemoteProject(CreateRemoteProject { dev_server_id, .. }) => {
-                self.create_remote_project(dev_server_id, cx);
+        match &self.mode {
+            Mode::Default(None) => {}
+            Mode::Default(Some(create_project)) => {
+                self.create_dev_server_project(create_project.dev_server_id, cx);
             }
             Mode::CreateDevServer(_) => {
                 self.create_dev_server(cx);
@@ -258,9 +307,9 @@ impl RemoteProjects {
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         match self.mode {
-            Mode::Default => cx.emit(DismissEvent),
-            Mode::CreateRemoteProject(_) | Mode::CreateDevServer(_) => {
-                self.mode = Mode::Default;
+            Mode::Default(None) => cx.emit(DismissEvent),
+            _ => {
+                self.mode = Mode::Default(None);
                 self.focus_handle(cx).focus(cx);
                 cx.notify();
             }
@@ -270,10 +319,17 @@ impl RemoteProjects {
     fn render_dev_server(
         &mut self,
         dev_server: &DevServer,
+        mut create_project: Option<CreateDevServerProject>,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let dev_server_id = dev_server.id;
         let status = dev_server.status;
+        if create_project
+            .as_ref()
+            .is_some_and(|cp| cp.dev_server_id != dev_server.id)
+        {
+            create_project = None;
+        }
 
         v_flex()
             .w_full()
@@ -338,15 +394,13 @@ impl RemoteProjects {
                             .tooltip(|cx| Tooltip::text("Add a remote project", cx))
                             .on_click(cx.listener(
                                 move |this, _, cx| {
-                                    this.mode = Mode::CreateRemoteProject(CreateRemoteProject {
-                                        dev_server_id,
-                                        creating: false,
-                                        remote_project: None,
-                                    });
-                                    this.remote_project_path_input
-                                        .read(cx)
-                                        .focus_handle(cx)
-                                        .focus(cx);
+                                    if let Mode::Default(project) = &mut this.mode {
+                                        *project = Some(CreateDevServerProject {
+                                            dev_server_id,
+                                            creating: false,
+                                        });
+                                    }
+                                    this.project_path_input.read(cx).focus_handle(cx).focus(cx);
                                     cx.notify();
                                 },
                             )),
@@ -364,27 +418,60 @@ impl RemoteProjects {
                     .py_0p5()
                     .px_3()
                     .child(
-                        List::new().empty_message("No projects.").children(
-                            self.remote_project_store
-                                .read(cx)
-                                .remote_projects_for_server(dev_server.id)
-                                .iter()
-                                .map(|p| self.render_remote_project(p, cx)),
-                        ),
+                        List::new()
+                            .empty_message("No projects.")
+                            .children(
+                                self.dev_server_store
+                                    .read(cx)
+                                    .projects_for_server(dev_server.id)
+                                    .iter()
+                                    .map(|p| self.render_dev_server_project(p, cx)),
+                            )
+                            .when_some(create_project, |el, create_project| {
+                                el.child(self.render_create_new_project(&create_project, cx))
+                            }),
                     ),
             )
     }
 
-    fn render_remote_project(
+    fn render_create_new_project(
         &mut self,
-        project: &RemoteProject,
+        create_project: &CreateDevServerProject,
+        _: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        ListItem::new("create-remote-project")
+            .start_slot(Icon::new(IconName::FileTree).color(Color::Muted))
+            .child(self.project_path_input.clone())
+            .child(
+                div()
+                    .w(IconSize::Medium.rems())
+                    .when(create_project.creating, |el| {
+                        el.child(
+                            Icon::new(IconName::ArrowCircle)
+                                .size(IconSize::Medium)
+                                .with_animation(
+                                    "arrow-circle",
+                                    Animation::new(Duration::from_secs(2)).repeat(),
+                                    |icon, delta| {
+                                        icon.transform(Transformation::rotate(percentage(delta)))
+                                    },
+                                ),
+                        )
+                    }),
+            )
+    }
+
+    fn render_dev_server_project(
+        &mut self,
+        project: &DevServerProject,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let remote_project_id = project.id;
+        let dev_server_project_id = project.id;
         let project_id = project.project_id;
         let is_online = project_id.is_some();
+        let project_path = project.path.clone();
 
-        ListItem::new(("remote-project", remote_project_id.0))
+        ListItem::new(("remote-project", dev_server_project_id.0))
             .start_slot(Icon::new(IconName::FileTree).when(!is_online, |icon| icon.color(Color::Muted)))
             .child(
                     Label::new(project.path.clone())
@@ -392,7 +479,7 @@ impl RemoteProjects {
             .on_click(cx.listener(move |_, _, cx| {
                 if let Some(project_id) = project_id {
                     if let Some(app_state) = AppState::global(cx).upgrade() {
-                        workspace::join_remote_project(project_id, app_state, None, cx)
+                        workspace::join_dev_server_project(project_id, app_state, None, cx)
                             .detach_and_prompt_err("Could not join project", cx, |_, _| None)
                     }
                 } else {
@@ -401,6 +488,11 @@ impl RemoteProjects {
                     }).detach();
                 }
             }))
+            .end_hover_slot::<AnyElement>(Some(IconButton::new("remove-remote-project", IconName::Trash)
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.delete_dev_server_project(dev_server_project_id, &project_path, cx)
+                }))
+                .tooltip(|cx| Tooltip::text("Delete remote project", cx)).into_any_element()))
     }
 
     fn render_create_dev_server(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -471,7 +563,7 @@ impl RemoteProjects {
                         })
                         .when_some(dev_server.clone(), |div, dev_server| {
                             let status = self
-                                .remote_project_store
+                                .dev_server_store
                                 .read(cx)
                                 .dev_server_status(DevServerId(dev_server.dev_server_id));
 
@@ -556,7 +648,12 @@ impl RemoteProjects {
     }
 
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let dev_servers = self.remote_project_store.read(cx).dev_servers();
+        let dev_servers = self.dev_server_store.read(cx).dev_servers();
+
+        let Mode::Default(create_dev_server_project) = &self.mode else {
+            unreachable!()
+        };
+        let create_dev_server_project = create_dev_server_project.clone();
 
         v_flex()
             .id("scroll-container")
@@ -596,138 +693,143 @@ impl RemoteProjects {
                             ),
                         ))
                         .children(dev_servers.iter().map(|dev_server| {
-                            self.render_dev_server(dev_server, cx).into_any_element()
+                            self.render_dev_server(
+                                dev_server,
+                                create_dev_server_project.clone(),
+                                cx,
+                            )
+                            .into_any_element()
                         })),
                 ),
             )
     }
 
-    fn render_create_remote_project(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let Mode::CreateRemoteProject(CreateRemoteProject {
-            dev_server_id,
-            creating,
-            remote_project,
-        }) = &self.mode
-        else {
-            unreachable!()
-        };
+    // fn render_create_dev_server_project(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    //     let Mode::CreateDevServerProject(CreateDevServerProject {
+    //         dev_server_id,
+    //         creating,
+    //         dev_server_project,
+    //     }) = &self.mode
+    //     else {
+    //         unreachable!()
+    //     };
 
-        let dev_server = self
-            .remote_project_store
-            .read(cx)
-            .dev_server(*dev_server_id)
-            .cloned();
+    //     let dev_server = self
+    //         .dev_server_store
+    //         .read(cx)
+    //         .dev_server(*dev_server_id)
+    //         .cloned();
 
-        let (dev_server_name, dev_server_status) = dev_server
-            .map(|server| (server.name, server.status))
-            .unwrap_or((SharedString::from(""), DevServerStatus::Offline));
+    //     let (dev_server_name, dev_server_status) = dev_server
+    //         .map(|server| (server.name, server.status))
+    //         .unwrap_or((SharedString::from(""), DevServerStatus::Offline));
 
-        v_flex()
-            .px_1()
-            .pt_0p5()
-            .gap_px()
-            .child(
-                v_flex().py_0p5().px_1().child(
-                    h_flex()
-                        .px_1()
-                        .py_0p5()
-                        .child(
-                            IconButton::new("back", IconName::ArrowLeft)
-                                .style(ButtonStyle::Transparent)
-                                .on_click(cx.listener(|_, _: &gpui::ClickEvent, cx| {
-                                    cx.dispatch_action(menu::Cancel.boxed_clone())
-                                })),
-                        )
-                        .child(Headline::new("Add remote project").size(HeadlineSize::Small)),
-                ),
-            )
-            .child(
-                h_flex()
-                    .ml_5()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id(("status", dev_server_id.0))
-                            .relative()
-                            .child(Icon::new(IconName::Server))
-                            .child(div().absolute().bottom_0().left(rems_from_px(12.0)).child(
-                                Indicator::dot().color(match dev_server_status {
-                                    DevServerStatus::Online => Color::Created,
-                                    DevServerStatus::Offline => Color::Hidden,
-                                }),
-                            ))
-                            .tooltip(move |cx| {
-                                Tooltip::text(
-                                    match dev_server_status {
-                                        DevServerStatus::Online => "Online",
-                                        DevServerStatus::Offline => "Offline",
-                                    },
-                                    cx,
-                                )
-                            }),
-                    )
-                    .child(dev_server_name.clone()),
-            )
-            .child(
-                h_flex()
-                    .ml_5()
-                    .gap_2()
-                    .child(self.remote_project_path_input.clone())
-                    .when(!*creating && remote_project.is_none(), |div| {
-                        div.child(Button::new("create-remote-server", "Create").on_click({
-                            let dev_server_id = *dev_server_id;
-                            cx.listener(move |this, _, cx| {
-                                this.create_remote_project(dev_server_id, cx)
-                            })
-                        }))
-                    })
-                    .when(*creating, |div| {
-                        div.child(Button::new("create-dev-server", "Creating...").disabled(true))
-                    }),
-            )
-            .when_some(remote_project.clone(), |div, remote_project| {
-                let status = self
-                    .remote_project_store
-                    .read(cx)
-                    .remote_project(RemoteProjectId(remote_project.id))
-                    .map(|project| {
-                        if project.project_id.is_some() {
-                            DevServerStatus::Online
-                        } else {
-                            DevServerStatus::Offline
-                        }
-                    })
-                    .unwrap_or(DevServerStatus::Offline);
-                div.child(
-                    v_flex()
-                        .ml_5()
-                        .ml_8()
-                        .gap_2()
-                        .when(status == DevServerStatus::Offline, |this| {
-                            this.child(Label::new("Waiting for project..."))
-                        })
-                        .when(status == DevServerStatus::Online, |this| {
-                            this.child(Label::new("Project online! 🎊")).child(
-                                Button::new("done", "Done").on_click(cx.listener(|_, _, cx| {
-                                    cx.dispatch_action(menu::Cancel.boxed_clone())
-                                })),
-                            )
-                        }),
-                )
-            })
-    }
+    //     v_flex()
+    //         .px_1()
+    //         .pt_0p5()
+    //         .gap_px()
+    //         .child(
+    //             v_flex().py_0p5().px_1().child(
+    //                 h_flex()
+    //                     .px_1()
+    //                     .py_0p5()
+    //                     .child(
+    //                         IconButton::new("back", IconName::ArrowLeft)
+    //                             .style(ButtonStyle::Transparent)
+    //                             .on_click(cx.listener(|_, _: &gpui::ClickEvent, cx| {
+    //                                 cx.dispatch_action(menu::Cancel.boxed_clone())
+    //                             })),
+    //                     )
+    //                     .child(Headline::new("Add remote project").size(HeadlineSize::Small)),
+    //             ),
+    //         )
+    //         .child(
+    //             h_flex()
+    //                 .ml_5()
+    //                 .gap_2()
+    //                 .child(
+    //                     div()
+    //                         .id(("status", dev_server_id.0))
+    //                         .relative()
+    //                         .child(Icon::new(IconName::Server))
+    //                         .child(div().absolute().bottom_0().left(rems_from_px(12.0)).child(
+    //                             Indicator::dot().color(match dev_server_status {
+    //                                 DevServerStatus::Online => Color::Created,
+    //                                 DevServerStatus::Offline => Color::Hidden,
+    //                             }),
+    //                         ))
+    //                         .tooltip(move |cx| {
+    //                             Tooltip::text(
+    //                                 match dev_server_status {
+    //                                     DevServerStatus::Online => "Online",
+    //                                     DevServerStatus::Offline => "Offline",
+    //                                 },
+    //                                 cx,
+    //                             )
+    //                         }),
+    //                 )
+    //                 .child(dev_server_name.clone()),
+    //         )
+    //         .child(
+    //             h_flex()
+    //                 .ml_5()
+    //                 .gap_2()
+    //                 .child(self.project_path_input.clone())
+    //                 .when(!*creating && dev_server_project.is_none(), |div| {
+    //                     div.child(Button::new("create-remote-server", "Create").on_click({
+    //                         let dev_server_id = *dev_server_id;
+    //                         cx.listener(move |this, _, cx| {
+    //                             this.create_dev_server_project(dev_server_id, cx)
+    //                         })
+    //                     }))
+    //                 })
+    //                 .when(*creating, |div| {
+    //                     div.child(Button::new("create-dev-server", "Creating...").disabled(true))
+    //                 }),
+    //         )
+    //         .when_some(dev_server_project.clone(), |div, dev_server_project| {
+    //             let status = self
+    //                 .dev_server_store
+    //                 .read(cx)
+    //                 .dev_server_project(DevServerProjectId(dev_server_project.id))
+    //                 .map(|project| {
+    //                     if project.project_id.is_some() {
+    //                         DevServerStatus::Online
+    //                     } else {
+    //                         DevServerStatus::Offline
+    //                     }
+    //                 })
+    //                 .unwrap_or(DevServerStatus::Offline);
+    //             div.child(
+    //                 v_flex()
+    //                     .ml_5()
+    //                     .ml_8()
+    //                     .gap_2()
+    //                     .when(status == DevServerStatus::Offline, |this| {
+    //                         this.child(Label::new("Waiting for project..."))
+    //                     })
+    //                     .when(status == DevServerStatus::Online, |this| {
+    //                         this.child(Label::new("Project online! 🎊")).child(
+    //                             Button::new("done", "Done").on_click(cx.listener(|_, _, cx| {
+    //                                 cx.dispatch_action(menu::Cancel.boxed_clone())
+    //                             })),
+    //                         )
+    //                     }),
+    //             )
+    //         })
+    // }
 }
-impl ModalView for RemoteProjects {}
+impl ModalView for DevServerProjects {}
 
-impl FocusableView for RemoteProjects {
+impl FocusableView for DevServerProjects {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl EventEmitter<DismissEvent> for RemoteProjects {}
+impl EventEmitter<DismissEvent> for DevServerProjects {}
 
-impl Render for RemoteProjects {
+impl Render for DevServerProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .track_focus(&self.focus_handle)
@@ -736,7 +838,7 @@ impl Render for RemoteProjects {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_mouse_down_out(cx.listener(|this, _, cx| {
-                if matches!(this.mode, Mode::Default) {
+                if matches!(this.mode, Mode::Default(None)) {
                     cx.emit(DismissEvent)
                 }
             }))
@@ -745,10 +847,7 @@ impl Render for RemoteProjects {
             .min_h(rems(20.))
             .max_h(rems(40.))
             .child(match &self.mode {
-                Mode::Default => self.render_default(cx).into_any_element(),
-                Mode::CreateRemoteProject(_) => {
-                    self.render_create_remote_project(cx).into_any_element()
-                }
+                Mode::Default(_) => self.render_default(cx).into_any_element(),
                 Mode::CreateDevServer(_) => self.render_create_dev_server(cx).into_any_element(),
             })
     }

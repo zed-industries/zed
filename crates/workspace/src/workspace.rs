@@ -47,7 +47,7 @@ pub use pane::*;
 pub use pane_group::*;
 use persistence::{model::SerializedWorkspace, SerializedWindowsBounds, DB};
 pub use persistence::{
-    model::{ItemId, LocalPaths, SerializedRemoteProject, SerializedWorkspaceLocation},
+    model::{ItemId, LocalPaths, SerializedDevServerProject, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use postage::stream::Stream;
@@ -3644,18 +3644,19 @@ impl Workspace {
             } else {
                 None
             }
-        } else if let Some(remote_project_id) = self.project().read(cx).remote_project_id() {
-            let store = remote_projects::Store::global(cx).read(cx);
+        } else if let Some(dev_server_project_id) = self.project().read(cx).dev_server_project_id()
+        {
+            let store = dev_server_projects::Store::global(cx).read(cx);
             maybe!({
-                let project = store.remote_project(remote_project_id)?;
+                let project = store.dev_server_project(dev_server_project_id)?;
                 let dev_server = store.dev_server(project.dev_server_id)?;
 
-                let remote_project = SerializedRemoteProject {
-                    id: remote_project_id,
+                let dev_server_project = SerializedDevServerProject {
+                    id: dev_server_project_id,
                     dev_server_name: dev_server.name.to_string(),
                     path: project.path.to_string(),
                 };
-                Some(SerializedWorkspaceLocation::Remote(remote_project))
+                Some(SerializedWorkspaceLocation::DevServer(dev_server_project))
             })
         } else {
             None
@@ -4537,7 +4538,7 @@ async fn join_channel_internal(
                         return None;
                     }
                     let project = workspace.project.read(cx);
-                    if (project.is_local() || project.remote_project_id().is_some())
+                    if (project.is_local() || project.dev_server_project_id().is_some())
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
@@ -4883,7 +4884,7 @@ pub fn join_hosted_project(
     })
 }
 
-pub fn join_remote_project(
+pub fn join_dev_server_project(
     project_id: ProjectId,
     app_state: Arc<AppState>,
     window_to_replace: Option<WindowHandle<Workspace>>,

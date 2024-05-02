@@ -1,5 +1,6 @@
-mod remote_projects;
+mod dev_servers;
 
+pub use dev_servers::DevServerProjects;
 use feature_flags::FeatureFlagAppExt;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -11,7 +12,6 @@ use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
     Picker, PickerDelegate,
 };
-pub use remote_projects::RemoteProjects;
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
 use std::{
@@ -42,8 +42,7 @@ gpui::actions!(projects, [OpenRemote]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(RecentProjects::register).detach();
-    cx.observe_new_views(remote_projects::RemoteProjects::register)
-        .detach();
+    cx.observe_new_views(DevServerProjects::register).detach();
 }
 
 pub struct RecentProjects {
@@ -158,7 +157,7 @@ pub struct RecentProjectsDelegate {
     create_new_window: bool,
     // Flag to reset index when there is a new query vs not reset index when user delete an item
     reset_selected_match_index: bool,
-    has_any_remote_projects: bool,
+    has_any_dev_server_projects: bool,
 }
 
 impl RecentProjectsDelegate {
@@ -171,16 +170,16 @@ impl RecentProjectsDelegate {
             create_new_window,
             render_paths,
             reset_selected_match_index: true,
-            has_any_remote_projects: false,
+            has_any_dev_server_projects: false,
         }
     }
 
     pub fn set_workspaces(&mut self, workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation)>) {
         self.workspaces = workspaces;
-        self.has_any_remote_projects = self
+        self.has_any_dev_server_projects = self
             .workspaces
             .iter()
-            .any(|(_, location)| matches!(location, SerializedWorkspaceLocation::Remote(_)));
+            .any(|(_, location)| matches!(location, SerializedWorkspaceLocation::DevServer(_)));
     }
 }
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
@@ -235,8 +234,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .map(|path| path.compact().to_string_lossy().into_owned())
                         .collect::<Vec<_>>()
                         .join(""),
-                    SerializedWorkspaceLocation::Remote(remote_project) => {
-                        format!("{}{}", remote_project.dev_server_name, remote_project.path)
+                    SerializedWorkspaceLocation::DevServer(dev_server_project) => {
+                        format!(
+                            "{}{}",
+                            dev_server_project.dev_server_name, dev_server_project.path
+                        )
                     }
                 };
 
@@ -310,13 +312,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     workspace.open_workspace_for_paths(false, paths, cx)
                                 }
                             }
-                            SerializedWorkspaceLocation::Remote(remote_project) => {
-                                let store = ::remote_projects::Store::global(cx).read(cx);
+                            SerializedWorkspaceLocation::DevServer(dev_server_project) => {
+                                let store = dev_server_projects::Store::global(cx).read(cx);
                                 let Some(project_id) = store
-                                    .remote_project(remote_project.id)
+                                    .dev_server_project(dev_server_project.id)
                                     .and_then(|p| p.project_id)
                                 else {
-                                    let dev_server_name = remote_project.dev_server_name.clone();
+                                    let dev_server_name = dev_server_project.dev_server_name.clone();
                                     return cx.spawn(|workspace, mut cx| async move {
                                         let response =
                                             cx.prompt(gpui::PromptLevel::Warning,
@@ -326,7 +328,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                             ).await?;
                                         if response == 1 {
                                             workspace.update(&mut cx, |workspace, cx| {
-                                                workspace.toggle_modal(cx, |cx| RemoteProjects::new(cx))
+                                                workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx))
                                             })?;
                                         } else {
                                             workspace.update(&mut cx, |workspace, cx| {
@@ -354,7 +356,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                                 if continue_replacing {
                                                     workspace
                                                         .update(&mut cx, |_workspace, cx| {
-                                                            workspace::join_remote_project(project_id, app_state, Some(handle), cx)
+                                                            workspace::join_dev_server_project(project_id, app_state, Some(handle), cx)
                                                         })?
                                                         .await?;
                                                 }
@@ -363,7 +365,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         }
                                     else {
                                         let task =
-                                            workspace::join_remote_project(project_id, app_state, None, cx);
+                                            workspace::join_dev_server_project(project_id, app_state, None, cx);
                                         cx.spawn(|_, _| async move {
                                             task.await?;
                                             Ok(())
@@ -404,13 +406,13 @@ impl PickerDelegate for RecentProjectsDelegate {
         let (workspace_id, location) = &self.workspaces[hit.candidate_id];
         let is_current_workspace = self.is_current_workspace(*workspace_id, cx);
 
-        let is_remote = matches!(location, SerializedWorkspaceLocation::Remote(_));
+        let is_remote = matches!(location, SerializedWorkspaceLocation::DevServer(_));
         let dev_server_status =
-            if let SerializedWorkspaceLocation::Remote(remote_project) = location {
-                let store = ::remote_projects::Store::global(cx).read(cx);
+            if let SerializedWorkspaceLocation::DevServer(dev_server_project) = location {
+                let store = dev_server_projects::Store::global(cx).read(cx);
                 Some(
                     store
-                        .remote_project(remote_project.id)
+                        .dev_server_project(dev_server_project.id)
                         .and_then(|p| store.dev_server(p.dev_server_id))
                         .map(|s| s.status)
                         .unwrap_or_default(),
@@ -422,9 +424,12 @@ impl PickerDelegate for RecentProjectsDelegate {
         let mut path_start_offset = 0;
         let paths = match location {
             SerializedWorkspaceLocation::Local(paths) => paths.paths(),
-            SerializedWorkspaceLocation::Remote(remote_project) => Arc::new(vec![PathBuf::from(
-                format!("{}:{}", remote_project.dev_server_name, remote_project.path),
-            )]),
+            SerializedWorkspaceLocation::DevServer(dev_server_project) => {
+                Arc::new(vec![PathBuf::from(format!(
+                    "{}:{}",
+                    dev_server_project.dev_server_name, dev_server_project.path
+                ))])
+            }
         };
 
         let (match_labels, paths): (Vec<_>, Vec<_>) = paths
@@ -459,7 +464,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     h_flex()
                         .flex_grow()
                         .gap_3()
-                        .when(self.has_any_remote_projects, |this| {
+                        .when(self.has_any_dev_server_projects, |this| {
                             this.child(if is_remote {
                                 // if disabled, Color::Disabled
                                 let indicator_color = match dev_server_status {
@@ -540,7 +545,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .when_some(KeyBinding::for_action(&OpenRemote, cx), |button, key| {
                             button.child(key)
                         })
-                        .child(Label::new("Connect remote…").color(Color::Muted))
+                        .child(Label::new("Connect…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(OpenRemote.boxed_clone())),
                 )
                 .child(

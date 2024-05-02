@@ -1,14 +1,14 @@
 use anyhow::Result;
 use assistant_tooling::LanguageModelTool;
-use gpui::{prelude::*, AnyView, Model, Task};
+use gpui::{percentage, prelude::*, Animation, AnimationExt, AnyView, Model, Task, Transformation};
 use project::Fs;
 use schemars::JsonSchema;
 use semantic_index::{ProjectIndex, Status};
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use ui::{
-    div, prelude::*, CollapsibleContainer, Color, Icon, IconName, Label, SharedString,
-    WindowContext,
+    div, prelude::*, ButtonLike, CollapsibleContainer, Color, Icon, IconName, Indicator, Label,
+    SharedString, Tooltip, WindowContext,
 };
 use util::ResultExt as _;
 
@@ -255,12 +255,63 @@ impl Render for ProjectIndexStatusView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let status = self.project_index.read(cx).status();
 
-        h_flex().gap_2().map(|element| match status {
-            Status::Idle => element.child(Label::new("Project index ready")),
-            Status::Loading => element.child(Label::new("Project index loading...")),
-            Status::Scanning { remaining_count } => element.child(Label::new(format!(
-                "Project index scanning: {remaining_count} remaining..."
-            ))),
-        })
+        let is_enabled = match status {
+            Status::Idle => true,
+            _ => false,
+        };
+
+        let icon = match status {
+            Status::Idle => Icon::new(IconName::Code)
+                .size(IconSize::XSmall)
+                .color(Color::Default),
+            Status::Loading => Icon::new(IconName::Code)
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+            Status::Scanning { .. } => Icon::new(IconName::Code)
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+        };
+
+        let indicator = match status {
+            Status::Idle => Some(Indicator::dot().color(Color::Success)),
+            Status::Scanning { .. } => Some(Indicator::dot().color(Color::Warning)),
+            Status::Loading => Some(Indicator::icon(
+                Icon::new(IconName::Spinner)
+                    .color(Color::Accent)
+                    .with_animation(
+                        "arrow-circle",
+                        Animation::new(Duration::from_secs(2)).repeat(),
+                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    ),
+            )),
+        };
+
+        ButtonLike::new("project-index")
+            .disabled(!is_enabled)
+            .child(
+                ui::IconWithIndicator::new(icon, indicator)
+                    .indicator_border_color(Some(gpui::transparent_black())),
+            )
+            .tooltip({
+                move |cx| {
+                    let (tooltip, meta) = match status {
+                        Status::Idle => (
+                            "Project index ready".to_string(),
+                            Some("Click to disable".to_string()),
+                        ),
+                        Status::Loading => ("Project index loading...".to_string(), None),
+                        Status::Scanning { remaining_count } => (
+                            "Project index scanning...".to_string(),
+                            Some(format!("{} remaining...", remaining_count)),
+                        ),
+                    };
+
+                    if let Some(meta) = meta {
+                        Tooltip::with_meta(tooltip, None, meta, cx)
+                    } else {
+                        Tooltip::text(tooltip, cx)
+                    }
+                }
+            })
     }
 }

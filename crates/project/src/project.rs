@@ -15,7 +15,7 @@ pub mod search_history;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use client::{
-    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, RemoteProjectId,
+    proto, Client, Collaborator, DevServerProjectId, PendingEntitySubscription, ProjectId,
     TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
@@ -209,7 +209,7 @@ pub struct Project {
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
     tasks: Model<Inventory>,
     hosted_project_id: Option<ProjectId>,
-    remote_project_id: Option<client::RemoteProjectId>,
+    dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
 }
 
@@ -744,7 +744,7 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
-                remote_project_id: None,
+                dev_server_project_id: None,
                 search_history: Self::new_search_history(),
             }
         })
@@ -858,7 +858,7 @@ impl Project {
                     capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
-                    in_room: response.payload.remote_project_id.is_none(),
+                    in_room: response.payload.dev_server_project_id.is_none(),
                 },
                 supplementary_language_servers: HashMap::default(),
                 language_servers: Default::default(),
@@ -900,10 +900,10 @@ impl Project {
                 prettier_instances: HashMap::default(),
                 tasks,
                 hosted_project_id: None,
-                remote_project_id: response
+                dev_server_project_id: response
                     .payload
-                    .remote_project_id
-                    .map(|remote_project_id| RemoteProjectId(remote_project_id)),
+                    .dev_server_project_id
+                    .map(|dev_server_project_id| DevServerProjectId(dev_server_project_id)),
                 search_history: Self::new_search_history(),
             };
             this.set_role(role, cx);
@@ -1262,8 +1262,8 @@ impl Project {
         self.hosted_project_id
     }
 
-    pub fn remote_project_id(&self) -> Option<RemoteProjectId> {
-        self.remote_project_id
+    pub fn dev_server_project_id(&self) -> Option<DevServerProjectId> {
+        self.dev_server_project_id
     }
 
     pub fn replica_id(&self) -> ReplicaId {
@@ -1589,7 +1589,7 @@ impl Project {
     pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
         if !matches!(self.client_state, ProjectClientState::Local) {
             if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
-                if *in_room || self.remote_project_id.is_none() {
+                if *in_room || self.dev_server_project_id.is_none() {
                     return Err(anyhow!("project was already shared"));
                 } else {
                     *in_room = true;
@@ -1808,7 +1808,7 @@ impl Project {
 
     fn unshare_internal(&mut self, cx: &mut AppContext) -> Result<()> {
         if self.is_remote() {
-            if self.remote_project_id().is_some() {
+            if self.dev_server_project_id().is_some() {
                 if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
                     *in_room = false
                 }

@@ -851,17 +851,17 @@ impl Database {
                     .await?;
 
                 // if any project in the room has a remote-project-id that belongs to a dev server that this user owns.
-                let remote_projects_for_user = self
-                    .remote_project_ids_for_user(leaving_participant.user_id, &tx)
+                let dev_server_projects_for_user = self
+                    .dev_server_project_ids_for_user(leaving_participant.user_id, &tx)
                     .await?;
 
-                let remote_projects_to_unshare = project::Entity::find()
+                let dev_server_projects_to_unshare = project::Entity::find()
                     .filter(
                         Condition::all()
                             .add(project::Column::RoomId.eq(room_id))
                             .add(
-                                project::Column::RemoteProjectId
-                                    .is_in(remote_projects_for_user.clone()),
+                                project::Column::DevServerProjectId
+                                    .is_in(dev_server_projects_for_user.clone()),
                             ),
                     )
                     .all(&*tx)
@@ -892,7 +892,7 @@ impl Database {
                     }
 
                     if (collaborator.is_host && collaborator.connection() == connection)
-                        || remote_projects_to_unshare.contains(&collaborator.project_id)
+                        || dev_server_projects_to_unshare.contains(&collaborator.project_id)
                     {
                         left_project.should_unshare = true;
                     }
@@ -936,9 +936,9 @@ impl Database {
                     .exec(&*tx)
                     .await?;
 
-                if !remote_projects_to_unshare.is_empty() {
+                if !dev_server_projects_to_unshare.is_empty() {
                     project::Entity::update_many()
-                        .filter(project::Column::Id.is_in(remote_projects_to_unshare))
+                        .filter(project::Column::Id.is_in(dev_server_projects_to_unshare))
                         .set(project::ActiveModel {
                             room_id: ActiveValue::Set(None),
                             ..Default::default()
@@ -1316,8 +1316,10 @@ impl Database {
                         project.worktree_root_names.push(db_worktree.root_name);
                     }
                 }
-            } else if let Some(remote_project_id) = db_project.remote_project_id {
-                let host = self.owner_for_remote_project(remote_project_id, tx).await?;
+            } else if let Some(dev_server_project_id) = db_project.dev_server_project_id {
+                let host = self
+                    .owner_for_dev_server_project(dev_server_project_id, tx)
+                    .await?;
                 if let Some((_, participant)) = participants
                     .iter_mut()
                     .find(|(_, v)| v.user_id == host.to_proto())

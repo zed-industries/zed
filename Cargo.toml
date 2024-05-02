@@ -69,7 +69,7 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
-    "crates/remote_projects",
+    "crates/dev_server_projects",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -207,7 +207,7 @@ project_symbols = { path = "crates/project_symbols" }
 quick_action_bar = { path = "crates/quick_action_bar" }
 recent_projects = { path = "crates/recent_projects" }
 release_channel = { path = "crates/release_channel" }
-remote_projects = { path = "crates/remote_projects" }
+dev_server_projects = { path = "crates/dev_server_projects" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }

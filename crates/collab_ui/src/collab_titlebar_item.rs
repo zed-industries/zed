@@ -171,8 +171,8 @@ impl Render for CollabTitlebarItem {
                         let room = room.read(cx);
                         let project = self.project.read(cx);
                         let is_local = project.is_local();
-                        let is_remote_project = project.remote_project_id().is_some();
-                        let is_shared = (is_local || is_remote_project) && project.is_shared();
+                        let is_dev_server_project = project.dev_server_project_id().is_some();
+                        let is_shared = (is_local || is_dev_server_project) && project.is_shared();
                         let is_muted = room.is_muted();
                         let is_deafened = room.is_deafened().unwrap_or(false);
                         let is_screen_sharing = room.is_screen_sharing();
@@ -180,7 +180,7 @@ impl Render for CollabTitlebarItem {
                         let can_share_projects = room.can_share_projects();
 
                         this.when(
-                            (is_local || is_remote_project) && can_share_projects,
+                            (is_local || is_dev_server_project) && can_share_projects,
                             |this| {
                                 this.child(
                                     Button::new(
@@ -379,11 +379,11 @@ impl CollabTitlebarItem {
         if let Some(dev_server) =
             self.project
                 .read(cx)
-                .remote_project_id()
-                .and_then(|remote_project_id| {
-                    remote_projects::Store::global(cx)
+                .dev_server_project_id()
+                .and_then(|dev_server_project_id| {
+                    dev_server_projects::Store::global(cx)
                         .read(cx)
-                        .dev_server_for_project(remote_project_id)
+                        .dev_server_for_project(dev_server_project_id)
                 })
         {
             return Some(
@@ -403,7 +403,7 @@ impl CollabTitlebarItem {
                     .tooltip(move |cx| Tooltip::text("Project is hosted on a dev server", cx))
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
-                            recent_projects::RemoteProjects::open(workspace, cx)
+                            recent_projects::DevServerProjects::open(workspace, cx)
                         }
                     }))
                     .into_any_element(),
