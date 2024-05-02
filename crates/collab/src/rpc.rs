@@ -413,6 +413,7 @@ impl Server {
             .add_request_handler(user_handler(join_hosted_project))
             .add_request_handler(user_handler(rejoin_dev_server_projects))
             .add_request_handler(user_handler(create_dev_server_project))
+            .add_request_handler(user_handler(delete_dev_server_project))
             .add_request_handler(user_handler(create_dev_server))
             .add_request_handler(user_handler(delete_dev_server))
             .add_request_handler(dev_server_handler(share_dev_server_project))
@@ -2356,6 +2357,68 @@ async fn delete_dev_server(
         .await
         .delete_dev_server(dev_server_id, session.user_id())
         .await?;
+
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn delete_dev_server_project(
+    request: proto::DeleteDevServerProject,
+    response: Response<proto::DeleteDevServerProject>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_project_id = DevServerProjectId(request.dev_server_project_id as i32);
+    let dev_server_project = session
+        .db()
+        .await
+        .get_dev_server_project(dev_server_project_id)
+        .await?;
+
+    let dev_server = session
+        .db()
+        .await
+        .get_dev_server(dev_server_project.dev_server_id)
+        .await?;
+    if dev_server.user_id != session.user_id() {
+        return Err(anyhow!(ErrorCode::Forbidden))?;
+    }
+
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server.id);
+
+    if let Some(dev_server_connection_id) = dev_server_connection_id {
+        let project = session
+            .db()
+            .await
+            .find_dev_server_project(dev_server_project_id)
+            .await;
+        if let Ok(project) = project {
+            unshare_project_internal(
+                project.id,
+                dev_server_connection_id,
+                Some(session.user_id()),
+                &session,
+            )
+            .await?;
+        }
+    }
+
+    let (projects, status) = session
+        .db()
+        .await
+        .delete_dev_server_project(dev_server_project_id, dev_server.id, session.user_id())
+        .await?;
+
+    if let Some(dev_server_connection_id) = dev_server_connection_id {
+        session.peer.send(
+            dev_server_connection_id,
+            proto::DevServerInstructions { projects },
+        )?;
+    }
 
     send_dev_server_projects_update(session.user_id(), status, &session).await;
 

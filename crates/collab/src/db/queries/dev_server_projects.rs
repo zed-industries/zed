@@ -1,5 +1,8 @@
 use anyhow::anyhow;
-use rpc::{proto, ConnectionId};
+use rpc::{
+    proto::{self},
+    ConnectionId,
+};
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, DatabaseTransaction, EntityTrait,
     ModelTrait, QueryFilter,
@@ -35,22 +38,31 @@ impl Database {
         dev_server_id: DevServerId,
     ) -> crate::Result<Vec<proto::DevServerProject>> {
         self.transaction(|tx| async move {
-            let servers = dev_server_project::Entity::find()
-                .filter(dev_server_project::Column::DevServerId.eq(dev_server_id))
-                .find_also_related(project::Entity)
-                .all(&*tx)
-                .await?;
-            Ok(servers
-                .into_iter()
-                .map(|(dev_server_project, project)| proto::DevServerProject {
-                    id: dev_server_project.id.to_proto(),
-                    project_id: project.map(|p| p.id.to_proto()),
-                    dev_server_id: dev_server_project.dev_server_id.to_proto(),
-                    path: dev_server_project.path,
-                })
-                .collect())
+            self.get_projects_for_dev_server_internal(dev_server_id, &tx)
+                .await
         })
         .await
+    }
+
+    pub async fn get_projects_for_dev_server_internal(
+        &self,
+        dev_server_id: DevServerId,
+        tx: &DatabaseTransaction,
+    ) -> crate::Result<Vec<proto::DevServerProject>> {
+        let servers = dev_server_project::Entity::find()
+            .filter(dev_server_project::Column::DevServerId.eq(dev_server_id))
+            .find_also_related(project::Entity)
+            .all(tx)
+            .await?;
+        Ok(servers
+            .into_iter()
+            .map(|(dev_server_project, project)| proto::DevServerProject {
+                id: dev_server_project.id.to_proto(),
+                project_id: project.map(|p| p.id.to_proto()),
+                dev_server_id: dev_server_project.dev_server_id.to_proto(),
+                path: dev_server_project.path,
+            })
+            .collect())
     }
 
     pub async fn dev_server_project_ids_for_user(
@@ -132,6 +144,39 @@ impl Database {
                 .await?;
 
             Ok((project, status))
+        })
+        .await
+    }
+
+    pub async fn delete_dev_server_project(
+        &self,
+        dev_server_project_id: DevServerProjectId,
+        dev_server_id: DevServerId,
+        user_id: UserId,
+    ) -> crate::Result<(Vec<proto::DevServerProject>, proto::DevServerProjectsUpdate)> {
+        self.transaction(|tx| async move {
+            project::Entity::delete_many()
+                .filter(project::Column::DevServerProjectId.eq(dev_server_project_id))
+                .exec(&*tx)
+                .await?;
+            let result = dev_server_project::Entity::delete_by_id(dev_server_project_id)
+                .exec(&*tx)
+                .await?;
+            if result.rows_affected != 1 {
+                return Err(anyhow!(
+                    "no dev server project with id {}",
+                    dev_server_project_id
+                ))?;
+            }
+
+            let status = self
+                .dev_server_projects_update_internal(user_id, &tx)
+                .await?;
+
+            let projects = self
+                .get_projects_for_dev_server_internal(dev_server_id, &tx)
+                .await?;
+            Ok((projects, status))
         })
         .await
     }

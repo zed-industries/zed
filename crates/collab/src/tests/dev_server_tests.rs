@@ -264,6 +264,58 @@ async fn test_dev_server_leave_room(
 }
 
 #[gpui::test]
+async fn test_dev_server_delete(
+    cx1: &mut gpui::TestAppContext,
+    cx2: &mut gpui::TestAppContext,
+    cx3: &mut gpui::TestAppContext,
+) {
+    let (server, client1, client2, channel_id) = TestServer::start2(cx1, cx2).await;
+
+    let (_dev_server, remote_workspace) =
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx3).await;
+
+    cx1.update(|cx| {
+        workspace::join_channel(
+            channel_id,
+            client1.app_state.clone(),
+            Some(remote_workspace),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    cx1.executor().run_until_parked();
+
+    remote_workspace
+        .update(cx1, |ws, cx| {
+            assert!(ws.project().read(cx).is_shared());
+        })
+        .unwrap();
+
+    join_channel(channel_id, &client2, cx2).await.unwrap();
+    cx2.executor().run_until_parked();
+
+    cx1.update(|cx| {
+        dev_server_projects::Store::global(cx).update(cx, |store, cx| {
+            store.delete_dev_server_project(store.dev_server_projects().first().unwrap().id, cx)
+        })
+    })
+    .await
+    .unwrap();
+
+    cx1.executor().run_until_parked();
+
+    let (workspace, cx2) = client2.active_workspace(cx2);
+    cx2.update(|cx| assert!(workspace.read(cx).project().read(cx).is_disconnected()));
+
+    cx1.update(|cx| {
+        dev_server_projects::Store::global(cx).update(cx, |store, _| {
+            assert_eq!(store.dev_server_projects().len(), 0);
+        })
+    })
+}
+
+#[gpui::test]
 async fn test_dev_server_reconnect(
     cx1: &mut gpui::TestAppContext,
     cx2: &mut gpui::TestAppContext,

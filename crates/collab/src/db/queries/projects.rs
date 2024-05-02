@@ -598,6 +598,17 @@ impl Database {
         .await
     }
 
+    pub async fn find_dev_server_project(&self, id: DevServerProjectId) -> Result<project::Model> {
+        self.transaction(|tx| async move {
+            Ok(project::Entity::find()
+                .filter(project::Column::DevServerProjectId.eq(id))
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?)
+        })
+        .await
+    }
+
     /// Adds the given connection to the specified project
     /// in the current room.
     pub async fn join_project(
