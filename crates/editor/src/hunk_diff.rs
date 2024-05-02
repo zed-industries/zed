@@ -603,6 +603,12 @@ fn editor_with_deleted_text(
             .anchor_after(editor.buffer.read(cx).len(cx));
 
         editor.highlight_rows::<DiffRowHighlight>(start..end, Some(deleted_color), cx);
+        let hunk_related_subscription = cx.on_blur(&editor.focus_handle, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.try_cancel();
+            });
+        });
+        editor._subscriptions.push(hunk_related_subscription);
         editor
     });
 
