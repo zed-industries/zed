@@ -516,6 +516,10 @@ impl LanguageRegistry {
                 .path_suffixes
                 .iter()
                 .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
+            let path_matches_regex = config
+                .path_regex
+                .as_ref()
+                .map_or(false, |regex| filename.map_or(false, |p| regex.is_match(p)));
             let path_matches_custom_suffix = user_file_types
                 .and_then(|types| types.get(language_name))
                 .unwrap_or(&empty)
@@ -532,7 +536,7 @@ impl LanguageRegistry {
             );
             if path_matches_custom_suffix {
                 2
-            } else if path_matches_default_suffix || content_matches {
+            } else if path_matches_default_suffix || content_matches || path_matches_regex {
                 1
             } else {
                 0
