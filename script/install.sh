@@ -4,14 +4,14 @@ set -euo pipefail
 main() {
     platform="$(uname -s)"
     arch="$(uname -m)"
-    channel="stable"
+    channel="${ZED_CHANNEL:-stable}"
     temp="$(mktemp -d "/tmp/zed-XXXXX")"
 
     if [[ $platform == "Darwin" ]]; then
         platform="macos"
     elif [[ $platform == "Linux" ]]; then
         platform="linux"
-        channel="nightly"
+        channel="${ZED_CHANNEL:-preview}"
     else
         echo "Unsupported platform $platform"
         exit 1
@@ -51,6 +51,7 @@ linux() {
         suffix="-$channel"
     fi
 
+    rm -rf "$HOME/.local/zed$suffix.app"
     mkdir -p "$HOME/.local/zed$suffix.app"
     tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
 
@@ -58,16 +59,17 @@ linux() {
     ln -sf ~/.local/zed$suffix.app/bin/zed ~/.local/bin/
     cp ~/.local/zed$suffix.app/share/applications/zed$suffix.desktop ~/.local/share/applications/
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/zed$suffix.desktop
-    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" ~/.local/share/applications/zed.desktop
+    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" ~/.local/share/applications/zed$suffix.desktop
 
-    if ! which zed >/dev/null 2>&1; then
+    if which zed >/dev/null 2>&1; then
+        echo "Zed has been installed. Run with 'zed'"
+    else
         echo "To run zed from your terminal, you must add ~/.local/bin to your PATH"
         echo "Run:"
         echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
         echo "   source ~/.bashrc"
+        echo "To run zed now, '~/.local/bin/zed'"
     fi
-
-    ~/.local/bin/zed
 }
 
 macos() {
@@ -80,9 +82,10 @@ macos() {
         echo "Removing existing $app"
         rm -rf "/Applications/$app"
     fi
-    ditto -v "$temp/mount/$app" "/Applications/$app"
+    ditto "$temp/mount/$app" "/Applications/$app"
     hdiutil detach -quiet "$temp/mount"
-    open "/Applications/$app"
+
+    echo "Zed has been installed. Run with 'open /Applications/$app'"
 }
 
 main "$@"
