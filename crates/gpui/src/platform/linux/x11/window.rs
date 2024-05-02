@@ -14,11 +14,11 @@ use util::ResultExt;
 use x11rb::{
     connection::Connection,
     protocol::{
-        xinput,
+        xinput::{self, ConnectionExt as _},
         xproto::{self, ConnectionExt as _, CreateWindowAux},
     },
     resource_manager::Database,
-    wrapper::ConnectionExt,
+    wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
 
@@ -170,23 +170,6 @@ impl X11WindowState {
             )
             .unwrap();
 
-        xinput::ConnectionExt::xinput_xi_select_events(
-            &xcb_connection,
-            x_window,
-            &[xinput::EventMask {
-                deviceid: 1,
-                mask: vec![
-                    xinput::XIEventMask::MOTION
-                        | xinput::XIEventMask::BUTTON_PRESS
-                        | xinput::XIEventMask::BUTTON_RELEASE
-                        | xinput::XIEventMask::LEAVE,
-                ],
-            }],
-        )
-        .unwrap()
-        .check()
-        .unwrap();
-
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
                 xcb_connection
@@ -208,6 +191,21 @@ impl X11WindowState {
                 atoms.WM_PROTOCOLS,
                 xproto::AtomEnum::ATOM,
                 &[atoms.WM_DELETE_WINDOW],
+            )
+            .unwrap();
+
+        xcb_connection
+            .xinput_xi_select_events(
+                x_window,
+                &[xinput::EventMask {
+                    deviceid: 1,
+                    mask: vec![
+                        xinput::XIEventMask::MOTION
+                            | xinput::XIEventMask::BUTTON_PRESS
+                            | xinput::XIEventMask::BUTTON_RELEASE
+                            | xinput::XIEventMask::LEAVE,
+                    ],
+                }],
             )
             .unwrap();
 
