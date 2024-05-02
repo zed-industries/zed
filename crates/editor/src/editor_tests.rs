@@ -3146,7 +3146,7 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         «hElLo, WoRld!ˇ»
     "});
-    cx.update_editor(|e, cx| e.convert_to_swapped_case(&ConvertToSwappedCase, cx));
+    cx.update_editor(|e, cx| e.convert_to_opposite_case(&ConvertToOppositeCase, cx));
     cx.assert_editor_state(indoc! {"
         «HeLlO, wOrLD!ˇ»
     "});

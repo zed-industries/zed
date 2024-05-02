@@ -5183,9 +5183,9 @@ impl Editor {
         self.manipulate_text(cx, |text| text.to_case(Case::Camel))
     }
 
-    pub fn convert_to_swapped_case(
+    pub fn convert_to_opposite_case(
         &mut self,
-        _: &ConvertToSwappedCase,
+        _: &ConvertToOppositeCase,
         cx: &mut ViewContext<Self>,
     ) {
         self.manipulate_text(cx, |text| {
