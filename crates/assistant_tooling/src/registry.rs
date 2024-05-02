@@ -1,6 +1,10 @@
 use anyhow::{anyhow, Result};
-use gpui::{AnyView, Task, WindowContext};
-use std::collections::HashMap;
+use gpui::{Task, WindowContext};
+use std::{
+    any::TypeId,
+    collections::HashMap,
+    sync::atomic::{AtomicBool, Ordering::SeqCst},
+};
 
 use crate::tool::{
     LanguageModelTool, ToolFunctionCall, ToolFunctionCallResult, ToolFunctionDefinition,
@@ -8,28 +12,24 @@ use crate::tool::{
 
 // Internal Tool representation for the registry
 pub struct Tool {
-    enabled: bool,
+    enabled: AtomicBool,
+    type_id: TypeId,
     call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
     definition: ToolFunctionDefinition,
-    status_view: Option<AnyView>,
 }
 
 impl Tool {
     fn new(
+        type_id: TypeId,
         call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
         definition: ToolFunctionDefinition,
-        status_view: Option<AnyView>,
     ) -> Self {
         Self {
-            enabled: true,
+            enabled: AtomicBool::new(true),
+            type_id,
             call,
             definition,
-            status_view,
         }
-    }
-
-    pub fn toggle(&mut self) {
-        self.enabled = !self.enabled;
     }
 }
 
@@ -44,10 +44,28 @@ impl ToolRegistry {
         }
     }
 
+    pub fn set_tool_enabled<T: 'static + LanguageModelTool>(&self, is_enabled: bool) {
+        for tool in self.tools.values() {
+            if tool.type_id == TypeId::of::<T>() {
+                tool.enabled.store(is_enabled, SeqCst);
+                return;
+            }
+        }
+    }
+
+    pub fn is_tool_enabled<T: 'static + LanguageModelTool>(&self) -> bool {
+        for tool in self.tools.values() {
+            if tool.type_id == TypeId::of::<T>() {
+                return tool.enabled.load(SeqCst);
+            }
+        }
+        false
+    }
+
     pub fn definitions(&self) -> Vec<ToolFunctionDefinition> {
         self.tools
             .values()
-            .filter(|tool| tool.enabled)
+            .filter(|tool| tool.enabled.load(SeqCst))
             .map(|tool| tool.definition.clone())
             .collect()
     }
@@ -55,54 +73,52 @@ impl ToolRegistry {
     pub fn register<T: 'static + LanguageModelTool>(
         &mut self,
         tool: T,
-        cx: &mut WindowContext,
+        _cx: &mut WindowContext,
     ) -> Result<()> {
         let definition = tool.definition();
-        let status_view = tool.status_view(cx);
 
         let name = tool.name();
-        let previous = self.tools.insert(
-            name.clone(),
-            Tool::new(
-                Box::new(
-                    move |tool_call: &ToolFunctionCall, cx: &mut WindowContext| {
-                        let name = tool_call.name.clone();
-                        let arguments = tool_call.arguments.clone();
-                        let id = tool_call.id.clone();
 
-                        let Ok(input) = serde_json::from_str::<T::Input>(arguments.as_str()) else {
-                            return Task::ready(Ok(ToolFunctionCall {
-                                id,
-                                name: name.clone(),
-                                arguments,
-                                result: Some(ToolFunctionCallResult::ParsingFailed),
-                            }));
-                        };
+        let registered_tool = Tool::new(
+            TypeId::of::<T>(),
+            Box::new(
+                move |tool_call: &ToolFunctionCall, cx: &mut WindowContext| {
+                    let name = tool_call.name.clone();
+                    let arguments = tool_call.arguments.clone();
+                    let id = tool_call.id.clone();
 
-                        let result = tool.execute(&input, cx);
+                    let Ok(input) = serde_json::from_str::<T::Input>(arguments.as_str()) else {
+                        return Task::ready(Ok(ToolFunctionCall {
+                            id,
+                            name: name.clone(),
+                            arguments,
+                            result: Some(ToolFunctionCallResult::ParsingFailed),
+                        }));
+                    };
 
-                        cx.spawn(move |mut cx| async move {
-                            let result: Result<T::Output> = result.await;
-                            let for_model = T::format(&input, &result);
-                            let view =
-                                cx.update(|cx| T::output_view(id.clone(), input, result, cx))?;
+                    let result = tool.execute(&input, cx);
 
-                            Ok(ToolFunctionCall {
-                                id,
-                                name: name.clone(),
-                                arguments,
-                                result: Some(ToolFunctionCallResult::Finished {
-                                    view: view.into(),
-                                    for_model,
-                                }),
-                            })
+                    cx.spawn(move |mut cx| async move {
+                        let result: Result<T::Output> = result.await;
+                        let for_model = T::format(&input, &result);
+                        let view = cx.update(|cx| T::output_view(id.clone(), input, result, cx))?;
+
+                        Ok(ToolFunctionCall {
+                            id,
+                            name: name.clone(),
+                            arguments,
+                            result: Some(ToolFunctionCallResult::Finished {
+                                view: view.into(),
+                                for_model,
+                            }),
                         })
-                    },
-                ),
-                definition,
-                status_view,
+                    })
+                },
             ),
+            definition,
         );
+
+        let previous = self.tools.insert(name.clone(), registered_tool);
 
         if previous.is_some() {
             return Err(anyhow!("already registered a tool with name {}", name));
@@ -135,13 +151,6 @@ impl ToolRegistry {
         };
 
         (tool.call)(tool_call, cx)
-    }
-
-    pub fn status_views(&self) -> Vec<AnyView> {
-        self.tools
-            .values()
-            .filter_map(|tool| tool.status_view.as_ref().cloned())
-            .collect::<Vec<AnyView>>()
     }
 }
 

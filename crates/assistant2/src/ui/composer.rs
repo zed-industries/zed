@@ -1,4 +1,4 @@
-use assistant_tooling::ToolRegistry;
+use crate::{ui::ProjectIndexButton, AssistantChat, CompletionProvider};
 use client::User;
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AnyElement, FontStyle, FontWeight, TextStyle, View, WeakView, WhiteSpace};
@@ -7,13 +7,11 @@ use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, Avatar, ButtonLike, ContextMenu, Tooltip};
 
-use crate::{AssistantChat, CompletionProvider};
-
 #[derive(IntoElement)]
 pub struct Composer {
     editor: View<Editor>,
     player: Option<Arc<User>>,
-    tool_registry: Arc<ToolRegistry>,
+    project_index_button: Option<View<ProjectIndexButton>>,
     model_selector: AnyElement,
 }
 
@@ -21,20 +19,28 @@ impl Composer {
     pub fn new(
         editor: View<Editor>,
         player: Option<Arc<User>>,
-        tool_registry: Arc<ToolRegistry>,
+        project_index_button: Option<View<ProjectIndexButton>>,
         model_selector: AnyElement,
     ) -> Self {
         Self {
             editor,
             player,
-            tool_registry,
+            project_index_button,
             model_selector,
         }
+    }
+
+    fn render_tools(&mut self, _cx: &mut WindowContext) -> impl IntoElement {
+        h_flex().children(
+            self.project_index_button
+                .clone()
+                .map(|view| view.into_any_element()),
+        )
     }
 }
 
 impl RenderOnce for Composer {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(mut self, cx: &mut WindowContext) -> impl IntoElement {
         let mut player_avatar = div().size(rems_from_px(20.)).into_any_element();
         if let Some(player) = self.player.clone() {
             player_avatar = Avatar::new(player.avatar_uri.clone())
@@ -95,9 +101,7 @@ impl RenderOnce for Composer {
                                         .gap_2()
                                         .justify_between()
                                         .w_full()
-                                        .child(h_flex().gap_1().children(
-                                            self.tool_registry.status_views().iter().cloned(),
-                                        ))
+                                        .child(h_flex().gap_1().child(self.render_tools(cx)))
                                         .child(h_flex().gap_1().child(self.model_selector)),
                                 ),
                         ),

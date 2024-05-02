@@ -416,6 +416,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "ui",
 ]
 
 [[package]]

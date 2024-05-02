@@ -104,8 +104,4 @@ pub trait LanguageModelTool {
         output: Result<Self::Output>,
         cx: &mut WindowContext,
     ) -> View<Self::View>;
-
-    fn status_view(&self, _cx: &mut WindowContext) -> Option<AnyView> {
-        None
-    }
 }
