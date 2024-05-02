@@ -237,7 +237,8 @@ message Envelope {
         DevServerProjectsUpdate dev_server_projects_update = 193;
         ValidateDevServerProjectRequest validate_dev_server_project_request = 194;
         DeleteDevServer delete_dev_server = 195;
-        OpenNewBuffer open_new_buffer = 196; // Current max
+        OpenNewBuffer open_new_buffer = 196;
+        DeleteDevServerProject delete_dev_server_project = 197; // Current max
     }
 
     reserved 158 to 161;
@@ -496,6 +497,10 @@ message ShutdownDevServer {
 
 message DeleteDevServer {
     uint64 dev_server_id = 1;
+}
+
+message DeleteDevServerProject {
+    uint64 dev_server_project_id = 1;
 }
 
 message ReconnectDevServer {

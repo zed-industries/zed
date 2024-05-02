@@ -320,6 +320,7 @@ messages!(
     (DevServerProjectsUpdate, Foreground),
     (ValidateDevServerProjectRequest, Background),
     (DeleteDevServer, Foreground),
+    (DeleteDevServerProject, Foreground),
     (OpenNewBuffer, Foreground)
 );
 
@@ -425,6 +426,7 @@ request_messages!(
     (ValidateDevServerProjectRequest, Ack),
     (MultiLspQuery, MultiLspQueryResponse),
     (DeleteDevServer, Ack),
+    (DeleteDevServerProject, Ack),
 );
 
 entity_messages!(

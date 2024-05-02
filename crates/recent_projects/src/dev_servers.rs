@@ -4,12 +4,12 @@ use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerPro
 use editor::Editor;
 use feature_flags::FeatureFlagViewExt;
 use gpui::{
-    percentage, Action, Animation, AnimationExt, AppContext, ClipboardItem, DismissEvent,
-    EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Transformation, View,
-    ViewContext,
+    percentage, Action, Animation, AnimationExt, AnyElement, AppContext, ClipboardItem,
+    DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ScrollHandle, Transformation,
+    View, ViewContext,
 };
 use rpc::{
-    proto::{self, CreateDevServerResponse, DevServerStatus},
+    proto::{CreateDevServerResponse, DevServerStatus},
     ErrorCode, ErrorExt,
 };
 use settings::Settings;
@@ -135,7 +135,6 @@ impl DevServerProjects {
         };
 
         cx.spawn(|this, mut cx| async move {
-            cx.background_executor().timer(Duration::from_secs(5)).await;
             let result = create.await;
             this.update(&mut cx, |this, cx| {
                 if result.is_ok() {
@@ -238,6 +237,35 @@ impl DevServerProjects {
             .await
         })
         .detach_and_prompt_err("Failed to delete dev server", cx, |_, _| None);
+    }
+
+    fn delete_dev_server_project(
+        &mut self,
+        id: DevServerProjectId,
+        path: &str,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let answer = cx.prompt(
+            gpui::PromptLevel::Destructive,
+            format!("Delete \"{}\"?", path).as_str(),
+            Some("This will delete the remote project. You can always re-add it later."),
+            &["Delete", "Cancel"],
+        );
+
+        cx.spawn(|this, mut cx| async move {
+            let answer = answer.await?;
+
+            if answer != 0 {
+                return Ok(());
+            }
+
+            this.update(&mut cx, |this, cx| {
+                this.dev_server_store
+                    .update(cx, |store, cx| store.delete_dev_server_project(id, cx))
+            })?
+            .await
+        })
+        .detach_and_prompt_err("Failed to delete dev server project", cx, |_, _| None);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
@@ -384,7 +412,7 @@ impl DevServerProjects {
     fn render_create_new_project(
         &mut self,
         create_project: &CreateDevServerProject,
-        cx: &mut ViewContext<Self>,
+        _: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         ListItem::new("create-remote-project")
             .start_slot(Icon::new(IconName::FileTree).color(Color::Muted))
@@ -416,6 +444,7 @@ impl DevServerProjects {
         let dev_server_project_id = project.id;
         let project_id = project.project_id;
         let is_online = project_id.is_some();
+        let project_path = project.path.clone();
 
         ListItem::new(("remote-project", dev_server_project_id.0))
             .start_slot(Icon::new(IconName::FileTree).when(!is_online, |icon| icon.color(Color::Muted)))
@@ -434,6 +463,11 @@ impl DevServerProjects {
                     }).detach();
                 }
             }))
+            .end_hover_slot::<AnyElement>(Some(IconButton::new("remove-remote-project", IconName::Trash)
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.delete_dev_server_project(dev_server_project_id, &project_path, cx)
+                }))
+                .tooltip(|cx| Tooltip::text("Delete remote project", cx)).into_any_element()))
     }
 
     fn render_create_dev_server(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
