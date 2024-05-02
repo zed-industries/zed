@@ -4501,7 +4501,7 @@ impl RateLimit for ComputeEmbeddingsRateLimit {
         std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(120) // Picked arbitrarily
+            .unwrap_or(5000) // Picked arbitrarily
     }
 
     fn refill_duration() -> chrono::Duration {
@@ -4573,36 +4573,12 @@ async fn compute_embeddings(
     Ok(())
 }
 
-struct GetCachedEmbeddingsRateLimit;
-
-impl RateLimit for GetCachedEmbeddingsRateLimit {
-    fn capacity() -> usize {
-        std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(120) // Picked arbitrarily
-    }
-
-    fn refill_duration() -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name() -> &'static str {
-        "get-cached-embeddings"
-    }
-}
-
 async fn get_cached_embeddings(
     request: proto::GetCachedEmbeddings,
     response: Response<proto::GetCachedEmbeddings>,
     session: UserSession,
 ) -> Result<()> {
     authorize_access_to_language_models(&session).await?;
-
-    session
-        .rate_limiter
-        .check::<GetCachedEmbeddingsRateLimit>(session.user_id())
-        .await?;
 
     let db = session.db().await;
     let embeddings = db.get_embeddings(&request.model, &request.digests).await?;
