@@ -1,5 +1,6 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
+use util::serde::default_true;
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct SelectNext {
@@ -11,6 +12,12 @@ pub struct SelectNext {
 pub struct SelectPrevious {
     #[serde(default)]
     pub replace_newest: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct MoveToBeginningOfLine {
+    #[serde(default = "default_true")]
+    pub(super) stop_at_soft_wraps: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -29,6 +36,12 @@ pub struct MovePageUp {
 pub struct MovePageDown {
     #[serde(default)]
     pub(super) center_cursor: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct MoveToEndOfLine {
+    #[serde(default = "default_true")]
+    pub(super) stop_at_soft_wraps: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -103,23 +116,25 @@ pub struct ExpandExcerpts {
 impl_actions!(
     editor,
     [
+        ConfirmCodeAction,
+        ConfirmCompletion,
+        ExpandExcerpts,
+        FoldAt,
+        MoveDownByLines,
+        MovePageDown,
+        MovePageUp,
+        MoveToBeginningOfLine,
+        MoveToEndOfLine,
+        MoveUpByLines,
+        SelectDownByLines,
         SelectNext,
         SelectPrevious,
         SelectToBeginningOfLine,
-        ExpandExcerpts,
-        MovePageUp,
-        MovePageDown,
         SelectToEndOfLine,
-        ToggleCodeActions,
-        ConfirmCompletion,
-        ConfirmCodeAction,
-        ToggleComments,
-        FoldAt,
-        UnfoldAt,
-        MoveUpByLines,
-        MoveDownByLines,
         SelectUpByLines,
-        SelectDownByLines,
+        ToggleCodeActions,
+        ToggleComments,
+        UnfoldAt,
     ]
 );
 
@@ -190,10 +205,8 @@ gpui::actions!(
         MoveLineUp,
         MoveRight,
         MoveToBeginning,
-        MoveToBeginningOfLine,
         MoveToEnclosingBracket,
         MoveToEnd,
-        MoveToEndOfLine,
         MoveToEndOfParagraph,
         MoveToNextSubwordEnd,
         MoveToNextWordEnd,
