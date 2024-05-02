@@ -9054,8 +9054,11 @@ impl Editor {
                 return;
             }
 
+            let focused = self.focus_handle(cx).contains_focused(cx);
+
             let project = project.clone();
-            let blame = cx.new_model(|cx| GitBlame::new(buffer, project, user_triggered, cx));
+            let blame =
+                cx.new_model(|cx| GitBlame::new(buffer, project, user_triggered, focused, cx));
             self.blame_subscription = Some(cx.observe(&blame, |_, _, cx| cx.notify()));
             self.blame = Some(blame);
         }
@@ -10055,6 +10058,10 @@ impl Editor {
             let rename_editor_focus_handle = rename.editor.read(cx).focus_handle.clone();
             cx.focus(&rename_editor_focus_handle);
         } else {
+            if let Some(blame) = self.blame.as_ref() {
+                blame.update(cx, GitBlame::focus)
+            }
+
             self.blink_manager.update(cx, BlinkManager::enable);
             self.show_cursor_names(cx);
             self.buffer.update(cx, |buffer, cx| {
@@ -10075,6 +10082,10 @@ impl Editor {
         self.blink_manager.update(cx, BlinkManager::disable);
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
+
+        if let Some(blame) = self.blame.as_ref() {
+            blame.update(cx, GitBlame::blur)
+        }
         self.hide_context_menu(cx);
         hide_hover(self, cx);
         cx.emit(EditorEvent::Blurred);
