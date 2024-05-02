@@ -61,7 +61,7 @@ languages.workspace = true
 log.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
-mimalloc = "0.1"
+mimalloc = { version = "0.1", optional = true }
 nix = {workspace = true, features = ["pthread"] }
 node_runtime.workspace = true
 notifications.workspace = true
