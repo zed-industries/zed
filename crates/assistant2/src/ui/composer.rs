@@ -1,16 +1,13 @@
 use crate::{ui::ProjectIndexButton, AssistantChat, CompletionProvider};
-use client::User;
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AnyElement, FontStyle, FontWeight, TextStyle, View, WeakView, WhiteSpace};
 use settings::Settings;
-use std::sync::Arc;
 use theme::ThemeSettings;
-use ui::{popover_menu, prelude::*, Avatar, ButtonLike, ContextMenu, Tooltip};
+use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Tooltip};
 
 #[derive(IntoElement)]
 pub struct Composer {
     editor: View<Editor>,
-    player: Option<Arc<User>>,
     project_index_button: Option<View<ProjectIndexButton>>,
     model_selector: AnyElement,
 }
@@ -18,13 +15,11 @@ pub struct Composer {
 impl Composer {
     pub fn new(
         editor: View<Editor>,
-        player: Option<Arc<User>>,
         project_index_button: Option<View<ProjectIndexButton>>,
         model_selector: AnyElement,
     ) -> Self {
         Self {
             editor,
-            player,
             project_index_button,
             model_selector,
         }
@@ -41,72 +36,59 @@ impl Composer {
 
 impl RenderOnce for Composer {
     fn render(mut self, cx: &mut WindowContext) -> impl IntoElement {
-        let mut player_avatar = div().size(rems_from_px(20.)).into_any_element();
-        if let Some(player) = self.player.clone() {
-            player_avatar = Avatar::new(player.avatar_uri.clone())
-                .size(rems_from_px(20.))
-                .into_any_element();
-        }
-
         let font_size = rems(0.875);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
 
-        h_flex()
-            .w_full()
-            .items_start()
-            .mt_4()
-            .gap_3()
-            .child(player_avatar)
-            .child(
-                v_flex().size_full().gap_1().child(
-                    v_flex()
-                        .w_full()
-                        .p_4()
-                        .bg(cx.theme().colors().editor_background)
-                        .rounded_lg()
-                        .child(
-                            v_flex()
-                                .justify_between()
-                                .w_full()
-                                .gap_2()
-                                .child({
-                                    let settings = ThemeSettings::get_global(cx);
-                                    let text_style = TextStyle {
-                                        color: cx.theme().colors().editor_foreground,
-                                        font_family: settings.buffer_font.family.clone(),
-                                        font_features: settings.buffer_font.features.clone(),
-                                        font_size: font_size.into(),
-                                        font_weight: FontWeight::NORMAL,
-                                        font_style: FontStyle::Normal,
-                                        line_height: line_height.into(),
-                                        background_color: None,
-                                        underline: None,
-                                        strikethrough: None,
-                                        white_space: WhiteSpace::Normal,
-                                    };
+        h_flex().w_full().items_start().mt_2().child(
+            v_flex().size_full().gap_1().child(
+                v_flex()
+                    .w_full()
+                    .p_3()
+                    .bg(cx.theme().colors().editor_background)
+                    .rounded_lg()
+                    .child(
+                        v_flex()
+                            .justify_between()
+                            .w_full()
+                            .gap_2()
+                            .child({
+                                let settings = ThemeSettings::get_global(cx);
+                                let text_style = TextStyle {
+                                    color: cx.theme().colors().editor_foreground,
+                                    font_family: settings.buffer_font.family.clone(),
+                                    font_features: settings.buffer_font.features.clone(),
+                                    font_size: font_size.into(),
+                                    font_weight: FontWeight::NORMAL,
+                                    font_style: FontStyle::Normal,
+                                    line_height: line_height.into(),
+                                    background_color: None,
+                                    underline: None,
+                                    strikethrough: None,
+                                    white_space: WhiteSpace::Normal,
+                                };
 
-                                    EditorElement::new(
-                                        &self.editor,
-                                        EditorStyle {
-                                            background: cx.theme().colors().editor_background,
-                                            local_player: cx.theme().players().local(),
-                                            text: text_style,
-                                            ..Default::default()
-                                        },
-                                    )
-                                })
-                                .child(
-                                    h_flex()
-                                        .flex_none()
-                                        .gap_2()
-                                        .justify_between()
-                                        .w_full()
-                                        .child(h_flex().gap_1().child(self.render_tools(cx)))
-                                        .child(h_flex().gap_1().child(self.model_selector)),
-                                ),
-                        ),
-                ),
-            )
+                                EditorElement::new(
+                                    &self.editor,
+                                    EditorStyle {
+                                        background: cx.theme().colors().editor_background,
+                                        local_player: cx.theme().players().local(),
+                                        text: text_style,
+                                        ..Default::default()
+                                    },
+                                )
+                            })
+                            .child(
+                                h_flex()
+                                    .flex_none()
+                                    .gap_2()
+                                    .justify_between()
+                                    .w_full()
+                                    .child(h_flex().gap_1().child(self.render_tools(cx)))
+                                    .child(h_flex().gap_1().child(self.model_selector)),
+                            ),
+                    ),
+            ),
+        )
     }
 }
 

@@ -34,7 +34,6 @@ impl ProjectIndexButton {
 }
 
 impl Render for ProjectIndexButton {
-    // Expanded information on ToolView
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let status = self.project_index.read(cx).status();
         let is_enabled = self.tool_registry.is_tool_enabled::<ProjectIndexTool>();
@@ -82,13 +81,17 @@ impl Render for ProjectIndexButton {
             )
             .tooltip({
                 move |cx| {
-                    let (tooltip, meta) = match status {
-                        Status::Idle => (
+                    let (tooltip, meta) = match (is_enabled, status) {
+                        (false, _) => (
+                            "Project index disabled".to_string(),
+                            Some("Click to enable".to_string()),
+                        ),
+                        (_, Status::Idle) => (
                             "Project index ready".to_string(),
                             Some("Click to disable".to_string()),
                         ),
-                        Status::Loading => ("Project index loading...".to_string(), None),
-                        Status::Scanning { remaining_count } => (
+                        (_, Status::Loading) => ("Project index loading...".to_string(), None),
+                        (_, Status::Scanning { remaining_count }) => (
                             "Project index scanning...".to_string(),
                             Some(format!("{} remaining...", remaining_count)),
                         ),
