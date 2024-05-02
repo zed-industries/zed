@@ -102,6 +102,23 @@ impl zed::Extension for ElixirExtension {
             _ => Ok(None),
         }
     }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        match language_server_id.as_ref() {
+            ElixirLs::LANGUAGE_SERVER_ID => {
+                if let Some(elixir_ls) = self.elixir_ls.as_mut() {
+                    return elixir_ls.language_server_workspace_configuration(worktree);
+                }
+            }
+            _ => (),
+        }
+
+        Ok(None)
+    }
 }
 
 zed::register_extension!(ElixirExtension);
