@@ -739,10 +739,8 @@ impl WorktreeIndex {
                                     .language_for_file_path(&entry.path)
                                     .await
                                     .ok();
-                                let grammar =
-                                    language.as_ref().and_then(|language| language.grammar());
                                 let chunked_file = ChunkedFile {
-                                    chunks: chunk_text(&text, grammar),
+                                    chunks: chunk_text(&text, language.as_ref()),
                                     handle,
                                     path: entry.path,
                                     mtime: entry.mtime,
@@ -874,7 +872,6 @@ impl WorktreeIndex {
                     db.put(&mut txn, &key, file)?;
                 }
                 txn.commit()?;
-                eprintln!("committed {:?}", embedded_files.len());
 
                 drop(embedded_files);
                 log::debug!("committed");

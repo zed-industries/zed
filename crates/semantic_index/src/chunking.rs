@@ -1,4 +1,4 @@
-use language::{with_parser, with_query_cursor, Grammar};
+use language::{with_parser, with_query_cursor, Language};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -26,52 +26,85 @@ pub struct Chunk {
     pub digest: [u8; 32],
 }
 
-pub fn chunk_text(text: &str, grammar: Option<&Arc<Grammar>>) -> Vec<Chunk> {
-    chunk_text_with_size_range(text, grammar, CHUNK_SIZE_RANGE)
+pub fn chunk_text(text: &str, language: Option<&Arc<Language>>) -> Vec<Chunk> {
+    chunk_text_with_size_range(text, language, CHUNK_SIZE_RANGE)
 }
 
 fn chunk_text_with_size_range(
     text: &str,
-    grammar: Option<&Arc<Grammar>>,
+    language: Option<&Arc<Language>>,
     size_config: ChunkSizeRange,
 ) -> Vec<Chunk> {
-    let mut syntactic_ranges = Vec::new();
+    let ranges = syntactic_ranges(text, language).unwrap_or_default();
+    chunk_text_with_syntactic_ranges(text, &ranges, size_config)
+}
 
-    if let Some(grammar) = grammar {
-        if let Some(outline) = grammar.outline_config.as_ref() {
-            let tree = with_parser(|parser| {
-                parser.set_language(&grammar.ts_language).log_err()?;
-                parser.parse(&text, None)
-            });
+fn syntactic_ranges(text: &str, language: Option<&Arc<Language>>) -> Option<Vec<Range<usize>>> {
+    let language = language?;
+    let grammar = language.grammar()?;
+    let outline = grammar.outline_config.as_ref()?;
+    let tree = with_parser(|parser| {
+        parser.set_language(&grammar.ts_language).log_err()?;
+        parser.parse(&text, None)
+    })?;
 
-            if let Some(tree) = tree {
-                with_query_cursor(|cursor| {
-                    // Retrieve a list of ranges of outline items (types, functions, etc) in the document.
-                    // Omit single-line outline items (e.g. struct fields, constant declarations), because
-                    // we'll already be attempting to split on lines.
-                    syntactic_ranges = cursor
-                        .matches(&outline.query, tree.root_node(), text.as_bytes())
-                        .filter_map(|mat| {
-                            mat.captures
-                                .iter()
-                                .find_map(|QueryCapture { node, index }| {
-                                    if *index == outline.item_capture_ix {
-                                        if node.end_position().row > node.start_position().row {
-                                            return Some(node.byte_range());
-                                        }
-                                    }
-                                    None
-                                })
-                        })
-                        .collect::<Vec<_>>();
-                    syntactic_ranges
-                        .sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
-                });
-            }
-        }
+    struct RowInfo {
+        offset: usize,
+        is_comment: bool,
     }
 
-    chunk_text_with_syntactic_ranges(text, &syntactic_ranges, size_config)
+    let scope = language.default_scope();
+    let line_comment_prefixes = scope.line_comment_prefixes();
+    let row_infos = text
+        .split('\n')
+        .map({
+            let mut offset = 0;
+            move |line| {
+                let line = line.trim_start();
+                let is_comment = line_comment_prefixes
+                    .iter()
+                    .any(|prefix| line.starts_with(prefix.as_ref()));
+                let result = RowInfo { offset, is_comment };
+                offset += line.len() + 1;
+                result
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Retrieve a list of ranges of outline items (types, functions, etc) in the document.
+    // Omit single-line outline items (e.g. struct fields, constant declarations), because
+    // we'll already be attempting to split on lines.
+    let mut ranges = with_query_cursor(|cursor| {
+        cursor
+            .matches(&outline.query, tree.root_node(), text.as_bytes())
+            .filter_map(|mat| {
+                mat.captures
+                    .iter()
+                    .find_map(|QueryCapture { node, index }| {
+                        if *index == outline.item_capture_ix {
+                            let mut start_offset = node.start_byte();
+                            let mut start_row = node.start_position().row;
+                            let end_offset = node.end_byte();
+                            let end_row = node.end_position().row;
+
+                            // Expand the range to include any preceding comments.
+                            while start_row > 0 && row_infos[start_row - 1].is_comment {
+                                start_offset = row_infos[start_row - 1].offset;
+                                start_row -= 1;
+                            }
+
+                            if end_row > start_row {
+                                return Some(start_offset..end_offset);
+                            }
+                        }
+                        None
+                    })
+            })
+            .collect::<Vec<_>>()
+    });
+
+    ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
+    Some(ranges)
 }
 
 fn chunk_text_with_syntactic_ranges(
@@ -148,7 +181,7 @@ fn chunk_text_with_syntactic_ranges(
     if !range.is_empty() {
         chunks.push(Chunk {
             range: range.clone(),
-            digest: Sha256::digest(&text[range.clone()]).into(),
+            digest: Sha256::digest(&text[range]).into(),
         });
     }
 
@@ -177,6 +210,7 @@ mod tests {
                     Self { first_name, last_name, age }
                 }
 
+                /// Returns the first name
                 fn first_name(&self) -> &str {
                     &self.first_name
                 }
@@ -194,7 +228,7 @@ mod tests {
 
         let chunks = chunk_text_with_size_range(
             &text,
-            language.grammar(),
+            Some(&language),
             ChunkSizeRange {
                 min: text.find('}').unwrap(),
                 max: text.find("Self {").unwrap(),
@@ -209,7 +243,7 @@ mod tests {
             &[
                 "struct Person {", // ...
                 "impl Person {",
-                "    fn first_name",
+                "    /// Returns the first name",
                 "    fn age",
             ],
         );
@@ -227,7 +261,7 @@ mod tests {
 
         let chunks = chunk_text_with_size_range(
             &text,
-            language.grammar(),
+            Some(&language),
             ChunkSizeRange {
                 min: text.find('{').unwrap(),
                 max: text.find('V').unwrap(),
@@ -261,11 +295,8 @@ mod tests {
         "
         .unindent();
 
-        let chunks = chunk_text_with_size_range(
-            &text,
-            language.grammar(),
-            ChunkSizeRange { min: 32, max: 64 },
-        );
+        let chunks =
+            chunk_text_with_size_range(&text, Some(&language), ChunkSizeRange { min: 32, max: 64 });
 
         // The line is too long to fit in one chunk
         assert_chunks(
@@ -338,26 +369,28 @@ mod tests {
         );
     }
 
-    fn rust_language() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+    fn rust_language() -> Arc<Language> {
+        Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["rs".to_string()],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        )
-        .with_outline_query(
-            "
+                Some(tree_sitter_rust::language()),
+            )
+            .with_outline_query(
+                "
             (function_item name: (_) @name) @item
             (impl_item type: (_) @name) @item
             (struct_item name: (_) @name) @item
             (field_declaration name: (_) @name) @item
         ",
+            )
+            .unwrap(),
         )
-        .unwrap()
     }
 }

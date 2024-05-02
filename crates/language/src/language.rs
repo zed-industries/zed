@@ -1340,11 +1340,12 @@ impl LanguageScope {
 
     /// Returns line prefix that is inserted in e.g. line continuations or
     /// in `toggle comments` action.
-    pub fn line_comment_prefixes(&self) -> Option<&Vec<Arc<str>>> {
+    pub fn line_comment_prefixes(&self) -> &[Arc<str>] {
         Override::as_option(
             self.config_override().map(|o| &o.line_comments),
             Some(&self.language.config.line_comments),
         )
+        .map_or(&[] as &[_], |e| e.as_slice())
     }
 
     pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
