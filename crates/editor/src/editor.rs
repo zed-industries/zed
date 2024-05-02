@@ -9114,12 +9114,24 @@ impl Editor {
     }
 
     pub fn render_git_blame_inline(&mut self, cx: &mut WindowContext) -> bool {
-        self.focus_handle.is_focused(cx) && self.show_git_blame_inline && self.has_blame_entries(cx)
+        self.show_git_blame_inline
+            && self.focus_handle.is_focused(cx)
+            && !self.newest_selection_head_on_empty_line(cx)
+            && self.has_blame_entries(cx)
     }
 
     fn has_blame_entries(&self, cx: &mut WindowContext) -> bool {
         self.blame()
             .map_or(false, |blame| blame.read(cx).has_generated_entries())
+    }
+
+    fn newest_selection_head_on_empty_line(&mut self, cx: &mut WindowContext) -> bool {
+        let cursor_anchor = self.selections.newest_anchor().head();
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let buffer_row = cursor_anchor.to_point(&snapshot).row;
+
+        snapshot.line_len(buffer_row) == 0
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
