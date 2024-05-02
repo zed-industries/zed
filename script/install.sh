@@ -11,7 +11,7 @@ main() {
         platform="macos"
     elif [[ $platform == "Linux" ]]; then
         platform="linux"
-        channel="nightly"
+        channel="preview"
     else
         echo "Unsupported platform $platform"
         exit 1
