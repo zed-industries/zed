@@ -289,7 +289,6 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         .collect();
 
     cx.with_common_p(v_flex())
-        .w_full()
         .child(header)
         .children(body)
         .into_any()
@@ -309,19 +308,20 @@ fn render_markdown_table_row(
             .copied()
             .unwrap_or(ParsedMarkdownTableAlignment::None);
 
-        let contents = v_flex().children(cell.iter().map(|c| render_markdown_block(c, cx)));
+        let contents = cell.iter().map(|c| render_markdown_block(c, cx));
 
         let container = match alignment {
-            ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => div(),
+            ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => v_flex(),
             ParsedMarkdownTableAlignment::Center => v_flex().items_center(),
             ParsedMarkdownTableAlignment::Right => v_flex().items_end(),
         };
 
         let mut cell = container
             .w_full()
-            .child(contents)
+            .h_full()
             .px_2()
             .py_1()
+            .children(contents)
             .border_color(cx.border_color);
 
         if is_header {
