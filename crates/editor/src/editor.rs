@@ -5190,14 +5190,14 @@ impl Editor {
     ) {
         self.manipulate_text(cx, |text| {
             text.chars()
-                .map(|c| {
+                .fold(String::with_capacity(text.len()), |mut t, c| {
                     if c.is_uppercase() {
-                        c.to_lowercase().to_string()
+                        t.extend(c.to_lowercase());
                     } else {
-                        c.to_uppercase().to_string()
+                        t.extend(c.to_uppercase());
                     }
+                    t
                 })
-                .collect()
         })
     }
 
