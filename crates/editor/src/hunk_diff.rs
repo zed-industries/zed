@@ -14,7 +14,8 @@ use util::{debug_panic, RangeExt};
 use crate::{
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle, DiffRowHighlight,
-    Editor, ExpandAllHunkDiffs, RangeToAnchorExt, ToDisplayPoint, ToggleHunkDiff,
+    Editor, ExpandAllHunkDiffs, RangeToAnchorExt, RevertSelectedHunks, ToDisplayPoint,
+    ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -575,6 +576,7 @@ fn editor_with_deleted_text(
     deleted_color: Hsla,
     cx: &mut ViewContext<'_, Editor>,
 ) -> (u8, View<Editor>) {
+    let parent_editor = cx.view().downgrade();
     let editor = cx.new_view(|cx| {
         let multi_buffer =
             cx.new_model(|_| MultiBuffer::without_headers(0, language::Capability::ReadOnly));
@@ -609,6 +611,14 @@ fn editor_with_deleted_text(
             });
         });
         editor._subscriptions.push(hunk_related_subscription);
+        editor.register_action::<RevertSelectedHunks>(|_, cx| {
+            parent_editor
+                .update(cx, |editor, cx| {
+                    dbg!("@@@@@@@@");
+                    //
+                })
+                .ok();
+        });
         editor
     });
 
