@@ -52,7 +52,7 @@ zed_dir="${temp_dir}/zed$suffix.app"
 
 # Binary
 mkdir -p "${zed_dir}/bin"
-cp "target/${target_triple}/release/Zed" "${zed_dir}/zed"
+cp "target/${target_triple}/release/Zed" "${zed_dir}/bin/zed"
 
 # Icons
 mkdir -p "${zed_dir}/share/icons/hicolor/512x512/apps"
@@ -84,4 +84,4 @@ else
 fi
 
 rm -rf "${archive}"
-tar -czvf $archive -C ${temp_dir} ${zed_dir}
+tar -czvf $archive -C ${temp_dir} "zed$suffix.app"
