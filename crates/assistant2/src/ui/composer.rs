@@ -7,13 +7,12 @@ use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{popover_menu, prelude::*, Avatar, ButtonLike, ContextMenu, Tooltip};
 
-use crate::{AssistantChat, CompletionProvider, Submit, SubmitMode};
+use crate::{AssistantChat, CompletionProvider};
 
 #[derive(IntoElement)]
 pub struct Composer {
     editor: View<Editor>,
     player: Option<Arc<User>>,
-    can_submit: bool,
     tool_registry: Arc<ToolRegistry>,
     model_selector: AnyElement,
 }
@@ -22,14 +21,12 @@ impl Composer {
     pub fn new(
         editor: View<Editor>,
         player: Option<Arc<User>>,
-        can_submit: bool,
         tool_registry: Arc<ToolRegistry>,
         model_selector: AnyElement,
     ) -> Self {
         Self {
             editor,
             player,
-            can_submit,
             tool_registry,
             model_selector,
         }
@@ -55,7 +52,7 @@ impl RenderOnce for Composer {
             .gap_3()
             .child(player_avatar)
             .child(
-                v_flex().size_full().gap_1().pr_4().child(
+                v_flex().size_full().gap_1().child(
                     v_flex()
                         .w_full()
                         .p_4()
@@ -98,49 +95,10 @@ impl RenderOnce for Composer {
                                         .gap_2()
                                         .justify_between()
                                         .w_full()
-                                        .child(
-                                            h_flex().gap_1().children(
-                                                self.tool_registry.status_views().iter().cloned(),
-                                            ), // .child(
-                                               // IconButton/button
-                                               // Toggle - if enabled, .selected(true).selected_style(IconButtonStyle::Filled)
-                                               //
-                                               // match status
-                                               // Tooltip::with_meta("some label explaining project index + status", "click to enable")
-                                               // IconButton::new(
-                                               //     "add-context",
-                                               //     IconName::FileDoc,
-                                               // )
-                                               // .icon_color(Color::Muted),
-                                               // ),
-                                               // .child(
-                                               //     IconButton::new(
-                                               //         "add-context",
-                                               //         IconName::Plus,
-                                               //     )
-                                               //     .icon_color(Color::Muted),
-                                        )
-                                        .child(
-                                            h_flex().gap_1().child(self.model_selector).child(
-                                                Button::new("send-button", "Send")
-                                                    .icon(IconName::Return)
-                                                    .icon_color(Color::Muted)
-                                                    .style(ButtonStyle::Filled)
-                                                    .disabled(!self.can_submit)
-                                                    .on_click(|_, cx| {
-                                                        cx.dispatch_action(Box::new(Submit(
-                                                            SubmitMode::Codebase,
-                                                        )))
-                                                    })
-                                                    .tooltip(|cx| {
-                                                        Tooltip::for_action(
-                                                            "Submit message",
-                                                            &Submit(SubmitMode::Codebase),
-                                                            cx,
-                                                        )
-                                                    }),
-                                            ),
-                                        ),
+                                        .child(h_flex().gap_1().children(
+                                            self.tool_registry.status_views().iter().cloned(),
+                                        ))
+                                        .child(h_flex().gap_1().child(self.model_selector)),
                                 ),
                         ),
                 ),
@@ -200,13 +158,17 @@ impl RenderOnce for ModelSelector {
                                     .overflow_x_hidden()
                                     .flex_grow()
                                     .whitespace_nowrap()
-                                    .child(Label::new(self.model).color(Color::Muted)),
+                                    .child(
+                                        Label::new(self.model)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
                             )
                             .child(
                                 div().child(
                                     Icon::new(IconName::ChevronDown)
                                         .color(Color::Muted)
-                                        .size(IconSize::Medium),
+                                        .size(IconSize::XSmall),
                                 ),
                             ),
                     )

@@ -286,8 +286,6 @@ impl Render for ProjectIndexStatusView {
 
         ButtonLike::new("project-index")
             .disabled(!is_enabled)
-            .selected(true)
-            .selected_style(ButtonStyle::Filled)
             .child(ui::IconWithIndicator::new(icon, indicator))
             .tooltip({
                 move |cx| {
