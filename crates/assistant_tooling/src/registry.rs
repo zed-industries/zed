@@ -6,11 +6,29 @@ use crate::tool::{
     LanguageModelTool, ToolFunctionCall, ToolFunctionCallResult, ToolFunctionDefinition,
 };
 
+// Internal Tool representation for the registry
+pub struct Tool {
+    enabled: bool,
+    call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+}
+
+impl Tool {
+    fn new(
+        call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+    ) -> Self {
+        Self {
+            enabled: true,
+            call,
+        }
+    }
+
+    pub fn toggle(&mut self) {
+        self.enabled = !self.enabled;
+    }
+}
+
 pub struct ToolRegistry {
-    tools: HashMap<
-        String,
-        Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
-    >,
+    tools: HashMap<String, Tool>,
     definitions: Vec<ToolFunctionDefinition>,
     status_views: Vec<AnyView>,
 }
@@ -43,7 +61,7 @@ impl ToolRegistry {
         let previous = self.tools.insert(
             name.clone(),
             // registry.call(tool_call, cx)
-            Box::new(
+            Tool::new(Box::new(
                 move |tool_call: &ToolFunctionCall, cx: &mut WindowContext| {
                     let name = tool_call.name.clone();
                     let arguments = tool_call.arguments.clone();
@@ -76,7 +94,7 @@ impl ToolRegistry {
                         })
                     })
                 },
-            ),
+            )),
         );
 
         if previous.is_some() {
@@ -109,7 +127,7 @@ impl ToolRegistry {
             }
         };
 
-        tool(tool_call, cx)
+        (tool.call)(tool_call, cx)
     }
 
     pub fn status_views(&self) -> &[AnyView] {
