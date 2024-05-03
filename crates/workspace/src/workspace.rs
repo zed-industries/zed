@@ -786,11 +786,11 @@ impl Workspace {
                     this.update(&mut cx, |this, cx| {
                         if let Some(display) = cx.display() {
                             if let Some(display_uuid) = display.uuid().log_err() {
-                                let restore_bounds = cx.window_bounds();
+                                let window_bounds = cx.window_bounds();
                                 cx.background_executor()
                                     .spawn(DB.set_window_open_status(
                                         workspace_id,
-                                        SerializedWindowBounds(restore_bounds),
+                                        SerializedWindowBounds(window_bounds),
                                         display_uuid,
                                     ))
                                     .detach_and_log_err(cx);
@@ -940,7 +940,7 @@ impl Workspace {
                         .as_ref()
                         .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
                         .or_else(|| {
-                            let (display, window_bounds, _) = DB.last_window().log_err()?;
+                            let (display, window_bounds) = DB.last_window().log_err()?;
                             Some((display?, window_bounds?))
                         });
 
@@ -3650,12 +3650,12 @@ impl Workspace {
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
-            let open_status = Some(SerializedWindowBounds(cx.window_bounds()));
+            let window_bounds = Some(SerializedWindowBounds(cx.window_bounds()));
             let serialized_workspace = SerializedWorkspace {
                 id: self.database_id,
                 location,
                 center_group,
-                window_bounds: open_status,
+                window_bounds,
                 display: Default::default(),
                 docks,
                 centered_layout: self.centered_layout,

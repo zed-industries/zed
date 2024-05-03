@@ -379,7 +379,7 @@ impl WorkspaceDb {
             workspace_id,
             local_paths,
             dev_server_project_id,
-            open_status,
+            window_bounds,
             display,
             centered_layout,
             docks,
@@ -446,7 +446,7 @@ impl WorkspaceDb {
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
                 .log_err()?,
-            window_bounds: open_status,
+            window_bounds,
             centered_layout: centered_layout.unwrap_or(false),
             display,
             docks,
@@ -596,13 +596,12 @@ impl WorkspaceDb {
 
     pub(crate) fn last_window(
         &self,
-    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowBounds>, Option<bool>)> {
+    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowBounds>)> {
         let mut prepared_query =
-            self.select::<(Option<Uuid>, Option<SerializedWindowBounds>, Option<bool>)>(sql!(
+            self.select::<(Option<Uuid>, Option<SerializedWindowBounds>)>(sql!(
                 SELECT
                 display,
-                window_state, window_x, window_y, window_width, window_height,
-                fullscreen
+                window_state, window_x, window_y, window_width, window_height
                 FROM workspaces
                 WHERE local_paths
                 IS NOT NULL
@@ -610,10 +609,7 @@ impl WorkspaceDb {
                 LIMIT 1
             ))?;
         let result = prepared_query()?;
-        Ok(result
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| (None, None, None)))
+        Ok(result.into_iter().next().unwrap_or_else(|| (None, None)))
     }
 
     query! {
