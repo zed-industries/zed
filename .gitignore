@@ -8,7 +8,6 @@
 /crates/theme/schemas/theme.json
 /crates/collab/seed.json
 /assets/*licenses.md
-/docs/book
 **/venv
 .build
 *.wasm
