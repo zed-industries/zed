@@ -51,6 +51,7 @@ picker.workspace = true
 project.workspace = true
 recent_projects.workspace = true
 dev_server_projects.workspace = true
+release_channel.workspace = true
 rich_text.workspace = true
 rpc.workspace = true
 schemars.workspace = true
