@@ -1,9 +1,11 @@
 use std::ops::Range;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use url::Url;
 
-use crate::hosting_provider::HostingProvider;
+use crate::hosting_provider::{GitHostingProvider, HostingProvider};
+use crate::hosting_providers::{Bitbucket, Codeberg, Gitee, Github, Gitlab, Sourcehut};
 
 pub struct BuildPermalinkParams<'a> {
     pub remote_url: &'a str,
@@ -44,7 +46,6 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
 
 #[derive(Debug)]
 pub struct ParsedGitRemote<'a> {
-    pub provider: HostingProvider,
     pub owner: &'a str,
     pub repo: &'a str,
 }
@@ -57,11 +58,7 @@ pub struct BuildCommitPermalinkParams<'a> {
 pub fn build_commit_permalink(params: BuildCommitPermalinkParams) -> Url {
     let BuildCommitPermalinkParams { sha, remote } = params;
 
-    let ParsedGitRemote {
-        provider,
-        owner,
-        repo,
-    } = remote;
+    let ParsedGitRemote { owner, repo } = remote;
 
     let path = match provider {
         HostingProvider::Github => format!("{owner}/{repo}/commit/{sha}"),
@@ -75,99 +72,21 @@ pub fn build_commit_permalink(params: BuildCommitPermalinkParams) -> Url {
     provider.base_url().join(&path).unwrap()
 }
 
-pub fn parse_git_remote_url(url: &str) -> Option<ParsedGitRemote> {
-    if url.starts_with("git@github.com:") || url.starts_with("https://github.com/") {
-        let repo_with_owner = url
-            .trim_start_matches("git@github.com:")
-            .trim_start_matches("https://github.com/")
-            .trim_end_matches(".git");
+pub fn parse_git_remote_url(url: &str) -> Option<(Arc<dyn GitHostingProvider>, ParsedGitRemote)> {
+    let providers: Vec<Arc<dyn GitHostingProvider>> = vec![
+        Arc::new(Github),
+        Arc::new(Gitlab),
+        Arc::new(Bitbucket),
+        Arc::new(Codeberg),
+        Arc::new(Gitee),
+        Arc::new(Sourcehut),
+    ];
 
-        let (owner, repo) = repo_with_owner.split_once('/')?;
-
-        return Some(ParsedGitRemote {
-            provider: HostingProvider::Github,
-            owner,
-            repo,
-        });
-    }
-
-    if url.starts_with("git@gitlab.com:") || url.starts_with("https://gitlab.com/") {
-        let repo_with_owner = url
-            .trim_start_matches("git@gitlab.com:")
-            .trim_start_matches("https://gitlab.com/")
-            .trim_end_matches(".git");
-
-        let (owner, repo) = repo_with_owner.split_once('/')?;
-
-        return Some(ParsedGitRemote {
-            provider: HostingProvider::Gitlab,
-            owner,
-            repo,
-        });
-    }
-
-    if url.starts_with("git@gitee.com:") || url.starts_with("https://gitee.com/") {
-        let repo_with_owner = url
-            .trim_start_matches("git@gitee.com:")
-            .trim_start_matches("https://gitee.com/")
-            .trim_end_matches(".git");
-
-        let (owner, repo) = repo_with_owner.split_once('/')?;
-
-        return Some(ParsedGitRemote {
-            provider: HostingProvider::Gitee,
-            owner,
-            repo,
-        });
-    }
-
-    if url.contains("bitbucket.org") {
-        let (_, repo_with_owner) = url.trim_end_matches(".git").split_once("bitbucket.org")?;
-        let (owner, repo) = repo_with_owner
-            .trim_start_matches('/')
-            .trim_start_matches(':')
-            .split_once('/')?;
-
-        return Some(ParsedGitRemote {
-            provider: HostingProvider::Bitbucket,
-            owner,
-            repo,
-        });
-    }
-
-    if url.starts_with("git@git.sr.ht:") || url.starts_with("https://git.sr.ht/") {
-        // sourcehut indicates a repo with '.git' suffix as a separate repo.
-        // For example, "git@git.sr.ht:~username/repo" and "git@git.sr.ht:~username/repo.git"
-        // are two distinct repositories.
-        let repo_with_owner = url
-            .trim_start_matches("git@git.sr.ht:~")
-            .trim_start_matches("https://git.sr.ht/~");
-
-        let (owner, repo) = repo_with_owner.split_once('/')?;
-
-        return Some(ParsedGitRemote {
-            provider: HostingProvider::Sourcehut,
-            owner,
-            repo,
-        });
-    }
-
-    if url.starts_with("git@codeberg.org:") || url.starts_with("https://codeberg.org/") {
-        let repo_with_owner = url
-            .trim_start_matches("git@codeberg.org:")
-            .trim_start_matches("https://codeberg.org/")
-            .trim_end_matches(".git");
-
-        let (owner, repo) = repo_with_owner.split_once('/')?;
-
-        return Some(ParsedGitRemote {
-            provider: HostingProvider::Codeberg,
-            owner,
-            repo,
-        });
-    }
-
-    None
+    providers.into_iter().find_map(|provider| {
+        provider
+            .parse_remote_url(&url)
+            .map(|parsed_remote| (provider, parsed_remote))
+    })
 }
 
 #[cfg(test)]

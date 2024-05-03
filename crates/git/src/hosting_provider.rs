@@ -5,6 +5,8 @@ use anyhow::Result;
 use url::Url;
 use util::{codeberg, github, http::HttpClient};
 
+use crate::hosting_providers::{Bitbucket, Codeberg, Gitee, Github, Gitlab, Sourcehut};
+use crate::permalink::{BuildCommitPermalinkParams, ParsedGitRemote};
 use crate::Oid;
 
 /// A Git hosting provider.
@@ -15,6 +17,8 @@ pub trait GitHostingProvider {
     /// Returns the base URL of the provider.
     fn base_url(&self) -> Url;
 
+    fn build_commit_permalink(&self, params: BuildCommitPermalinkParams) -> Url;
+
     /// Returns whether this provider supports avatars.
     fn supports_avatars(&self) -> bool;
 
@@ -23,30 +27,33 @@ pub trait GitHostingProvider {
 
     /// Returns a formatted range of line numbers to be placed in a permalink URL.
     fn format_line_numbers(&self, start_line: u32, end_line: u32) -> String;
+
+    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>>;
 }
 
-#[derive(Clone, Debug, Hash)]
 pub enum HostingProvider {
-    Github,
-    Gitlab,
-    Gitee,
-    Bitbucket,
-    Sourcehut,
-    Codeberg,
+    Github(Github),
+    Gitlab(Gitlab),
+    Gitee(Gitee),
+    Bitbucket(Bitbucket),
+    Sourcehut(Sourcehut),
+    Codeberg(Codeberg),
 }
 
 impl HostingProvider {
-    pub(crate) fn base_url(&self) -> Url {
-        let base_url = match self {
-            Self::Github => "https://github.com",
-            Self::Gitlab => "https://gitlab.com",
-            Self::Gitee => "https://gitee.com",
-            Self::Bitbucket => "https://bitbucket.org",
-            Self::Sourcehut => "https://git.sr.ht",
-            Self::Codeberg => "https://codeberg.org",
-        };
+    fn provider(&self) -> Arc<dyn GitHostingProvider> {
+        match self {
+            HostingProvider::Github(provider) => Arc::new(*provider),
+            HostingProvider::Gitlab(provider) => Arc::new(*provider),
+            HostingProvider::Gitee(provider) => Arc::new(*provider),
+            HostingProvider::Bitbucket(provider) => Arc::new(*provider),
+            HostingProvider::Sourcehut(provider) => Arc::new(*provider),
+            HostingProvider::Codeberg(provider) => Arc::new(*provider),
+        }
+    }
 
-        Url::parse(&base_url).unwrap()
+    pub(crate) fn base_url(&self) -> Url {
+        self.provider().base_url()
     }
 
     /// Returns the fragment portion of the URL for the selected lines in
@@ -55,31 +62,17 @@ impl HostingProvider {
         if selection.start == selection.end {
             let line = selection.start + 1;
 
-            match self {
-                Self::Github | Self::Gitlab | Self::Gitee | Self::Sourcehut | Self::Codeberg => {
-                    format!("L{}", line)
-                }
-                Self::Bitbucket => format!("lines-{}", line),
-            }
+            self.provider().format_line_number(line)
         } else {
             let start_line = selection.start + 1;
             let end_line = selection.end + 1;
 
-            match self {
-                Self::Github | Self::Codeberg => format!("L{}-L{}", start_line, end_line),
-                Self::Gitlab | Self::Gitee | Self::Sourcehut => {
-                    format!("L{}-{}", start_line, end_line)
-                }
-                Self::Bitbucket => format!("lines-{}:{}", start_line, end_line),
-            }
+            self.provider().format_line_numbers(start_line, end_line)
         }
     }
 
     pub fn supports_avatars(&self) -> bool {
-        match self {
-            HostingProvider::Github | HostingProvider::Codeberg => true,
-            _ => false,
-        }
+        self.provider().supports_avatars()
     }
 
     pub async fn commit_author_avatar_url(
@@ -90,7 +83,7 @@ impl HostingProvider {
         client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         Ok(match self {
-            HostingProvider::Github => {
+            HostingProvider::Github(_) => {
                 let commit = commit.to_string();
                 github::fetch_github_commit_author(repo_owner, repo, &commit, &client)
                     .await?
@@ -101,7 +94,7 @@ impl HostingProvider {
                     })
                     .transpose()
             }
-            HostingProvider::Codeberg => {
+            HostingProvider::Codeberg(_) => {
                 let commit = commit.to_string();
                 codeberg::fetch_codeberg_commit_author(repo_owner, repo, &commit, &client)
                     .await?
@@ -115,14 +108,6 @@ impl HostingProvider {
 
 impl fmt::Display for HostingProvider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            HostingProvider::Github => "GitHub",
-            HostingProvider::Gitlab => "GitLab",
-            HostingProvider::Gitee => "Gitee",
-            HostingProvider::Bitbucket => "Bitbucket",
-            HostingProvider::Sourcehut => "Sourcehut",
-            HostingProvider::Codeberg => "Codeberg",
-        };
-        write!(f, "{}", name)
+        write!(f, "{}", self.provider().name())
     }
 }

@@ -1,6 +1,7 @@
 use url::Url;
 
 use crate::hosting_provider::GitHostingProvider;
+use crate::permalink::{BuildCommitPermalinkParams, ParsedGitRemote};
 
 pub struct Sourcehut;
 
@@ -23,5 +24,31 @@ impl GitHostingProvider for Sourcehut {
 
     fn format_line_numbers(&self, start_line: u32, end_line: u32) -> String {
         format!("L{start_line}-{end_line}")
+    }
+
+    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
+        if url.starts_with("git@git.sr.ht:") || url.starts_with("https://git.sr.ht/") {
+            // sourcehut indicates a repo with '.git' suffix as a separate repo.
+            // For example, "git@git.sr.ht:~username/repo" and "git@git.sr.ht:~username/repo.git"
+            // are two distinct repositories.
+            let repo_with_owner = url
+                .trim_start_matches("git@git.sr.ht:~")
+                .trim_start_matches("https://git.sr.ht/~");
+
+            let (owner, repo) = repo_with_owner.split_once('/')?;
+
+            return Some(ParsedGitRemote { owner, repo });
+        }
+
+        None
+    }
+
+    fn build_commit_permalink(&self, params: BuildCommitPermalinkParams) -> Url {
+        let BuildCommitPermalinkParams { sha, remote } = params;
+        let ParsedGitRemote { owner, repo } = remote;
+
+        self.base_url()
+            .join(&format!("~{owner}/{repo}/commit/{sha}"))
+            .unwrap()
     }
 }
