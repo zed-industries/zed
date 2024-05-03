@@ -21,13 +21,13 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{
     movement::{self, FindRange},
-    Anchor, Editor, EditorEvent, EditorMode,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, EntityId, FocusableView, Global, KeystrokeEvent,
     Subscription, View, ViewContext, WeakView, WindowContext,
 };
-use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
+use language::{CursorShape, Point, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::normal_replace;
@@ -239,12 +239,9 @@ impl Vim {
         self.active_editor = Some(editor.clone().downgrade());
         self.editor_subscription = Some(cx.subscribe(&editor, |editor, event, cx| match event {
             EditorEvent::SelectionsChanged { local: true } => {
-                let editor = editor.read(cx);
-                if editor.leader_peer_id().is_none() {
-                    let newest = editor.selections.newest_anchor().clone();
-                    let is_multicursor = editor.selections.count() > 1;
+                if editor.read(cx).leader_peer_id().is_none() {
                     Vim::update(cx, |vim, cx| {
-                        vim.local_selections_changed(newest, is_multicursor, cx);
+                        vim.local_selections_changed(editor, cx);
                     })
                 }
             }
@@ -455,6 +452,17 @@ impl Vim {
                     s.select_anchor_ranges(vec![pos..pos])
                 }
 
+                let snapshot = s.display_map();
+                if let Some(pending) = s.pending.as_mut() {
+                    if pending.selection.reversed && mode.is_visual() && !last_mode.is_visual() {
+                        let mut end = pending.selection.end.to_point(&snapshot.buffer_snapshot);
+                        end = snapshot
+                            .buffer_snapshot
+                            .clip_point(end + Point::new(0, 1), Bias::Right);
+                        pending.selection.end = snapshot.buffer_snapshot.anchor_before(end);
+                    }
+                }
+
                 s.move_with(|map, selection| {
                     if last_mode.is_visual() && !mode.is_visual() {
                         let mut point = selection.head();
@@ -601,12 +609,10 @@ impl Vim {
         self.switch_mode(Mode::Normal, true, cx)
     }
 
-    fn local_selections_changed(
-        &mut self,
-        newest: Selection<editor::Anchor>,
-        is_multicursor: bool,
-        cx: &mut WindowContext,
-    ) {
+    fn local_selections_changed(&mut self, editor: View<Editor>, cx: &mut WindowContext) {
+        let newest = editor.read(cx).selections.newest_anchor().clone();
+        let is_multicursor = editor.read(cx).selections.count() > 1;
+
         let state = self.state();
         if state.mode == Mode::Insert && state.current_tx.is_some() {
             if state.current_anchor.is_none() {
