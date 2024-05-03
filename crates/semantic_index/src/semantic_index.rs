@@ -419,7 +419,6 @@ impl ProjectIndex {
         let mut result = self
             .worktree_indices
             .values()
-            .into_iter()
             .filter_map(|index| {
                 if let WorktreeIndexHandle::Loaded { index, .. } = index {
                     Some(index.clone())

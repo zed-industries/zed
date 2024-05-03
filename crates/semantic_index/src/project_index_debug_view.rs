@@ -180,12 +180,12 @@ impl ProjectIndexDebugView {
     }
 
     fn scroll_to_chunk(&mut self, ix: usize) {
-        self.selected_path.as_mut().map(|state| {
+        if let Some(state) = self.selected_path.as_mut() {
             state.list_state.scroll_to(ListOffset {
                 item_ix: ix,
                 offset_in_item: px(0.),
             })
-        });
+        }
     }
 }
 
