@@ -1408,10 +1408,6 @@ impl PlatformWindow for WindowsWindow {
         Modifiers::none()
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
     // todo(windows)
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.inner.input_handler.set(Some(input_handler));
@@ -1584,11 +1580,6 @@ impl PlatformWindow for WindowsWindow {
     // todo(windows)
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.inner.callbacks.borrow_mut().appearance_changed = Some(callback);
-    }
-
-    // todo(windows)
-    fn is_topmost_for_position(&self, _position: Point<Pixels>) -> bool {
-        true
     }
 
     // todo(windows)
