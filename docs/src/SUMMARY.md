@@ -20,6 +20,7 @@
 - [Collaboration]()
 - [Using AI]()
 - [Tasks](./tasks.md)
+- [Remote Development](./remote_development.md)
 
 # Contributing to Zed
 
