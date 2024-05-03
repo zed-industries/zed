@@ -1,9 +1,4 @@
----
-title: Themes
-slug: themes
-short_summary: Explanation of Zed's theme system, including UI and syntax themes
-section: using-zed
----
+# Themes
 
 Zed themes and their underlying systems are undergoing significant development. They should not be considered stable or final. Note that themes are subject to change or removal as the theme system moves towards a stable version.
 
