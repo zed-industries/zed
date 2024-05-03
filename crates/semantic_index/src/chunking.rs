@@ -4,9 +4,10 @@ use sha2::{Digest, Sha256};
 use std::{
     cmp::{self, Reverse},
     ops::Range,
+    path::Path,
     sync::Arc,
 };
-use tree_sitter::QueryCapture;
+use tree_sitter::{QueryCapture, QueryCursor};
 use util::ResultExt as _;
 
 #[derive(Copy, Clone)]
@@ -26,27 +27,37 @@ pub struct Chunk {
     pub digest: [u8; 32],
 }
 
-pub fn chunk_text(text: &str, language: Option<&Arc<Language>>) -> Vec<Chunk> {
-    chunk_text_with_size_range(text, language, CHUNK_SIZE_RANGE)
+pub fn chunk_text(text: &str, language: Option<&Arc<Language>>, path: &Path) -> Vec<Chunk> {
+    chunk_text_with_size_range(text, language, path, CHUNK_SIZE_RANGE)
 }
 
 fn chunk_text_with_size_range(
     text: &str,
     language: Option<&Arc<Language>>,
+    path: &Path,
     size_config: ChunkSizeRange,
 ) -> Vec<Chunk> {
-    let ranges = syntactic_ranges(text, language).unwrap_or_default();
+    let ranges = syntactic_ranges(text, language, path).unwrap_or_default();
     chunk_text_with_syntactic_ranges(text, &ranges, size_config)
 }
 
-fn syntactic_ranges(text: &str, language: Option<&Arc<Language>>) -> Option<Vec<Range<usize>>> {
+fn syntactic_ranges(
+    text: &str,
+    language: Option<&Arc<Language>>,
+    path: &Path,
+) -> Option<Vec<Range<usize>>> {
     let language = language?;
     let grammar = language.grammar()?;
     let outline = grammar.outline_config.as_ref()?;
     let tree = with_parser(|parser| {
         parser.set_language(&grammar.ts_language).log_err()?;
         parser.parse(&text, None)
-    })?;
+    });
+
+    let Some(tree) = tree else {
+        log::error!("failed to parse file {path:?} for chunking");
+        return None;
+    };
 
     struct RowInfo {
         offset: usize,
@@ -229,6 +240,7 @@ mod tests {
         let chunks = chunk_text_with_size_range(
             &text,
             Some(&language),
+            Path::new("lib.rs"),
             ChunkSizeRange {
                 min: text.find('}').unwrap(),
                 max: text.find("Self {").unwrap(),
@@ -262,6 +274,7 @@ mod tests {
         let chunks = chunk_text_with_size_range(
             &text,
             Some(&language),
+            Path::new("lib.rs"),
             ChunkSizeRange {
                 min: text.find('{').unwrap(),
                 max: text.find('V').unwrap(),
@@ -295,8 +308,12 @@ mod tests {
         "
         .unindent();
 
-        let chunks =
-            chunk_text_with_size_range(&text, Some(&language), ChunkSizeRange { min: 32, max: 64 });
+        let chunks = chunk_text_with_size_range(
+            &text,
+            Some(&language),
+            Path::new("lib.rs"),
+            ChunkSizeRange { min: 32, max: 64 },
+        );
 
         // The line is too long to fit in one chunk
         assert_chunks(
@@ -362,7 +379,7 @@ mod tests {
     #[test]
     fn test_chunk_text() {
         let text = "a\n".repeat(1000);
-        let chunks = chunk_text(&text, None);
+        let chunks = chunk_text(&text, None, Path::new("lib.rs"));
         assert_eq!(
             chunks.len(),
             ((2000_f64) / (CHUNK_SIZE_RANGE.max as f64)).ceil() as usize

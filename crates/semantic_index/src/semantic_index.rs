@@ -740,7 +740,7 @@ impl WorktreeIndex {
                                     .await
                                     .ok();
                                 let chunked_file = ChunkedFile {
-                                    chunks: chunk_text(&text, language.as_ref()),
+                                    chunks: chunk_text(&text, language.as_ref(), &entry.path),
                                     handle,
                                     path: entry.path,
                                     mtime: entry.mtime,
