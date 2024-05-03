@@ -1,6 +1,6 @@
 # Local Collaboration
 
-First, make sure you've installed Zed's [backend dependencies](./developing_zed__building_zed.md#backend-dependencies).
+First, make sure you've installed Zed's [backend dependencies](../developing-zed.md#backend-dependencies).
 
 ## Database setup
 
