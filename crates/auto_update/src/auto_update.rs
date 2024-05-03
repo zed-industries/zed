@@ -342,8 +342,8 @@ impl AutoUpdater {
         })?;
 
         let asset = match OS {
-            "linux" => "zed-linux-x86_64.tar.gz",
-            "macos" => "Zed.dmg",
+            "linux" => format!("zed-linux-{}.tar.gz", ARCH),
+            "macos" => "Zed.dmg".into(),
             _ => return Err(anyhow!("auto-update not supported for OS {:?}", OS)),
         };
 
@@ -368,6 +368,7 @@ impl AutoUpdater {
             .read_to_end(&mut body)
             .await
             .context("error reading release")?;
+
         let release: JsonRelease =
             serde_json::from_slice(body.as_slice()).context("error deserializing release")?;
 
@@ -396,18 +397,18 @@ impl AutoUpdater {
         let temp_dir = tempfile::Builder::new()
             .prefix("zed-auto-update")
             .tempdir()?;
-        let downloaded_asset = download_release(&temp_dir, release, asset, client, &cx).await?;
+        let downloaded_asset = download_release(&temp_dir, release, &asset, client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing;
             cx.notify();
         })?;
 
-        let install_task = match OS {
-            "macos" => install_release_macos(&temp_dir, downloaded_asset, &cx),
-            _ => return Err(anyhow!("not supported: {:?}", OS)),
-        };
-        install_task.await?;
+        match OS {
+            "macos" => install_release_macos(&temp_dir, downloaded_asset, &cx).await,
+            "linux" => install_release_linux(&temp_dir, downloaded_asset, &cx).await,
+            _ => Err(anyhow!("not supported: {:?}", OS)),
+        }?;
 
         this.update(&mut cx, |this, cx| {
             this.set_should_show_update_notification(true, cx)
@@ -480,6 +481,52 @@ async fn download_release(
     log::info!("downloaded update. path:{:?}", target_path);
 
     Ok(target_path)
+}
+
+async fn install_release_linux(
+    temp_dir: &tempfile::TempDir,
+    downloaded_tar_gz: PathBuf,
+    cx: &AsyncAppContext,
+) -> Result<()> {
+    let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name())?;
+    let home_dir = PathBuf::from(std::env::var("HOME").context("no HOME env var set")?);
+
+    let extracted = temp_dir.path().join("zed");
+
+    let output = Command::new("tar")
+        .arg("-xzf")
+        .arg(&downloaded_tar_gz)
+        .arg("-C")
+        .arg(&extracted)
+        .output()
+        .await?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to extract {:?} to {:?}: {:?}",
+        downloaded_tar_gz,
+        extracted,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let suffix = if channel != "stable" {
+        format!("-{}", channel)
+    } else {
+        String::default()
+    };
+    let app_folder_name = format!("zed{}.app", suffix);
+
+    let from = extracted.join(&app_folder_name);
+
+    let dest = home_dir.join(".local").join(app_folder_name);
+    std::fs::rename(&from, &dest).with_context(|| {
+        format!(
+            "failed to move downloaded Zed from {:?} to {:?}",
+            from, dest
+        )
+    })?;
+
+    Ok(())
 }
 
 async fn install_release_macos(
