@@ -74,8 +74,6 @@ impl Render for ActiveFileButton {
                 }
             })
             .on_click(cx.listener(move |this, _, cx| {
-                dbg!("Active file button clicked");
-                dbg!(is_enabled);
                 this.set_enabled(!is_enabled);
                 cx.notify();
             }))
