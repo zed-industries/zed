@@ -4977,10 +4977,16 @@ impl Editor {
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
                 editor.buffer().update(cx, |multi_buffer, cx| {
-                    for (buffer_id, buffer_revert_ranges) in revert_changes {
+                    for (buffer_id, changes) in revert_changes {
                         if let Some(buffer) = multi_buffer.buffer(buffer_id) {
                             buffer.update(cx, |buffer, cx| {
-                                buffer.edit(buffer_revert_ranges, None, cx);
+                                buffer.edit(
+                                    changes.into_iter().map(|(range, text)| {
+                                        (range, text.to_string().map(Arc::<str>::from))
+                                    }),
+                                    None,
+                                    cx,
+                                );
                             });
                         }
                     }
@@ -5013,7 +5019,7 @@ impl Editor {
         &mut self,
         selections: &[Selection<Anchor>],
         cx: &mut ViewContext<'_, Editor>,
-    ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>> {
+    ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>> {
         let mut revert_changes = HashMap::default();
         self.buffer.update(cx, |multi_buffer, cx| {
             let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -5025,14 +5031,14 @@ impl Editor {
     }
 
     fn prepare_revert_change(
-        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>>,
+        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
         multi_buffer: &MultiBuffer,
         hunk: &DiffHunk<u32>,
         cx: &mut AppContext,
     ) -> Option<()> {
         let buffer = multi_buffer.buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
-        let original_text = buffer.diff_base()?.get(hunk.diff_base_byte_range.clone())?;
+        let original_text = buffer.diff_base()?.slice(hunk.diff_base_byte_range.clone());
         let buffer_snapshot = buffer.snapshot();
         let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
         if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
@@ -5041,9 +5047,8 @@ impl Editor {
                 .start
                 .cmp(&hunk.buffer_range.start, &buffer_snapshot)
                 .then(probe.0.end.cmp(&hunk.buffer_range.end, &buffer_snapshot))
-                .then(probe.1.as_ref().cmp(original_text))
         }) {
-            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), Arc::from(original_text)));
+            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), original_text));
             Some(())
         } else {
             None

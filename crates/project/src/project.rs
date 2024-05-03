@@ -98,7 +98,7 @@ use std::{
 };
 use task::static_source::{StaticSource, TrackedFile};
 use terminals::Terminals;
-use text::{Anchor, BufferId, LineEnding};
+use text::{Anchor, BufferId, LineEnding, Rope};
 use util::{
     debug_panic, defer,
     http::{HttpClient, Url},
@@ -7586,7 +7586,11 @@ impl Project {
                                     None
                                 } else {
                                     let relative_path = path.strip_prefix(&work_directory).ok()?;
-                                    repo_entry.repo().lock().load_index_text(relative_path)
+                                    repo_entry
+                                        .repo()
+                                        .lock()
+                                        .load_index_text(relative_path)
+                                        .map(Rope::from)
                                 };
                                 Some((buffer, base_text))
                             }
@@ -7614,7 +7618,7 @@ impl Project {
                         .send(proto::UpdateDiffBase {
                             project_id,
                             buffer_id,
-                            diff_base,
+                            diff_base: diff_base.map(|rope| rope.to_string()),
                         })
                         .log_err();
                 }
@@ -8694,7 +8698,7 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let buffer_id = envelope.payload.buffer_id;
             let buffer_id = BufferId::new(buffer_id)?;
-            let diff_base = envelope.payload.diff_base;
+            let diff_base = envelope.payload.diff_base.map(Rope::from);
             if let Some(buffer) = this
                 .opened_buffers
                 .get_mut(&buffer_id)
@@ -8859,7 +8863,7 @@ impl Project {
                         .send(proto::UpdateDiffBase {
                             project_id,
                             buffer_id: buffer_id.into(),
-                            diff_base: buffer.diff_base().map(Into::into),
+                            diff_base: buffer.diff_base().map(ToString::to_string),
                         })
                         .log_err();
 
