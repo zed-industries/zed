@@ -5931,6 +5931,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "markdown"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "language",
+ "linkify",
+ "pulldown-cmark",
+ "theme",
+ "ui",
+ "util",
+]
+
+[[package]]
 name = "markdown_preview"
 version = "0.1.0"
 dependencies = [

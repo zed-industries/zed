@@ -51,6 +51,7 @@ members = [
     "crates/live_kit_client",
     "crates/live_kit_server",
     "crates/lsp",
+    "crates/markdown",
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
