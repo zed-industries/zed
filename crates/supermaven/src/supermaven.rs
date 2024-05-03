@@ -1,13 +1,14 @@
 mod messages;
+mod supermaven_button;
 mod supermaven_completion_provider;
+
+pub use supermaven_button::*;
+pub use supermaven_completion_provider::*;
 
 use anyhow::{Context as _, Result};
 use collections::BTreeMap;
 use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
-use gpui::{
-    AppContext, AsyncAppContext, Bounds, DevicePixels, EntityId, Global, InteractiveText, Model,
-    Render, StyledText, Task, ViewContext,
-};
+use gpui::{AppContext, AsyncAppContext, EntityId, Global, Model, ModelContext, Task, WeakModel};
 use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
 use messages::*;
 use postage::watch;
@@ -18,16 +19,16 @@ use smol::{
     process::{Child, ChildStdin, ChildStdout, Command},
 };
 use std::{ops::Range, path::PathBuf, process::Stdio, sync::Arc};
-pub use supermaven_completion_provider::*;
 use ui::prelude::*;
 use util::{http::HttpClient, ResultExt};
 
 pub fn init(client: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    cx.set_global(Supermaven::Starting);
+    let supermaven = cx.new_model(|_| Supermaven::Starting);
+    Supermaven::set_global(supermaven.clone(), cx);
 
     let mut provider = all_language_settings(None, cx).inline_completions.provider;
     if provider == language::language_settings::InlineCompletionProvider::Supermaven {
-        Supermaven::update(cx, |supermaven, cx| supermaven.start(client.clone(), cx));
+        supermaven.update(cx, |supermaven, cx| supermaven.start(client.clone(), cx));
     }
 
     cx.observe_global::<SettingsStore>(move |cx| {
@@ -35,9 +36,9 @@ pub fn init(client: Arc<dyn HttpClient>, cx: &mut AppContext) {
         if new_provider != provider {
             provider = new_provider;
             if provider == language::language_settings::InlineCompletionProvider::Supermaven {
-                Supermaven::update(cx, |supermaven, cx| supermaven.start(client.clone(), cx));
+                supermaven.update(cx, |supermaven, cx| supermaven.start(client.clone(), cx));
             } else {
-                Supermaven::update(cx, |supermaven, _cx| supermaven.stop());
+                supermaven.update(cx, |supermaven, _cx| supermaven.stop());
             }
         }
     })
@@ -46,63 +47,43 @@ pub fn init(client: Arc<dyn HttpClient>, cx: &mut AppContext) {
 
 pub enum Supermaven {
     Starting,
-    FailedDownload {
-        error: anyhow::Error,
-    },
-    Spawned {
-        _process: Child,
-        next_state_id: SupermavenCompletionStateId,
-        states: BTreeMap<SupermavenCompletionStateId, SupermavenCompletionState>,
-        outgoing_tx: mpsc::UnboundedSender<OutboundMessage>,
-        _handle_outgoing_messages: Task<Result<()>>,
-        _handle_incoming_messages: Task<Result<()>>,
-    },
+    FailedDownload { error: anyhow::Error },
+    Spawned(SupermavenAgent),
 }
 
+#[derive(Clone)]
+pub enum AccountStatus {
+    Unknown,
+    NeedsActivation { activate_url: String },
+    Ready,
+}
+
+#[derive(Clone)]
+struct SupermavenGlobal(Model<Supermaven>);
+
+impl Global for SupermavenGlobal {}
+
 impl Supermaven {
-    pub fn start(&mut self, client: Arc<dyn HttpClient>, cx: &mut AppContext) {
+    pub fn global(cx: &AppContext) -> Option<Model<Self>> {
+        cx.try_global::<SupermavenGlobal>()
+            .map(|model| model.0.clone())
+    }
+
+    pub fn set_global(supermaven: Model<Self>, cx: &mut AppContext) {
+        cx.set_global(SupermavenGlobal(supermaven));
+    }
+
+    pub fn start(&mut self, client: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) {
         if let Self::Starting = self {
-            cx.spawn(|cx| async move {
+            cx.spawn(|this, mut cx| async move {
                 // todo!(): Don't download the most up to date binary every time, check to see if a recent is downloaded
                 let binary_path = supermaven_api::download_latest(client).await?;
 
-                let mut process = Command::new(&binary_path)
-                    .arg("stdio")
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .kill_on_drop(true)
-                    .spawn()
-                    .context("failed to start the binary")?;
-
-                let stdin = process
-                    .stdin
-                    .take()
-                    .context("failed to get stdin for process")?;
-                let stdout = process
-                    .stdout
-                    .take()
-                    .context("failed to get stdout for process")?;
-                cx.update(|cx| {
-                    Self::update(cx, |this, cx| {
-                        if let Self::Starting = this {
-                            let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
-                            outgoing_tx
-                                .unbounded_send(OutboundMessage::UseFreeVersion)
-                                .unwrap();
-                            *this = Self::Spawned {
-                                _process: process,
-                                next_state_id: SupermavenCompletionStateId::default(),
-                                states: BTreeMap::default(),
-                                outgoing_tx,
-                                _handle_outgoing_messages: cx.spawn(|_cx| {
-                                    Self::handle_outgoing_messages(outgoing_rx, stdin)
-                                }),
-                                _handle_incoming_messages: cx
-                                    .spawn(|cx| Self::handle_incoming_messages(stdout, cx)),
-                            };
-                        }
-                    });
+                this.update(&mut cx, |this, cx| {
+                    if let Self::Starting = this {
+                        *this = Self::Spawned(SupermavenAgent::new(binary_path, cx)?);
+                    }
+                    anyhow::Ok(())
                 })
             })
             .detach_and_log_err(cx);
@@ -123,13 +104,7 @@ impl Supermaven {
         cursor_position: Anchor,
         cx: &AppContext,
     ) -> Option<SupermavenCompletion> {
-        if let Self::Spawned {
-            next_state_id,
-            states,
-            outgoing_tx,
-            ..
-        } = self
-        {
+        if let Self::Spawned(agent) = self {
             let buffer_id = buffer.entity_id();
             let buffer = buffer.read(cx);
             let path = buffer
@@ -140,13 +115,13 @@ impl Supermaven {
                 .to_string();
             let content = buffer.text();
             let offset = cursor_position.to_offset(buffer);
-            let state_id = *next_state_id;
-            next_state_id.0 += 1;
+            let state_id = agent.next_state_id;
+            agent.next_state_id.0 += 1;
 
             let (updates_tx, mut updates_rx) = watch::channel();
             postage::stream::Stream::try_recv(&mut updates_rx).unwrap();
 
-            states.insert(
+            agent.states.insert(
                 state_id,
                 SupermavenCompletionState {
                     buffer_id,
@@ -156,16 +131,18 @@ impl Supermaven {
                     updates_tx,
                 },
             );
-            let _ = outgoing_tx.unbounded_send(OutboundMessage::StateUpdate(StateUpdateMessage {
-                new_id: state_id.0.to_string(),
-                updates: vec![
-                    StateUpdate::FileUpdate(FileUpdateMessage {
-                        path: path.clone(),
-                        content,
-                    }),
-                    StateUpdate::CursorUpdate(CursorPositionUpdateMessage { path, offset }),
-                ],
-            }));
+            let _ = agent
+                .outgoing_tx
+                .unbounded_send(OutboundMessage::StateUpdate(StateUpdateMessage {
+                    new_id: state_id.0.to_string(),
+                    updates: vec![
+                        StateUpdate::FileUpdate(FileUpdateMessage {
+                            path: path.clone(),
+                            content,
+                        }),
+                        StateUpdate::CursorUpdate(CursorPositionUpdateMessage { path, offset }),
+                    ],
+                }));
 
             Some(SupermavenCompletion {
                 id: state_id,
@@ -180,11 +157,60 @@ impl Supermaven {
         &self,
         id: SupermavenCompletionStateId,
     ) -> Option<&SupermavenCompletionState> {
-        if let Self::Spawned { states, .. } = self {
-            states.get(&id)
+        if let Self::Spawned(agent) = self {
+            agent.states.get(&id)
         } else {
             None
         }
+    }
+}
+
+pub struct SupermavenAgent {
+    _process: Child,
+    next_state_id: SupermavenCompletionStateId,
+    states: BTreeMap<SupermavenCompletionStateId, SupermavenCompletionState>,
+    outgoing_tx: mpsc::UnboundedSender<OutboundMessage>,
+    _handle_outgoing_messages: Task<Result<()>>,
+    _handle_incoming_messages: Task<Result<()>>,
+    account_status: AccountStatus,
+}
+
+impl SupermavenAgent {
+    fn new(binary_path: PathBuf, cx: &mut ModelContext<Supermaven>) -> Result<Self> {
+        let mut process = Command::new(&binary_path)
+            .arg("stdio")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("failed to start the binary")?;
+
+        let stdin = process
+            .stdin
+            .take()
+            .context("failed to get stdin for process")?;
+        let stdout = process
+            .stdout
+            .take()
+            .context("failed to get stdout for process")?;
+
+        let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
+        outgoing_tx
+            .unbounded_send(OutboundMessage::UseFreeVersion)
+            .unwrap();
+
+        Ok(Self {
+            _process: process,
+            next_state_id: SupermavenCompletionStateId::default(),
+            states: BTreeMap::default(),
+            outgoing_tx,
+            _handle_outgoing_messages: cx
+                .spawn(|_, _cx| Self::handle_outgoing_messages(outgoing_rx, stdin)),
+            _handle_incoming_messages: cx
+                .spawn(|this, cx| Self::handle_incoming_messages(this, stdout, cx)),
+            account_status: AccountStatus::Unknown,
+        })
     }
 
     async fn handle_outgoing_messages(
@@ -199,7 +225,11 @@ impl Supermaven {
         Ok(())
     }
 
-    async fn handle_incoming_messages(stdout: ChildStdout, cx: AsyncAppContext) -> Result<()> {
+    async fn handle_incoming_messages(
+        this: WeakModel<Supermaven>,
+        stdout: ChildStdout,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
         const MESSAGE_PREFIX: &str = "SM-MESSAGE ";
 
         let stdout = BufReader::new(stdout);
@@ -218,7 +248,11 @@ impl Supermaven {
                 continue;
             };
 
-            cx.update(|cx| Self::update(cx, |this, cx| this.handle_message(message, cx)))?;
+            this.update(&mut cx, |this, cx| {
+                if let Supermaven::Spawned(this) = this {
+                    this.handle_message(message, cx)
+                }
+            })?;
         }
 
         Ok(())
@@ -231,31 +265,20 @@ impl Supermaven {
                     return;
                 };
 
-                cx.open_window(
-                    gpui::WindowOptions {
-                        bounds: Some(Bounds::new(
-                            gpui::point(DevicePixels::from(0), DevicePixels::from(0)),
-                            gpui::size(DevicePixels::from(800), DevicePixels::from(600)),
-                        )),
-                        titlebar: None,
-                        focus: false,
-                        ..Default::default()
-                    },
-                    |cx| cx.new_view(|_cx| ActivationRequestPrompt::new(activate_url.into())),
-                );
+                self.account_status = AccountStatus::NeedsActivation {
+                    activate_url: activate_url.clone(),
+                };
             }
             SupermavenMessage::Response(response) => {
-                if let Self::Spawned { states, .. } = self {
-                    let state_id = SupermavenCompletionStateId(response.state_id.parse().unwrap());
-                    if let Some(state) = states.get_mut(&state_id) {
-                        for item in &response.items {
-                            if let ResponseItem::Text { text } = item {
-                                state.text.push_str(text);
-                            }
+                let state_id = SupermavenCompletionStateId(response.state_id.parse().unwrap());
+                if let Some(state) = self.states.get_mut(&state_id) {
+                    for item in &response.items {
+                        if let ResponseItem::Text { text } = item {
+                            state.text.push_str(text);
                         }
-                        state.completion.extend(response.items);
-                        *state.updates_tx.borrow_mut() = ();
                     }
+                    state.completion.extend(response.items);
+                    *state.updates_tx.borrow_mut() = ();
                 }
             }
             SupermavenMessage::Passthrough { passthrough } => self.handle_message(*passthrough, cx),
@@ -265,8 +288,6 @@ impl Supermaven {
         }
     }
 }
-
-impl Global for Supermaven {}
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct SupermavenCompletionStateId(usize);
@@ -283,27 +304,4 @@ pub struct SupermavenCompletionState {
 pub struct SupermavenCompletion {
     pub id: SupermavenCompletionStateId,
     pub updates: watch::Receiver<()>,
-}
-
-struct ActivationRequestPrompt {
-    activate_url: SharedString,
-}
-
-impl ActivationRequestPrompt {
-    fn new(activate_url: SharedString) -> Self {
-        Self { activate_url }
-    }
-}
-
-impl Render for ActivationRequestPrompt {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl gpui::prelude::IntoElement {
-        InteractiveText::new(
-            "activation_prompt",
-            StyledText::new(self.activate_url.clone()),
-        )
-        .on_click(vec![0..self.activate_url.len()], {
-            let activate_url = self.activate_url.clone();
-            move |_, cx| cx.open_url(&activate_url)
-        })
-    }
 }

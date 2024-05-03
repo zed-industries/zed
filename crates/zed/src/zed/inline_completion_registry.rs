@@ -8,7 +8,7 @@ use editor::{Editor, EditorMode};
 use gpui::{AnyWindowHandle, AppContext, Context, ViewContext, WeakView};
 use language::language_settings::all_language_settings;
 use settings::SettingsStore;
-use supermaven::SupermavenCompletionProvider;
+use supermaven::{Supermaven, SupermavenCompletionProvider};
 
 pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
     let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -111,8 +111,10 @@ fn assign_inline_completion_provider(
             }
         }
         language::language_settings::InlineCompletionProvider::Supermaven => {
-            let provider = cx.new_model(|_| SupermavenCompletionProvider::new());
-            editor.set_inline_completion_provider(Some(provider), cx);
+            if let Some(supermaven) = Supermaven::global(cx) {
+                let provider = cx.new_model(|_| SupermavenCompletionProvider::new(supermaven));
+                editor.set_inline_completion_provider(Some(provider), cx);
+            }
         }
     }
 }

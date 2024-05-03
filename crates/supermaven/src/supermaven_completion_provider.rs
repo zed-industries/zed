@@ -1,23 +1,25 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
 use editor::{Direction, InlineCompletionProvider};
-use futures::StreamExt;
-use gpui::{AppContext, Global, Model, ModelContext, Task};
+use futures::StreamExt as _;
+use gpui::{AppContext, Model, ModelContext, Task};
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, OffsetRangeExt, ToOffset,
+    language_settings::all_language_settings, Anchor, Buffer, OffsetRangeExt as _, ToOffset,
 };
 use std::time::Duration;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub struct SupermavenCompletionProvider {
+    supermaven: Model<Supermaven>,
     completion_id: Option<SupermavenCompletionStateId>,
     pending_refresh: Task<Result<()>>,
 }
 
 impl SupermavenCompletionProvider {
-    pub fn new() -> Self {
+    pub fn new(supermaven: Model<Supermaven>) -> Self {
         Self {
+            supermaven,
             completion_id: None,
             pending_refresh: Task::ready(Ok(())),
         }
@@ -26,7 +28,7 @@ impl SupermavenCompletionProvider {
 
 impl InlineCompletionProvider for SupermavenCompletionProvider {
     fn is_enabled(&self, buffer: &Model<Buffer>, cursor_position: Anchor, cx: &AppContext) -> bool {
-        if !Supermaven::get(cx).is_enabled() {
+        if !self.supermaven.read(cx).is_enabled() {
             return false;
         }
 
@@ -44,7 +46,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        let Some(mut completion) = Supermaven::update(cx, |supermaven, cx| {
+        let Some(mut completion) = self.supermaven.update(cx, |supermaven, cx| {
             supermaven.complete(&buffer_handle, cursor_position, cx)
         }) else {
             return;
@@ -94,7 +96,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         let completion_id = self.completion_id?;
         let buffer = buffer.read(cx);
         let cursor_offset = cursor_position.to_offset(buffer);
-        let completion = Supermaven::get(cx).completion(completion_id)?;
+        let completion = self.supermaven.read(cx).completion(completion_id)?;
 
         let mut completion_range = completion.range.to_offset(buffer);
 
