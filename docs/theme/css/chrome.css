@@ -1,0 +1,606 @@
+/* CSS for UI elements (a.k.a. chrome) */
+
+@import 'variables.css';
+
+html {
+    scrollbar-color: var(--scrollbar) var(--bg);
+}
+#searchresults a,
+.content a:link,
+a:visited,
+a > .hljs {
+    color: var(--links);
+}
+
+/*
+    body-container is necessary because mobile browsers don't seem to like
+    overflow-x on the body tag when there is a <meta name="viewport"> tag.
+*/
+#body-container {
+    /*
+        This is used when the sidebar pushes the body content off the side of
+        the screen on small screens. Without it, dragging on mobile Safari
+        will want to reposition the viewport in a weird way.
+    */
+    overflow-x: clip;
+}
+
+/* Menu Bar */
+
+#menu-bar,
+#menu-bar-hover-placeholder {
+    z-index: 101;
+    margin: auto calc(0px - var(--page-padding));
+}
+#menu-bar {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    background-color: var(--bg);
+    border-block-end-color: var(--bg);
+    border-block-end-width: 1px;
+    border-block-end-style: solid;
+}
+#menu-bar.sticky,
+.js #menu-bar-hover-placeholder:hover + #menu-bar,
+.js #menu-bar:hover,
+.js.sidebar-visible #menu-bar {
+    position: -webkit-sticky;
+    position: sticky;
+    top: 0 !important;
+}
+#menu-bar-hover-placeholder {
+    position: sticky;
+    position: -webkit-sticky;
+    top: 0;
+    height: var(--menu-bar-height);
+}
+#menu-bar.bordered {
+    border-block-end-color: var(--table-border-color);
+}
+#menu-bar i, #menu-bar .icon-button {
+    position: relative;
+    padding: 0 8px;
+    z-index: 10;
+    line-height: var(--menu-bar-height);
+    cursor: pointer;
+    transition: color 0.5s;
+}
+@media only screen and (max-width: 420px) {
+    #menu-bar i, #menu-bar .icon-button {
+        padding: 0 5px;
+    }
+}
+
+.icon-button {
+    border: none;
+    background: none;
+    padding: 0;
+    color: inherit;
+}
+.icon-button i {
+    margin: 0;
+}
+
+.right-buttons {
+    margin: 0 15px;
+}
+.right-buttons a {
+    text-decoration: none;
+}
+
+.left-buttons {
+    display: flex;
+    margin: 0 5px;
+}
+.no-js .left-buttons button {
+    display: none;
+}
+
+.menu-title {
+    display: inline-block;
+    font-weight: 200;
+    font-size: 2.4rem;
+    line-height: var(--menu-bar-height);
+    text-align: center;
+    margin: 0;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.js .menu-title {
+    cursor: pointer;
+}
+
+.menu-bar,
+.menu-bar:visited,
+.nav-chapters,
+.nav-chapters:visited,
+.mobile-nav-chapters,
+.mobile-nav-chapters:visited,
+.menu-bar .icon-button,
+.menu-bar a i {
+    color: var(--icons);
+}
+
+.menu-bar i:hover,
+.menu-bar .icon-button:hover,
+.nav-chapters:hover,
+.mobile-nav-chapters i:hover {
+    color: var(--icons-hover);
+}
+
+/* Nav Icons */
+
+.nav-chapters {
+    font-size: 2.5em;
+    text-align: center;
+    text-decoration: none;
+
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    margin: 0;
+    max-width: 150px;
+    min-width: 90px;
+
+    display: flex;
+    justify-content: center;
+    align-content: center;
+    flex-direction: column;
+
+    transition: color 0.5s, background-color 0.5s;
+}
+
+.nav-chapters:hover {
+    text-decoration: none;
+    background-color: var(--theme-hover);
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.nav-wrapper {
+    margin-block-start: 50px;
+    display: none;
+}
+
+.mobile-nav-chapters {
+    font-size: 2.5em;
+    text-align: center;
+    text-decoration: none;
+    width: 90px;
+    border-radius: 5px;
+    background-color: var(--sidebar-bg);
+}
+
+/* Only Firefox supports flow-relative values */
+.previous { float: left; }
+[dir=rtl] .previous { float: right; }
+
+/* Only Firefox supports flow-relative values */
+.next {
+    float: right;
+    right: var(--page-padding);
+}
+[dir=rtl] .next {
+    float: left;
+    right: unset;
+    left: var(--page-padding);
+}
+
+/* Use the correct buttons for RTL layouts*/
+[dir=rtl] .previous i.fa-angle-left:before {content:"\f105";}
+[dir=rtl] .next i.fa-angle-right:before { content:"\f104"; }
+
+@media only screen and (max-width: 1080px) {
+    .nav-wide-wrapper { display: none; }
+    .nav-wrapper { display: block; }
+}
+
+/* sidebar-visible */
+@media only screen and (max-width: 1380px) {
+    #sidebar-toggle-anchor:checked ~ .page-wrapper .nav-wide-wrapper { display: none; }
+    #sidebar-toggle-anchor:checked ~ .page-wrapper .nav-wrapper { display: block; }
+}
+
+/* Inline code */
+
+:not(pre) > .hljs {
+    display: inline;
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+}
+
+:not(pre):not(a) > .hljs {
+    color: var(--inline-code-color);
+    overflow-x: initial;
+}
+
+a:hover > .hljs {
+    text-decoration: underline;
+}
+
+pre {
+    position: relative;
+}
+pre > .buttons {
+    position: absolute;
+    z-index: 100;
+    right: 0px;
+    top: 2px;
+    margin: 0px;
+    padding: 2px 0px;
+
+    color: var(--sidebar-fg);
+    cursor: pointer;
+    visibility: hidden;
+    opacity: 0;
+    transition: visibility 0.1s linear, opacity 0.1s linear;
+}
+pre:hover > .buttons {
+    visibility: visible;
+    opacity: 1
+}
+pre > .buttons :hover {
+    color: var(--sidebar-active);
+    border-color: var(--icons-hover);
+    background-color: var(--theme-hover);
+}
+pre > .buttons i {
+    margin-inline-start: 8px;
+}
+pre > .buttons button {
+    cursor: inherit;
+    margin: 0px 5px;
+    padding: 3px 5px;
+    font-size: 14px;
+
+    border-style: solid;
+    border-width: 1px;
+    border-radius: 4px;
+    border-color: var(--icons);
+    background-color: var(--theme-popup-bg);
+    transition: 100ms;
+    transition-property: color,border-color,background-color;
+    color: var(--icons);
+}
+@media (pointer: coarse) {
+    pre > .buttons button {
+        /* On mobile, make it easier to tap buttons. */
+        padding: 0.3rem 1rem;
+    }
+
+    .sidebar-resize-indicator {
+        /* Hide resize indicator on devices with limited accuracy */
+        display: none;
+    }
+}
+pre > code {
+    display: block;
+    padding: 1rem;
+}
+
+/* FIXME: ACE editors overlap their buttons because ACE does absolute
+   positioning within the code block which breaks padding. The only solution I
+   can think of is to move the padding to the outer pre tag (or insert a div
+   wrapper), but that would require fixing a whole bunch of CSS rules.
+*/
+.hljs.ace_editor {
+  padding: 0rem 0rem;
+}
+
+pre > .result {
+    margin-block-start: 10px;
+}
+
+/* Search */
+
+#searchresults a {
+    text-decoration: none;
+}
+
+mark {
+    border-radius: 2px;
+    padding-block-start: 0;
+    padding-block-end: 1px;
+    padding-inline-start: 3px;
+    padding-inline-end: 3px;
+    margin-block-start: 0;
+    margin-block-end: -1px;
+    margin-inline-start: -3px;
+    margin-inline-end: -3px;
+    background-color: var(--search-mark-bg);
+    transition: background-color 300ms linear;
+    cursor: pointer;
+}
+
+mark.fade-out {
+    background-color: rgba(0,0,0,0) !important;
+    cursor: auto;
+}
+
+.searchbar-outer {
+    margin-inline-start: auto;
+    margin-inline-end: auto;
+    max-width: var(--content-max-width);
+}
+
+#searchbar {
+    width: 100%;
+    margin-block-start: 5px;
+    margin-block-end: 0;
+    margin-inline-start: auto;
+    margin-inline-end: auto;
+    padding: 10px 16px;
+    transition: box-shadow 300ms ease-in-out;
+    border: 1px solid var(--searchbar-border-color);
+    border-radius: 3px;
+    background-color: var(--searchbar-bg);
+    color: var(--searchbar-fg);
+}
+#searchbar:focus,
+#searchbar.active {
+    box-shadow: 0 0 3px var(--searchbar-shadow-color);
+}
+
+.searchresults-header {
+    font-weight: bold;
+    font-size: 1em;
+    padding-block-start: 18px;
+    padding-block-end: 0;
+    padding-inline-start: 5px;
+    padding-inline-end: 0;
+    color: var(--searchresults-header-fg);
+}
+
+.searchresults-outer {
+    margin-inline-start: auto;
+    margin-inline-end: auto;
+    max-width: var(--content-max-width);
+    border-block-end: 1px dashed var(--searchresults-border-color);
+}
+
+ul#searchresults {
+    list-style: none;
+    padding-inline-start: 20px;
+}
+ul#searchresults li {
+    margin: 10px 0px;
+    padding: 2px;
+    border-radius: 2px;
+}
+ul#searchresults li.focus {
+    background-color: var(--searchresults-li-bg);
+}
+ul#searchresults span.teaser {
+    display: block;
+    clear: both;
+    margin-block-start: 5px;
+    margin-block-end: 0;
+    margin-inline-start: 20px;
+    margin-inline-end: 0;
+    font-size: 0.8em;
+}
+ul#searchresults span.teaser em {
+    font-weight: bold;
+    font-style: normal;
+}
+
+/* Sidebar */
+
+.sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--sidebar-width);
+    font-size: 0.875em;
+    box-sizing: border-box;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    background-color: var(--sidebar-bg);
+    color: var(--sidebar-fg);
+}
+[dir=rtl] .sidebar { left: unset; right: 0; }
+.sidebar-resizing {
+    -moz-user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+.no-js .sidebar,
+.js:not(.sidebar-resizing) .sidebar {
+    transition: transform 0.3s; /* Animation: slide away */
+}
+.sidebar code {
+    line-height: 2em;
+}
+.sidebar .sidebar-scrollbox {
+    overflow-y: auto;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 10px 10px;
+}
+.sidebar .sidebar-resize-handle {
+    position: absolute;
+    cursor: col-resize;
+    width: 0;
+    right: calc(var(--sidebar-resize-indicator-width) * -1);
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+}
+
+.sidebar-resize-handle .sidebar-resize-indicator {
+    width: 100%;
+    height: 12px;
+    background-color: var(--icons);
+    margin-inline-start: var(--sidebar-resize-indicator-space);
+}
+
+[dir=rtl] .sidebar .sidebar-resize-handle {
+    left: calc(var(--sidebar-resize-indicator-width) * -1);
+    right: unset;
+}
+.js .sidebar .sidebar-resize-handle {
+    cursor: col-resize;
+    width: calc(var(--sidebar-resize-indicator-width) - var(--sidebar-resize-indicator-space));
+}
+/* sidebar-hidden */
+#sidebar-toggle-anchor:not(:checked) ~ .sidebar {
+    transform: translateX(calc(0px - var(--sidebar-width) - var(--sidebar-resize-indicator-width)));
+    z-index: -1;
+}
+[dir=rtl] #sidebar-toggle-anchor:not(:checked) ~ .sidebar {
+    transform: translateX(calc(var(--sidebar-width) + var(--sidebar-resize-indicator-width)));
+}
+.sidebar::-webkit-scrollbar {
+    background: var(--sidebar-bg);
+}
+.sidebar::-webkit-scrollbar-thumb {
+    background: var(--scrollbar);
+}
+
+/* sidebar-visible */
+#sidebar-toggle-anchor:checked ~ .page-wrapper {
+    transform: translateX(calc(var(--sidebar-width) + var(--sidebar-resize-indicator-width)));
+}
+[dir=rtl] #sidebar-toggle-anchor:checked ~ .page-wrapper {
+    transform: translateX(calc(0px - var(--sidebar-width) - var(--sidebar-resize-indicator-width)));
+}
+@media only screen and (min-width: 620px) {
+    #sidebar-toggle-anchor:checked ~ .page-wrapper {
+        transform: none;
+        margin-inline-start: calc(var(--sidebar-width) + var(--sidebar-resize-indicator-width));
+    }
+    [dir=rtl] #sidebar-toggle-anchor:checked ~ .page-wrapper {
+        transform: none;
+    }
+}
+
+.chapter {
+    list-style: none outside none;
+    padding-inline-start: 0;
+    line-height: 2.2em;
+}
+
+.chapter ol {
+    width: 100%;
+}
+
+.chapter li {
+    display: flex;
+    color: var(--sidebar-non-existant);
+}
+.chapter li a {
+    display: block;
+    padding: 0;
+    text-decoration: none;
+    color: var(--sidebar-fg);
+}
+
+.chapter li a:hover {
+    color: var(--sidebar-active);
+}
+
+.chapter li a.active {
+    color: var(--sidebar-active);
+}
+
+.chapter li > a.toggle {
+    cursor: pointer;
+    display: block;
+    margin-inline-start: auto;
+    padding: 0 10px;
+    user-select: none;
+    opacity: 0.68;
+}
+
+.chapter li > a.toggle div {
+    transition: transform 0.5s;
+}
+
+/* collapse the section */
+.chapter li:not(.expanded) + li > ol {
+    display: none;
+}
+
+.chapter li.chapter-item {
+    line-height: 1.5em;
+    margin-block-start: 0.6em;
+}
+
+.chapter li.expanded > a.toggle div {
+    transform: rotate(90deg);
+}
+
+.spacer {
+    width: 100%;
+    height: 3px;
+    margin: 5px 0px;
+}
+.chapter .spacer {
+    background-color: var(--sidebar-spacer);
+}
+
+@media (-moz-touch-enabled: 1), (pointer: coarse) {
+    .chapter li a { padding: 5px 0; }
+    .spacer { margin: 10px 0; }
+}
+
+.section {
+    list-style: none outside none;
+    padding-inline-start: 20px;
+    line-height: 1.9em;
+}
+
+/* Theme Menu Popup */
+
+.theme-popup {
+    position: absolute;
+    left: 10px;
+    top: var(--menu-bar-height);
+    z-index: 1000;
+    border-radius: 4px;
+    font-size: 0.7em;
+    color: var(--fg);
+    background: var(--theme-popup-bg);
+    border: 1px solid var(--theme-popup-border);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: none;
+    /* Don't let the children's background extend past the rounded corners. */
+    overflow: hidden;
+}
+[dir=rtl] .theme-popup { left: unset;  right: 10px; }
+.theme-popup .default {
+    color: var(--icons);
+}
+.theme-popup .theme {
+    width: 100%;
+    border: 0;
+    margin: 0;
+    padding: 2px 20px;
+    line-height: 25px;
+    white-space: nowrap;
+    text-align: start;
+    cursor: pointer;
+    color: inherit;
+    background: inherit;
+    font-size: inherit;
+}
+.theme-popup .theme:hover {
+    background-color: var(--theme-hover);
+}
+
+.theme-selected::before {
+    display: inline-block;
+    content: "✓";
+    margin-inline-start: -14px;
+    width: 14px;
+}

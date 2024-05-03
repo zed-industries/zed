@@ -1,0 +1,50 @@
+
+#sidebar,
+#menu-bar,
+.nav-chapters,
+.mobile-nav-chapters {
+    display: none;
+}
+
+#page-wrapper.page-wrapper {
+    transform: none !important;
+    margin-inline-start: 0px;
+    overflow-y: initial;
+}
+
+#content {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+}
+
+.page {
+    overflow-y: initial;
+}
+
+code {
+    direction: ltr !important;
+}
+
+pre > .buttons {
+    z-index: 2;
+}
+
+a, a:visited, a:active, a:hover {
+    color: #4183c4;
+    text-decoration: none;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    page-break-inside: avoid;
+    page-break-after: avoid;
+}
+
+pre, code {
+    page-break-inside: avoid;
+    white-space: pre-wrap;
+}
+
+.fa {
+    display: none !important;
+}

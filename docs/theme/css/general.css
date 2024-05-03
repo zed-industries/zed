@@ -1,0 +1,234 @@
+/* Base styles and content styles */
+
+@import 'variables.css';
+
+:root {
+    /* Browser default font-size is 16px, this way 1 rem = 10px */
+    font-size: 62.5%;
+    color-scheme: var(--color-scheme);
+}
+
+html {
+    font-family: "Open Sans", sans-serif;
+    color: var(--fg);
+    background-color: var(--bg);
+    text-size-adjust: none;
+    -webkit-text-size-adjust: none;
+}
+
+body {
+    margin: 0;
+    font-size: 1.6rem;
+    overflow-x: hidden;
+}
+
+code {
+    font-family: var(--mono-font) !important;
+    font-size: var(--code-font-size);
+    direction: ltr !important;
+}
+
+/* make long words/inline code not x overflow */
+main {
+    overflow-wrap: break-word;
+}
+
+/* make wide tables scroll if they overflow */
+.table-wrapper {
+    overflow-x: auto;
+}
+
+/* Don't change font size in headers. */
+h1 code, h2 code, h3 code, h4 code, h5 code, h6 code {
+    font-size: unset;
+}
+
+.left { float: left; }
+.right { float: right; }
+.boring { opacity: 0.6; }
+.hide-boring .boring { display: none; }
+.hidden { display: none !important; }
+
+h2, h3 { margin-block-start: 2.5em; }
+h4, h5 { margin-block-start: 2em; }
+
+.header + .header h3,
+.header + .header h4,
+.header + .header h5 {
+    margin-block-start: 1em;
+}
+
+h1:target::before,
+h2:target::before,
+h3:target::before,
+h4:target::before,
+h5:target::before,
+h6:target::before {
+    display: inline-block;
+    content: "»";
+    margin-inline-start: -30px;
+    width: 30px;
+}
+
+/* This is broken on Safari as of version 14, but is fixed
+   in Safari Technology Preview 117 which I think will be Safari 14.2.
+   https://bugs.webkit.org/show_bug.cgi?id=218076
+*/
+:target {
+    /* Safari does not support logical properties */
+    scroll-margin-top: calc(var(--menu-bar-height) + 0.5em);
+}
+
+.page {
+    outline: 0;
+    padding: 0 var(--page-padding);
+    margin-block-start: calc(0px - var(--menu-bar-height)); /* Compensate for the #menu-bar-hover-placeholder */
+}
+.page-wrapper {
+    box-sizing: border-box;
+    background-color: var(--bg);
+}
+.no-js .page-wrapper,
+.js:not(.sidebar-resizing) .page-wrapper {
+    transition: margin-left 0.3s ease, transform 0.3s ease; /* Animation: slide away */
+}
+[dir=rtl] .js:not(.sidebar-resizing) .page-wrapper {
+    transition: margin-right 0.3s ease, transform 0.3s ease; /* Animation: slide away */
+}
+
+.content {
+    overflow-y: auto;
+    padding: 0 5px 50px 5px;
+}
+.content main {
+    margin-inline-start: auto;
+    margin-inline-end: auto;
+    max-width: var(--content-max-width);
+}
+.content p { line-height: 1.45em; }
+.content ol { line-height: 1.45em; }
+.content ul { line-height: 1.45em; }
+.content a { text-decoration: none; }
+.content a:hover { text-decoration: underline; }
+.content img, .content video { max-width: 100%; }
+.content .header:link,
+.content .header:visited {
+    color: var(--fg);
+}
+.content .header:link,
+.content .header:visited:hover {
+    text-decoration: none;
+}
+
+table {
+    margin: 0 auto;
+    border-collapse: collapse;
+}
+table td {
+    padding: 3px 20px;
+    border: 1px var(--table-border-color) solid;
+}
+table thead {
+    background: var(--table-header-bg);
+}
+table thead td {
+    font-weight: 700;
+    border: none;
+}
+table thead th {
+    padding: 3px 20px;
+}
+table thead tr {
+    border: 1px var(--table-header-bg) solid;
+}
+/* Alternate background colors for rows */
+table tbody tr:nth-child(2n) {
+    background: var(--table-alternate-bg);
+}
+
+
+blockquote {
+    margin: 20px 0;
+    padding: 0 20px;
+    color: var(--fg);
+    background-color: var(--quote-bg);
+    border-block-start: .1em solid var(--quote-border);
+    border-block-end: .1em solid var(--quote-border);
+}
+
+.warning {
+    margin: 20px;
+    padding: 0 20px;
+    border-inline-start: 2px solid var(--warning-border);
+}
+
+.warning:before {
+    position: absolute;
+    width: 3rem;
+    height: 3rem;
+    margin-inline-start: calc(-1.5rem - 21px);
+    content: "ⓘ";
+    text-align: center;
+    background-color: var(--bg);
+    color: var(--warning-border);
+    font-weight: bold;
+    font-size: 2rem;
+}
+
+blockquote .warning:before {
+    background-color: var(--quote-bg);
+}
+
+kbd {
+    background-color: var(--table-border-color);
+    border-radius: 4px;
+    border: solid 1px var(--theme-popup-border);
+    box-shadow: inset 0 -1px 0 var(--theme-hover);
+    display: inline-block;
+    font-size: var(--code-font-size);
+    font-family: var(--mono-font);
+    line-height: 10px;
+    padding: 4px 5px;
+    vertical-align: middle;
+}
+
+:not(.footnote-definition) + .footnote-definition,
+.footnote-definition + :not(.footnote-definition) {
+    margin-block-start: 2em;
+}
+.footnote-definition {
+    font-size: 0.9em;
+    margin: 0.5em 0;
+}
+.footnote-definition p {
+    display: inline;
+}
+
+.tooltiptext {
+    position: absolute;
+    visibility: hidden;
+    color: #fff;
+    background-color: #333;
+    transform: translateX(-50%); /* Center by moving tooltip 50% of its width left */
+    left: -8px; /* Half of the width of the icon */
+    top: -35px;
+    font-size: 0.8em;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px 8px;
+    margin: 5px;
+    z-index: 1000;
+}
+.tooltipped .tooltiptext {
+    visibility: visible;
+}
+
+.chapter li.part-title {
+    color: var(--sidebar-fg);
+    margin: 5px 0px;
+    font-weight: bold;
+}
+
+.result-no-output {
+    font-style: italic;
+}
