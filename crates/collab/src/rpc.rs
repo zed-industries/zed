@@ -2378,7 +2378,7 @@ async fn rename_dev_server(
     response: Response<proto::RenameDevServer>,
     session: UserSession,
 ) -> Result<()> {
-    if request.name.is_empty() {
+    if request.name.trim().is_empty() {
         return Err(proto::ErrorCode::Forbidden
             .message("Dev server name cannot be empty".to_string())
             .anyhow())?;

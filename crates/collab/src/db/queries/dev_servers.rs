@@ -77,14 +77,14 @@ impl Database {
         user_id: UserId,
     ) -> crate::Result<(dev_server::Model, proto::DevServerProjectsUpdate)> {
         self.transaction(|tx| async move {
-            if name.is_empty() {
+            if name.trim().is_empty() {
                 return Err(anyhow::anyhow!(proto::ErrorCode::Forbidden))?;
             }
 
             let dev_server = dev_server::Entity::insert(dev_server::ActiveModel {
                 id: ActiveValue::NotSet,
                 hashed_token: ActiveValue::Set(hashed_access_token.to_string()),
-                name: ActiveValue::Set(name.to_string()),
+                name: ActiveValue::Set(name.trim().to_string()),
                 user_id: ActiveValue::Set(user_id),
             })
             .exec_with_returning(&*tx)
@@ -139,12 +139,12 @@ impl Database {
             let Some(dev_server) = dev_server::Entity::find_by_id(id).one(&*tx).await? else {
                 return Err(anyhow::anyhow!("no dev server with id {}", id))?;
             };
-            if dev_server.user_id != user_id || name.is_empty() {
+            if dev_server.user_id != user_id || name.trim().is_empty() {
                 return Err(anyhow::anyhow!(proto::ErrorCode::Forbidden))?;
             }
 
             dev_server::Entity::update(dev_server::ActiveModel {
-                name: ActiveValue::Set(name.to_string()),
+                name: ActiveValue::Set(name.trim().to_string()),
                 ..dev_server.clone().into_active_model()
             })
             .exec(&*tx)
