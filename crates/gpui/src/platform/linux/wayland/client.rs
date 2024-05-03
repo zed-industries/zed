@@ -42,6 +42,7 @@ use wayland_protocols::wp::fractional_scale::v1::client::{
     wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
 };
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
+use wayland_protocols::xdg::activation::v1::client::{xdg_activation_token_v1, xdg_activation_v1};
 use wayland_protocols::xdg::decoration::zv1::client::{
     zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
 };
@@ -49,7 +50,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
-use super::super::{read_fd, DOUBLE_CLICK_INTERVAL};
+use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
 use super::window::{WaylandWindowState, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
@@ -71,6 +72,7 @@ const MIN_KEYCODE: u32 = 8;
 #[derive(Clone)]
 pub struct Globals {
     pub qh: QueueHandle<WaylandClientStatePtr>,
+    pub activation: Option<xdg_activation_v1::XdgActivationV1>,
     pub compositor: wl_compositor::WlCompositor,
     pub cursor_shape_manager: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
     pub data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
@@ -90,6 +92,7 @@ impl Globals {
         qh: QueueHandle<WaylandClientStatePtr>,
     ) -> Self {
         Globals {
+            activation: globals.bind(&qh, 1..=1, ()).ok(),
             compositor: globals
                 .bind(
                     &qh,
@@ -121,6 +124,7 @@ pub(crate) struct WaylandClientState {
     serial: u32, // todo(linux): storing a general serial is wrong
     pointer_serial: u32,
     globals: Globals,
+    wl_seat: wl_seat::WlSeat, // todo(linux): multi-seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
     data_device: Option<wl_data_device::WlDataDevice>,
@@ -151,6 +155,8 @@ pub(crate) struct WaylandClientState {
     primary: Option<Primary>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     common: LinuxCommon,
+
+    pending_open_uri: Option<String>,
 }
 
 pub struct DragState {
@@ -259,7 +265,6 @@ impl WaylandClient {
             for global in list {
                 match &global.interface[..] {
                     "wl_seat" => {
-                        // TODO: multi-seat support
                         seat = Some(globals.registry().bind::<wl_seat::WlSeat, _, _>(
                             global.name,
                             wl_seat_version(global.version),
@@ -310,6 +315,7 @@ impl WaylandClient {
             serial: 0,
             pointer_serial: 0,
             globals,
+            wl_seat: seat,
             wl_pointer: None,
             cursor_shape_device: None,
             data_device,
@@ -357,6 +363,8 @@ impl WaylandClient {
             clipboard: Some(clipboard),
             primary: Some(primary),
             event_loop: Some(event_loop),
+
+            pending_open_uri: None,
         }));
 
         WaylandSource::new(conn, event_queue).insert(handle);
@@ -418,6 +426,22 @@ impl LinuxClient for WaylandClient {
                     .cursor
                     .set_icon(&wl_pointer, serial, &style.to_icon_name());
             }
+        }
+    }
+
+    fn open_uri(&self, uri: &str) {
+        let mut state = self.0.borrow_mut();
+        if let (Some(activation), Some(window)) = (
+            state.globals.activation.clone(),
+            state.mouse_focused_window.clone(),
+        ) {
+            state.pending_open_uri = Some(uri.to_owned());
+            let token = activation.get_activation_token(&state.globals.qh, ());
+            token.set_serial(state.serial, &state.wl_seat);
+            token.set_surface(&window.surface());
+            token.commit();
+        } else {
+            open_uri_internal(uri, None);
         }
     }
 
@@ -525,6 +549,7 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
     }
 }
 
+delegate_noop!(WaylandClientStatePtr: ignore xdg_activation_v1::XdgActivationV1);
 delegate_noop!(WaylandClientStatePtr: ignore wl_compositor::WlCompositor);
 delegate_noop!(WaylandClientStatePtr: ignore wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
 delegate_noop!(WaylandClientStatePtr: ignore wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
@@ -674,6 +699,28 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClientStatePtr {
             state.serial = serial;
             wm_base.pong(serial);
         }
+    }
+}
+
+impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClientStatePtr {
+    fn event(
+        this: &mut Self,
+        token: &xdg_activation_token_v1::XdgActivationTokenV1,
+        event: <xdg_activation_token_v1::XdgActivationTokenV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let client = this.get_client();
+        let mut state = client.borrow_mut();
+        if let xdg_activation_token_v1::Event::Done { token } = event {
+            if let Some(uri) = state.pending_open_uri.take() {
+                open_uri_internal(&uri, Some(&token));
+            } else {
+                log::error!("called while pending_open_uri is None");
+            }
+        }
+        token.destroy();
     }
 }
 
