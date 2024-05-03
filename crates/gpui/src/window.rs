@@ -565,7 +565,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
     const DEFAULT_WINDOW_OFFSET: Point<DevicePixels> = point(DevicePixels(0), DevicePixels(35));
 
     cx.active_window()
-        .and_then(|w| w.update(cx, |_, cx| cx.window_bounds()).ok())
+        .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
         .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
         .unwrap_or_else(|| {
             let display = display_id
@@ -696,7 +696,7 @@ impl Window {
             let mut cx = cx.to_async();
             move |_, _| {
                 handle
-                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .update(&mut cx, |_, cx| cx.bounds_changed())
                     .log_err();
             }
         }));
@@ -704,7 +704,7 @@ impl Window {
             let mut cx = cx.to_async();
             move || {
                 handle
-                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .update(&mut cx, |_, cx| cx.bounds_changed())
                     .log_err();
             }
         }));
@@ -948,9 +948,9 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
-    /// Return the restore size to indicate that how a window should be opened
+    /// Return the `WindowBounds` to indicate that how a window should be opened
     /// after it has been closed
-    pub fn restore_status(&self) -> WindowBounds {
+    pub fn window_bounds(&self) -> WindowBounds {
         self.window.platform_window.window_bounds()
     }
 
@@ -1080,7 +1080,7 @@ impl<'a> WindowContext<'a> {
             .spawn(|app| f(AsyncWindowContext::new(app, self.window.handle)))
     }
 
-    fn window_bounds_changed(&mut self) {
+    fn bounds_changed(&mut self) {
         self.window.scale_factor = self.window.platform_window.scale_factor();
         self.window.viewport_size = self.window.platform_window.content_size();
         self.window.display_id = self.window.platform_window.display().id();
@@ -1093,7 +1093,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
-    pub fn window_bounds(&self) -> Bounds<DevicePixels> {
+    pub fn bounds(&self) -> Bounds<DevicePixels> {
         self.window.platform_window.bounds()
     }
 

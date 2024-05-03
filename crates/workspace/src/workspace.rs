@@ -786,7 +786,7 @@ impl Workspace {
                     this.update(&mut cx, |this, cx| {
                         if let Some(display) = cx.display() {
                             if let Some(display_uuid) = display.uuid().log_err() {
-                                let restore_bounds = cx.restore_status();
+                                let restore_bounds = cx.window_bounds();
                                 cx.background_executor()
                                     .spawn(DB.set_window_open_status(
                                         workspace_id,
@@ -3650,7 +3650,7 @@ impl Workspace {
         if let Some(location) = location {
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
-            let open_status = Some(SerializedWindowBounds(cx.restore_status()));
+            let open_status = Some(SerializedWindowBounds(cx.window_bounds()));
             let serialized_workspace = SerializedWorkspace {
                 id: self.database_id,
                 location,
