@@ -7,6 +7,24 @@ use util::{codeberg, github, http::HttpClient};
 
 use crate::Oid;
 
+/// A Git hosting provider.
+pub trait GitHostingProvider {
+    /// Returns the name of the provider.
+    fn name(&self) -> String;
+
+    /// Returns the base URL of the provider.
+    fn base_url(&self) -> Url;
+
+    /// Returns whether this provider supports avatars.
+    fn supports_avatars(&self) -> bool;
+
+    /// Returns a formatted line number to be placed in a permalink URL.
+    fn format_line_number(&self, line: u32) -> String;
+
+    /// Returns a formatted range of line numbers to be placed in a permalink URL.
+    fn format_line_numbers(&self, start_line: u32, end_line: u32) -> String;
+}
+
 #[derive(Clone, Debug, Hash)]
 pub enum HostingProvider {
     Github,
