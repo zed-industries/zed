@@ -74,7 +74,6 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         _direction: Direction,
         _cx: &mut ModelContext<Self>,
     ) {
-        // todo!("cycling")
     }
 
     fn accept(&mut self, _cx: &mut ModelContext<Self>) {

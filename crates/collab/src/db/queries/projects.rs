@@ -78,7 +78,6 @@ impl Database {
                 .await?;
 
                 // todo! check user is a project-collaborator
-
                 let room = self.get_room(room_id, &tx).await?;
                 return Ok((project.id, room));
             }
