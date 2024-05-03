@@ -48,6 +48,15 @@
 (string) @string
 (escape_sequence) @escape
 
+[
+  "("
+  ")"
+  "["
+  "]"
+  "{"
+  "}"
+] @punctuation.bracket
+
 (interpolation
   "{" @punctuation.special
   "}" @punctuation.special) @embedded
@@ -96,6 +105,8 @@
   "is"
   "not"
   "or"
+  "is not"
+  "not in"
 ] @operator
 
 [
