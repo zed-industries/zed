@@ -290,3 +290,8 @@ kbd {
 .result-no-output {
     font-style: italic;
 }
+
+code.hljs {
+    color: rgb(75, 83, 97) !important;
+    background-color: rgba(8, 76, 207, 0.1);
+}
