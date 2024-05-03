@@ -215,6 +215,34 @@ impl DevServerProjects {
         cx.notify()
     }
 
+    fn refresh_dev_server_token(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
+        let answer = cx.prompt(
+            gpui::PromptLevel::Warning,
+            "Are you sure?",
+            Some("This will invalidate the existing dev server token."),
+            &["Regenerate", "Cancel"],
+        );
+
+        let request = self
+            .dev_server_store
+            .update(cx, |store, cx| store.regenerate_dev_server_token(id, cx));
+
+        cx.spawn(|_, _| async move {
+            let answer = answer.await?;
+
+            if answer != 0 {
+                return Ok(());
+            }
+
+            let response = request.await?;
+
+            dbg!(response.access_token);
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to delete dev server", cx, |_, _| None);
+    }
+
     fn delete_dev_server(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
         let answer = cx.prompt(
             gpui::PromptLevel::Destructive,
@@ -374,6 +402,18 @@ impl DevServerProjects {
                                             .tooltip(|cx| {
                                                 Tooltip::text("Coming Soon - Edit dev server", cx)
                                             }),
+                                    )
+                                    .child(
+                                        IconButton::new(
+                                            "regenerate-dev-server-token",
+                                            IconName::Code,
+                                        )
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            this.refresh_dev_server_token(dev_server_id, cx)
+                                        }))
+                                        .tooltip(|cx| {
+                                            Tooltip::text("Generate new access token", cx)
+                                        }),
                                     )
                                     .child({
                                         let dev_server_id = dev_server.id;

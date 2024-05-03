@@ -238,7 +238,9 @@ message Envelope {
         ValidateDevServerProjectRequest validate_dev_server_project_request = 194;
         DeleteDevServer delete_dev_server = 195;
         OpenNewBuffer open_new_buffer = 196;
-        DeleteDevServerProject delete_dev_server_project = 197; // Current max
+        DeleteDevServerProject delete_dev_server_project = 197;
+        RegenerateDevServerToken regenerate_dev_server_token = 198;
+        RegenerateDevServerTokenResponse regenerate_dev_server_token_response = 199; // Current max
     }
 
     reserved 158 to 161;
@@ -483,6 +485,15 @@ message ValidateDevServerProjectRequest {
 message CreateDevServer {
     reserved 1;
     string name = 2;
+}
+
+message RegenerateDevServerToken {
+    uint64 dev_server_id = 1;
+}
+
+message RegenerateDevServerTokenResponse {
+    uint64 dev_server_id = 1;
+    string access_token = 2;
 }
 
 message CreateDevServerResponse {

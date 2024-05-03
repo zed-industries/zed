@@ -415,6 +415,7 @@ impl Server {
             .add_request_handler(user_handler(create_dev_server_project))
             .add_request_handler(user_handler(delete_dev_server_project))
             .add_request_handler(user_handler(create_dev_server))
+            .add_request_handler(user_handler(regenerate_dev_server_token))
             .add_request_handler(user_handler(delete_dev_server))
             .add_request_handler(dev_server_handler(share_dev_server_project))
             .add_request_handler(dev_server_handler(shutdown_dev_server))
@@ -2326,6 +2327,41 @@ async fn create_dev_server(
         dev_server_id: dev_server.id.0 as u64,
         access_token: auth::generate_dev_server_token(dev_server.id.0 as usize, access_token),
         name: request.name.clone(),
+    })?;
+    Ok(())
+}
+
+async fn regenerate_dev_server_token(
+    request: proto::RegenerateDevServerToken,
+    response: Response<proto::RegenerateDevServerToken>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let access_token = auth::random_token();
+    let hashed_access_token = auth::hash_access_token(&access_token);
+
+    let connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
+    if let Some(connection_id) = connection_id {
+        shutdown_dev_server_internal(dev_server_id, connection_id, &session).await?;
+        session
+            .peer
+            .send(connection_id, proto::ShutdownDevServer {})?;
+    }
+
+    let status = session
+        .db()
+        .await
+        .update_dev_server_token(dev_server_id, &hashed_access_token, session.user_id())
+        .await?;
+
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::RegenerateDevServerTokenResponse {
+        dev_server_id: dev_server_id.to_proto(),
+        access_token: auth::generate_dev_server_token(dev_server_id.0 as usize, access_token),
     })?;
     Ok(())
 }

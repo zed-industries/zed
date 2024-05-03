@@ -95,6 +95,36 @@ impl Database {
         .await
     }
 
+    pub async fn update_dev_server_token(
+        &self,
+        id: DevServerId,
+        hashed_token: &str,
+        user_id: UserId,
+    ) -> crate::Result<proto::DevServerProjectsUpdate> {
+        self.transaction(|tx| async move {
+            let Some(dev_server) = dev_server::Entity::find_by_id(id).one(&*tx).await? else {
+                return Err(anyhow::anyhow!("no dev server with id {}", id))?;
+            };
+            if dev_server.user_id != user_id {
+                return Err(anyhow::anyhow!(proto::ErrorCode::Forbidden))?;
+            }
+
+            dev_server::Entity::update(dev_server::ActiveModel {
+                hashed_token: ActiveValue::Set(hashed_token.to_string()),
+                ..dev_server.clone().into_active_model()
+            })
+            .exec(&*tx)
+            .await?;
+
+            let dev_server_projects = self
+                .dev_server_projects_update_internal(user_id, &tx)
+                .await?;
+
+            Ok(dev_server_projects)
+        })
+        .await
+    }
+
     pub async fn delete_dev_server(
         &self,
         id: DevServerId,
