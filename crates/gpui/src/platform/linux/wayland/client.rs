@@ -458,7 +458,7 @@ impl LinuxClient for WaylandClient {
         ) {
             state.pending_open_uri = Some(uri.to_owned());
             let token = activation.get_activation_token(&state.globals.qh, ());
-            token.set_serial(state.pointer_serial, &state.wl_seat);
+            token.set_serial(state.serial, &state.wl_seat);
             token.set_surface(&window.surface());
             token.commit();
         } else {
