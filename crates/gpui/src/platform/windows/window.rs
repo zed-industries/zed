@@ -1637,14 +1637,14 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
             };
             if idata_obj.QueryGetData(&config as _) == S_OK {
                 *pdweffect = DROPEFFECT_LINK;
-                let mut paths = SmallVec::<[PathBuf; 2]>::new();
-                let Ok(mut idata) = idata_obj.GetData(&config as _) else {
+                let Some(mut idata) = idata_obj.GetData(&config as _).log_err() else {
                     return Ok(());
                 };
                 if idata.u.hGlobal.is_invalid() {
                     return Ok(());
                 }
                 let hdrop = idata.u.hGlobal.0 as *mut HDROP;
+                let mut paths = SmallVec::<[PathBuf; 2]>::new();
                 let file_count = DragQueryFileW(*hdrop, DRAGDROP_GET_FILES_COUNT, None);
                 for file_index in 0..file_count {
                     let filename_length = DragQueryFileW(*hdrop, file_index, None) as usize;
@@ -1654,8 +1654,10 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                         log::error!("unable to read file name");
                         continue;
                     }
-                    if let Ok(file_name) = String::from_utf16(&buffer[0..filename_length]) {
-                        if let Ok(path) = PathBuf::from_str(&file_name) {
+                    if let Some(file_name) =
+                        String::from_utf16(&buffer[0..filename_length]).log_err()
+                    {
+                        if let Some(path) = PathBuf::from_str(&file_name).log_err() {
                             paths.push(path);
                         }
                     }
