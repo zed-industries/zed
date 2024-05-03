@@ -57,7 +57,6 @@ impl CopilotCompletionProvider {
 }
 
 impl InlineCompletionProvider for CopilotCompletionProvider {
-    // todo!("perhaps pull this into the editor")
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,

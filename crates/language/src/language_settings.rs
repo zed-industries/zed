@@ -51,7 +51,7 @@ pub fn all_language_settings<'a>(
 /// The settings for all languages.
 #[derive(Debug, Clone)]
 pub struct AllLanguageSettings {
-    /// The settings for GitHub Copilot.
+    /// The inline completion settings.
     pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
     languages: HashMap<Arc<str>, LanguageSettings>,
@@ -181,7 +181,7 @@ pub enum InlineCompletionProvider {
 pub struct InlineCompletionSettings {
     /// The provider that supplies inline completions.
     pub provider: InlineCompletionProvider,
-    /// A list of globs representing files that Copilot should be disabled for.
+    /// A list of globs representing files that inline completions should be disabled for.
     pub disabled_globs: Vec<GlobMatcher>,
 }
 
@@ -191,7 +191,7 @@ pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
     pub features: Option<FeaturesContent>,
-    /// The settings for GitHub Copilot.
+    /// The inline completion settings.
     #[serde(default, alias = "copilot")]
     pub inline_completions: Option<InlineCompletionSettingsContent>,
     /// The default language settings.
@@ -328,7 +328,7 @@ pub struct LanguageSettingsContent {
 /// The contents of the inline completion settings.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct InlineCompletionSettingsContent {
-    /// A list of globs representing files that Copilot should be disabled for.
+    /// A list of globs representing files that inline completions should be disabled for.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
 }

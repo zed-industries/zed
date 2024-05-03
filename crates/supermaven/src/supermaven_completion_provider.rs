@@ -1,10 +1,9 @@
+use crate::Supermaven;
 use anyhow::Result;
 use editor::{Direction, InlineCompletionProvider};
 use gpui::{AppContext, Global, Model, ModelContext, Task};
-use language::{Anchor, Buffer, ToOffset};
+use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
 use std::path::PathBuf;
-
-use crate::{CompletionState, Supermaven};
 
 pub struct SupermavenCompletionProvider {
     completions: Vec<String>,
@@ -34,8 +33,15 @@ impl SupermavenCompletionProvider {
 
 impl InlineCompletionProvider for SupermavenCompletionProvider {
     fn is_enabled(&self, buffer: &Model<Buffer>, cursor_position: Anchor, cx: &AppContext) -> bool {
-        // todo!()
-        true
+        if !Supermaven::get(cx).is_enabled() {
+            return false;
+        }
+
+        let buffer = buffer.read(cx);
+        let file = buffer.file();
+        let language = buffer.language_at(cursor_position);
+        let settings = all_language_settings(file, cx);
+        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()))
     }
 
     fn refresh(

@@ -10,11 +10,12 @@ use futures::{
 };
 use gpui::{
     AppContext, AsyncAppContext, Bounds, Global, GlobalPixels, InteractiveText, Model, Render,
-    StyledText, Subscription, Task, ViewContext,
+    StyledText, Task, ViewContext,
 };
-use language::{Anchor, Buffer};
+use language::{language_settings::all_language_settings, Anchor, Buffer};
 use messages::*;
 use serde::{Deserialize, Serialize};
+use settings::SettingsStore;
 use smol::{
     io::AsyncWriteExt,
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -24,61 +25,97 @@ pub use supermaven_completion_provider::*;
 use ui::prelude::*;
 use util::ResultExt;
 
-pub struct Supermaven {
-    _process: Child,
-    next_state_id: SupermavenStateId,
-    states: HashMap<SupermavenStateId, CompletionState>,
-    update_txs: Vec<oneshot::Sender<()>>,
-    outgoing_tx: mpsc::UnboundedSender<OutboundMessage>,
-    _handle_outgoing_messages: Task<Result<()>>,
-    _handle_incoming_messages: Task<Result<()>>,
+pub fn init(cx: &mut AppContext) {
+    cx.set_global(Supermaven::Disabled);
+
+    let mut provider = all_language_settings(None, cx).inline_completions.provider;
+    if provider == language::language_settings::InlineCompletionProvider::Supermaven {
+        Supermaven::update(cx, |supermaven, cx| supermaven.start(cx));
+    }
+
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let new_provider = all_language_settings(None, cx).inline_completions.provider;
+        if new_provider != provider {
+            provider = new_provider;
+            if provider == language::language_settings::InlineCompletionProvider::Supermaven {
+                Supermaven::update(cx, |supermaven, cx| supermaven.start(cx));
+            } else {
+                Supermaven::update(cx, |supermaven, _cx| supermaven.stop());
+            }
+        }
+    })
+    .detach();
+}
+
+pub enum Supermaven {
+    Disabled,
+    Started {
+        _process: Child,
+        next_state_id: SupermavenStateId,
+        states: HashMap<SupermavenStateId, CompletionState>,
+        update_txs: Vec<oneshot::Sender<()>>,
+        outgoing_tx: mpsc::UnboundedSender<OutboundMessage>,
+        _handle_outgoing_messages: Task<Result<()>>,
+        _handle_incoming_messages: Task<Result<()>>,
+    },
 }
 
 impl Supermaven {
-    pub fn launch(cx: &mut AppContext) -> Task<Result<()>> {
-        cx.spawn(|cx| async move {
-            let binary_path = std::env::var("SUPERMAVEN_AGENT_BINARY")
-                .expect("set SUPERMAVEN_AGENT_BINARY env variable");
-            let mut process = Command::new(&binary_path)
-                .arg("stdio")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-                .context("failed to start the binary")?;
+    pub fn start(&mut self, cx: &mut AppContext) {
+        if let Self::Disabled = self {
+            cx.spawn(|cx| async move {
+                let binary_path = std::env::var("SUPERMAVEN_AGENT_BINARY")
+                    .expect("set SUPERMAVEN_AGENT_BINARY env variable");
+                let mut process = Command::new(&binary_path)
+                    .arg("stdio")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+                    .context("failed to start the binary")?;
 
-            let stdin = process
-                .stdin
-                .take()
-                .context("failed to get stdin for process")?;
-            let stdout = process
-                .stdout
-                .take()
-                .context("failed to get stdout for process")?;
-            cx.update(|cx| {
-                let supermaven = Self::new(process, stdin, stdout, cx);
-                cx.set_global(supermaven);
+                let stdin = process
+                    .stdin
+                    .take()
+                    .context("failed to get stdin for process")?;
+                let stdout = process
+                    .stdout
+                    .take()
+                    .context("failed to get stdout for process")?;
+                cx.update(|cx| {
+                    Self::update(cx, |this, cx| {
+                        if let Self::Disabled = this {
+                            let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
+                            outgoing_tx
+                                .unbounded_send(OutboundMessage::UseFreeVersion)
+                                .unwrap();
+                            *this = Self::Started {
+                                _process: process,
+                                next_state_id: SupermavenStateId::default(),
+                                states: HashMap::default(),
+                                update_txs: Vec::new(),
+                                outgoing_tx,
+                                _handle_outgoing_messages: cx.spawn(|_cx| {
+                                    Self::handle_outgoing_messages(outgoing_rx, stdin)
+                                }),
+                                _handle_incoming_messages: cx
+                                    .spawn(|cx| Self::handle_incoming_messages(stdout, cx)),
+                            };
+                        }
+                    });
+                })
             })
-        })
+            .detach_and_log_err(cx);
+        }
     }
 
-    fn new(process: Child, stdin: ChildStdin, stdout: ChildStdout, cx: &mut AppContext) -> Self {
-        let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
-        outgoing_tx
-            .unbounded_send(OutboundMessage::UseFreeVersion)
-            .unwrap();
+    pub fn stop(&mut self) {
+        *self = Self::Disabled;
+    }
 
-        Self {
-            _process: process,
-            next_state_id: SupermavenStateId::default(),
-            states: HashMap::default(),
-            update_txs: Vec::new(),
-            outgoing_tx,
-            _handle_outgoing_messages: cx
-                .spawn(|_cx| Self::handle_outgoing_messages(outgoing_rx, stdin)),
-            _handle_incoming_messages: cx.spawn(|cx| Self::handle_incoming_messages(stdout, cx)),
-        }
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, Self::Started { .. })
     }
 
     pub fn complete(
@@ -87,21 +124,28 @@ impl Supermaven {
         content: String,
         offset: usize,
     ) -> impl Future<Output = ()> {
-        let path = path.to_string_lossy().to_string();
-        let state_id = self.next_state_id;
-        self.next_state_id.0 += 1;
+        let (tx, rx) = oneshot::channel();
+        if let Self::Started {
+            next_state_id,
+            states,
+            update_txs,
+            outgoing_tx,
+            ..
+        } = self
+        {
+            let path = path.to_string_lossy().to_string();
+            let state_id = *next_state_id;
+            next_state_id.0 += 1;
 
-        self.states.insert(
-            state_id,
-            CompletionState {
-                prefix: content[..offset].to_string(),
-                suffix: content[offset..].to_string(),
-                completion: Vec::new(),
-            },
-        );
-        let _ = self
-            .outgoing_tx
-            .unbounded_send(dbg!(OutboundMessage::StateUpdate(StateUpdateMessage {
+            states.insert(
+                state_id,
+                CompletionState {
+                    prefix: content[..offset].to_string(),
+                    suffix: content[offset..].to_string(),
+                    completion: Vec::new(),
+                },
+            );
+            let _ = outgoing_tx.unbounded_send(OutboundMessage::StateUpdate(StateUpdateMessage {
                 new_id: state_id.0.to_string(),
                 updates: vec![
                     StateUpdate::FileUpdate(FileUpdateMessage {
@@ -110,10 +154,11 @@ impl Supermaven {
                     }),
                     StateUpdate::CursorUpdate(CursorPositionUpdateMessage { path, offset }),
                 ],
-            })));
+            }));
 
-        let (tx, rx) = oneshot::channel();
-        self.update_txs.push(tx);
+            update_txs.push(tx);
+        }
+
         async move {
             _ = rx.await;
         }
@@ -126,39 +171,41 @@ impl Supermaven {
         cx: &AppContext,
     ) -> Vec<String> {
         let mut completions = Vec::new();
-        for state in self.states.values() {
-            // todo!("avoid collecting into a string")
-            let buffer_prefix = buffer
-                .read(cx)
-                .text_for_range(Anchor::MIN..cursor_position)
-                .collect::<String>();
-            if buffer_prefix.starts_with(&state.prefix) && buffer_prefix.len() > state.prefix.len()
-            {
-                let user_input = &buffer_prefix[state.prefix.len()..];
-                let completion = state
-                    .completion
-                    .iter()
-                    .filter_map(|completion| {
-                        if let ResponseItem::Text { text } = completion {
-                            Some(text.as_str())
-                        } else {
-                            None
-                        }
-                    })
+        if let Self::Started { states, .. } = self {
+            for state in states.values() {
+                // todo!("avoid collecting into a string")
+                let buffer_prefix = buffer
+                    .read(cx)
+                    .text_for_range(Anchor::MIN..cursor_position)
                     .collect::<String>();
+                if buffer_prefix.starts_with(&state.prefix)
+                    && buffer_prefix.len() > state.prefix.len()
+                {
+                    let user_input = &buffer_prefix[state.prefix.len()..];
+                    let completion = state
+                        .completion
+                        .iter()
+                        .filter_map(|completion| {
+                            if let ResponseItem::Text { text } = completion {
+                                Some(text.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<String>();
 
-                let common_prefix_len = user_input
-                    .chars()
-                    .zip(completion.chars())
-                    .take_while(|(input_char, completion_char)| input_char == completion_char)
-                    .count();
-                let completion = &completion[common_prefix_len..];
-                if !completion.is_empty() {
-                    completions.push(completion.to_string());
+                    let common_prefix_len = user_input
+                        .chars()
+                        .zip(completion.chars())
+                        .take_while(|(input_char, completion_char)| input_char == completion_char)
+                        .count();
+                    let completion = &completion[common_prefix_len..];
+                    if !completion.is_empty() {
+                        completions.push(completion.to_string());
+                    }
                 }
             }
         }
-
         completions
     }
 
@@ -220,11 +267,16 @@ impl Supermaven {
                 );
             }
             SupermavenMessage::Response(response) => {
-                let state_id = SupermavenStateId(response.state_id.parse().unwrap());
-                if let Some(state) = self.states.get_mut(&state_id) {
-                    state.completion.extend(response.items);
-                    for update_tx in self.update_txs.drain(..) {
-                        let _ = update_tx.send(());
+                if let Self::Started {
+                    states, update_txs, ..
+                } = self
+                {
+                    let state_id = SupermavenStateId(response.state_id.parse().unwrap());
+                    if let Some(state) = states.get_mut(&state_id) {
+                        state.completion.extend(response.items);
+                        for update_tx in update_txs.drain(..) {
+                            let _ = update_tx.send(());
+                        }
                     }
                 }
             }
@@ -239,17 +291,13 @@ impl Supermaven {
 impl Global for Supermaven {}
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
-struct SupermavenStateId(usize);
+pub struct SupermavenStateId(usize);
 
 #[allow(dead_code)]
-struct CompletionState {
+pub struct CompletionState {
     prefix: String,
     suffix: String,
     completion: Vec<ResponseItem>,
-}
-
-struct RegisteredEditor {
-    _subscription: Subscription,
 }
 
 struct ActivationRequestPrompt {
