@@ -81,7 +81,7 @@ linux() {
 
     # Link the binary
     binary_name="zed${suffix}"
-    ln -sf ~/.local/zed$suffix.app/bin/zed "~/.local/bin/${binary_name}"
+    ln -sf ~/.local/zed$suffix.app/bin/zed "$HOME/.local/bin/${binary_name}"
 
     # Copy .desktop file
     desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
