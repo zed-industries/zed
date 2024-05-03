@@ -15,7 +15,7 @@ use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPrevi
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use smol::io::AsyncReadExt;
+use smol::{fs, io::AsyncReadExt};
 
 use settings::{Settings, SettingsSources, SettingsStore};
 use smol::{fs::File, process::Command};
@@ -492,6 +492,9 @@ async fn install_release_linux(
     let home_dir = PathBuf::from(std::env::var("HOME").context("no HOME env var set")?);
 
     let extracted = temp_dir.path().join("zed");
+    fs::create_dir_all(&extracted)
+        .await
+        .context("failed to create directory into which to extract update")?;
 
     let output = Command::new("tar")
         .arg("-xzf")
@@ -517,14 +520,22 @@ async fn install_release_linux(
     let app_folder_name = format!("zed{}.app", suffix);
 
     let from = extracted.join(&app_folder_name);
+    let to = home_dir.join(".local");
 
-    let dest = home_dir.join(".local").join(app_folder_name);
-    std::fs::rename(&from, &dest).with_context(|| {
-        format!(
-            "failed to move downloaded Zed from {:?} to {:?}",
-            from, dest
-        )
-    })?;
+    let output = Command::new("rsync")
+        .args(&["-av", "--delete"])
+        .arg(&from)
+        .arg(&to)
+        .output()
+        .await?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to copy Zed update from {:?} to {:?}: {:?}",
+        from,
+        to,
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     Ok(())
 }
