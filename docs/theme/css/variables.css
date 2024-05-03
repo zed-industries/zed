@@ -13,9 +13,7 @@
         Liberation Mono, Courier New, monospace;
     --code-font-size: 0.875em
         /* please adjust the ace font size accordingly in editor.js */;
-}
 
-.light {
     --bg: rgb(246, 245, 240);
     --fg: rgb(75, 83, 97);
     --title-color: rgb(8, 76, 207);
