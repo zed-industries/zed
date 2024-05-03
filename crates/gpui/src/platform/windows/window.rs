@@ -1,7 +1,6 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::{
-    any::Any,
     cell::{Cell, RefCell},
     iter::once,
     num::NonZeroIsize,
