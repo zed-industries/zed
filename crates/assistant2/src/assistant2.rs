@@ -717,20 +717,20 @@ impl AssistantChat {
 
                 let tools = tool_calls
                     .iter()
-                    .filter_map(|tool_call| {
+                    .map(|tool_call| {
                         let result = &tool_call.result;
                         let name = tool_call.name.clone();
-                        let element = match result {
-                            Some(result) => {
-                                div().p_2().child(result.into_any_element(&name)).into_any()
-                            }
+                        match result {
+                            Some(result) => div()
+                                .p_2()
+                                .child(result.into_any_element(&name))
+                                .into_any_element(),
                             None => div()
                                 .p_2()
                                 .child(Label::new(name).color(Color::Modified))
                                 .child("Running...")
-                                .into_any(),
-                        };
-                        Some(element)
+                                .into_any_element(),
+                        }
                     })
                     .collect::<Vec<AnyElement>>();
 
