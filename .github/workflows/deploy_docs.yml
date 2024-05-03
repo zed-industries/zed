@@ -1,0 +1,36 @@
+name: Deploy Docs
+
+on:
+  push:
+    branches:
+      - main
+      - mdbook
+
+jobs:
+  deploy-docs:
+    name: Deploy Docs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Install mdbook
+        run: cargo install mdbook
+
+      - name: Install mdbook
+        run: mkdir -p target/deploy
+
+      - name: Build book
+        run: mdbook build ./docs
+
+      - name: Build book
+        run: mdbook build ./docs --dest-dir=target/deploy/docs2/
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: pages deploy target/deploy --project-name=docs-awn
