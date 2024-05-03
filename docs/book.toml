@@ -8,6 +8,7 @@ site-url = "/docs2/"
 
 [output.html]
 no-section-label = true
+preferred-dark-theme = "light"
 
 [output.html.print]
 enable = false
