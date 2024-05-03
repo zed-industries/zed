@@ -58,7 +58,7 @@ impl TomlExtension {
             "{version_dir}/{bin_name}",
             bin_name = match platform {
                 zed::Os::Windows => "taplo.exe",
-                _ => "taplo",
+                zed::Os::Mac | zed::Os::Linux => "taplo",
             }
         );
 
