@@ -120,27 +120,6 @@ impl Globals {
     }
 }
 
-impl Drop for Globals {
-    fn drop(&mut self) {
-        if let Some(activation) = &self.activation {
-            activation.destroy();
-        }
-        if let Some(cursor_shape_manager) = &self.cursor_shape_manager {
-            cursor_shape_manager.destroy();
-        }
-        self.wm_base.destroy();
-        if let Some(viewporter) = &self.viewporter {
-            viewporter.destroy();
-        }
-        if let Some(fractional_scale_manager) = &self.fractional_scale_manager {
-            fractional_scale_manager.destroy();
-        }
-        if let Some(decoration_manager) = &self.decoration_manager {
-            decoration_manager.destroy();
-        }
-    }
-}
-
 pub(crate) struct WaylandClientState {
     serial: u32, // todo(linux): storing a general serial is wrong
     pointer_serial: u32,
