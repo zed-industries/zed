@@ -193,14 +193,15 @@ impl WindowsPlatform {
 
     fn redraw_all(&self) {
         for handle in self.inner.raw_window_handles.read().iter() {
-            unsafe {
-                RedrawWindow(
-                    *handle,
-                    None,
-                    HRGN::default(),
-                    RDW_INVALIDATE | RDW_UPDATENOW,
-                );
-            }
+            // unsafe {
+            // RedrawWindow(
+            //     *handle,
+            //     None,
+            //     HRGN::default(),
+            //     RDW_INVALIDATE | RDW_UPDATENOW,
+            // );
+            // }
+            unsafe { InvalidateRect(*handle, None, FALSE) };
         }
     }
 }
@@ -248,7 +249,8 @@ impl Platform for WindowsPlatform {
                 WAIT_EVENT(2) => {
                     let mut msg = MSG::default();
                     unsafe {
-                        while PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_REMOVE).as_bool() {
+                        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                            log::error!("==> MSG: {}", msg.message);
                             if msg.message == WM_QUIT {
                                 break 'a;
                             }
@@ -359,7 +361,9 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
-        Box::new(WindowsWindow::new(self.inner.clone(), handle, options))
+        let (window, handle) = WindowsWindow::new(self.inner.clone(), handle, options);
+        self.inner.raw_window_handles.write().push(handle);
+        Box::new(window)
     }
 
     // todo(windows)

@@ -47,7 +47,6 @@ pub(crate) struct WindowsWindowState {
     input_handler: Option<PlatformInputHandler>,
     renderer: BladeRenderer,
     callbacks: Callbacks,
-    platform_inner: Rc<WindowsPlatformInner>,
     pub(crate) handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: WindowsDisplay,
@@ -125,7 +124,7 @@ impl WindowsWindowState {
             input_handler,
             renderer,
             callbacks,
-            platform_inner,
+            // platform_inner,
             handle,
             hide_title_bar,
             display,
@@ -203,20 +202,6 @@ impl WindowsWindowState {
         Ok(rect)
     }
 
-    fn is_virtual_key_pressed(&self, vkey: VIRTUAL_KEY) -> bool {
-        unsafe { GetKeyState(vkey.0 as i32) < 0 }
-    }
-
-    fn current_modifiers(&self) -> Modifiers {
-        Modifiers {
-            control: self.is_virtual_key_pressed(VK_CONTROL),
-            alt: self.is_virtual_key_pressed(VK_MENU),
-            shift: self.is_virtual_key_pressed(VK_SHIFT),
-            platform: self.is_virtual_key_pressed(VK_LWIN) || self.is_virtual_key_pressed(VK_RWIN),
-            function: false,
-        }
-    }
-
     /// mark window client rect to be re-drawn
     /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-invalidaterect
     pub(crate) fn invalidate_client_area(&self) {
@@ -236,7 +221,7 @@ impl WindowsWindowState {
             WM_NCCALCSIZE => self.handle_calc_client_size(wparam, lparam),
             WM_DPICHANGED => self.handle_dpi_changed_msg(wparam, lparam),
             WM_NCHITTEST => self.handle_hit_test_msg(msg, wparam, lparam),
-            WM_PAINT => self.handle_paint_msg(),
+            // WM_PAINT => self.handle_paint_msg(),
             WM_CLOSE => self.handle_close_msg(),
             WM_DESTROY => self.handle_destroy_msg(),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(lparam, wparam),
@@ -264,7 +249,7 @@ impl WindowsWindowState {
             WM_CHAR => self.handle_char_msg(msg, wparam, lparam),
             WM_IME_STARTCOMPOSITION => self.handle_ime_position(),
             WM_IME_COMPOSITION => self.handle_ime_composition(lparam),
-            WM_SETCURSOR => self.handle_set_cursor(lparam),
+            // WM_SETCURSOR => self.handle_set_cursor(lparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -339,7 +324,8 @@ impl WindowsWindowState {
 
     fn handle_timer_msg(&mut self, wparam: WPARAM) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
-            self.platform_inner.run_foreground_tasks();
+            // TODO:
+            // self.platform_inner.run_foreground_tasks();
             self.handle_paint_msg();
             return Some(0);
         }
@@ -369,22 +355,23 @@ impl WindowsWindowState {
         if let Some(callback) = self.callbacks.close.take() {
             callback()
         }
-        let index = self
-            .platform_inner
-            .raw_window_handles
-            .read()
-            .iter()
-            .position(|handle| *handle == self.hwnd)
-            .unwrap();
-        self.platform_inner.raw_window_handles.write().remove(index);
-        if self.platform_inner.raw_window_handles.read().is_empty() {
-            self.platform_inner
-                .foreground_executor
-                .spawn(async {
-                    unsafe { PostQuitMessage(0) };
-                })
-                .detach();
-        }
+        // TODO:
+        // let index = self
+        //     .platform_inner
+        //     .raw_window_handles
+        //     .read()
+        //     .iter()
+        //     .position(|handle| *handle == self.hwnd)
+        //     .unwrap();
+        // self.platform_inner.raw_window_handles.write().remove(index);
+        // if self.platform_inner.raw_window_handles.read().is_empty() {
+        //     self.platform_inner
+        //         .foreground_executor
+        //         .spawn(async {
+        //             unsafe { PostQuitMessage(0) };
+        //         })
+        //         .detach();
+        // }
         Some(1)
     }
 
@@ -418,7 +405,7 @@ impl WindowsWindowState {
     }
 
     fn parse_syskeydown_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
-        let modifiers = self.current_modifiers();
+        let modifiers = current_modifiers();
         if !modifiers.alt {
             // on Windows, F10 can trigger this event, not just the alt key
             // and we just don't care about F10
@@ -462,7 +449,7 @@ impl WindowsWindowState {
     fn parse_keydown_msg_keystroke(&self, wparam: WPARAM) -> Option<Keystroke> {
         let vk_code = wparam.loword();
 
-        let modifiers = self.current_modifiers();
+        let modifiers = current_modifiers();
         if modifiers.control || modifiers.alt {
             let basic_key = basic_vkcode_to_string(vk_code, modifiers);
             if basic_key.is_some() {
@@ -516,7 +503,7 @@ impl WindowsWindowState {
         if first_char.is_control() {
             None
         } else {
-            let mut modifiers = self.current_modifiers();
+            let mut modifiers = current_modifiers();
             // for characters that use 'shift' to type it is expected that the
             // shift is not reported if the uppercase/lowercase are the same and instead only the key is reported
             if first_char.to_lowercase().to_string() == first_char.to_uppercase().to_string() {
@@ -690,8 +677,9 @@ impl WindowsWindowState {
 
     fn handle_mouse_wheel_msg(&mut self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         if let Some(ref mut callback) = self.callbacks.input {
-            let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
-                * self.platform_inner.settings.borrow().wheel_scroll_lines as f32;
+            let wheel_distance = wparam.signed_hiword() as f32 / WHEEL_DELTA as f32;
+            // let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
+            // * self.platform_inner.settings.borrow().wheel_scroll_lines as f32;
             let mut cursor_point = POINT {
                 x: lparam.signed_loword().into(),
                 y: lparam.signed_hiword().into(),
@@ -719,8 +707,9 @@ impl WindowsWindowState {
         lparam: LPARAM,
     ) -> Option<isize> {
         if let Some(ref mut callback) = self.callbacks.input {
-            let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
-                * self.platform_inner.settings.borrow().wheel_scroll_chars as f32;
+            let wheel_distance = wparam.signed_hiword() as f32 / WHEEL_DELTA as f32;
+            // let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
+            //     * self.platform_inner.settings.borrow().wheel_scroll_chars as f32;
             let mut cursor_point = POINT {
                 x: lparam.signed_loword().into(),
                 y: lparam.signed_hiword().into(),
@@ -921,29 +910,34 @@ impl WindowsWindowState {
         None
     }
 
-    fn handle_create_msg(&mut self, _lparam: LPARAM) -> Option<isize> {
+    fn handle_create_msg(&self, _lparam: LPARAM) -> Option<isize> {
         let mut size_rect = RECT::default();
         unsafe { GetWindowRect(self.hwnd, &mut size_rect).log_err() };
 
         let width = size_rect.right - size_rect.left;
         let height = size_rect.bottom - size_rect.top;
-        self.physical_size = size(width.into(), height.into());
 
         if self.hide_title_bar {
             // Inform the application of the frame change to force redrawing with the new
             // client area that is extended into the title bar
-            unsafe {
-                SetWindowPos(
-                    self.hwnd,
-                    HWND::default(),
-                    size_rect.left,
-                    size_rect.top,
-                    width,
-                    height,
-                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
-                )
-                .log_err()
-            };
+            let handle = self.hwnd;
+            let executor = self.executor.clone();
+            executor
+                .spawn(async move {
+                    unsafe {
+                        SetWindowPos(
+                            handle,
+                            None,
+                            size_rect.left,
+                            size_rect.top,
+                            width,
+                            height,
+                            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
+                        )
+                        .log_err()
+                    }
+                })
+                .detach();
         }
 
         Some(0)
@@ -1158,7 +1152,8 @@ impl WindowsWindowState {
         ) {
             return None;
         }
-        unsafe { SetCursor(self.platform_inner.current_cursor.get()) };
+        // TODO:
+        // unsafe { SetCursor(self.platform_inner.current_cursor.get()) };
         Some(1)
     }
 }
@@ -1194,7 +1189,7 @@ impl WindowsWindow {
         platform_inner: Rc<WindowsPlatformInner>,
         handle: AnyWindowHandle,
         options: WindowParams,
-    ) -> Self {
+    ) -> (Self, HWND) {
         let classname = register_wnd_class(platform_inner.icon);
         let hide_title_bar = options
             .titlebar
@@ -1259,10 +1254,11 @@ impl WindowsWindow {
             state: context.inner.unwrap(),
             drag_drop_handler,
         };
-        platform_inner.raw_window_handles.write().push(raw_hwnd);
+        // platform_inner.raw_window_handles.write().push(raw_hwnd);
 
         unsafe { ShowWindow(raw_hwnd, SW_SHOW) };
-        wnd
+
+        (wnd, raw_hwnd)
     }
 }
 
