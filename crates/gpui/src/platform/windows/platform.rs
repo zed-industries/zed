@@ -71,7 +71,7 @@ impl WindowsPlatformInner {
     pub(crate) fn try_get_windows_inner_from_hwnd(
         &self,
         hwnd: HWND,
-    ) -> Option<Rc<WindowsWindowState>> {
+    ) -> Option<Arc<RwLock<WindowsWindowState>>> {
         self.raw_window_handles
             .read()
             .iter()
@@ -250,7 +250,6 @@ impl Platform for WindowsPlatform {
                     let mut msg = MSG::default();
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                            log::error!("==> MSG: {}", msg.message);
                             if msg.message == WM_QUIT {
                                 break 'a;
                             }
@@ -353,7 +352,7 @@ impl Platform for WindowsPlatform {
         let active_window_hwnd = unsafe { GetActiveWindow() };
         self.inner
             .try_get_windows_inner_from_hwnd(active_window_hwnd)
-            .map(|inner| inner.handle)
+            .map(|inner| inner.as_ref().read().handle)
     }
 
     fn open_window(

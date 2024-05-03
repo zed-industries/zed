@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     str::FromStr,
-    sync::{Arc, Once},
+    sync::{atomic::AtomicUsize, Arc, Once},
     time::{Duration, Instant},
 };
 
@@ -211,65 +211,65 @@ impl WindowsWindowState {
         msg: u32,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> LRESULT {
-        println!("MSG: {msg}");
         let handled = match msg {
-            WM_NCACTIVATE => Some(0),
-            WM_ACTIVATE => Self::handle_activate_msg(handle, wparam, lock),
-            WM_CREATE => Self::handle_create_msg(handle, lock),
-            WM_MOVE => Self::handle_move_msg(handle, lparam, lock),
-            WM_SIZE => Self::handle_size_msg(lparam, lock),
+            WM_ACTIVATE => Self::handle_activate_msg(handle, wparam, state),
+            WM_CREATE => Self::handle_create_msg(handle, state),
+            WM_MOVE => Self::handle_move_msg(handle, lparam, state),
+            WM_SIZE => Self::handle_size_msg(lparam, state),
             WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => Self::handle_size_move_loop(handle),
             WM_EXITSIZEMOVE | WM_EXITMENULOOP => Self::handle_size_move_loop_exit(handle),
-            WM_TIMER => Self::handle_timer_msg(handle, wparam, lock),
-            WM_NCCALCSIZE => Self::handle_calc_client_size(handle, wparam, lparam, lock),
-            WM_DPICHANGED => Self::handle_dpi_changed_msg(handle, wparam, lparam, lock),
-            WM_NCHITTEST => Self::handle_hit_test_msg(handle, msg, wparam, lparam, lock),
-            // WM_PAINT => self.handle_paint_msg(),
-            WM_CLOSE => Self::handle_close_msg(lock),
-            WM_DESTROY => Self::handle_destroy_msg(lock),
-            WM_MOUSEMOVE => Self::handle_mouse_move_msg(lparam, wparam, lock),
-            WM_NCMOUSEMOVE => Self::handle_nc_mouse_move_msg(handle, lparam, lock),
+            WM_TIMER => Self::handle_timer_msg(handle, wparam, state),
+            WM_NCCALCSIZE => Self::handle_calc_client_size(handle, wparam, lparam, state),
+            WM_DPICHANGED => Self::handle_dpi_changed_msg(handle, wparam, lparam, state),
+            WM_NCHITTEST => Self::handle_hit_test_msg(handle, msg, wparam, lparam, state),
+            WM_PAINT => Self::handle_paint_msg(handle, state),
+            WM_CLOSE => Self::handle_close_msg(state),
+            WM_DESTROY => Self::handle_destroy_msg(state),
+            WM_MOUSEMOVE => Self::handle_mouse_move_msg(lparam, wparam, state),
+            WM_NCMOUSEMOVE => Self::handle_nc_mouse_move_msg(handle, lparam, state),
             WM_NCLBUTTONDOWN => {
-                Self::handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, lock)
+                Self::handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state)
             }
             WM_NCRBUTTONDOWN => {
-                Self::handle_nc_mouse_down_msg(handle, MouseButton::Right, wparam, lparam, lock)
+                Self::handle_nc_mouse_down_msg(handle, MouseButton::Right, wparam, lparam, state)
             }
             WM_NCMBUTTONDOWN => {
-                Self::handle_nc_mouse_down_msg(handle, MouseButton::Middle, wparam, lparam, lock)
+                Self::handle_nc_mouse_down_msg(handle, MouseButton::Middle, wparam, lparam, state)
             }
             WM_NCLBUTTONUP => {
-                Self::handle_nc_mouse_up_msg(handle, MouseButton::Left, wparam, lparam, lock)
+                Self::handle_nc_mouse_up_msg(handle, MouseButton::Left, wparam, lparam, state)
             }
             WM_NCRBUTTONUP => {
-                Self::handle_nc_mouse_up_msg(handle, MouseButton::Right, wparam, lparam, lock)
+                Self::handle_nc_mouse_up_msg(handle, MouseButton::Right, wparam, lparam, state)
             }
             WM_NCMBUTTONUP => {
-                Self::handle_nc_mouse_up_msg(handle, MouseButton::Middle, wparam, lparam, lock)
+                Self::handle_nc_mouse_up_msg(handle, MouseButton::Middle, wparam, lparam, state)
             }
-            WM_LBUTTONDOWN => Self::handle_mouse_down_msg(MouseButton::Left, lparam, lock),
-            WM_RBUTTONDOWN => Self::handle_mouse_down_msg(MouseButton::Right, lparam, lock),
-            WM_MBUTTONDOWN => Self::handle_mouse_down_msg(MouseButton::Middle, lparam, lock),
+            WM_LBUTTONDOWN => Self::handle_mouse_down_msg(MouseButton::Left, lparam, state),
+            WM_RBUTTONDOWN => Self::handle_mouse_down_msg(MouseButton::Right, lparam, state),
+            WM_MBUTTONDOWN => Self::handle_mouse_down_msg(MouseButton::Middle, lparam, state),
             WM_XBUTTONDOWN => {
-                Self::handle_xbutton_msg(wparam, lparam, Self::handle_mouse_down_msg, lock)
+                Self::handle_xbutton_msg(wparam, lparam, Self::handle_mouse_down_msg, state)
             }
-            WM_LBUTTONUP => Self::handle_mouse_up_msg(MouseButton::Left, lparam, lock),
-            WM_RBUTTONUP => Self::handle_mouse_up_msg(MouseButton::Right, lparam, lock),
-            WM_MBUTTONUP => Self::handle_mouse_up_msg(MouseButton::Middle, lparam, lock),
+            WM_LBUTTONUP => Self::handle_mouse_up_msg(MouseButton::Left, lparam, state),
+            WM_RBUTTONUP => Self::handle_mouse_up_msg(MouseButton::Right, lparam, state),
+            WM_MBUTTONUP => Self::handle_mouse_up_msg(MouseButton::Middle, lparam, state),
             WM_XBUTTONUP => {
-                Self::handle_xbutton_msg(wparam, lparam, Self::handle_mouse_up_msg, lock)
+                Self::handle_xbutton_msg(wparam, lparam, Self::handle_mouse_up_msg, state)
             }
-            WM_MOUSEWHEEL => Self::handle_mouse_wheel_msg(handle, wparam, lparam, lock),
-            WM_MOUSEHWHEEL => Self::handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, lock),
-            WM_SYSKEYDOWN => Self::handle_syskeydown_msg(handle, wparam, lparam, lock),
-            WM_SYSKEYUP => Self::handle_syskeyup_msg(handle, wparam, lock),
-            WM_KEYDOWN => Self::handle_keydown_msg(handle, wparam, lparam, lock),
-            WM_KEYUP => Self::handle_keyup_msg(handle, wparam, lock),
-            WM_CHAR => Self::handle_char_msg(handle, wparam, lparam, lock),
-            WM_IME_STARTCOMPOSITION => Self::handle_ime_position(handle, lock),
-            WM_IME_COMPOSITION => Self::handle_ime_composition(handle, lparam, lock),
+            WM_MOUSEWHEEL => Self::handle_mouse_wheel_msg(handle, wparam, lparam, state),
+            WM_MOUSEHWHEEL => {
+                Self::handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state)
+            }
+            WM_SYSKEYDOWN => Self::handle_syskeydown_msg(handle, wparam, lparam, state),
+            WM_SYSKEYUP => Self::handle_syskeyup_msg(handle, wparam, state),
+            WM_KEYDOWN => Self::handle_keydown_msg(handle, wparam, lparam, state),
+            WM_KEYUP => Self::handle_keyup_msg(handle, wparam, state),
+            WM_CHAR => Self::handle_char_msg(handle, wparam, lparam, state),
+            WM_IME_STARTCOMPOSITION => Self::handle_ime_position(handle, state),
+            WM_IME_COMPOSITION => Self::handle_ime_composition(handle, lparam, state),
             // WM_SETCURSOR => self.handle_set_cursor(lparam),
             _ => None,
         };
@@ -283,11 +283,11 @@ impl WindowsWindowState {
     fn handle_move_msg(
         handle: HWND,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let x = lparam.signed_loword() as i32;
         let y = lparam.signed_hiword() as i32;
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         lock.origin = point(x.into(), y.into());
         let size = lock.physical_size;
         let center_x = x + size.width.0 / 2;
@@ -311,13 +311,10 @@ impl WindowsWindowState {
         Some(0)
     }
 
-    fn handle_size_msg(
-        lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
-    ) -> Option<isize> {
+    fn handle_size_msg(lparam: LPARAM, state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
         let width = lparam.loword().max(1) as i32;
         let height = lparam.hiword().max(1) as i32;
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         let scale_factor = lock.scale_factor;
         let new_physical_size = size(width.into(), height.into());
         lock.physical_size = new_physical_size;
@@ -355,34 +352,36 @@ impl WindowsWindowState {
     fn handle_timer_msg(
         handle: HWND,
         wparam: WPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
             // TODO:
             // self.platform_inner.run_foreground_tasks();
-            Self::handle_paint_msg(handle, lock)
+            Self::handle_paint_msg(handle, state)
         } else {
             None
         }
     }
 
-    fn handle_paint_msg(
-        handle: HWND,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
-    ) -> Option<isize> {
+    fn handle_paint_msg(handle: HWND, state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
         let mut paint_struct = PAINTSTRUCT::default();
         let _hdc = unsafe { BeginPaint(handle, &mut paint_struct) };
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-        if let Some(ref mut request_frame) = lock.callbacks.request_frame {
+        let mut write_lock = state.as_ref().write();
+        let ptr = write_lock.this.clone();
+        if let Some(mut request_frame) = write_lock.callbacks.request_frame.take() {
+            drop(write_lock);
             request_frame();
+            if let Some(inner) = ptr.upgrade() {
+                let mut write_lock = inner.as_ref().write();
+                write_lock.callbacks.request_frame = Some(request_frame);
+            }
         }
-        drop(lock);
         unsafe { EndPaint(handle, &paint_struct) };
         Some(0)
     }
 
-    fn handle_close_msg(lock: RwLockUpgradableReadGuard<WindowsWindowState>) -> Option<isize> {
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+    fn handle_close_msg(state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
+        let mut lock = state.as_ref().write();
         if let Some(ref mut callback) = lock.callbacks.should_close {
             if callback() {
                 return Some(0);
@@ -391,8 +390,8 @@ impl WindowsWindowState {
         None
     }
 
-    fn handle_destroy_msg(lock: RwLockUpgradableReadGuard<WindowsWindowState>) -> Option<isize> {
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+    fn handle_destroy_msg(state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
+        let mut lock = state.as_ref().write();
         if let Some(callback) = lock.callbacks.close.take() {
             callback();
         }
@@ -419,10 +418,10 @@ impl WindowsWindowState {
     fn handle_mouse_move_msg(
         lparam: LPARAM,
         wparam: WPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
+        let mut lock = state.as_ref().write();
         let scale_factor = lock.scale_factor;
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
         if let Some(ref mut callback) = lock.callbacks.input {
             let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
                 flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
@@ -454,14 +453,14 @@ impl WindowsWindowState {
         handle: HWND,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
         // shortcuts.
         let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
             return None;
         };
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         let Some(ref mut func) = lock.callbacks.input else {
             return None;
         };
@@ -479,14 +478,14 @@ impl WindowsWindowState {
     fn handle_syskeyup_msg(
         handle: HWND,
         wparam: WPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
         // shortcuts.
         let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
             return None;
         };
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         let Some(ref mut func) = lock.callbacks.input else {
             return None;
         };
@@ -502,12 +501,12 @@ impl WindowsWindowState {
         handle: HWND,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let Some(keystroke) = parse_keydown_msg_keystroke(wparam) else {
             return Some(1);
         };
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         let Some(ref mut func) = lock.callbacks.input else {
             return Some(1);
         };
@@ -525,12 +524,12 @@ impl WindowsWindowState {
     fn handle_keyup_msg(
         handle: HWND,
         wparam: WPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let Some(keystroke) = parse_keydown_msg_keystroke(wparam) else {
             return Some(1);
         };
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         let Some(ref mut func) = lock.callbacks.input else {
             return Some(1);
         };
@@ -546,12 +545,12 @@ impl WindowsWindowState {
         handle: HWND,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let Some(keystroke) = parse_char_msg_keystroke(wparam) else {
             return Some(1);
         };
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         let Some(ref mut func) = lock.callbacks.input else {
             return Some(1);
         };
@@ -582,9 +581,9 @@ impl WindowsWindowState {
     fn handle_mouse_down_msg(
         button: MouseButton,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         if let Some(mut callback) = lock.callbacks.input.take() {
             let x = lparam.signed_loword() as f32;
             let y = lparam.signed_hiword() as f32;
@@ -609,9 +608,9 @@ impl WindowsWindowState {
     fn handle_mouse_up_msg(
         button: MouseButton,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         if let Some(mut callback) = lock.callbacks.input.take() {
             let x = lparam.signed_loword() as f32;
             let y = lparam.signed_hiword() as f32;
@@ -634,29 +633,25 @@ impl WindowsWindowState {
     fn handle_xbutton_msg(
         wparam: WPARAM,
         lparam: LPARAM,
-        handler: impl Fn(
-            MouseButton,
-            LPARAM,
-            RwLockUpgradableReadGuard<WindowsWindowState>,
-        ) -> Option<isize>,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        handler: impl Fn(MouseButton, LPARAM, Arc<RwLock<WindowsWindowState>>) -> Option<isize>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let nav_dir = match wparam.hiword() {
             XBUTTON1 => NavigationDirection::Back,
             XBUTTON2 => NavigationDirection::Forward,
             _ => return Some(1),
         };
-        handler(MouseButton::Navigate(nav_dir), lparam, lock)
+        handler(MouseButton::Navigate(nav_dir), lparam, state)
     }
 
     fn handle_mouse_wheel_msg(
         handle: HWND,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
+        let mut lock = state.as_ref().write();
         let scale_factor = lock.scale_factor;
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
         if let Some(ref mut callback) = lock.callbacks.input {
             let wheel_distance = wparam.signed_hiword() as f32 / WHEEL_DELTA as f32;
             // let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
@@ -685,10 +680,10 @@ impl WindowsWindowState {
         handle: HWND,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
+        let mut lock = state.as_ref().write();
         let scale_factor = lock.scale_factor;
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
         if let Some(ref mut callback) = lock.callbacks.input {
             let wheel_distance = wparam.signed_hiword() as f32 / WHEEL_DELTA as f32;
             // let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
@@ -714,12 +709,9 @@ impl WindowsWindowState {
         Some(1)
     }
 
-    fn handle_ime_position(
-        handle: HWND,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
-    ) -> Option<isize> {
+    fn handle_ime_position(handle: HWND, state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
         unsafe {
-            let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+            let mut lock = state.as_ref().write();
             let ctx = ImmGetContext(handle);
             let Some(mut input_handler) = lock.input_handler.take() else {
                 return Some(1);
@@ -748,10 +740,10 @@ impl WindowsWindowState {
     fn handle_ime_composition(
         handle: HWND,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let mut ime_input = None;
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
             let Some((string, string_len)) = parse_ime_compostion_string(handle) else {
                 return None;
@@ -806,8 +798,9 @@ impl WindowsWindowState {
         handle: HWND,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
+        let lock = state.as_ref().upgradable_read();
         if !lock.hide_title_bar || lock.is_fullscreen() {
             return None;
         }
@@ -837,74 +830,72 @@ impl WindowsWindowState {
     fn handle_activate_msg(
         handle: HWND,
         wparam: WPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let activated = wparam.loword() > 0;
-        // let executor = self.executor.clone();
-        // let weak = self.this.clone();
-        // executor
-        //     .spawn(async move {
-        //         let Some(state) = weak.upgrade() else {
-        //             return;
-        //         };
-        //         let mut lock = state.write();
-        //         if lock.hide_title_bar {
-        //             if let Some(titlebar_rect) = lock.get_titlebar_rect().log_err() {
-        //                 unsafe { InvalidateRect(handle, Some(&titlebar_rect), FALSE) };
-        //             }
-        //         }
-        //         if let Some(ref mut cb) = lock.callbacks.active_status_change {
-        //             cb(activated);
-        //         }
-        //     })
-        //     .detach();
+        let lock = state.as_ref().read();
+        let executor = lock.executor.clone();
+        let weak = lock.this.clone();
+        executor
+            .spawn(async move {
+                let Some(state) = weak.upgrade() else {
+                    return;
+                };
+                let mut lock = state.write();
+                if lock.hide_title_bar {
+                    if let Some(titlebar_rect) = lock.get_titlebar_rect().log_err() {
+                        unsafe { InvalidateRect(handle, Some(&titlebar_rect), FALSE) };
+                    }
+                }
+                if let Some(ref mut cb) = lock.callbacks.active_status_change {
+                    cb(activated);
+                }
+            })
+            .detach();
 
         None
     }
 
-    fn handle_create_msg(
-        handle: HWND,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
-    ) -> Option<isize> {
+    fn handle_create_msg(handle: HWND, state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
         let mut size_rect = RECT::default();
         unsafe { GetWindowRect(handle, &mut size_rect).log_err() };
 
         let width = size_rect.right - size_rect.left;
         let height = size_rect.bottom - size_rect.top;
 
+        let lock = state.as_ref().read();
         if lock.hide_title_bar {
-            drop(lock);
             // Inform the application of the frame change to force redrawing with the new
             // client area that is extended into the title bar
-            // let executor = self.executor.clone();
-            // executor
-            //     .spawn(async move {
-            //         unsafe {
-            //             SetWindowPos(
-            //                 handle,
-            //                 None,
-            //                 size_rect.left,
-            //                 size_rect.top,
-            //                 width,
-            //                 height,
-            //                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
-            //             )
-            //             .log_err()
-            //         }
-            //     })
-            //     .detach();
-            unsafe {
-                SetWindowPos(
-                    handle,
-                    None,
-                    size_rect.left,
-                    size_rect.top,
-                    width,
-                    height,
-                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
-                )
-                .log_err()
-            };
+            let executor = lock.executor.clone();
+            executor
+                .spawn(async move {
+                    unsafe {
+                        SetWindowPos(
+                            handle,
+                            None,
+                            size_rect.left,
+                            size_rect.top,
+                            width,
+                            height,
+                            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
+                        )
+                        .log_err()
+                    }
+                })
+                .detach();
+            // unsafe {
+            //     SetWindowPos(
+            //         handle,
+            //         None,
+            //         size_rect.left,
+            //         size_rect.top,
+            //         width,
+            //         height,
+            //         SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
+            //     )
+            //     .log_err()
+            // };
         }
 
         Some(0)
@@ -914,10 +905,10 @@ impl WindowsWindowState {
         handle: HWND,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let new_dpi = wparam.loword() as f32;
-        let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
+        let mut lock = state.as_ref().write();
         lock.scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
         drop(lock);
 
@@ -950,8 +941,9 @@ impl WindowsWindowState {
         msg: u32,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
+        let lock = state.as_ref().read();
         if !lock.hide_title_bar {
             return None;
         }
@@ -1012,8 +1004,9 @@ impl WindowsWindowState {
     fn handle_nc_mouse_move_msg(
         handle: HWND,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
+        let lock = state.as_ref().upgradable_read();
         if !lock.hide_title_bar {
             return None;
         }
@@ -1043,8 +1036,9 @@ impl WindowsWindowState {
         button: MouseButton,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
+        let lock = state.as_ref().upgradable_read();
         if !lock.hide_title_bar {
             return None;
         }
@@ -1081,8 +1075,9 @@ impl WindowsWindowState {
         button: MouseButton,
         wparam: WPARAM,
         lparam: LPARAM,
-        lock: RwLockUpgradableReadGuard<WindowsWindowState>,
+        state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
+        let lock = state.as_ref().upgradable_read();
         if !lock.hide_title_bar {
             return None;
         }
@@ -1105,7 +1100,9 @@ impl WindowsWindowState {
                 return Some(0);
             }
         }
+        drop(lock);
 
+        let lock = state.as_ref().read();
         if button == MouseButton::Left {
             match wparam.0 as u32 {
                 HTMINBUTTON => unsafe {
@@ -1802,14 +1799,29 @@ unsafe extern "system" fn wnd_proc(
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
     let inner = unsafe { &*ptr };
-    let r = if let Some(inner) = inner.upgrade() {
-        let lock = inner.as_ref().upgradable_read();
-        // let mut lock = inner.as_ref().write();
-        WindowsWindowState::handle_msg(hwnd, msg, wparam, lparam, lock)
-        // lock.handle_msg(hwnd, msg, wparam, lparam)
+    {
+        let indent_count = INDENT_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+        let mut pre_indent = "".to_owned();
+        for _ in 0..indent_count {
+            pre_indent.push_str(INDENT_STRING);
+        }
+        println!("{}Handling MSG: {}", pre_indent, msg);
+    }
+    INDENT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let r = if let Some(state) = inner.upgrade() {
+        WindowsWindowState::handle_msg(hwnd, msg, wparam, lparam, state)
     } else {
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     };
+    INDENT_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    {
+        let indent_count = INDENT_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+        let mut pre_indent = "".to_owned();
+        for _ in 0..indent_count {
+            pre_indent.push_str(INDENT_STRING);
+        }
+        println!("{}Finished handling: {}", pre_indent, msg);
+    }
     if msg == WM_NCDESTROY {
         unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
         unsafe { drop(Box::from_raw(ptr)) };
@@ -1817,12 +1829,16 @@ unsafe extern "system" fn wnd_proc(
     r
 }
 
-pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowState>> {
+static INDENT_COUNT: AtomicUsize = AtomicUsize::new(0);
+const INDENT_STRING: &str = "   ";
+
+pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Arc<RwLock<WindowsWindowState>>> {
     if hwnd == HWND(0) {
         return None;
     }
 
-    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowState>;
+    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) }
+        as *mut std::sync::Weak<RwLock<WindowsWindowState>>;
     if !ptr.is_null() {
         let inner = unsafe { &*ptr };
         inner.upgrade()
