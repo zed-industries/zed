@@ -5598,6 +5598,7 @@ impl Project {
     pub fn resolve_completions(
         &self,
         buffer: Model<Buffer>,
+        language: Option<Arc<Language>>,
         completion_indices: Vec<usize>,
         completions: Arc<RwLock<Box<[Completion]>>>,
         cx: &mut ModelContext<Self>,
@@ -5671,7 +5672,7 @@ impl Project {
                         Err(_) => continue,
                     };
 
-                    let resolved = Self::resolve_completion_documentation_local(
+                    let resolved = Self::resolve_completion_local(
                         server,
                         &buffer_snapshot,
                         language.clone(),
@@ -5692,6 +5693,7 @@ impl Project {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn resolve_completion_local(
         server: Arc<lsp::LanguageServer>,
         snapshot: &BufferSnapshot,
@@ -5739,6 +5741,16 @@ impl Project {
             Some(Documentation::Undocumented)
         };
 
+        let text_edit = lsp_completion
+            .text_edit
+            .as_ref()
+            .map(|edit| parse_completion_text_edit(edit, snapshot))
+            .flatten()
+            .map(|(old_range, mut new_text)| {
+                LineEnding::normalize(&mut new_text);
+                (old_range, new_text)
+            });
+
         let mut completions = completions.write();
         let completion = &mut completions[completion_index];
         completion.documentation = documentation;
@@ -5746,24 +5758,12 @@ impl Project {
         if let Some(label) = label {
             completion.label = label;
         }
-
-        if let Some(text_edit) = completion_item.text_edit.as_ref() {
-            // Technically we don't have to parse the whole `text_edit`, since the only
-            // language server we currently use that does update `text_edit` in `completionItem/resolve`
-            // is `typescript-language-server` and they only update `text_edit.new_text`.
-            // But we should not rely on that.
-            let edit = parse_completion_text_edit(text_edit, snapshot);
-
-            if let Some((old_range, mut new_text)) = edit {
-                LineEnding::normalize(&mut new_text);
-
-                let mut completions = completions.write();
-                let completion = &mut completions[completion_index];
-
-                completion.new_text = new_text;
-                completion.old_range = old_range;
-            }
+        if let Some((old_range, new_text)) = text_edit {
+            completion.new_text = new_text;
+            completion.old_range = old_range;
         }
+
+        true
     }
 
     #[allow(clippy::too_many_arguments)]

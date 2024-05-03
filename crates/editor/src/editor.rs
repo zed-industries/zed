@@ -793,12 +793,12 @@ struct CompletionsMenu {
     initial_position: Anchor,
     buffer: Model<Buffer>,
     completions: Arc<RwLock<Box<[Completion]>>>,
-    language: Option<Arc<Language>>,
     match_candidates: Arc<[StringMatchCandidate]>,
     matches: Arc<RwLock<Box<[StringMatch]>>>,
     selected_item: usize,
     scroll_handle: UniformListScrollHandle,
     selected_completion_documentation_resolve_debounce: Arc<Mutex<DebouncedDelay>>,
+    language: Option<Arc<Language>>,
 }
 
 impl CompletionsMenu {
@@ -968,7 +968,6 @@ impl CompletionsMenu {
                 vec![completion_index],
                 self.completions.clone(),
                 cx,
-            ,
             )
         });
 
@@ -3538,9 +3537,9 @@ impl Editor {
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
         let completions = provider.completions(&buffer, buffer_position, cx);
+        let language = buffer.read(cx).language_at(buffer_position);
 
         let id = post_inc(&mut self.next_completion_id);
-        let language = buffer.read(cx).language_at(buffer_position);
         let task = cx.spawn(|this, mut cx| {
             async move {
                 let completions = completions.await.log_err();
