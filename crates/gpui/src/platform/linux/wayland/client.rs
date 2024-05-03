@@ -50,7 +50,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
-use super::super::{open_uri_impl, read_fd, DOUBLE_CLICK_INTERVAL};
+use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
 use super::window::{WaylandWindowState, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
@@ -441,7 +441,7 @@ impl LinuxClient for WaylandClient {
             token.set_surface(&window.surface());
             token.commit();
         } else {
-            open_uri_impl(uri, None);
+            open_uri_internal(uri, None);
         }
     }
 
@@ -715,7 +715,7 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, ()> for WaylandClie
         let mut state = client.borrow_mut();
         if let xdg_activation_token_v1::Event::Done { token } = event {
             if let Some(uri) = state.pending_open_uri.take() {
-                open_uri_impl(&uri, Some(&token));
+                open_uri_internal(&uri, Some(&token));
             } else {
                 log::error!("called while pending_open_uri is None");
             }

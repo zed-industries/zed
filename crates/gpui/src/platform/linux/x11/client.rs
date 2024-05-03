@@ -30,7 +30,7 @@ use crate::{
 };
 
 use super::{
-    super::{open_uri_impl, SCROLL_LINES},
+    super::{open_uri_internal, SCROLL_LINES},
     X11Display, X11WindowStatePtr, XcbAtoms,
 };
 use super::{button_of_key, modifiers_from_state};
@@ -676,7 +676,7 @@ impl LinuxClient for X11Client {
     fn set_cursor_style(&self, _style: CursorStyle) {}
 
     fn open_uri(&self, uri: &str) {
-        open_uri_impl(uri, None);
+        open_uri_internal(uri, None);
     }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {

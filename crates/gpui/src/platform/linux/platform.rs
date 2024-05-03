@@ -485,7 +485,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 }
 
-pub(super) fn open_uri_impl(uri: &str, activation_token: Option<&str>) {
+pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
     let mut last_err = None;
     for mut command in open::commands(uri) {
         if let Some(token) = activation_token {
