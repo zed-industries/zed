@@ -140,7 +140,7 @@ pub struct FileAttachmentView {
 }
 
 impl Render for FileAttachmentView {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         match &self.output {
             Ok(attachment) => {
                 let filename = attachment.filename.clone();
@@ -149,6 +149,9 @@ impl Render for FileAttachmentView {
                 ButtonLike::new("file-attachment")
                     .child(
                         h_flex()
+                            .gap_1()
+                            .bg(cx.theme().colors().editor_background)
+                            .rounded_md()
                             .child(ui::Icon::new(IconName::File))
                             // Matching up to the mock, which was to show a number of files. We only have one
                             .child("1"),

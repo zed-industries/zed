@@ -39,7 +39,7 @@ impl Composer {
         )
     }
 
-    fn render_attachments(&mut self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render_attachment_tools(&mut self, _cx: &mut WindowContext) -> impl IntoElement {
         h_flex().children(
             self.active_file_button
                 .clone()
@@ -103,7 +103,7 @@ impl RenderOnce for Composer {
                                                 .gap_2()
                                                 .child(self.render_tools(cx))
                                                 .child(Divider::vertical())
-                                                .child(self.render_attachments(cx)),
+                                                .child(self.render_attachment_tools(cx)),
                                         ),
                                     )
                                     .child(h_flex().gap_1().child(self.model_selector)),

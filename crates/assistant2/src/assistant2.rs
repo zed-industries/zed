@@ -366,8 +366,6 @@ impl AssistantChat {
                 });
                 composer_editor.clear(cx);
 
-                // self.attachment_store.
-
                 ChatMessage::User(UserMessage {
                     id,
                     body,
@@ -398,7 +396,6 @@ impl AssistantChat {
             .unwrap_or_default();
 
             // Set the attachments to the _last_ user message
-
             this.update(&mut cx, |this, _cx| {
                 if let Some(ChatMessage::User(message)) = this.messages.last_mut() {
                     message.attachments = attachments;
@@ -679,6 +676,16 @@ impl AssistantChat {
                                     )
                                     .element(ElementId::from(id.0), cx),
                                 ),
+                                Some(
+                                    h_flex()
+                                        .gap_2()
+                                        .children(
+                                            attachments
+                                                .iter()
+                                                .map(|attachment| attachment.view.clone()),
+                                        )
+                                        .into_any_element(),
+                                ),
                                 self.is_message_collapsed(id),
                                 Box::new(cx.listener({
                                     let id = *id;
@@ -686,9 +693,6 @@ impl AssistantChat {
                                         assistant_chat.toggle_message_collapsed(id)
                                     }
                                 })),
-                            ))
-                            .child(h_flex().gap_2().children(
-                                attachments.iter().map(|attachment| attachment.view.clone()),
                             ))
                     }
                 })
@@ -717,6 +721,8 @@ impl AssistantChat {
                         *id,
                         UserOrAssistant::Assistant,
                         assistant_body,
+                        // todo!(): Stick tool use here?
+                        None,
                         self.is_message_collapsed(id),
                         Box::new(cx.listener({
                             let id = *id;
