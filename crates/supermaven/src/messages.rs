@@ -12,6 +12,7 @@ pub struct SetApiKey {
 pub enum OutboundMessage {
     SetApiKey(SetApiKey),
     StateUpdate(StateUpdateMessage),
+    #[allow(dead_code)]
     UseFreeVersion,
 }
 
