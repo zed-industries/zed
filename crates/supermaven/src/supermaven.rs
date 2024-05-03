@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result};
 #[allow(unused_imports)]
 use client::{proto, Client};
 use collections::BTreeMap;
-use feature_flags::FeatureFlagAppExt as _;
+
 use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, EntityId, Global, Model, ModelContext, Task, WeakModel};
 use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
@@ -297,7 +297,6 @@ impl SupermavenAgent {
     fn handle_message(&mut self, message: SupermavenMessage) {
         match message {
             SupermavenMessage::ActivationRequest(request) => {
-                dbg!(&request);
                 self.account_status = match request.activate_url {
                     Some(activate_url) => AccountStatus::NeedsActivation {
                         activate_url: activate_url.clone(),
