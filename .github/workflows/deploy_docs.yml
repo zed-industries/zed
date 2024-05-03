@@ -26,10 +26,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p target/deploy
-          mdbook build ./docs --dest-dir=target/deploy/docs2/
+          mdbook build ./docs --dest-dir=../target/deploy/docs2/
 
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          command: pages deploy target/deploy --project-name=docs-awn
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy target/deploy --project-name=docs
