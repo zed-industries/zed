@@ -40,6 +40,7 @@ use crate::platform::blade::BladeRenderer;
 use crate::*;
 
 pub(crate) struct WindowsWindowInner {
+    this: Weak<Self>,
     hwnd: HWND,
     origin: Cell<Point<DevicePixels>>,
     physical_size: Cell<Size<DevicePixels>>,
@@ -63,7 +64,7 @@ impl WindowsWindowInner {
         handle: AnyWindowHandle,
         hide_title_bar: bool,
         display: Rc<WindowsDisplay>,
-    ) -> Self {
+    ) -> Rc<Self> {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = Cell::new(Point {
             x: DevicePixels(cs.x),
@@ -120,7 +121,9 @@ impl WindowsWindowInner {
         let display = RefCell::new(display);
         let click_state = RefCell::new(ClickState::new());
         let fullscreen = Cell::new(None);
-        Self {
+
+        Rc::new_cyclic(|this| Self {
+            this: this.clone(),
             hwnd,
             origin,
             physical_size,
@@ -134,7 +137,7 @@ impl WindowsWindowInner {
             display,
             click_state,
             fullscreen,
-        }
+        })
     }
 
     fn is_maximized(&self) -> bool {
@@ -952,6 +955,13 @@ impl WindowsWindowInner {
         Some(0)
     }
 
+    fn handle_activate_callback(self: Rc<Self>, activated: bool) {
+        let mut callbacks = self.callbacks.borrow_mut();
+        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
+            cb(activated);
+        }
+    }
+
     fn handle_activate_msg(&self, wparam: WPARAM) -> Option<isize> {
         if self.hide_title_bar {
             if let Some(titlebar_rect) = self.get_titlebar_rect().log_err() {
@@ -959,10 +969,16 @@ impl WindowsWindowInner {
             }
         }
         let activated = wparam.loword() > 0;
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(mut cb) = callbacks.active_status_change.as_mut() {
-            cb(activated);
-        }
+        let executor = self.platform_inner.foreground_executor.clone();
+        let inner = self.this.clone();
+        executor
+            .spawn(async move {
+                if let Some(inner) = inner.upgrade() {
+                    inner.handle_activate_callback(activated);
+                }
+            })
+            .detach();
+
         None
     }
 
@@ -1791,14 +1807,14 @@ unsafe extern "system" fn wnd_proc(
         let cs = unsafe { &*cs };
         let ctx = cs.lpCreateParams as *mut WindowCreateContext;
         let ctx = unsafe { &mut *ctx };
-        let inner = Rc::new(WindowsWindowInner::new(
+        let inner = WindowsWindowInner::new(
             hwnd,
             cs,
             ctx.platform_inner.clone(),
             ctx.handle,
             ctx.hide_title_bar,
             ctx.display.clone(),
-        ));
+        );
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
         ctx.inner = Some(inner);
