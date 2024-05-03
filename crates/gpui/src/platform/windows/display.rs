@@ -9,7 +9,7 @@ use windows::{
 
 use crate::{Bounds, DevicePixels, DisplayId, PlatformDisplay, Point, Size};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct WindowsDisplay {
     pub handle: HMONITOR,
     pub display_id: DisplayId,

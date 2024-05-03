@@ -71,7 +71,7 @@ impl WindowsPlatformInner {
     pub(crate) fn try_get_windows_inner_from_hwnd(
         &self,
         hwnd: HWND,
-    ) -> Option<Rc<WindowsWindowInner>> {
+    ) -> Option<Rc<WindowsWindowState>> {
         self.raw_window_handles
             .read()
             .iter()
