@@ -1,4 +1,4 @@
-# Getting Started
+# REALLY Getting Started
 
 Welcome to Zed! We are excited to have you. Here is a jumping-off point to getting started.
 
