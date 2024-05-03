@@ -588,10 +588,9 @@ impl WindowsWindowState {
             return Some(1);
         };
         let mut lock = state.as_ref().write();
-        let Some(mut func) = lock.callbacks.input.take() else {
+        let Some(ref mut func) = lock.callbacks.input else {
             return Some(1);
         };
-        drop(lock);
         let ime_key = keystroke.ime_key.clone();
         let event = KeyDownEvent {
             keystroke,
@@ -601,23 +600,18 @@ impl WindowsWindowState {
         let dispatch_event_result = func(PlatformInput::KeyDown(event));
         if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
             invalidate_client_area(handle);
-            let mut lock = state.write();
-            lock.callbacks.input = Some(func);
             return Some(0);
         }
         let Some(ime_char) = ime_key else {
-            let mut lock = state.write();
-            lock.callbacks.input = Some(func);
             return Some(1);
         };
-        let mut lock = state.write();
         let Some(mut input_handler) = lock.input_handler.take() else {
-            lock.callbacks.input = Some(func);
             return Some(1);
         };
+        drop(lock);
         input_handler.replace_text_in_range(None, &ime_char);
         invalidate_client_area(handle);
-        lock.callbacks.input = Some(func);
+        let mut lock = state.write();
         lock.input_handler = Some(input_handler);
 
         Some(0)
@@ -1178,9 +1172,9 @@ impl WindowsWindowState {
             return None;
         }
 
+        let scale_factor = lock.scale_factor;
         let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-        let result = if let Some(mut callback) = lock.callbacks.input.take() {
-            let scale_factor = lock.scale_factor;
+        if let Some(mut callback) = lock.callbacks.input.take() {
             drop(lock);
             let mut cursor_point = POINT {
                 x: lparam.signed_loword().into(),
@@ -1198,16 +1192,13 @@ impl WindowsWindowState {
             } else {
                 None
             };
-            let mut lock = state.write();
+            let mut lock = state.as_ref().write();
             lock.callbacks.input = Some(callback);
-
-            result
+            if result.is_some() {
+                return result;
+            }
         } else {
             drop(lock);
-            None
-        };
-        if result.is_some() {
-            return result;
         }
 
         let lock = state.as_ref().read();
