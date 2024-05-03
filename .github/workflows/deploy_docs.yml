@@ -16,9 +16,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false
-
-      - name: Install mdbook
-        run: cargo install mdbook
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: "0.4.37"
 
       - name: Install mdbook
         run: mkdir -p target/deploy
