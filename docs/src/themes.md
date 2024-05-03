@@ -13,19 +13,19 @@ We will not have separate UI and syntax themes the like Atom, but will provide a
 
 ---
 
-A variety of Zed flavoured ports of various syntax themes are avaiable in Zed. These are mostly placeholders while we develop the system and develop our own themes. It is likely the themes that exist today in Zed will be converted into community themes in the future when we ship user-creatable themes.
+A variety of Zed flavoured ports of various syntax themes are available in Zed. These are mostly placeholders while we develop the system and develop our own themes. It is likely the themes that exist today in Zed will be converted into community themes in the future when we ship user-creatable themes.
 
 ## Choosing a Theme
 
 You can choose a theme in Zed a few ways:
 
--   by pressing `CMD + K` then `CMD + T`
--   by typing `theme` in the command palette
--   by editing your `settings.json` with a specific theme name:
+- by pressing `CMD + K` then `CMD + T`
+- by typing `theme` in the command palette
+- by editing your `settings.json` with a specific theme name:
 
 ```json
 {
-    "theme": "Ayu Mirage"
+  "theme": "Ayu Mirage"
 }
 ```
 
@@ -51,13 +51,13 @@ We want to provide the right balance of good defaults and a powerful toolkit to 
 
 In practice, this means:
 
--   **Default Themes**: We want to provide a set of themes that are beautiful, usable and accessible out of the box. Additionally, we would love to provide default versions of prominent themes that developers are already familiar with where possible.
+- **Default Themes**: We want to provide a set of themes that are beautiful, usable and accessible out of the box. Additionally, we would love to provide default versions of prominent themes that developers are already familiar with where possible.
 
--   **Powerful Customization**: We want to provide a way to customize your theme to your heart's content. This could mean taking a default theme and just changing a few colors, or it could mean creating your own theme from scratch.
+- **Powerful Customization**: We want to provide a way to customize your theme to your heart's content. This could mean taking a default theme and just changing a few colors, or it could mean creating your own theme from scratch.
 
--   **Community**: We want to enable the community to create and share their themes. We will provide a way to load themes into Zed, and a toolkit for building themes.
+- **Community**: We want to enable the community to create and share their themes. We will provide a way to load themes into Zed, and a toolkit for building themes.
 
--   **Accessibility**: We want to ensure that the default themes are accessible to all users. We will also provide guardrails for you to ensure that your custom themes are accessible. We won't, however, require you to make your theme accessible. We may tag themes that don't meet our accessibility standards as such, but we won't prevent you from using or sharing them.
+- **Accessibility**: We want to ensure that the default themes are accessible to all users. We will also provide guardrails for you to ensure that your custom themes are accessible. We won't, however, require you to make your theme accessible. We may tag themes that don't meet our accessibility standards as such, but we won't prevent you from using or sharing them.
 
 We want you to have the flexibility to express yourself while ensuring the editor remains a functional tool. We're working hard to create a theme system that strikes the right balance between customization and usability.
 

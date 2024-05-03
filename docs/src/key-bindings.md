@@ -91,7 +91,7 @@ A common request is to be able to map from one sequence of keys to another. As o
 
 There are some limitations to this, notably:
 
-- Any asyncronous operation will not happen until after all your key bindings have been dispatched. For example this means that while you can use a binding to open a file (as in the `cmd-alt-r` example) you cannot send further keystrokes and hope to have them interpretted by the new view.
+- Any asynchronous operation will not happen until after all your key bindings have been dispatched. For example this means that while you can use a binding to open a file (as in the `cmd-alt-r` example) you cannot send further keystrokes and hope to have them interpreted by the new view.
 - - Other examples of asynchronous things are: communicating with a language server, changing the language of a buffer, anything that hits the network.
 - There is a limit of 100 simulated keys at a time, this is to avoid accidental infinite recursion if you trigger SendKeystrokes again inside your bindings.
 
