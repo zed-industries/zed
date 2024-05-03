@@ -1,6 +1,7 @@
 [book]
-authors = ["Nate Butler"]
+authors = ["The Zed Team"]
 language = "en"
 multilingual = false
 src = "src"
-title = "Zed App Docs"
+title = "Zed"
+site-url = "/docs2/"
