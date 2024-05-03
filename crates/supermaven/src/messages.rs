@@ -1,10 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetApiKey {
+    pub api_key: String,
+}
+
 // Outbound messages
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OutboundMessage {
-    SetApiKey { api_key: String },
+    SetApiKey(SetApiKey),
     StateUpdate(StateUpdateMessage),
     UseFreeVersion,
 }
@@ -113,7 +119,6 @@ pub struct SupermavenSetMessage {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
 pub enum ServiceTier {
     FreeNoLicense,
     #[serde(other)]

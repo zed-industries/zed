@@ -7,7 +7,8 @@ use anyhow::{Context as _, Result};
 #[allow(unused_imports)]
 use client::{proto, Client};
 use collections::BTreeMap;
-use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, SinkExt as _, StreamExt};
+use feature_flags::FeatureFlagAppExt as _;
+use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, EntityId, Global, Model, ModelContext, Task, WeakModel};
 use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
 use messages::*;
@@ -177,8 +178,6 @@ pub struct SupermavenAgent {
     pub account_status: AccountStatus,
     service_tier: Option<ServiceTier>,
     #[allow(dead_code)]
-    api_key: Option<String>,
-    #[allow(dead_code)]
     client: Arc<Client>,
 }
 
@@ -208,6 +207,31 @@ impl SupermavenAgent {
 
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
 
+        cx.spawn({
+            let client = client.clone();
+            let outgoing_tx = outgoing_tx.clone();
+            move |this, mut cx| async move {
+                let mut status = client.status();
+                while let Some(status) = status.next().await {
+                    if status.is_connected() {
+                        let api_key = client.request(proto::GetSupermavenApiKey {}).await?.api_key;
+                        outgoing_tx
+                            .unbounded_send(OutboundMessage::SetApiKey(SetApiKey { api_key }))
+                            .ok();
+                        this.update(&mut cx, |this, cx| {
+                            if let Supermaven::Spawned(this) = this {
+                                this.account_status = AccountStatus::Ready;
+                                cx.notify();
+                            }
+                        })?;
+                        break;
+                    }
+                }
+                return anyhow::Ok(());
+            }
+        })
+        .detach();
+
         Ok(Self {
             _process: process,
             next_state_id: SupermavenCompletionStateId::default(),
@@ -219,7 +243,6 @@ impl SupermavenAgent {
                 .spawn(|this, cx| Self::handle_incoming_messages(this, stdout, cx)),
             account_status: AccountStatus::Unknown,
             service_tier: None,
-            api_key: None,
             client,
         })
     }
@@ -259,24 +282,11 @@ impl SupermavenAgent {
                 continue;
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, _cx| {
                 if let Supermaven::Spawned(this) = this {
                     this.handle_message(message);
-
-                    if let AccountStatus::NeedsActivation { .. } = &this.account_status {
-                        let client = this.client.clone();
-                        let mut outgoing_tx = this.outgoing_tx.clone();
-                        return cx.spawn(|_, _| async move {
-                            let api_key =
-                                client.request(proto::GetSupermavenApiKey {}).await?.api_key;
-                            outgoing_tx
-                                .send(OutboundMessage::SetApiKey { api_key })
-                                .await?;
-                            anyhow::Ok(())
-                        });
-                    }
                 }
-                Task::ready(Ok(()))
+                Task::ready(anyhow::Ok(()))
             })?
             .await?;
         }
@@ -287,6 +297,7 @@ impl SupermavenAgent {
     fn handle_message(&mut self, message: SupermavenMessage) {
         match message {
             SupermavenMessage::ActivationRequest(request) => {
+                dbg!(&request);
                 self.account_status = match request.activate_url {
                     Some(activate_url) => AccountStatus::NeedsActivation {
                         activate_url: activate_url.clone(),

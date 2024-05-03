@@ -9612,6 +9612,7 @@ dependencies = [
  "collections",
  "editor",
  "env_logger",
+ "feature_flags",
  "futures 0.3.28",
  "gpui",
  "language",

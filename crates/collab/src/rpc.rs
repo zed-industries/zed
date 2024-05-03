@@ -191,6 +191,14 @@ impl Session {
         }
     }
 
+    fn is_staff(&self) -> bool {
+        match &self.principal {
+            Principal::User(user) => user.admin,
+            Principal::Impersonated { .. } => true,
+            Principal::DevServer(_) => false,
+        }
+    }
+
     fn dev_server_id(&self) -> Option<DevServerId> {
         match &self.principal {
             Principal::User(_) | Principal::Impersonated { .. } => None,
@@ -956,7 +964,7 @@ impl Server {
                 }
             };
 
-            let supermaven_client = if let Some(supermaven_admin_api_key) = this.app_state.config.supermaven_api_key.clone() {
+            let supermaven_client = if let Some(supermaven_admin_api_key) = this.app_state.config.supermaven_admin_api_key.clone() {
                 Some(Arc::new(SupermavenAdminApi::new(
                     supermaven_admin_api_key.to_string(),
                     http_client.clone(),
@@ -4630,6 +4638,9 @@ async fn get_supermaven_api_key(
     session: UserSession,
 ) -> Result<()> {
     let user_id: String = session.user_id().to_string();
+    if !session.is_staff() {
+        return Err(anyhow!("supermaven not enabled for this account"))?;
+    }
 
     let email = session
         .email()
@@ -4641,7 +4652,7 @@ async fn get_supermaven_api_key(
         .ok_or_else(|| anyhow!("supermaven not configured"))?;
 
     let result = supermaven_admin_api
-        .try_get_or_create_user(CreateExternalUserRequest { user_id, email })
+        .try_get_or_create_user(CreateExternalUserRequest { id: user_id, email })
         .await?;
 
     response.send(proto::GetSupermavenApiKeyResponse {
