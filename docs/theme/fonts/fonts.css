@@ -1,0 +1,17 @@
+/* Open Sans is licensed under the Apache License, Version 2.0. See http://www.apache.org/licenses/LICENSE-2.0 */
+/* Source Code Pro is under the Open Font License. See https://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=OFL */
+
+/* open-sans-300 - latin_vietnamese_latin-ext_greek-ext_greek_cyrillic-ext_cyrillic */
+@font-face {
+    font-family: "Agrandir";
+    font-style: normal;
+    font-weight: 400;
+    src: url("PPAgrandir-Regular.woff2") format("woff2");
+}
+
+@font-face {
+    font-family: "IA Writer Quattro S";
+    font-style: normal;
+    font-weight: 400;
+    src: url("iAWriterQuattroS-Regular.woff2") format("woff2");
+}
