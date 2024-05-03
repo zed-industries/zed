@@ -20,6 +20,7 @@ use panel_settings::MessageEditorSettings;
 pub use panel_settings::{
     ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
 };
+use release_channel::ReleaseChannel;
 use settings::Settings;
 use workspace::{notifications::DetachAndPromptErr, AppState};
 
@@ -96,6 +97,7 @@ pub fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
 fn notification_window_options(
     screen: Rc<dyn PlatformDisplay>,
     window_size: Size<Pixels>,
+    cx: &AppContext,
 ) -> WindowOptions {
     let notification_margin_width = DevicePixels::from(16);
     let notification_margin_height = DevicePixels::from(-0) - DevicePixels::from(48);
@@ -112,6 +114,8 @@ fn notification_window_options(
         size: window_size.into(),
     };
 
+    let app_id = ReleaseChannel::global(cx).app_id();
+
     WindowOptions {
         bounds: Some(bounds),
         titlebar: None,
@@ -122,6 +126,6 @@ fn notification_window_options(
         display_id: Some(screen.id()),
         fullscreen: false,
         window_background: WindowBackgroundAppearance::default(),
-        app_id: Some("dev.zed.Zed".to_owned()),
+        app_id: Some(app_id.to_owned()),
     }
 }

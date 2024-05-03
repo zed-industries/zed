@@ -87,6 +87,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
             .into_iter()
             .find(|display| display.uuid().ok() == Some(uuid))
     });
+    let app_id = ReleaseChannel::global(cx).app_id();
 
     WindowOptions {
         titlebar: Some(TitlebarOptions {
@@ -102,7 +103,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
         display_id: display.map(|display| display.id()),
         fullscreen: false,
         window_background: cx.theme().window_background_appearance(),
-        app_id: Some("dev.zed.Zed".to_owned()),
+        app_id: Some(app_id.to_owned()),
     }
 }
 
@@ -3106,6 +3107,7 @@ mod tests {
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
+            release_channel::init("0.0.0", cx);
             command_palette::init(cx);
             language::init(cx);
             editor::init(cx);

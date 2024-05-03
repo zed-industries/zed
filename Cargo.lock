@@ -2360,6 +2360,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "release_channel",
  "rich_text",
  "rpc",
  "schemars",
