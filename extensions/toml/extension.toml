@@ -1,7 +1,7 @@
 id = "toml"
 name = "TOML"
 description = "TOML support."
-version = "0.1.0"
+version = "0.1.1"
 schema_version = 1
 authors = [
     "Max Brunsfeld <max@zed.dev>",
