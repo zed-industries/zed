@@ -160,7 +160,6 @@ impl Render for FileAttachmentView {
                     })
                     .into_any_element()
             }
-            // todo!(): show a better error view when the file attaching didn't work
             Err(err) => div().child(err.to_string()).into_any_element(),
         }
     }

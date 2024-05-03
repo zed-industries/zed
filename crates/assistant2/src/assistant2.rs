@@ -110,7 +110,6 @@ impl AssistantPanel {
             let user_store = app_state.user_store.clone();
 
             cx.new_view(|cx| {
-                // todo!("this will panic if the semantic index failed to load or has not loaded yet")
                 let project_index = cx.update_global(|semantic_index: &mut SemanticIndex, cx| {
                     semantic_index.project_index(project.clone(), cx)
                 });
@@ -819,9 +818,7 @@ impl AssistantChat {
                     });
 
                     for tool_call in tool_calls {
-                        // todo!(): we should not be sending when the tool is still running / has no result
-                        // For now I'm going to have to assume we send an empty string because otherwise
-                        // the Chat API will break -- there is a required message for every tool call by ID
+                        // Every tool call _must_ have a result by ID, otherwise OpenAI will error.
                         let content = match &tool_call.result {
                             Some(result) => result.format(&tool_call.name),
                             None => "".to_string(),
