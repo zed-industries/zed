@@ -13,7 +13,6 @@ pub mod diff;
 pub mod hosting_provider;
 pub mod hosting_providers;
 pub mod permalink;
-pub mod pull_request;
 pub mod repository;
 
 lazy_static! {

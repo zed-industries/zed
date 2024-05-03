@@ -1,7 +1,16 @@
+use std::sync::OnceLock;
+
+use regex::Regex;
 use url::Url;
 
-use crate::hosting_provider::GitHostingProvider;
+use crate::hosting_provider::{GitHostingProvider, PullRequest};
 use crate::permalink::{BuildCommitPermalinkParams, ParsedGitRemote};
+
+fn pull_request_number_regex() -> &'static Regex {
+    static PULL_REQUEST_NUMBER_REGEX: OnceLock<Regex> = OnceLock::new();
+
+    PULL_REQUEST_NUMBER_REGEX.get_or_init(|| Regex::new(r"\(#(\d+)\)$").unwrap())
+}
 
 pub struct Github;
 
@@ -48,5 +57,66 @@ impl GitHostingProvider for Github {
         self.base_url()
             .join(&format!("{owner}/{repo}/commit/{sha}"))
             .unwrap()
+    }
+
+    fn extract_pull_request(&self, remote: &ParsedGitRemote, message: &str) -> Option<PullRequest> {
+        let line = message.lines().next()?;
+        let capture = pull_request_number_regex().captures(line)?;
+        let number = capture.get(1)?.as_str().parse::<u32>().ok()?;
+
+        let mut url = self.base_url();
+        let path = format!("/{}/{}/pull/{}", remote.owner, remote.repo, number);
+        url.set_path(&path);
+
+        Some(PullRequest { number, url })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // TODO: Replace with `indoc`.
+    use unindent::Unindent;
+
+    use super::*;
+
+    #[test]
+    fn test_github_pull_requests() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries",
+            repo: "zed",
+        };
+
+        let message = "This does not contain a pull request";
+        assert!(Github.extract_pull_request(&remote, message).is_none());
+
+        // Pull request number at end of first line
+        let message = r#"
+            project panel: do not expand collapsed worktrees on "collapse all entries" (#10687)
+
+            Fixes #10597
+
+            Release Notes:
+
+            - Fixed "project panel: collapse all entries" expanding collapsed worktrees.
+            "#
+        .unindent();
+
+        assert_eq!(
+            Github
+                .extract_pull_request(&remote, &message)
+                .unwrap()
+                .url
+                .as_str(),
+            "https://github.com/zed-industries/zed/pull/10687"
+        );
+
+        // Pull request number in middle of line, which we want to ignore
+        let message = r#"
+            Follow-up to #10687 to fix problems
+
+            See the original PR, this is a fix.
+            "#
+        .unindent();
+        assert_eq!(Github.extract_pull_request(&remote, &message), None);
     }
 }

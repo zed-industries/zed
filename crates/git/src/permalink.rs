@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use url::Url;
 
-use crate::hosting_provider::{GitHostingProvider, HostingProvider};
+use crate::hosting_provider::GitHostingProvider;
 use crate::hosting_providers::{Bitbucket, Codeberg, Gitee, Github, Gitlab, Sourcehut};
 
 pub struct BuildPermalinkParams<'a> {
@@ -22,24 +22,14 @@ pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
         selection,
     } = params;
 
-    let ParsedGitRemote {
-        provider,
-        owner,
-        repo,
-    } = parse_git_remote_url(remote_url)
+    let (provider, remote) = parse_git_remote_url(remote_url)
         .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
-
-    let path = match provider {
-        HostingProvider::Github => format!("{owner}/{repo}/blob/{sha}/{path}"),
-        HostingProvider::Gitlab => format!("{owner}/{repo}/-/blob/{sha}/{path}"),
-        HostingProvider::Gitee => format!("{owner}/{repo}/blob/{sha}/{path}"),
-        HostingProvider::Bitbucket => format!("{owner}/{repo}/src/{sha}/{path}"),
-        HostingProvider::Sourcehut => format!("~{owner}/{repo}/tree/{sha}/item/{path}"),
-        HostingProvider::Codeberg => format!("{owner}/{repo}/src/commit/{sha}/{path}"),
-    };
     let line_fragment = selection.map(|selection| provider.line_fragment(&selection));
 
-    let mut permalink = provider.base_url().join(&path).unwrap();
+    let mut permalink = provider.build_commit_permalink(BuildCommitPermalinkParams {
+        remote: &remote,
+        sha,
+    });
     permalink.set_fragment(line_fragment.as_deref());
     Ok(permalink)
 }
@@ -53,23 +43,6 @@ pub struct ParsedGitRemote<'a> {
 pub struct BuildCommitPermalinkParams<'a> {
     pub remote: &'a ParsedGitRemote<'a>,
     pub sha: &'a str,
-}
-
-pub fn build_commit_permalink(params: BuildCommitPermalinkParams) -> Url {
-    let BuildCommitPermalinkParams { sha, remote } = params;
-
-    let ParsedGitRemote { owner, repo } = remote;
-
-    let path = match provider {
-        HostingProvider::Github => format!("{owner}/{repo}/commit/{sha}"),
-        HostingProvider::Gitlab => format!("{owner}/{repo}/-/commit/{sha}"),
-        HostingProvider::Gitee => format!("{owner}/{repo}/commit/{sha}"),
-        HostingProvider::Bitbucket => format!("{owner}/{repo}/commits/{sha}"),
-        HostingProvider::Sourcehut => format!("~{owner}/{repo}/commit/{sha}"),
-        HostingProvider::Codeberg => format!("{owner}/{repo}/commit/{sha}"),
-    };
-
-    provider.base_url().join(&path).unwrap()
 }
 
 pub fn parse_git_remote_url(url: &str) -> Option<(Arc<dyn GitHostingProvider>, ParsedGitRemote)> {
@@ -347,8 +320,8 @@ mod tests {
     #[test]
     fn test_parse_git_remote_url_bitbucket_https_with_username() {
         let url = "https://thorstenballzed@bitbucket.org/thorstenzed/testingrepo.git";
-        let parsed = parse_git_remote_url(url).unwrap();
-        assert!(matches!(parsed.provider, HostingProvider::Bitbucket));
+        let (provider, parsed) = parse_git_remote_url(url).unwrap();
+        assert_eq!(provider.name(), "Bitbucket");
         assert_eq!(parsed.owner, "thorstenzed");
         assert_eq!(parsed.repo, "testingrepo");
     }
@@ -356,8 +329,8 @@ mod tests {
     #[test]
     fn test_parse_git_remote_url_bitbucket_https_without_username() {
         let url = "https://bitbucket.org/thorstenzed/testingrepo.git";
-        let parsed = parse_git_remote_url(url).unwrap();
-        assert!(matches!(parsed.provider, HostingProvider::Bitbucket));
+        let (provider, parsed) = parse_git_remote_url(url).unwrap();
+        assert_eq!(provider.name(), "Bitbucket");
         assert_eq!(parsed.owner, "thorstenzed");
         assert_eq!(parsed.repo, "testingrepo");
     }
@@ -365,8 +338,8 @@ mod tests {
     #[test]
     fn test_parse_git_remote_url_bitbucket_git() {
         let url = "git@bitbucket.org:thorstenzed/testingrepo.git";
-        let parsed = parse_git_remote_url(url).unwrap();
-        assert!(matches!(parsed.provider, HostingProvider::Bitbucket));
+        let (provider, parsed) = parse_git_remote_url(url).unwrap();
+        assert_eq!(provider.name(), "Bitbucket");
         assert_eq!(parsed.owner, "thorstenzed");
         assert_eq!(parsed.repo, "testingrepo");
     }

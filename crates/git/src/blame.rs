@@ -1,5 +1,5 @@
 use crate::commit::get_messages;
-use crate::permalink::{build_commit_permalink, parse_git_remote_url, BuildCommitPermalinkParams};
+use crate::permalink::{parse_git_remote_url, BuildCommitPermalinkParams};
 use crate::Oid;
 use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
@@ -47,9 +47,9 @@ impl Blame {
             unique_shas.insert(entry.sha);
             // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
             // now do the parsing.
-            if let Some(remote) = parsed_remote_url.as_ref() {
+            if let Some((provider, remote)) = parsed_remote_url.as_ref() {
                 permalinks.entry(entry.sha).or_insert_with(|| {
-                    build_commit_permalink(BuildCommitPermalinkParams {
+                    provider.build_commit_permalink(BuildCommitPermalinkParams {
                         remote,
                         sha: entry.sha.to_string().as_str(),
                     })
