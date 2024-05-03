@@ -173,6 +173,24 @@ impl Store {
         })
     }
 
+    pub fn rename_dev_server(
+        &mut self,
+        dev_server_id: DevServerId,
+        name: String,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.background_executor().spawn(async move {
+            client
+                .request(proto::RenameDevServer {
+                    dev_server_id: dev_server_id.0,
+                    name,
+                })
+                .await?;
+            Ok(())
+        })
+    }
+
     pub fn regenerate_dev_server_token(
         &mut self,
         dev_server_id: DevServerId,

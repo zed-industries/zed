@@ -240,7 +240,8 @@ message Envelope {
         OpenNewBuffer open_new_buffer = 196;
         DeleteDevServerProject delete_dev_server_project = 197;
         RegenerateDevServerToken regenerate_dev_server_token = 198;
-        RegenerateDevServerTokenResponse regenerate_dev_server_token_response = 199; // Current max
+        RegenerateDevServerTokenResponse regenerate_dev_server_token_response = 199;
+        RenameDevServer rename_dev_server = 200; // Current max
     }
 
     reserved 158 to 161;
@@ -504,6 +505,11 @@ message CreateDevServerResponse {
 }
 
 message ShutdownDevServer {
+}
+
+message RenameDevServer {
+    uint64 dev_server_id = 1;
+    string name = 2;
 }
 
 message DeleteDevServer {

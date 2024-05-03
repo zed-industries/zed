@@ -77,6 +77,10 @@ impl Database {
         user_id: UserId,
     ) -> crate::Result<(dev_server::Model, proto::DevServerProjectsUpdate)> {
         self.transaction(|tx| async move {
+            if name.is_empty() {
+                return Err(anyhow::anyhow!(proto::ErrorCode::Forbidden))?;
+            }
+
             let dev_server = dev_server::Entity::insert(dev_server::ActiveModel {
                 id: ActiveValue::NotSet,
                 hashed_token: ActiveValue::Set(hashed_access_token.to_string()),
@@ -111,6 +115,36 @@ impl Database {
 
             dev_server::Entity::update(dev_server::ActiveModel {
                 hashed_token: ActiveValue::Set(hashed_token.to_string()),
+                ..dev_server.clone().into_active_model()
+            })
+            .exec(&*tx)
+            .await?;
+
+            let dev_server_projects = self
+                .dev_server_projects_update_internal(user_id, &tx)
+                .await?;
+
+            Ok(dev_server_projects)
+        })
+        .await
+    }
+
+    pub async fn rename_dev_server(
+        &self,
+        id: DevServerId,
+        name: &str,
+        user_id: UserId,
+    ) -> crate::Result<proto::DevServerProjectsUpdate> {
+        self.transaction(|tx| async move {
+            let Some(dev_server) = dev_server::Entity::find_by_id(id).one(&*tx).await? else {
+                return Err(anyhow::anyhow!("no dev server with id {}", id))?;
+            };
+            if dev_server.user_id != user_id || name.is_empty() {
+                return Err(anyhow::anyhow!(proto::ErrorCode::Forbidden))?;
+            }
+
+            dev_server::Entity::update(dev_server::ActiveModel {
+                name: ActiveValue::Set(name.to_string()),
                 ..dev_server.clone().into_active_model()
             })
             .exec(&*tx)

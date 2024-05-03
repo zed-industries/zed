@@ -28,6 +28,7 @@ pub struct DevServerProjects {
     dev_server_store: Model<dev_server_projects::Store>,
     project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
+    rename_dev_server_input: View<TextField>,
     _subscription: gpui::Subscription,
 }
 
@@ -45,7 +46,8 @@ struct EditDevServer {
 
 #[derive(Clone)]
 enum EditDevServerState {
-    Idle,
+    Default,
+    Renaming,
     RegeneratingToken,
     RegeneratedToken(RegenerateDevServerTokenResponse),
 }
@@ -88,6 +90,8 @@ impl DevServerProjects {
         });
         let dev_server_name_input =
             cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Stacked));
+        let rename_dev_server_input =
+            cx.new_view(|cx| TextField::new(cx, "Name", "").with_label(FieldLabelLayout::Stacked));
 
         let focus_handle = cx.focus_handle();
         let dev_server_store = dev_server_projects::Store::global(cx);
@@ -103,6 +107,7 @@ impl DevServerProjects {
             dev_server_store,
             project_path_input,
             dev_server_name_input,
+            rename_dev_server_input,
             _subscription: subscription,
         }
     }
@@ -229,6 +234,33 @@ impl DevServerProjects {
         cx.notify()
     }
 
+    fn rename_dev_server(&mut self, id: DevServerId, name: String, cx: &mut ViewContext<Self>) {
+        if name.is_empty() {
+            return;
+        }
+
+        let request = self
+            .dev_server_store
+            .update(cx, |store, cx| store.rename_dev_server(id, name, cx));
+
+        self.mode = Mode::EditDevServer(EditDevServer {
+            dev_server_id: id,
+            state: EditDevServerState::Renaming,
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            request.await?;
+            this.update(&mut cx, move |this, cx| {
+                this.mode = Mode::EditDevServer(EditDevServer {
+                    dev_server_id: id,
+                    state: EditDevServerState::Default,
+                });
+                cx.notify();
+            })
+        })
+        .detach_and_prompt_err("Failed to rename dev server", cx, |_, _| None);
+    }
+
     fn refresh_dev_server_token(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
         let answer = cx.prompt(
             gpui::PromptLevel::Warning,
@@ -236,11 +268,6 @@ impl DevServerProjects {
             Some("This will invalidate the existing dev server token."),
             &["Regenerate", "Cancel"],
         );
-
-        let request = self
-            .dev_server_store
-            .update(cx, |store, cx| store.regenerate_dev_server_token(id, cx));
-
         cx.spawn(|this, mut cx| async move {
             let answer = answer.await?;
 
@@ -249,6 +276,8 @@ impl DevServerProjects {
             }
 
             this.update(&mut cx, move |this, cx| {
+                this.dev_server_store
+                    .update(cx, |store, cx| store.regenerate_dev_server_token(id, cx));
                 this.mode = Mode::EditDevServer(EditDevServer {
                     dev_server_id: id,
                     state: EditDevServerState::RegeneratingToken,
@@ -382,6 +411,7 @@ impl DevServerProjects {
     ) -> impl IntoElement {
         let dev_server_id = dev_server.id;
         let status = dev_server.status;
+        let dev_server_name = dev_server.name.clone();
         if create_project
             .as_ref()
             .is_some_and(|cp| cp.dev_server_id != dev_server.id)
@@ -421,18 +451,30 @@ impl DevServerProjects {
                                         )
                                     }),
                             )
-                            .child(dev_server.name.clone())
+                            .child(dev_server_name.clone())
                             .child(
                                 h_flex()
                                     .visible_on_hover("dev-server")
                                     .gap_1()
                                     .child(
                                         IconButton::new("edit-dev-server", IconName::Pencil)
-                                            .on_click(cx.listener(move |this, _, _| {
+                                            .on_click(cx.listener(move |this, _, cx| {
                                                 this.mode = Mode::EditDevServer(EditDevServer {
                                                     dev_server_id,
-                                                    state: EditDevServerState::Idle,
+                                                    state: EditDevServerState::Default,
                                                 });
+                                                let dev_server_name = dev_server_name.clone();
+                                                this.rename_dev_server_input.update(
+                                                    cx,
+                                                    move |input, cx| {
+                                                        input.editor().update(
+                                                            cx,
+                                                            move |editor, cx| {
+                                                                editor.set_text(dev_server_name, cx)
+                                                            },
+                                                        )
+                                                    },
+                                                )
                                             }))
                                             .tooltip(|cx| Tooltip::text("Edit dev server", cx)),
                                     )
@@ -715,10 +757,10 @@ impl DevServerProjects {
 
     fn render_edit_dev_server(
         &mut self,
-        state: EditDevServer,
+        edit_dev_server: EditDevServer,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let dev_server_id = state.dev_server_id;
+        let dev_server_id = edit_dev_server.dev_server_id;
         let dev_server = self
             .dev_server_store
             .read(cx)
@@ -734,27 +776,53 @@ impl DevServerProjects {
             .map(|dev_server| dev_server.status)
             .unwrap_or(DevServerStatus::Offline);
 
-        let container = v_flex().child(
-            Button::new("regenerate-dev-server-token", "Generate new access token")
-                .icon(IconName::Update)
-                .on_click(cx.listener(move |this, _, cx| {
-                    this.refresh_dev_server_token(dev_server_id, cx);
-                    cx.notify();
-                })),
+        let disabled = matches!(
+            edit_dev_server.state,
+            EditDevServerState::Renaming | EditDevServerState::RegeneratingToken
         );
-        let content = match state.state {
-            EditDevServerState::Idle => container,
+        self.rename_dev_server_input.update(cx, |input, cx| {
+            input.set_disabled(disabled, cx);
+        });
+
+        let content = v_flex()
+            .justify_end()
+            .child(self.rename_dev_server_input.clone())
+            .child(
+                Button::new("rename-dev-server", "Rename")
+                    .icon(IconName::Update)
+                    .on_click(cx.listener(move |this, _, cx| {
+                        let text = this
+                            .rename_dev_server_input
+                            .read(cx)
+                            .editor()
+                            .read(cx)
+                            .text(cx);
+                        this.rename_dev_server(dev_server_id, text, cx);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("regenerate-dev-server-token", "Generate new access token")
+                    .icon(IconName::Update)
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.refresh_dev_server_token(dev_server_id, cx);
+                        cx.notify();
+                    })),
+            );
+
+        let content = match edit_dev_server.state {
             EditDevServerState::RegeneratingToken => {
-                container.child(Self::render_loading_spinner("Generating token..."))
+                content.child(Self::render_loading_spinner("Generating token..."))
             }
             EditDevServerState::RegeneratedToken(response) => {
-                container.child(Self::render_dev_server_token_instructions(
+                content.child(Self::render_dev_server_token_instructions(
                     &response.access_token,
                     &dev_server_name,
                     dev_server_status,
                     cx,
                 ))
             }
+            _ => content,
         };
 
         v_flex()

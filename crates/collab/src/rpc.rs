@@ -416,6 +416,7 @@ impl Server {
             .add_request_handler(user_handler(delete_dev_server_project))
             .add_request_handler(user_handler(create_dev_server))
             .add_request_handler(user_handler(regenerate_dev_server_token))
+            .add_request_handler(user_handler(rename_dev_server))
             .add_request_handler(user_handler(delete_dev_server))
             .add_request_handler(dev_server_handler(share_dev_server_project))
             .add_request_handler(dev_server_handler(shutdown_dev_server))
@@ -2315,6 +2316,12 @@ async fn create_dev_server(
     let access_token = auth::random_token();
     let hashed_access_token = auth::hash_access_token(&access_token);
 
+    if request.name.is_empty() {
+        return Err(proto::ErrorCode::Forbidden
+            .message("Dev server name cannot be empty".to_string())
+            .anyhow())?;
+    }
+
     let (dev_server, status) = session
         .db()
         .await
@@ -2363,6 +2370,35 @@ async fn regenerate_dev_server_token(
         dev_server_id: dev_server_id.to_proto(),
         access_token: auth::generate_dev_server_token(dev_server_id.0 as usize, access_token),
     })?;
+    Ok(())
+}
+
+async fn rename_dev_server(
+    request: proto::RenameDevServer,
+    response: Response<proto::RenameDevServer>,
+    session: UserSession,
+) -> Result<()> {
+    if request.name.is_empty() {
+        return Err(proto::ErrorCode::Forbidden
+            .message("Dev server name cannot be empty".to_string())
+            .anyhow())?;
+    }
+
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let dev_server = session.db().await.get_dev_server(dev_server_id).await?;
+    if dev_server.user_id != session.user_id() {
+        return Err(anyhow!(ErrorCode::Forbidden))?;
+    }
+
+    let status = session
+        .db()
+        .await
+        .rename_dev_server(dev_server_id, &request.name, session.user_id())
+        .await?;
+
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::Ack {})?;
     Ok(())
 }
 
