@@ -2,17 +2,17 @@
 
 # General
 
-- [Getting Started](./getting_started.md)
-  - [System Requirements](./system_requirements.md)
+- [Getting Started](./getting-started.md)
+  - [System Requirements](./system-requirements.md)
   - [Telemetry](./telemetry.md)
-  - [Additional Learning Materials](./additional_learning_materials.md)
+  - [Additional Learning Materials](./additional-learning-materials.md)
 - [Feedback](./feedback.md)
 
 # Configuring Zed
 
 - [Settings](./configuring_zed.md)
 - [Key bindings](./configuring_zed__key_bindings.md)
-- [Vim Mode](./configuring_zed__configuring_vim.md)
+- [Vim Mode](./vim.md)
 
 # Using Zed
 
@@ -20,7 +20,7 @@
 - [Collaboration]()
 - [Using AI]()
 - [Tasks](./tasks.md)
-- [Remote Development](./remote_development.md)
+- [Remote Development](./remote-development.md)
 
 # Contributing to Zed
 
