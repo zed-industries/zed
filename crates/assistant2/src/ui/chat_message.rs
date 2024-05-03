@@ -16,6 +16,7 @@ pub struct ChatMessage {
     id: MessageId,
     player: UserOrAssistant,
     message: Option<AnyElement>,
+    tools_used: Option<AnyElement>,
     collapsed: bool,
     on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
 }
@@ -25,6 +26,7 @@ impl ChatMessage {
         id: MessageId,
         player: UserOrAssistant,
         message: Option<AnyElement>,
+        tools_used: Option<AnyElement>,
         collapsed: bool,
         on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
     ) -> Self {
@@ -32,6 +34,7 @@ impl ChatMessage {
             id,
             player,
             message,
+            tools_used,
             collapsed,
             on_collapse_handle_click,
         }
@@ -66,6 +69,10 @@ impl RenderOnce for ChatMessage {
         // Clamp the message height to exactly 1.5 lines when collapsed.
         let collapsed_height = content_padding.to_pixels(cx.rem_size()) + cx.line_height() * 1.5;
 
+        let tools_used = self
+            .tools_used
+            .map(|attachment| div().mt_3().child(attachment));
+
         let content = self.message.map(|message| {
             div()
                 .overflow_hidden()
@@ -75,6 +82,7 @@ impl RenderOnce for ChatMessage {
                 .when(self.collapsed, |this| this.h(collapsed_height))
                 .bg(cx.theme().colors().surface_background)
                 .child(message)
+                .children(tools_used)
         });
 
         v_flex()
