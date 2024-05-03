@@ -7,7 +7,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use tree_sitter::{QueryCapture, QueryCursor};
+use tree_sitter::QueryCapture;
 use util::ResultExt as _;
 
 #[derive(Copy, Clone)]
