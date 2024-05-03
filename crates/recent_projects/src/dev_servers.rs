@@ -44,7 +44,7 @@ struct EditDevServer {
     state: EditDevServerState,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum EditDevServerState {
     Default,
     Renaming,
@@ -786,22 +786,62 @@ impl DevServerProjects {
             input.set_disabled(disabled, cx);
         });
 
+        let rename_dev_server_input_text = self
+            .rename_dev_server_input
+            .read(cx)
+            .editor()
+            .read(cx)
+            .text(cx);
+
         let content = v_flex()
             .justify_end()
-            .child(self.rename_dev_server_input.clone())
             .child(
-                Button::new("rename-dev-server", "Rename")
-                    .icon(IconName::Update)
-                    .on_click(cx.listener(move |this, _, cx| {
-                        let text = this
-                            .rename_dev_server_input
-                            .read(cx)
-                            .editor()
-                            .read(cx)
-                            .text(cx);
-                        this.rename_dev_server(dev_server_id, text, cx);
-                        cx.notify();
-                    })),
+                h_flex()
+                    .pb_2()
+                    .items_end()
+                    .w_full()
+                    .px_2()
+                    .child(
+                        div()
+                            .pl_2()
+                            .max_w(rems(16.))
+                            .child(self.rename_dev_server_input.clone()),
+                    )
+                    .child(
+                        div()
+                            .pl_1()
+                            .pb(px(3.))
+                            .when(
+                                edit_dev_server.state != EditDevServerState::Renaming,
+                                |div| {
+                                    div.child(
+                                        Button::new("rename-dev-server", "Rename")
+                                            .disabled(
+                                                rename_dev_server_input_text.trim().is_empty()
+                                                    || rename_dev_server_input_text
+                                                        == dev_server_name,
+                                            )
+                                            .on_click(cx.listener(move |this, _, cx| {
+                                                this.rename_dev_server(
+                                                    dev_server_id,
+                                                    rename_dev_server_input_text.clone(),
+                                                    cx,
+                                                );
+                                                cx.notify();
+                                            })),
+                                    )
+                                },
+                            )
+                            .when(
+                                edit_dev_server.state == EditDevServerState::Renaming,
+                                |div| {
+                                    div.child(
+                                        Button::new("rename-dev-server", "Renaming...")
+                                            .disabled(true),
+                                    )
+                                },
+                            ),
+                    ),
             )
             .child(
                 Button::new("regenerate-dev-server-token", "Generate new access token")
