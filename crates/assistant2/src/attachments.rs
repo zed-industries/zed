@@ -153,8 +153,7 @@ impl Render for FileAttachmentView {
                             .bg(cx.theme().colors().editor_background)
                             .rounded_md()
                             .child(ui::Icon::new(IconName::File))
-                            // Matching up to the mock, which was to show a number of files. We only have one
-                            .child("1"),
+                            .child(filename.to_string()),
                     )
                     .tooltip({
                         move |cx| Tooltip::with_meta("File Attached", None, filename.clone(), cx)

@@ -140,6 +140,7 @@ impl AssistantPanel {
                     Arc::new(tool_registry),
                     user_store,
                     Some(project_index),
+                    workspace,
                     cx,
                 )
             })
@@ -152,6 +153,7 @@ impl AssistantPanel {
         tool_registry: Arc<ToolRegistry>,
         user_store: Model<UserStore>,
         project_index: Option<Model<ProjectIndex>>,
+        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let chat = cx.new_view(|cx| {
@@ -161,6 +163,7 @@ impl AssistantPanel {
                 tool_registry.clone(),
                 user_store,
                 project_index,
+                workspace,
                 cx,
             )
         });
@@ -259,6 +262,7 @@ impl AssistantChat {
         tool_registry: Arc<ToolRegistry>,
         user_store: Model<UserStore>,
         project_index: Option<Model<ProjectIndex>>,
+        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let model = CompletionProvider::get(cx).default_model();
@@ -277,8 +281,14 @@ impl AssistantChat {
             cx.new_view(|cx| ProjectIndexButton::new(project_index, tool_registry.clone(), cx))
         });
 
-        let active_file_button =
-            Some(cx.new_view(|_cx| ActiveFileButton::new(attachment_store.clone())));
+        let active_file_button = match workspace.upgrade() {
+            Some(workspace) => {
+                Some(cx.new_view(
+                    |cx| ActiveFileButton::new(attachment_store.clone(), workspace, cx), //
+                ))
+            }
+            _ => None,
+        };
 
         Self {
             model,

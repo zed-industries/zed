@@ -1,7 +1,9 @@
 use crate::attachments::{ActiveEditorAttachmentTool, UserAttachmentStore};
-use gpui::prelude::*;
+use editor::Editor;
+use gpui::{prelude::*, Subscription, View};
 use std::sync::Arc;
 use ui::{prelude::*, ButtonLike, Color, Icon, IconName, Tooltip};
+use workspace::Workspace;
 
 #[derive(Clone)]
 enum Status {
@@ -12,16 +14,65 @@ enum Status {
 
 pub struct ActiveFileButton {
     attachment_store: Arc<UserAttachmentStore>,
+    status: Status,
+    #[allow(dead_code)]
+    workspace_subscription: Subscription,
 }
 
 impl ActiveFileButton {
-    pub fn new(attachment_store: Arc<UserAttachmentStore>) -> Self {
-        Self { attachment_store }
+    pub fn new(
+        attachment_store: Arc<UserAttachmentStore>,
+        workspace: View<Workspace>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let workspace_subscription = cx.subscribe(&workspace, Self::handle_workspace_event);
+
+        cx.defer(move |this, cx| this.update_active_buffer(workspace.clone(), cx));
+
+        Self {
+            attachment_store,
+            status: Status::NoFile,
+            workspace_subscription,
+        }
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
         self.attachment_store
             .set_attachment_tool_enabled::<ActiveEditorAttachmentTool>(enabled);
+    }
+
+    pub fn update_active_buffer(&mut self, workspace: View<Workspace>, cx: &mut ViewContext<Self>) {
+        let active_buffer = workspace
+            .read(cx)
+            .active_item(cx)
+            .and_then(|item| Some(item.act_as::<Editor>(cx)?.read(cx).buffer().clone()));
+
+        if let Some(buffer) = active_buffer {
+            let buffer = buffer.read(cx);
+
+            if let Some(singleton) = buffer.as_singleton() {
+                let singleton = singleton.read(cx);
+
+                let filename: String = singleton
+                    .file()
+                    .map(|file| file.path().to_string_lossy())
+                    .unwrap_or("Untitled".into())
+                    .into();
+
+                self.status = Status::ActiveFile(filename);
+            }
+        }
+    }
+
+    fn handle_workspace_event(
+        &mut self,
+        workspace: View<Workspace>,
+        event: &workspace::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let workspace::Event::ActiveItemChanged = event {
+            self.update_active_buffer(workspace, cx);
+        }
     }
 }
 
@@ -43,7 +94,7 @@ impl Render for ActiveFileButton {
 
         let indicator = None;
 
-        let status = Status::ActiveFile("example-of-filename".to_string());
+        let status = self.status.clone();
 
         ButtonLike::new("active-file-button")
             .child(
@@ -58,9 +109,10 @@ impl Render for ActiveFileButton {
                             "Active file disabled".to_string(),
                             Some("Click to enable".to_string()),
                         ),
-                        (true, Status::ActiveFile(file)) => {
-                            ("Active file enabled".to_string(), Some(file))
-                        }
+                        (true, Status::ActiveFile(filename)) => (
+                            format!("Active file {filename} enabled"),
+                            Some("Click to disable".to_string()),
+                        ),
                         (true, Status::NoFile) => {
                             ("No file active for conversation".to_string(), None)
                         }
