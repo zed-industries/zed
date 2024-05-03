@@ -2,7 +2,7 @@ use anyhow::Result;
 use assistant_tooling::ToolFunctionDefinition;
 use client::{proto, Client};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::Global;
+use gpui::{AppContext, Global};
 use std::sync::Arc;
 
 pub use open_ai::RequestMessage as CompletionMessage;
@@ -11,6 +11,10 @@ pub use open_ai::RequestMessage as CompletionMessage;
 pub struct CompletionProvider(Arc<dyn CompletionProviderBackend>);
 
 impl CompletionProvider {
+    pub fn get(cx: &AppContext) -> &Self {
+        cx.global::<CompletionProvider>()
+    }
+
     pub fn new(backend: impl CompletionProviderBackend) -> Self {
         Self(Arc::new(backend))
     }
@@ -29,7 +33,7 @@ impl CompletionProvider {
         messages: Vec<CompletionMessage>,
         stop: Vec<String>,
         temperature: f32,
-        tools: &[ToolFunctionDefinition],
+        tools: Vec<ToolFunctionDefinition>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::LanguageModelResponseMessage>>>>
     {
         self.0.complete(model, messages, stop, temperature, tools)
@@ -47,7 +51,7 @@ pub trait CompletionProviderBackend: 'static {
         messages: Vec<CompletionMessage>,
         stop: Vec<String>,
         temperature: f32,
-        tools: &[ToolFunctionDefinition],
+        tools: Vec<ToolFunctionDefinition>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::LanguageModelResponseMessage>>>>;
 }
 
@@ -76,7 +80,7 @@ impl CompletionProviderBackend for CloudCompletionProvider {
         messages: Vec<CompletionMessage>,
         stop: Vec<String>,
         temperature: f32,
-        tools: &[ToolFunctionDefinition],
+        tools: Vec<ToolFunctionDefinition>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::LanguageModelResponseMessage>>>>
     {
         let client = self.client.clone();

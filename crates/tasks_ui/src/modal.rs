@@ -3,9 +3,9 @@ use std::sync::Arc;
 use crate::{active_item_selection_properties, schedule_resolved_task};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, Global,
-    InteractiveElement, Model, ParentElement, Render, SharedString, Styled, Subscription, View,
-    ViewContext, VisualContext, WeakView,
+    impl_actions, rems, AppContext, DismissEvent, EventEmitter, FocusableView, InteractiveElement,
+    Model, ParentElement, Render, SharedString, Styled, Subscription, View, ViewContext,
+    VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};

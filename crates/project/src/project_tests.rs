@@ -2931,9 +2931,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     let languages = project.update(cx, |project, _| project.languages().clone());
     languages.add(rust_lang());
 
-    let buffer = project.update(cx, |project, cx| {
-        project.create_buffer("", None, cx).unwrap()
-    });
+    let buffer = project.update(cx, |project, cx| project.create_local_buffer("", None, cx));
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());

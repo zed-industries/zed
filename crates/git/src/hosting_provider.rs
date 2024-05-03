@@ -3,7 +3,7 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::Result;
 use url::Url;
-use util::{github, http::HttpClient};
+use util::{codeberg, github, http::HttpClient};
 
 use crate::Oid;
 
@@ -59,7 +59,7 @@ impl HostingProvider {
 
     pub fn supports_avatars(&self) -> bool {
         match self {
-            HostingProvider::Github => true,
+            HostingProvider::Github | HostingProvider::Codeberg => true,
             _ => false,
         }
     }
@@ -71,24 +71,27 @@ impl HostingProvider {
         commit: Oid,
         client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
-        match self {
+        Ok(match self {
             HostingProvider::Github => {
                 let commit = commit.to_string();
-
-                let author =
-                    github::fetch_github_commit_author(repo_owner, repo, &commit, &client).await?;
-
-                let url = if let Some(author) = author {
-                    let mut url = Url::parse(&author.avatar_url)?;
-                    url.set_query(Some("size=128"));
-                    Some(url)
-                } else {
-                    None
-                };
-                Ok(url)
+                github::fetch_github_commit_author(repo_owner, repo, &commit, &client)
+                    .await?
+                    .map(|author| -> Result<Url, url::ParseError> {
+                        let mut url = Url::parse(&author.avatar_url)?;
+                        url.set_query(Some("size=128"));
+                        Ok(url)
+                    })
+                    .transpose()
+            }
+            HostingProvider::Codeberg => {
+                let commit = commit.to_string();
+                codeberg::fetch_codeberg_commit_author(repo_owner, repo, &commit, &client)
+                    .await?
+                    .map(|author| Url::parse(&author.avatar_url))
+                    .transpose()
             }
             _ => Ok(None),
-        }
+        }?)
     }
 }
 

@@ -5,18 +5,21 @@ edition = "2021"
 publish = false
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/assistant2.rs"
 
-[[example]]
-name = "assistant_example"
-path = "examples/assistant_example.rs"
-crate-type = ["bin"]
+[features]
+default = []
+stories = ["dep:story"]
 
 [dependencies]
 anyhow.workspace = true
 assistant_tooling.workspace = true
 client.workspace = true
+collections.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
@@ -33,6 +36,7 @@ semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+story = { workspace = true, optional = true }
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -53,6 +57,3 @@ settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
-
-[lints]
-workspace = true

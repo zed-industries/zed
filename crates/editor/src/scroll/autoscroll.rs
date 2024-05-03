@@ -1,9 +1,12 @@
-use std::{cmp, f32};
+use std::{any::TypeId, cmp, f32};
 
+use collections::HashSet;
 use gpui::{px, Bounds, Pixels, ViewContext};
 use language::Point;
 
-use crate::{display_map::ToDisplayPoint, Editor, EditorMode, LineWithInvisibles};
+use crate::{
+    display_map::ToDisplayPoint, DiffRowHighlight, Editor, EditorMode, LineWithInvisibles,
+};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
@@ -103,7 +106,13 @@ impl Editor {
 
         let mut target_top;
         let mut target_bottom;
-        if let Some(first_highlighted_row) = &self.highlighted_display_rows(cx).first_entry() {
+        if let Some(first_highlighted_row) = &self
+            .highlighted_display_rows(
+                HashSet::from_iter(Some(TypeId::of::<DiffRowHighlight>())),
+                cx,
+            )
+            .first_entry()
+        {
             target_top = *first_highlighted_row.key() as f32;
             target_bottom = target_top + 1.;
         } else {

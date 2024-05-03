@@ -415,6 +415,15 @@ impl MacWindowState {
 
     fn start_display_link(&mut self) {
         self.stop_display_link();
+        unsafe {
+            if !self
+                .native_window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+            {
+                return;
+            }
+        }
         let display_id = unsafe { display_id_for_screen(self.native_window.screen()) };
         if let Some(mut display_link) =
             DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step).log_err()
@@ -926,7 +935,6 @@ impl PlatformWindow for MacWindow {
             if let Some((ix, answer)) = latest_non_cancel_label {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
-                let _: () = msg_send![button, setHasDestructiveAction: YES];
                 if level == PromptLevel::Destructive {
                     let _: () = msg_send![button, setHasDestructiveAction: YES];
                 }
@@ -983,6 +991,8 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn set_app_id(&mut self, _app_id: &str) {}
+
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
         let this = self.0.as_ref().lock();
         let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
@@ -997,6 +1007,8 @@ impl PlatformWindow for MacWindow {
         };
         unsafe {
             this.native_window.setOpaque_(opaque);
+            // Shadows for transparent windows cause artifacts and performance issues
+            this.native_window.setHasShadow_(opaque);
             let clear_color = if opaque == YES {
                 NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
             } else {

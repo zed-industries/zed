@@ -4,6 +4,7 @@ use std::ops::Range;
 
 use git::diff::{DiffHunk, DiffHunkStatus};
 use language::Point;
+use multi_buffer::Anchor;
 
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
@@ -17,7 +18,9 @@ pub enum DisplayDiffHunk {
     },
 
     Unfolded {
+        diff_base_byte_range: Range<usize>,
         display_row_range: Range<u32>,
+        multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
     },
 }
@@ -45,7 +48,7 @@ impl DisplayDiffHunk {
     }
 }
 
-pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> DisplayDiffHunk {
+pub fn diff_hunk_to_display(hunk: &DiffHunk<u32>, snapshot: &DisplaySnapshot) -> DisplayDiffHunk {
     let hunk_start_point = Point::new(hunk.associated_range.start, 0);
     let hunk_start_point_sub = Point::new(hunk.associated_range.start.saturating_sub(1), 0);
     let hunk_end_point_sub = Point::new(
@@ -81,11 +84,16 @@ pub fn diff_hunk_to_display(hunk: DiffHunk<u32>, snapshot: &DisplaySnapshot) -> 
 
         let hunk_end_row = hunk.associated_range.end.max(hunk.associated_range.start);
         let hunk_end_point = Point::new(hunk_end_row, 0);
+
+        let multi_buffer_start = snapshot.buffer_snapshot.anchor_after(hunk_start_point);
+        let multi_buffer_end = snapshot.buffer_snapshot.anchor_before(hunk_end_point);
         let end = hunk_end_point.to_display_point(snapshot).row();
 
         DisplayDiffHunk::Unfolded {
             display_row_range: start..end,
+            multi_buffer_range: multi_buffer_start..multi_buffer_end,
             status: hunk.status(),
+            diff_base_byte_range: hunk.diff_base_byte_range.clone(),
         }
     }
 }
@@ -108,10 +116,9 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
 
         // buffer has two modified hunks with two rows each
-        let buffer_1 = project
-            .update(cx, |project, cx| {
-                project.create_buffer(
-                    "
+        let buffer_1 = project.update(cx, |project, cx| {
+            project.create_local_buffer(
+                "
                         1.zero
                         1.ONE
                         1.TWO
@@ -120,13 +127,12 @@ mod tests {
                         1.FIVE
                         1.six
                     "
-                    .unindent()
-                    .as_str(),
-                    None,
-                    cx,
-                )
-            })
-            .unwrap();
+                .unindent()
+                .as_str(),
+                None,
+                cx,
+            )
+        });
         buffer_1.update(cx, |buffer, cx| {
             buffer.set_diff_base(
                 Some(
@@ -139,17 +145,17 @@ mod tests {
                         1.five
                         1.six
                     "
-                    .unindent(),
+                    .unindent()
+                    .into(),
                 ),
                 cx,
             );
         });
 
         // buffer has a deletion hunk and an insertion hunk
-        let buffer_2 = project
-            .update(cx, |project, cx| {
-                project.create_buffer(
-                    "
+        let buffer_2 = project.update(cx, |project, cx| {
+            project.create_local_buffer(
+                "
                         2.zero
                         2.one
                         2.two
@@ -158,13 +164,12 @@ mod tests {
                         2.five
                         2.six
                     "
-                    .unindent()
-                    .as_str(),
-                    None,
-                    cx,
-                )
-            })
-            .unwrap();
+                .unindent()
+                .as_str(),
+                None,
+                cx,
+            )
+        });
         buffer_2.update(cx, |buffer, cx| {
             buffer.set_diff_base(
                 Some(
@@ -177,7 +182,8 @@ mod tests {
                         2.four
                         2.six
                     "
-                    .unindent(),
+                    .unindent()
+                    .into(),
                 ),
                 cx,
             );

@@ -4,9 +4,9 @@ use crate::{
     auth,
     db::{
         self, dev_server, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
-        CreatedChannelMessage, Database, DevServerId, InviteMemberResult, MembershipUpdated,
-        MessageId, NotificationId, PrincipalId, Project, ProjectId, RejoinedProject,
-        RemoteProjectId, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId,
+        CreatedChannelMessage, Database, DevServerId, DevServerProjectId, InviteMemberResult,
+        MembershipUpdated, MessageId, NotificationId, PrincipalId, Project, ProjectId,
+        RejoinedProject, RemoveChannelMemberResult, ReplicaId, RespondToChannelInvite, RoomId,
         ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
@@ -73,6 +73,8 @@ use tracing::{
     info_span, instrument, Instrument,
 };
 use util::http::IsahcHttpClient;
+
+use self::connection_pool::VersionedMessage;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -409,11 +411,12 @@ impl Server {
             .add_message_handler(unshare_project)
             .add_request_handler(user_handler(join_project))
             .add_request_handler(user_handler(join_hosted_project))
-            .add_request_handler(user_handler(rejoin_remote_projects))
-            .add_request_handler(user_handler(create_remote_project))
+            .add_request_handler(user_handler(rejoin_dev_server_projects))
+            .add_request_handler(user_handler(create_dev_server_project))
+            .add_request_handler(user_handler(delete_dev_server_project))
             .add_request_handler(user_handler(create_dev_server))
             .add_request_handler(user_handler(delete_dev_server))
-            .add_request_handler(dev_server_handler(share_remote_project))
+            .add_request_handler(dev_server_handler(share_dev_server_project))
             .add_request_handler(dev_server_handler(shutdown_dev_server))
             .add_request_handler(dev_server_handler(reconnect_dev_server))
             .add_message_handler(user_message_handler(leave_project))
@@ -466,6 +469,9 @@ impl Server {
                 forward_mutating_project_request::<proto::ApplyCompletionAdditionalEdits>,
             ))
             .add_request_handler(user_handler(
+                forward_versioned_mutating_project_request::<proto::OpenNewBuffer>,
+            ))
+            .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             ))
             .add_request_handler(user_handler(
@@ -505,7 +511,7 @@ impl Server {
                 forward_mutating_project_request::<proto::OnTypeFormatting>,
             ))
             .add_request_handler(user_handler(
-                forward_mutating_project_request::<proto::SaveBuffer>,
+                forward_versioned_mutating_project_request::<proto::SaveBuffer>,
             ))
             .add_request_handler(user_handler(
                 forward_mutating_project_request::<proto::BlameBuffer>,
@@ -1062,12 +1068,12 @@ impl Server {
                         .await?;
                 }
 
-                let (contacts, channels_for_user, channel_invites, remote_projects) =
+                let (contacts, channels_for_user, channel_invites, dev_server_projects) =
                     future::try_join4(
                         self.app_state.db.get_contacts(user.id),
                         self.app_state.db.get_channels_for_user(user.id),
                         self.app_state.db.get_channel_invites_for_user(user.id),
-                        self.app_state.db.remote_projects_update(user.id),
+                        self.app_state.db.dev_server_projects_update(user.id),
                     )
                     .await?;
 
@@ -1090,7 +1096,7 @@ impl Server {
                         build_channels_update(channels_for_user, channel_invites),
                     )?;
                 }
-                send_remote_projects_update(user.id, remote_projects, session).await;
+                send_dev_server_projects_update(user.id, dev_server_projects, session).await;
 
                 if let Some(incoming_call) =
                     self.app_state.db.incoming_call_for_user(user.id).await?
@@ -1112,7 +1118,7 @@ impl Server {
                 let projects = self
                     .app_state
                     .db
-                    .get_remote_projects_for_dev_server(dev_server.id)
+                    .get_projects_for_dev_server(dev_server.id)
                     .await?;
                 self.peer
                     .send(connection_id, proto::DevServerInstructions { projects })?;
@@ -1120,9 +1126,9 @@ impl Server {
                 let status = self
                     .app_state
                     .db
-                    .remote_projects_update(dev_server.user_id)
+                    .dev_server_projects_update(dev_server.user_id)
                     .await?;
-                send_remote_projects_update(dev_server.user_id, status, &session).await;
+                send_dev_server_projects_update(dev_server.user_id, status, &session).await;
             }
         }
 
@@ -1965,8 +1971,8 @@ async fn share_project(
             session.connection_id,
             &request.worktrees,
             request
-                .remote_project_id
-                .map(|id| RemoteProjectId::from_proto(id)),
+                .dev_server_project_id
+                .map(|id| DevServerProjectId::from_proto(id)),
         )
         .await?;
     response.send(proto::ShareProjectResponse {
@@ -2018,26 +2024,26 @@ async fn unshare_project_internal(
 }
 
 /// DevServer makes a project available online
-async fn share_remote_project(
-    request: proto::ShareRemoteProject,
-    response: Response<proto::ShareRemoteProject>,
+async fn share_dev_server_project(
+    request: proto::ShareDevServerProject,
+    response: Response<proto::ShareDevServerProject>,
     session: DevServerSession,
 ) -> Result<()> {
-    let (remote_project, user_id, status) = session
+    let (dev_server_project, user_id, status) = session
         .db()
         .await
-        .share_remote_project(
-            RemoteProjectId::from_proto(request.remote_project_id),
+        .share_dev_server_project(
+            DevServerProjectId::from_proto(request.dev_server_project_id),
             session.dev_server_id(),
             session.connection_id,
             &request.worktrees,
         )
         .await?;
-    let Some(project_id) = remote_project.project_id else {
+    let Some(project_id) = dev_server_project.project_id else {
         return Err(anyhow!("failed to share remote project"))?;
     };
 
-    send_remote_projects_update(user_id, status, &session).await;
+    send_dev_server_projects_update(user_id, status, &session).await;
 
     response.send(proto::ShareProjectResponse { project_id })?;
 
@@ -2130,9 +2136,9 @@ fn join_project_internal(
         collaborators: collaborators.clone(),
         language_servers: project.language_servers.clone(),
         role: project.role.into(),
-        remote_project_id: project
-            .remote_project_id
-            .map(|remote_project_id| remote_project_id.0 as u64),
+        dev_server_project_id: project
+            .dev_server_project_id
+            .map(|dev_server_project_id| dev_server_project_id.0 as u64),
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -2244,9 +2250,9 @@ async fn join_hosted_project(
     join_project_internal(response, session, &mut project, &replica_id)
 }
 
-async fn create_remote_project(
-    request: proto::CreateRemoteProject,
-    response: Response<proto::CreateRemoteProject>,
+async fn create_dev_server_project(
+    request: proto::CreateDevServerProject,
+    response: Response<proto::CreateDevServerProject>,
     session: UserSession,
 ) -> Result<()> {
     let dev_server_id = DevServerId(request.dev_server_id as i32);
@@ -2267,14 +2273,14 @@ async fn create_remote_project(
         .forward_request(
             session.connection_id,
             dev_server_connection_id,
-            proto::ValidateRemoteProjectRequest { path: path.clone() },
+            proto::ValidateDevServerProjectRequest { path: path.clone() },
         )
         .await?;
 
-    let (remote_project, update) = session
+    let (dev_server_project, update) = session
         .db()
         .await
-        .create_remote_project(
+        .create_dev_server_project(
             DevServerId(request.dev_server_id as i32),
             &request.path,
             session.user_id(),
@@ -2284,7 +2290,7 @@ async fn create_remote_project(
     let projects = session
         .db()
         .await
-        .get_remote_projects_for_dev_server(remote_project.dev_server_id)
+        .get_projects_for_dev_server(dev_server_project.dev_server_id)
         .await?;
 
     session.peer.send(
@@ -2292,10 +2298,10 @@ async fn create_remote_project(
         proto::DevServerInstructions { projects },
     )?;
 
-    send_remote_projects_update(session.user_id(), update, &session).await;
+    send_dev_server_projects_update(session.user_id(), update, &session).await;
 
-    response.send(proto::CreateRemoteProjectResponse {
-        remote_project: Some(remote_project.to_proto(None)),
+    response.send(proto::CreateDevServerProjectResponse {
+        dev_server_project: Some(dev_server_project.to_proto(None)),
     })?;
     Ok(())
 }
@@ -2314,7 +2320,7 @@ async fn create_dev_server(
         .create_dev_server(&request.name, &hashed_access_token, session.user_id())
         .await?;
 
-    send_remote_projects_update(session.user_id(), status, &session).await;
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
 
     response.send(proto::CreateDevServerResponse {
         dev_server_id: dev_server.id.0 as u64,
@@ -2352,20 +2358,82 @@ async fn delete_dev_server(
         .delete_dev_server(dev_server_id, session.user_id())
         .await?;
 
-    send_remote_projects_update(session.user_id(), status, &session).await;
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
 
     response.send(proto::Ack {})?;
     Ok(())
 }
 
-async fn rejoin_remote_projects(
+async fn delete_dev_server_project(
+    request: proto::DeleteDevServerProject,
+    response: Response<proto::DeleteDevServerProject>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_project_id = DevServerProjectId(request.dev_server_project_id as i32);
+    let dev_server_project = session
+        .db()
+        .await
+        .get_dev_server_project(dev_server_project_id)
+        .await?;
+
+    let dev_server = session
+        .db()
+        .await
+        .get_dev_server(dev_server_project.dev_server_id)
+        .await?;
+    if dev_server.user_id != session.user_id() {
+        return Err(anyhow!(ErrorCode::Forbidden))?;
+    }
+
+    let dev_server_connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server.id);
+
+    if let Some(dev_server_connection_id) = dev_server_connection_id {
+        let project = session
+            .db()
+            .await
+            .find_dev_server_project(dev_server_project_id)
+            .await;
+        if let Ok(project) = project {
+            unshare_project_internal(
+                project.id,
+                dev_server_connection_id,
+                Some(session.user_id()),
+                &session,
+            )
+            .await?;
+        }
+    }
+
+    let (projects, status) = session
+        .db()
+        .await
+        .delete_dev_server_project(dev_server_project_id, dev_server.id, session.user_id())
+        .await?;
+
+    if let Some(dev_server_connection_id) = dev_server_connection_id {
+        session.peer.send(
+            dev_server_connection_id,
+            proto::DevServerInstructions { projects },
+        )?;
+    }
+
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn rejoin_dev_server_projects(
     request: proto::RejoinRemoteProjects,
     response: Response<proto::RejoinRemoteProjects>,
     session: UserSession,
 ) -> Result<()> {
     let mut rejoined_projects = {
         let db = session.db().await;
-        db.rejoin_remote_projects(
+        db.rejoin_dev_server_projects(
             &request.rejoined_projects,
             session.user_id(),
             session.0.connection_id,
@@ -2389,7 +2457,7 @@ async fn reconnect_dev_server(
 ) -> Result<()> {
     let reshared_projects = {
         let db = session.db().await;
-        db.reshare_remote_projects(
+        db.reshare_dev_server_projects(
             &request.reshared_projects,
             session.dev_server_id(),
             session.0.connection_id,
@@ -2462,14 +2530,14 @@ async fn shutdown_dev_server_internal(
     connection_id: ConnectionId,
     session: &Session,
 ) -> Result<()> {
-    let (remote_projects, dev_server) = {
+    let (dev_server_projects, dev_server) = {
         let db = session.db().await;
-        let remote_projects = db.get_remote_projects_for_dev_server(dev_server_id).await?;
+        let dev_server_projects = db.get_projects_for_dev_server(dev_server_id).await?;
         let dev_server = db.get_dev_server(dev_server_id).await?;
-        (remote_projects, dev_server)
+        (dev_server_projects, dev_server)
     };
 
-    for project_id in remote_projects.iter().filter_map(|p| p.project_id) {
+    for project_id in dev_server_projects.iter().filter_map(|p| p.project_id) {
         unshare_project_internal(
             ProjectId::from_proto(project_id),
             connection_id,
@@ -2487,9 +2555,9 @@ async fn shutdown_dev_server_internal(
     let status = session
         .db()
         .await
-        .remote_projects_update(dev_server.user_id)
+        .dev_server_projects_update(dev_server.user_id)
         .await?;
-    send_remote_projects_update(dev_server.user_id, status, &session).await;
+    send_dev_server_projects_update(dev_server.user_id, status, &session).await;
 
     Ok(())
 }
@@ -2677,11 +2745,51 @@ where
     T: EntityMessage + RequestMessage,
 {
     let project_id = ProjectId::from_proto(request.remote_entity_id());
+
     let host_connection_id = session
         .db()
         .await
         .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
         .await?;
+    let payload = session
+        .peer
+        .forward_request(session.connection_id, host_connection_id, request)
+        .await?;
+    response.send(payload)?;
+    Ok(())
+}
+
+/// forward a project request to the host. These requests are disallowed
+/// for guests.
+async fn forward_versioned_mutating_project_request<T>(
+    request: T,
+    response: Response<T>,
+    session: UserSession,
+) -> Result<()>
+where
+    T: EntityMessage + RequestMessage + VersionedMessage,
+{
+    let project_id = ProjectId::from_proto(request.remote_entity_id());
+
+    let host_connection_id = session
+        .db()
+        .await
+        .host_for_mutating_project_request(project_id, session.connection_id, session.user_id())
+        .await?;
+    if let Some(host_version) = session
+        .connection_pool()
+        .await
+        .connection(host_connection_id)
+        .map(|c| c.zed_version)
+    {
+        if let Some(min_required_version) = request.required_host_version() {
+            if min_required_version > host_version {
+                return Err(anyhow!(ErrorCode::RemoteUpgradeRequired
+                    .with_tag("required", &min_required_version.to_string())))?;
+            }
+        }
+    }
+
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)
@@ -4393,7 +4501,7 @@ impl RateLimit for ComputeEmbeddingsRateLimit {
         std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(120) // Picked arbitrarily
+            .unwrap_or(5000) // Picked arbitrarily
     }
 
     fn refill_duration() -> chrono::Duration {
@@ -4465,36 +4573,12 @@ async fn compute_embeddings(
     Ok(())
 }
 
-struct GetCachedEmbeddingsRateLimit;
-
-impl RateLimit for GetCachedEmbeddingsRateLimit {
-    fn capacity() -> usize {
-        std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(120) // Picked arbitrarily
-    }
-
-    fn refill_duration() -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name() -> &'static str {
-        "get-cached-embeddings"
-    }
-}
-
 async fn get_cached_embeddings(
     request: proto::GetCachedEmbeddings,
     response: Response<proto::GetCachedEmbeddings>,
     session: UserSession,
 ) -> Result<()> {
     authorize_access_to_language_models(&session).await?;
-
-    session
-        .rate_limiter
-        .check::<GetCachedEmbeddingsRateLimit>(session.user_id())
-        .await?;
 
     let db = session.db().await;
     let embeddings = db.get_embeddings(&request.model, &request.digests).await?;
@@ -4863,9 +4947,9 @@ fn channel_updated(
     );
 }
 
-async fn send_remote_projects_update(
+async fn send_dev_server_projects_update(
     user_id: UserId,
-    mut status: proto::RemoteProjectsUpdate,
+    mut status: proto::DevServerProjectsUpdate,
     session: &Session,
 ) {
     let pool = session.connection_pool().await;
@@ -4928,9 +5012,13 @@ async fn lost_dev_server_connection(session: &DevServerSession) -> Result<()> {
     }
 
     let user_id = session.dev_server().user_id;
-    let update = session.db().await.remote_projects_update(user_id).await?;
+    let update = session
+        .db()
+        .await
+        .dev_server_projects_update(user_id)
+        .await?;
 
-    send_remote_projects_update(user_id, update, session).await;
+    send_dev_server_projects_update(user_id, update, session).await;
 
     Ok(())
 }
