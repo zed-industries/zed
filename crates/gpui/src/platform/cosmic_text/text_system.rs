@@ -176,17 +176,6 @@ impl PlatformTextSystem for CosmicTextSystem {
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
         self.0.write().layout_line(text, font_size, runs)
     }
-
-    // todo(linux) Confirm that this has been superseded by the LineWrapper
-    fn wrap_line(
-        &self,
-        _text: &str,
-        _font_id: FontId,
-        _font_size: Pixels,
-        _width: Pixels,
-    ) -> Vec<usize> {
-        unimplemented!()
-    }
 }
 
 impl CosmicTextSystemState {

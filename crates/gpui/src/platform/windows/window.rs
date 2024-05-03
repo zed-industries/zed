@@ -1567,11 +1567,6 @@ impl PlatformWindow for WindowsWindow {
     }
 
     // todo(windows)
-    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.inner.callbacks.borrow_mut().fullscreen = Some(callback);
-    }
-
-    // todo(windows)
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.inner.callbacks.borrow_mut().moved = Some(callback);
     }

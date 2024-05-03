@@ -198,10 +198,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        self.display(id)
-    }
-
     // todo(linux)
     fn active_window(&self) -> Option<AnyWindowHandle> {
         None
@@ -303,12 +299,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         // If `path` is a file, the system may try to open it in a text editor
         let dir = path.parent().unwrap_or(Path::new(""));
         open::that(dir);
-    }
-
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| {
-            common.callbacks.become_active = Some(callback);
-        });
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {

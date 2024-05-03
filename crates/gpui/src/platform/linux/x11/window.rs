@@ -460,10 +460,6 @@ impl PlatformWindow for X11Window {
         Modifiers::default()
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.state.borrow_mut().input_handler = Some(input_handler);
     }
@@ -587,10 +583,6 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().resize = Some(callback);
     }
 
-    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.callbacks.borrow_mut().fullscreen = Some(callback);
-    }
-
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().moved = Some(callback);
     }
@@ -605,11 +597,6 @@ impl PlatformWindow for X11Window {
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
-    }
-
-    // todo(linux)
-    fn is_topmost_for_position(&self, _position: Point<Pixels>) -> bool {
-        unimplemented!()
     }
 
     fn draw(&self, scene: &Scene) {
