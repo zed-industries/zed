@@ -1,4 +1,5 @@
 mod app_menus;
+pub mod inline_completion_registry;
 mod only_instance;
 mod open_listener;
 
@@ -127,7 +128,10 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         })
         .detach();
 
-        let copilot = cx.new_view(|cx| copilot_ui::CopilotButton::new(app_state.fs.clone(), cx));
+        let inline_completion_button = cx.new_view(|cx| {
+            inline_completion_button::InlineCompletionButton::new(app_state.fs.clone(), cx)
+        });
+
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
@@ -140,7 +144,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut AppContext) {
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
-            status_bar.add_right_item(copilot, cx);
+            status_bar.add_right_item(inline_completion_button, cx);
             status_bar.add_right_item(active_buffer_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);

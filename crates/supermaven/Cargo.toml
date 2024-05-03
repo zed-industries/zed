@@ -1,5 +1,5 @@
 [package]
-name = "language_tools"
+name = "supermaven"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,30 +9,33 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/language_tools.rs"
+path = "src/supermaven.rs"
 doctest = false
 
 [dependencies]
 anyhow.workspace = true
+client.workspace = true
 collections.workspace = true
-copilot.workspace = true
 editor.workspace = true
-futures.workspace = true
 gpui.workspace = true
+futures.workspace = true
 language.workspace = true
-lsp.workspace = true
-project.workspace = true
+log.workspace = true
+postage.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-theme.workspace = true
-tree-sitter.workspace = true
+supermaven_api.workspace = true
+smol.workspace = true
 ui.workspace = true
-workspace.workspace = true
+util.workspace = true
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
-release_channel.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }

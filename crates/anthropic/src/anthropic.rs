@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::convert::TryFrom;
+use std::{convert::TryFrom, sync::Arc};
 use util::http::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -141,7 +141,7 @@ pub enum TextDelta {
 }
 
 pub async fn stream_completion(
-    client: &dyn HttpClient,
+    client: Arc<dyn HttpClient>,
     api_url: &str,
     api_key: &str,
     request: Request,

@@ -34,6 +34,7 @@ pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
 use sha2::Digest;
+use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
     channel::oneshot,
@@ -148,7 +149,8 @@ struct Session {
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
-    http_client: IsahcHttpClient,
+    supermaven_client: Option<Arc<SupermavenAdminApi>>,
+    http_client: Arc<IsahcHttpClient>,
     rate_limiter: Arc<RateLimiter>,
     _executor: Executor,
 }
@@ -186,6 +188,14 @@ impl Session {
             Principal::User(user) => Some(user.id),
             Principal::Impersonated { user, .. } => Some(user.id),
             Principal::DevServer(_) => None,
+        }
+    }
+
+    fn is_staff(&self) -> bool {
+        match &self.principal {
+            Principal::User(user) => user.admin,
+            Principal::Impersonated { .. } => true,
+            Principal::DevServer(_) => false,
         }
     }
 
@@ -232,6 +242,14 @@ impl UserSession {
     }
     pub fn user_id(&self) -> UserId {
         self.0.user_id().unwrap()
+    }
+
+    pub fn email(&self) -> Option<String> {
+        match &self.0.principal {
+            Principal::User(user) => user.email_address.clone(),
+            Principal::Impersonated { user, .. } => user.email_address.clone(),
+            Principal::DevServer(..) => None,
+        }
     }
 }
 
@@ -561,6 +579,7 @@ impl Server {
             .add_request_handler(user_handler(get_private_user_info))
             .add_message_handler(user_message_handler(acknowledge_channel_message))
             .add_message_handler(user_message_handler(acknowledge_buffer_version))
+            .add_request_handler(user_handler(get_supermaven_api_key))
             .add_streaming_request_handler({
                 let app_state = app_state.clone();
                 move |request, response, session| {
@@ -938,11 +957,20 @@ impl Server {
             tracing::info!("connection opened");
 
             let http_client = match IsahcHttpClient::new() {
-                Ok(http_client) => http_client,
+                Ok(http_client) => Arc::new(http_client),
                 Err(error) => {
                     tracing::error!(?error, "failed to create HTTP client");
                     return;
                 }
+            };
+
+            let supermaven_client = if let Some(supermaven_admin_api_key) = this.app_state.config.supermaven_admin_api_key.clone() {
+                Some(Arc::new(SupermavenAdminApi::new(
+                    supermaven_admin_api_key.to_string(),
+                    http_client.clone(),
+                )))
+            } else {
+                None
             };
 
             let session = Session {
@@ -955,6 +983,7 @@ impl Server {
                 http_client,
                 rate_limiter: this.app_state.rate_limiter.clone(),
                 _executor: executor.clone(),
+                supermaven_client,
             };
 
             if let Err(error) = this.send_initial_client_update(connection_id, &principal, zed_version, send_connection_id, &session).await {
@@ -4210,7 +4239,7 @@ async fn complete_with_open_ai(
     api_key: Arc<str>,
 ) -> Result<()> {
     let mut completion_stream = open_ai::stream_completion(
-        &session.http_client,
+        session.http_client.as_ref(),
         OPEN_AI_API_URL,
         &api_key,
         crate::ai::language_model_request_to_open_ai(request)?,
@@ -4274,7 +4303,7 @@ async fn complete_with_google_ai(
     api_key: Arc<str>,
 ) -> Result<()> {
     let mut stream = google_ai::stream_generate_content(
-        &session.http_client,
+        session.http_client.clone(),
         google_ai::API_URL,
         api_key.as_ref(),
         crate::ai::language_model_request_to_google_ai(request)?,
@@ -4358,7 +4387,7 @@ async fn complete_with_anthropic(
         .collect();
 
     let mut stream = anthropic::stream_completion(
-        &session.http_client,
+        session.http_client.clone(),
         "https://api.anthropic.com",
         &api_key,
         anthropic::Request {
@@ -4482,7 +4511,7 @@ async fn count_tokens_with_language_model(
     let api_key = google_ai_api_key
         .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
     let tokens_response = google_ai::count_tokens(
-        &session.http_client,
+        session.http_client.as_ref(),
         google_ai::API_URL,
         &api_key,
         crate::ai::count_tokens_request_to_google_ai(request)?,
@@ -4530,7 +4559,7 @@ async fn compute_embeddings(
     let embeddings = match request.model.as_str() {
         "openai/text-embedding-3-small" => {
             open_ai::embed(
-                &session.http_client,
+                session.http_client.as_ref(),
                 OPEN_AI_API_URL,
                 &api_key,
                 OpenAiEmbeddingModel::TextEmbedding3Small,
@@ -4600,6 +4629,37 @@ async fn authorize_access_to_language_models(session: &UserSession) -> Result<()
     } else {
         Err(anyhow!("permission denied"))?
     }
+}
+
+/// Get a Supermaven API key for the user
+async fn get_supermaven_api_key(
+    _request: proto::GetSupermavenApiKey,
+    response: Response<proto::GetSupermavenApiKey>,
+    session: UserSession,
+) -> Result<()> {
+    let user_id: String = session.user_id().to_string();
+    if !session.is_staff() {
+        return Err(anyhow!("supermaven not enabled for this account"))?;
+    }
+
+    let email = session
+        .email()
+        .ok_or_else(|| anyhow!("user must have an email"))?;
+
+    let supermaven_admin_api = session
+        .supermaven_client
+        .as_ref()
+        .ok_or_else(|| anyhow!("supermaven not configured"))?;
+
+    let result = supermaven_admin_api
+        .try_get_or_create_user(CreateExternalUserRequest { id: user_id, email })
+        .await?;
+
+    response.send(proto::GetSupermavenApiKeyResponse {
+        api_key: result.api_key,
+    })?;
+
+    Ok(())
 }
 
 /// Start receiving chat updates for a channel

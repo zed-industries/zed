@@ -1,10 +1,12 @@
+use crate::{Completion, Copilot};
 use anyhow::Result;
 use client::telemetry::Telemetry;
-use copilot::Copilot;
 use editor::{Direction, InlineCompletionProvider};
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
-use language::language_settings::AllLanguageSettings;
-use language::{language_settings::all_language_settings, Buffer, OffsetRangeExt, ToOffset};
+use language::{
+    language_settings::{all_language_settings, AllLanguageSettings},
+    Buffer, OffsetRangeExt, ToOffset,
+};
 use settings::Settings;
 use std::{path::Path, sync::Arc, time::Duration};
 
@@ -13,7 +15,7 @@ pub const COPILOT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 pub struct CopilotCompletionProvider {
     cycled: bool,
     buffer_id: Option<EntityId>,
-    completions: Vec<copilot::Completion>,
+    completions: Vec<Completion>,
     active_completion_index: usize,
     file_extension: Option<String>,
     pending_refresh: Task<Result<()>>,
@@ -42,11 +44,11 @@ impl CopilotCompletionProvider {
         self
     }
 
-    fn active_completion(&self) -> Option<&copilot::Completion> {
+    fn active_completion(&self) -> Option<&Completion> {
         self.completions.get(self.active_completion_index)
     }
 
-    fn push_completion(&mut self, new_completion: copilot::Completion) {
+    fn push_completion(&mut self, new_completion: Completion) {
         for completion in &self.completions {
             if completion.text == new_completion.text && completion.range == new_completion.range {
                 return;
@@ -71,7 +73,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         let file = buffer.file();
         let language = buffer.language_at(cursor_position);
         let settings = all_language_settings(file, cx);
-        settings.copilot_enabled(language.as_ref(), file.map(|f| f.path().as_ref()))
+        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()))
     }
 
     fn refresh(
@@ -196,7 +198,10 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
     fn discard(&mut self, cx: &mut ModelContext<Self>) {
         let settings = AllLanguageSettings::get_global(cx);
-        if !settings.copilot.feature_enabled {
+
+        let copilot_enabled = settings.inline_completions_enabled(None, None);
+
+        if !copilot_enabled {
             return;
         }
 
@@ -298,7 +303,9 @@ mod tests {
         )
         .await;
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
-        cx.update_editor(|editor, cx| editor.set_inline_completion_provider(copilot_provider, cx));
+        cx.update_editor(|editor, cx| {
+            editor.set_inline_completion_provider(Some(copilot_provider), cx)
+        });
 
         // When inserting, ensure autocompletion is favored over Copilot suggestions.
         cx.set_state(indoc! {"
@@ -318,7 +325,7 @@ mod tests {
         );
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![copilot::request::Completion {
+            vec![crate::request::Completion {
                 text: "one.copilot1".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
                 ..Default::default()
@@ -360,7 +367,7 @@ mod tests {
         );
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![copilot::request::Completion {
+            vec![crate::request::Completion {
                 text: "one.copilot1".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
                 ..Default::default()
@@ -393,7 +400,7 @@ mod tests {
         );
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![copilot::request::Completion {
+            vec![crate::request::Completion {
                 text: "one.copilot1".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
                 ..Default::default()
@@ -426,7 +433,7 @@ mod tests {
         // After debouncing, new Copilot completions should be requested.
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![copilot::request::Completion {
+            vec![crate::request::Completion {
                 text: "one.copilot2".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 5)),
                 ..Default::default()
@@ -503,7 +510,7 @@ mod tests {
         });
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![copilot::request::Completion {
+            vec![crate::request::Completion {
                 text: "    let x = 4;".into(),
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
                 ..Default::default()
@@ -553,7 +560,9 @@ mod tests {
         )
         .await;
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
-        cx.update_editor(|editor, cx| editor.set_inline_completion_provider(copilot_provider, cx));
+        cx.update_editor(|editor, cx| {
+            editor.set_inline_completion_provider(Some(copilot_provider), cx)
+        });
 
         // Setup the editor with a completion request.
         cx.set_state(indoc! {"
@@ -573,7 +582,7 @@ mod tests {
         );
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![copilot::request::Completion {
+            vec![crate::request::Completion {
                 text: "one.copilot1".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
                 ..Default::default()
@@ -615,7 +624,7 @@ mod tests {
         );
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![copilot::request::Completion {
+            vec![crate::request::Completion {
                 text: "one.123. copilot\n 456".into(),
                 range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
                 ..Default::default()
@@ -675,7 +684,9 @@ mod tests {
         )
         .await;
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
-        cx.update_editor(|editor, cx| editor.set_inline_completion_provider(copilot_provider, cx));
+        cx.update_editor(|editor, cx| {
+            editor.set_inline_completion_provider(Some(copilot_provider), cx)
+        });
 
         cx.set_state(indoc! {"
             one
@@ -685,7 +696,7 @@ mod tests {
 
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![copilot::request::Completion {
+            vec![crate::request::Completion {
                 text: "two.foo()".into(),
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
                 ..Default::default()
@@ -756,13 +767,13 @@ mod tests {
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, cx| {
-                editor.set_inline_completion_provider(copilot_provider, cx)
+                editor.set_inline_completion_provider(Some(copilot_provider), cx)
             })
             .unwrap();
 
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![copilot::request::Completion {
+            vec![crate::request::Completion {
                 text: "b = 2 + a".into(),
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 5)),
                 ..Default::default()
@@ -788,7 +799,7 @@ mod tests {
 
         handle_copilot_completion_request(
             &copilot_lsp,
-            vec![copilot::request::Completion {
+            vec![crate::request::Completion {
                 text: "d = 4 + c".into(),
                 range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 6)),
                 ..Default::default()
@@ -833,7 +844,7 @@ mod tests {
     async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         init_test(cx, |settings| {
             settings
-                .copilot
+                .inline_completions
                 .get_or_insert(Default::default())
                 .disabled_globs = Some(vec![".env*".to_string()]);
         });
@@ -888,15 +899,15 @@ mod tests {
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, cx| {
-                editor.set_inline_completion_provider(copilot_provider, cx)
+                editor.set_inline_completion_provider(Some(copilot_provider), cx)
             })
             .unwrap();
 
         let mut copilot_requests = copilot_lsp
-            .handle_request::<copilot::request::GetCompletions, _, _>(
+            .handle_request::<crate::request::GetCompletions, _, _>(
                 move |_params, _cx| async move {
-                    Ok(copilot::request::GetCompletionsResult {
-                        completions: vec![copilot::request::Completion {
+                    Ok(crate::request::GetCompletionsResult {
+                        completions: vec![crate::request::Completion {
                             text: "next line".into(),
                             range: lsp::Range::new(
                                 lsp::Position::new(1, 0),
@@ -931,21 +942,21 @@ mod tests {
 
     fn handle_copilot_completion_request(
         lsp: &lsp::FakeLanguageServer,
-        completions: Vec<copilot::request::Completion>,
-        completions_cycling: Vec<copilot::request::Completion>,
+        completions: Vec<crate::request::Completion>,
+        completions_cycling: Vec<crate::request::Completion>,
     ) {
-        lsp.handle_request::<copilot::request::GetCompletions, _, _>(move |_params, _cx| {
+        lsp.handle_request::<crate::request::GetCompletions, _, _>(move |_params, _cx| {
             let completions = completions.clone();
             async move {
-                Ok(copilot::request::GetCompletionsResult {
+                Ok(crate::request::GetCompletionsResult {
                     completions: completions.clone(),
                 })
             }
         });
-        lsp.handle_request::<copilot::request::GetCompletionsCycling, _, _>(move |_params, _cx| {
+        lsp.handle_request::<crate::request::GetCompletionsCycling, _, _>(move |_params, _cx| {
             let completions_cycling = completions_cycling.clone();
             async move {
-                Ok(copilot::request::GetCompletionsResult {
+                Ok(crate::request::GetCompletionsResult {
                     completions: completions_cycling.clone(),
                 })
             }

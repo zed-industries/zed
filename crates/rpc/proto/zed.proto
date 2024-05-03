@@ -207,7 +207,7 @@ message Envelope {
         GetCachedEmbeddings get_cached_embeddings = 189;
         GetCachedEmbeddingsResponse get_cached_embeddings_response = 190;
         ComputeEmbeddings compute_embeddings = 191;
-        ComputeEmbeddingsResponse compute_embeddings_response = 192; // current max
+        ComputeEmbeddingsResponse compute_embeddings_response = 192;
 
         UpdateChannelMessage update_channel_message = 170;
         ChannelMessageUpdate channel_message_update = 171;
@@ -238,7 +238,10 @@ message Envelope {
         ValidateDevServerProjectRequest validate_dev_server_project_request = 194;
         DeleteDevServer delete_dev_server = 195;
         OpenNewBuffer open_new_buffer = 196;
-        DeleteDevServerProject delete_dev_server_project = 197; // Current max
+        DeleteDevServerProject delete_dev_server_project = 197;
+
+        GetSupermavenApiKey get_supermaven_api_key = 198;
+        GetSupermavenApiKeyResponse get_supermaven_api_key_response = 199; // current max
     }
 
     reserved 158 to 161;
@@ -2083,4 +2086,10 @@ message LspResponse {
         GetHoverResponse get_hover_response = 1;
         GetCodeActionsResponse get_code_actions_response = 2;
     }
+}
+
+message GetSupermavenApiKey {}
+
+message GetSupermavenApiKeyResponse {
+    string api_key = 1;
 }
