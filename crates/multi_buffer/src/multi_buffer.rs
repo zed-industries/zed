@@ -87,6 +87,9 @@ pub enum Event {
     },
     Reloaded,
     DiffBaseChanged,
+    DiffUpdated {
+        buffer: Model<Buffer>,
+    },
     LanguageChanged,
     CapabilityChanged,
     Reparsed,
@@ -156,6 +159,7 @@ pub struct MultiBufferSnapshot {
     edit_count: usize,
     is_dirty: bool,
     has_conflict: bool,
+    show_headers: bool,
 }
 
 /// A boundary between [`Excerpt`]s in a [`MultiBuffer`]
@@ -269,6 +273,28 @@ struct ExcerptBytes<'a> {
 
 impl MultiBuffer {
     pub fn new(replica_id: ReplicaId, capability: Capability) -> Self {
+        Self {
+            snapshot: RefCell::new(MultiBufferSnapshot {
+                show_headers: true,
+                ..MultiBufferSnapshot::default()
+            }),
+            buffers: RefCell::default(),
+            subscriptions: Topic::default(),
+            singleton: false,
+            capability,
+            replica_id,
+            title: None,
+            history: History {
+                next_transaction_id: clock::Lamport::default(),
+                undo_stack: Vec::new(),
+                redo_stack: Vec::new(),
+                transaction_depth: 0,
+                group_interval: Duration::from_millis(300),
+            },
+        }
+    }
+
+    pub fn without_headers(replica_id: ReplicaId, capability: Capability) -> Self {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
@@ -1466,6 +1492,7 @@ impl MultiBuffer {
             language::Event::FileHandleChanged => Event::FileHandleChanged,
             language::Event::Reloaded => Event::Reloaded,
             language::Event::DiffBaseChanged => Event::DiffBaseChanged,
+            language::Event::DiffUpdated => Event::DiffUpdated { buffer },
             language::Event::LanguageChanged => Event::LanguageChanged,
             language::Event::Reparsed => Event::Reparsed,
             language::Event::DiagnosticsUpdated => Event::DiagnosticsUpdated,
@@ -3587,6 +3614,10 @@ impl MultiBufferSnapshot {
                         })
                     })
             })
+    }
+
+    pub fn show_headers(&self) -> bool {
+        self.show_headers
     }
 }
 

@@ -317,10 +317,15 @@ impl TerminalPanel {
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
+
         terminal_panel.update(cx, |panel, cx| {
-            panel.add_terminal(Some(action.working_directory.clone()), None, cx)
+            panel.add_terminal(
+                Some(action.working_directory.clone()),
+                None,
+                RevealStrategy::Always,
+                cx,
+            )
         });
-        workspace.focus_panel::<Self>(cx);
     }
 
     fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
@@ -429,19 +434,7 @@ impl TerminalPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let reveal = spawn_task.reveal;
-        self.add_terminal(working_directory, Some(spawn_task), cx);
-        match reveal {
-            RevealStrategy::Always => {
-                let task_workspace = self.workspace.clone();
-                cx.spawn(|_, mut cx| async move {
-                    task_workspace
-                        .update(&mut cx, |workspace, cx| workspace.focus_panel::<Self>(cx))
-                        .ok()
-                })
-                .detach();
-            }
-            RevealStrategy::Never => {}
-        }
+        self.add_terminal(working_directory, Some(spawn_task), reveal, cx);
     }
 
     /// Create a new Terminal in the current working directory or the user's home directory
@@ -453,8 +446,10 @@ impl TerminalPanel {
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
-        terminal_panel.update(cx, |this, cx| this.add_terminal(None, None, cx));
-        workspace.focus_panel::<Self>(cx);
+
+        terminal_panel.update(cx, |this, cx| {
+            this.add_terminal(None, None, RevealStrategy::Always, cx)
+        });
     }
 
     fn terminals_for_task(
@@ -488,13 +483,23 @@ impl TerminalPanel {
         &mut self,
         working_directory: Option<PathBuf>,
         spawn_task: Option<SpawnInTerminal>,
+        reveal_strategy: RevealStrategy,
         cx: &mut ViewContext<Self>,
     ) {
         let workspace = self.workspace.clone();
         self.pending_terminals_to_add += 1;
+
         cx.spawn(|terminal_panel, mut cx| async move {
             let pane = terminal_panel.update(&mut cx, |this, _| this.pane.clone())?;
             workspace.update(&mut cx, |workspace, cx| {
+                if workspace.project().read(cx).is_remote() {
+                    workspace.show_error(
+                        &anyhow::anyhow!("Cannot open terminals on remote projects (yet!)"),
+                        cx,
+                    );
+                    return;
+                };
+
                 let working_directory = if let Some(working_directory) = working_directory {
                     Some(working_directory)
                 } else {
@@ -521,6 +526,9 @@ impl TerminalPanel {
                         let focus = pane.has_focus(cx);
                         pane.add_item(terminal, true, focus, None, cx);
                     });
+                }
+                if reveal_strategy == RevealStrategy::Always {
+                    workspace.focus_panel::<Self>(cx);
                 }
             })?;
             terminal_panel.update(&mut cx, |this, cx| {
@@ -736,7 +744,7 @@ impl Panel for TerminalPanel {
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         if active && self.has_no_terminals(cx) {
-            self.add_terminal(None, None, cx)
+            self.add_terminal(None, None, RevealStrategy::Never, cx);
         }
     }
 

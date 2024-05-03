@@ -220,8 +220,8 @@ message Envelope {
         MultiLspQuery multi_lsp_query = 175;
         MultiLspQueryResponse multi_lsp_query_response = 176;
 
-        CreateRemoteProject create_remote_project = 177;
-        CreateRemoteProjectResponse create_remote_project_response = 188;
+        CreateDevServerProject create_dev_server_project = 177;
+        CreateDevServerProjectResponse create_dev_server_project_response = 188;
         CreateDevServer create_dev_server = 178;
         CreateDevServerResponse create_dev_server_response = 179;
         ShutdownDevServer shutdown_dev_server = 180;
@@ -229,15 +229,16 @@ message Envelope {
         ReconnectDevServer reconnect_dev_server = 182;
         ReconnectDevServerResponse reconnect_dev_server_response = 183;
 
-        ShareRemoteProject share_remote_project = 184;
-        JoinRemoteProject join_remote_project = 185;
+        ShareDevServerProject share_dev_server_project = 184;
+        JoinDevServerProject join_dev_server_project = 185;
         RejoinRemoteProjects rejoin_remote_projects = 186;
         RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
 
-        RemoteProjectsUpdate remote_projects_update = 193;
-        ValidateRemoteProjectRequest validate_remote_project_request = 194;
+        DevServerProjectsUpdate dev_server_projects_update = 193;
+        ValidateDevServerProjectRequest validate_dev_server_project_request = 194;
         DeleteDevServer delete_dev_server = 195;
-        OpenNewBuffer open_new_buffer = 196; // Current max
+        OpenNewBuffer open_new_buffer = 196;
+        DeleteDevServerProject delete_dev_server_project = 197; // Current max
     }
 
     reserved 158 to 161;
@@ -275,7 +276,7 @@ enum ErrorCode {
     NoSuchProject = 13;
     DevServerAlreadyOnline = 14;
     DevServerOffline = 15;
-    RemoteProjectPathDoesNotExist = 16;
+    DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
     reserved 6;
 }
@@ -441,7 +442,7 @@ message LiveKitConnectionInfo {
 message ShareProject {
     uint64 room_id = 1;
     repeated WorktreeMetadata worktrees = 2;
-    optional uint64 remote_project_id = 3;
+    optional uint64 dev_server_project_id = 3;
 }
 
 message ShareProjectResponse {
@@ -465,17 +466,17 @@ message JoinHostedProject {
     uint64 project_id = 1;
 }
 
-message CreateRemoteProject {
+message CreateDevServerProject {
     reserved 1;
     reserved 2;
     uint64 dev_server_id = 3;
     string path = 4;
 }
-message CreateRemoteProjectResponse {
-    RemoteProject remote_project = 1;
+message CreateDevServerProjectResponse {
+    DevServerProject dev_server_project = 1;
 }
 
-message ValidateRemoteProjectRequest {
+message ValidateDevServerProjectRequest {
     string path = 1;
 }
 
@@ -498,6 +499,10 @@ message DeleteDevServer {
     uint64 dev_server_id = 1;
 }
 
+message DeleteDevServerProject {
+    uint64 dev_server_project_id = 1;
+}
+
 message ReconnectDevServer {
     repeated UpdateProject reshared_projects = 1;
 }
@@ -507,21 +512,21 @@ message ReconnectDevServerResponse {
 }
 
 message DevServerInstructions {
-    repeated RemoteProject projects = 1;
+    repeated DevServerProject projects = 1;
 }
 
-message RemoteProjectsUpdate {
+message DevServerProjectsUpdate {
     repeated DevServer dev_servers = 1;
-    repeated RemoteProject remote_projects = 2;
+    repeated DevServerProject dev_server_projects = 2;
 }
 
-message ShareRemoteProject {
-    uint64 remote_project_id = 1;
+message ShareDevServerProject {
+    uint64 dev_server_project_id = 1;
     repeated WorktreeMetadata worktrees = 2;
 }
 
-message JoinRemoteProject {
-    uint64 remote_project_id = 1;
+message JoinDevServerProject {
+    uint64 dev_server_project_id = 1;
 }
 
 message JoinProjectResponse {
@@ -531,7 +536,7 @@ message JoinProjectResponse {
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
     ChannelRole role = 6;
-    optional uint64 remote_project_id = 7;
+    optional uint64 dev_server_project_id = 7;
 }
 
 message LeaveProject {
@@ -1024,15 +1029,22 @@ message ResolveState {
     }
 }
 
+// This type is used to resolve more than just
+// the documentation, but for backwards-compatibility
+// reasons we can't rename the type.
 message ResolveCompletionDocumentation {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
     bytes lsp_completion = 3;
+    uint64 buffer_id = 4;
 }
 
 message ResolveCompletionDocumentationResponse {
-    string text = 1;
-    bool is_markdown = 2;
+    string documentation = 1;
+    bool documentation_is_markdown = 2;
+    Anchor old_start = 3;
+    Anchor old_end = 4;
+    string new_text = 5;
 }
 
 message ResolveInlayHint {
@@ -1204,7 +1216,7 @@ message HostedProject {
     ChannelVisibility visibility = 4;
 }
 
-message RemoteProject {
+message DevServerProject {
     uint64 id = 1;
     optional uint64 project_id = 2;
     reserved 3;

@@ -95,7 +95,8 @@ slotmap::new_key_type! {
 }
 
 thread_local! {
-    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(8 * 1024 * 1024));
+    /// 8MB wasn't quite enough...
+    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
 }
 
 impl FocusId {

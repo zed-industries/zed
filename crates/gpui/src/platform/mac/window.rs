@@ -415,6 +415,15 @@ impl MacWindowState {
 
     fn start_display_link(&mut self) {
         self.stop_display_link();
+        unsafe {
+            if !self
+                .native_window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+            {
+                return;
+            }
+        }
         let display_id = unsafe { display_id_for_screen(self.native_window.screen()) };
         if let Some(mut display_link) =
             DisplayLink::new(display_id, self.native_view.as_ptr() as *mut c_void, step).log_err()

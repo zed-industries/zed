@@ -24,7 +24,6 @@ use language::LanguageRegistry;
 use log::LevelFilter;
 
 use assets::Assets;
-use mimalloc::MiMalloc;
 use node_runtime::RealNodeRuntime;
 use parking_lot::Mutex;
 use release_channel::AppCommitSha;
@@ -56,8 +55,9 @@ use zed::{
     OpenListener, OpenRequest,
 };
 
+#[cfg(feature = "mimalloc")]
 #[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn fail_to_launch(e: anyhow::Error) {
     App::new().run(move |cx| {
@@ -290,7 +290,7 @@ fn init_ui(args: Args) {
             ThemeRegistry::global(cx),
             cx,
         );
-        remote_projects::init(client.clone(), cx);
+        dev_server_projects::init(client.clone(), cx);
 
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);

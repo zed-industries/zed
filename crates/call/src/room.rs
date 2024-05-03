@@ -1203,11 +1203,12 @@ impl Room {
         project: Model<Project>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<u64>> {
-        let request = if let Some(remote_project_id) = project.read(cx).remote_project_id() {
+        let request = if let Some(dev_server_project_id) = project.read(cx).dev_server_project_id()
+        {
             self.client.request(proto::ShareProject {
                 room_id: self.id(),
                 worktrees: vec![],
-                remote_project_id: Some(remote_project_id.0),
+                dev_server_project_id: Some(dev_server_project_id.0),
             })
         } else {
             if let Some(project_id) = project.read(cx).remote_id() {
@@ -1217,7 +1218,7 @@ impl Room {
             self.client.request(proto::ShareProject {
                 room_id: self.id(),
                 worktrees: project.read(cx).worktree_metadata_protos(cx),
-                remote_project_id: None,
+                dev_server_project_id: None,
             })
         };
 

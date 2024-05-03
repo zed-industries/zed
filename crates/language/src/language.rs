@@ -55,10 +55,10 @@ use std::{
         Arc,
     },
 };
-use syntax_map::SyntaxSnapshot;
+use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 pub use task_context::{BasicContextProvider, ContextProvider, ContextProviderWithTasks};
 use theme::SyntaxTheme;
-use tree_sitter::{self, wasmtime, Query, WasmStore};
+use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
 use util::http::HttpClient;
 
 pub use buffer::Operation;
@@ -99,6 +99,15 @@ where
         let mut parser = parser.borrow_mut();
         func(&mut parser)
     })
+}
+
+pub fn with_query_cursor<F, R>(func: F) -> R
+where
+    F: FnOnce(&mut QueryCursor) -> R,
+{
+    use std::ops::DerefMut;
+    let mut cursor = QueryCursorHandle::new();
+    func(cursor.deref_mut())
 }
 
 lazy_static! {

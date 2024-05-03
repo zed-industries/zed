@@ -685,11 +685,47 @@ impl VisualTestContext {
     }
 
     /// Simulate a mouse move event to the given point
-    pub fn simulate_mouse_move(&mut self, position: Point<Pixels>, modifiers: Modifiers) {
+    pub fn simulate_mouse_move(
+        &mut self,
+        position: Point<Pixels>,
+        button: impl Into<Option<MouseButton>>,
+        modifiers: Modifiers,
+    ) {
         self.simulate_event(MouseMoveEvent {
             position,
             modifiers,
-            pressed_button: None,
+            pressed_button: button.into(),
+        })
+    }
+
+    /// Simulate a mouse down event to the given point
+    pub fn simulate_mouse_down(
+        &mut self,
+        position: Point<Pixels>,
+        button: MouseButton,
+        modifiers: Modifiers,
+    ) {
+        self.simulate_event(MouseDownEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
+            first_mouse: false,
+        })
+    }
+
+    /// Simulate a mouse up event to the given point
+    pub fn simulate_mouse_up(
+        &mut self,
+        position: Point<Pixels>,
+        button: MouseButton,
+        modifiers: Modifiers,
+    ) {
+        self.simulate_event(MouseUpEvent {
+            position,
+            modifiers,
+            button,
+            click_count: 1,
         })
     }
 

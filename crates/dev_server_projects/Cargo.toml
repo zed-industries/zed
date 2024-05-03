@@ -1,5 +1,5 @@
 [package]
-name = "remote_projects"
+name = "dev_server_projects"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/remote_projects.rs"
+path = "src/dev_server_projects.rs"
 doctest = false
 
 [dependencies]

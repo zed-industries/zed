@@ -23,7 +23,7 @@ use semantic_index::{CloudEmbeddingProvider, ProjectIndex, SemanticIndex};
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use ui::Composer;
+use ui::{Composer, ProjectIndexButton};
 use util::{paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -202,7 +202,7 @@ impl Panel for AssistantPanel {
     }
 
     fn icon(&self, _cx: &WindowContext) -> Option<::ui::IconName> {
-        Some(IconName::Ai)
+        Some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _: &WindowContext) -> Option<&'static str> {
@@ -228,6 +228,7 @@ pub struct AssistantChat {
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
     composer_editor: View<Editor>,
+    project_index_button: Option<View<ProjectIndexButton>>,
     user_store: Model<UserStore>,
     next_message_id: MessageId,
     collapsed_messages: HashMap<MessageId, bool>,
@@ -263,18 +264,23 @@ impl AssistantChat {
             },
         );
 
+        let project_index_button = project_index.clone().map(|project_index| {
+            cx.new_view(|cx| ProjectIndexButton::new(project_index, tool_registry.clone(), cx))
+        });
+
         Self {
             model,
             messages: Vec::new(),
             composer_editor: cx.new_view(|cx| {
                 let mut editor = Editor::auto_height(80, cx);
                 editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-                editor.set_placeholder_text("Type a message to the assistant", cx);
+                editor.set_placeholder_text("Send a message…", cx);
                 editor
             }),
             list_state,
             user_store,
             language_registry,
+            project_index_button,
             project_index,
             next_message_id: MessageId(0),
             editing_message: None,
@@ -372,10 +378,6 @@ impl AssistantChat {
         }));
     }
 
-    fn can_submit(&self) -> bool {
-        self.pending_completion.is_none()
-    }
-
     fn debug_project_index(&mut self, _: &DebugProjectIndex, cx: &mut ViewContext<Self>) {
         if let Some(index) = &self.project_index {
             index.update(cx, |project_index, cx| {
@@ -401,7 +403,7 @@ impl AssistantChat {
                     {
                         this.tool_registry.definitions()
                     } else {
-                        &[]
+                        Vec::new()
                     };
                     call_count += 1;
 
@@ -593,9 +595,7 @@ impl AssistantChat {
                     if self.editing_message_id() == Some(*id) {
                         element.child(Composer::new(
                             body.clone(),
-                            self.user_store.read(cx).current_user(),
-                            true,
-                            self.tool_registry.clone(),
+                            self.project_index_button.clone(),
                             crate::ui::ModelSelector::new(
                                 cx.view().downgrade(),
                                 self.model.clone(),
@@ -772,9 +772,7 @@ impl Render for AssistantChat {
             .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(
                 self.composer_editor.clone(),
-                self.user_store.read(cx).current_user(),
-                self.can_submit(),
-                self.tool_registry.clone(),
+                self.project_index_button.clone(),
                 crate::ui::ModelSelector::new(cx.view().downgrade(), self.model.clone())
                     .into_any_element(),
             ))

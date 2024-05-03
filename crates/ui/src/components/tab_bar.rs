@@ -115,16 +115,21 @@ impl RenderOnce for TabBar {
             .flex()
             .flex_none()
             .w_full()
-            .h(rems_from_px(29.))
+            .h(
+                // TODO: This should scale with [UiDensity], however tabs,
+                // and other tab bar tools need to scale dynamically first.
+                rems_from_px(29.),
+            )
             .bg(cx.theme().colors().tab_bar_background)
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
                     h_flex()
                         .flex_none()
-                        .gap_1()
-                        .px_1()
+                        .gap(Spacing::Small.rems(cx))
+                        .px(Spacing::Small.rems(cx))
                         .when(placement_top, Styled::border_b)
                         .when(placement_bottom, Styled::border_t)
+                        .border_b()
                         .border_r()
                         .border_color(cx.theme().colors().border)
                         .children(self.start_children),
@@ -161,10 +166,11 @@ impl RenderOnce for TabBar {
                 this.child(
                     h_flex()
                         .flex_none()
-                        .gap_1()
-                        .px_1()
+                        .gap(Spacing::Small.rems(cx))
+                        .px(Spacing::Medium.rems(cx))
                         .when(placement_top, Styled::border_b)
                         .when(placement_bottom, Styled::border_t)
+                        .border_b()
                         .border_l()
                         .border_color(cx.theme().colors().border)
                         .children(self.end_children),

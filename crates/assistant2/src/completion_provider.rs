@@ -33,7 +33,7 @@ impl CompletionProvider {
         messages: Vec<CompletionMessage>,
         stop: Vec<String>,
         temperature: f32,
-        tools: &[ToolFunctionDefinition],
+        tools: Vec<ToolFunctionDefinition>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::LanguageModelResponseMessage>>>>
     {
         self.0.complete(model, messages, stop, temperature, tools)
@@ -51,7 +51,7 @@ pub trait CompletionProviderBackend: 'static {
         messages: Vec<CompletionMessage>,
         stop: Vec<String>,
         temperature: f32,
-        tools: &[ToolFunctionDefinition],
+        tools: Vec<ToolFunctionDefinition>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::LanguageModelResponseMessage>>>>;
 }
 
@@ -80,7 +80,7 @@ impl CompletionProviderBackend for CloudCompletionProvider {
         messages: Vec<CompletionMessage>,
         stop: Vec<String>,
         temperature: f32,
-        tools: &[ToolFunctionDefinition],
+        tools: Vec<ToolFunctionDefinition>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::LanguageModelResponseMessage>>>>
     {
         let client = self.client.clone();

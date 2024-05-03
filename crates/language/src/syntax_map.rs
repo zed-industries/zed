@@ -211,7 +211,7 @@ struct TextProvider<'a>(&'a Rope);
 
 struct ByteChunks<'a>(text::Chunks<'a>);
 
-struct QueryCursorHandle(Option<QueryCursor>);
+pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
 impl SyntaxMap {
     pub fn new() -> Self {
@@ -1739,7 +1739,7 @@ impl<'a> Iterator for ByteChunks<'a> {
 }
 
 impl QueryCursorHandle {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let mut cursor = QUERY_CURSORS.lock().pop().unwrap_or_else(QueryCursor::new);
         cursor.set_match_limit(64);
         QueryCursorHandle(Some(cursor))
