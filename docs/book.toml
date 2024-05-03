@@ -14,7 +14,7 @@ preferred-dark-theme = "light"
 enable = false
 
 [output.html.redirect]
-"/elixir.html" = "/languages/elixir.html"
-"/javascript.html" = "/languages/javascript.html"
-"/ruby.html" = "/languages/ruby.html"
-"/python.html" = "/languages/python.html"
+"/elixir.html" = "/docs2/languages/elixir.html"
+"/javascript.html" = "/docs2/languages/javascript.html"
+"/ruby.html" = "/docs2/languages/ruby.html"
+"/python.html" = "/docs2/languages/python.html"
