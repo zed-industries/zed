@@ -275,18 +275,20 @@ impl DevServerProjects {
                 return Ok(());
             }
 
-            this.update(&mut cx, move |this, cx| {
-                this.dev_server_store
-                    .update(cx, |store, cx| store.regenerate_dev_server_token(id, cx));
-                this.mode = Mode::EditDevServer(EditDevServer {
-                    dev_server_id: id,
-                    state: EditDevServerState::RegeneratingToken,
-                });
-                cx.notify();
-            })
-            .log_err();
+            let response = this
+                .update(&mut cx, move |this, cx| {
+                    let request = this
+                        .dev_server_store
+                        .update(cx, |store, cx| store.regenerate_dev_server_token(id, cx));
+                    this.mode = Mode::EditDevServer(EditDevServer {
+                        dev_server_id: id,
+                        state: EditDevServerState::RegeneratingToken,
+                    });
+                    cx.notify();
+                    request
+                })?
+                .await?;
 
-            let response = request.await?;
             this.update(&mut cx, move |this, cx| {
                 this.mode = Mode::EditDevServer(EditDevServer {
                     dev_server_id: id,
