@@ -715,28 +715,12 @@ impl AssistantChat {
                     )
                 };
 
-                div()
-                    .when(!is_last, |element| element.mb_2())
-                    .child(crate::ui::ChatMessage::new(
-                        *id,
-                        UserOrAssistant::Assistant,
-                        assistant_body,
-                        // todo!(): Stick tool use here?
-                        None,
-                        self.is_message_collapsed(id),
-                        Box::new(cx.listener({
-                            let id = *id;
-                            move |assistant_chat, _event, _cx| {
-                                assistant_chat.toggle_message_collapsed(id)
-                            }
-                        })),
-                    ))
-                    // TODO: Should the errors and tool calls get passed into `ChatMessage`?
-                    .child(self.render_error(error.clone(), ix, cx))
-                    .children(tool_calls.iter().map(|tool_call| {
+                let tools = tool_calls
+                    .iter()
+                    .filter_map(|tool_call| {
                         let result = &tool_call.result;
                         let name = tool_call.name.clone();
-                        match result {
+                        let element = match result {
                             Some(result) => {
                                 div().p_2().child(result.into_any_element(&name)).into_any()
                             }
@@ -745,8 +729,33 @@ impl AssistantChat {
                                 .child(Label::new(name).color(Color::Modified))
                                 .child("Running...")
                                 .into_any(),
-                        }
-                    }))
+                        };
+                        Some(element)
+                    })
+                    .collect::<Vec<AnyElement>>();
+
+                let tools_body = if tools.is_empty() {
+                    None
+                } else {
+                    Some(div().children(tools).into_any_element())
+                };
+
+                div()
+                    .when(!is_last, |element| element.mb_2())
+                    .child(crate::ui::ChatMessage::new(
+                        *id,
+                        UserOrAssistant::Assistant,
+                        assistant_body,
+                        tools_body,
+                        self.is_message_collapsed(id),
+                        Box::new(cx.listener({
+                            let id = *id;
+                            move |assistant_chat, _event, _cx| {
+                                assistant_chat.toggle_message_collapsed(id)
+                            }
+                        })),
+                    ))
+                    .child(self.render_error(error.clone(), ix, cx))
                     .into_any()
             }
         }
