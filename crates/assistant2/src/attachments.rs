@@ -11,20 +11,21 @@ use collections::HashMap;
 use editor::Editor;
 use futures::future::join_all;
 use gpui::{AnyView, Render, Task, View, WeakView};
-use ui::{prelude::*, WindowContext};
+use ui::{prelude::*, ButtonLike, Tooltip, WindowContext};
 use util::{maybe, ResultExt};
 use workspace::Workspace;
 
-// Immutable already done attached sometime ago
+/// A collected attachment from running an attachment tool
 pub struct UserAttachment {
     pub message: Option<String>,
     pub view: AnyView,
 }
 
 pub struct UserAttachmentStore {
-    attachments: HashMap<TypeId, DynamicAttachment>,
+    attachment_tools: HashMap<TypeId, DynamicAttachment>,
 }
 
+/// Internal representation of an attachment tool to allow us to treat them dynamically
 struct DynamicAttachment {
     enabled: AtomicBool,
     call: Box<dyn Fn(&mut WindowContext) -> Task<Result<UserAttachment>>>,
@@ -33,7 +34,7 @@ struct DynamicAttachment {
 impl UserAttachmentStore {
     pub fn new() -> Self {
         Self {
-            attachments: HashMap::default(),
+            attachment_tools: HashMap::default(),
         }
     }
 
@@ -42,7 +43,7 @@ impl UserAttachmentStore {
             let result = attachment.run(cx);
 
             cx.spawn(move |mut cx| async move {
-                let result = result.await;
+                let result: Result<A::Output> = result.await;
                 let message = A::format(&result);
                 let view = cx.update(|cx| A::view(result, cx))?;
 
@@ -53,7 +54,7 @@ impl UserAttachmentStore {
             })
         });
 
-        self.attachments.insert(
+        self.attachment_tools.insert(
             TypeId::of::<A>(),
             DynamicAttachment {
                 call,
@@ -62,14 +63,14 @@ impl UserAttachmentStore {
         );
     }
 
-    pub fn set_attachment_enabled<A: AttachmentTool + 'static>(&self, is_enabled: bool) {
-        if let Some(attachment) = self.attachments.get(&TypeId::of::<A>()) {
+    pub fn set_attachment_tool_enabled<A: AttachmentTool + 'static>(&self, is_enabled: bool) {
+        if let Some(attachment) = self.attachment_tools.get(&TypeId::of::<A>()) {
             attachment.enabled.store(is_enabled, SeqCst);
         }
     }
 
-    pub fn is_attachment_enabled<A: AttachmentTool + 'static>(&self) -> bool {
-        if let Some(attachment) = self.attachments.get(&TypeId::of::<A>()) {
+    pub fn is_attachment_tool_enabled<A: AttachmentTool + 'static>(&self) -> bool {
+        if let Some(attachment) = self.attachment_tools.get(&TypeId::of::<A>()) {
             attachment.enabled.load(SeqCst)
         } else {
             false
@@ -80,14 +81,14 @@ impl UserAttachmentStore {
         &self,
         cx: &mut WindowContext,
     ) -> Task<Result<UserAttachment>> {
-        let Some(attachment) = self.attachments.get(&TypeId::of::<A>()) else {
+        let Some(attachment) = self.attachment_tools.get(&TypeId::of::<A>()) else {
             return Task::ready(Err(anyhow!("no attachment tool")));
         };
 
         (attachment.call)(cx)
     }
 
-    pub fn call_all_attachments(
+    pub fn call_all_attachment_tools(
         self: Arc<Self>,
         cx: &mut WindowContext<'_>,
     ) -> Task<Result<Vec<UserAttachment>>> {
@@ -96,7 +97,7 @@ impl UserAttachmentStore {
             let attachment_tasks = cx.update(|cx| {
                 let mut tasks = Vec::new();
                 for attachment in this
-                    .attachments
+                    .attachment_tools
                     .values()
                     .filter(|attachment| attachment.enabled.load(SeqCst))
                 {
@@ -116,6 +117,7 @@ impl UserAttachmentStore {
     }
 }
 
+///
 pub trait AttachmentTool {
     type Output: 'static;
     type View: Render;
@@ -142,9 +144,22 @@ impl Render for FileAttachmentView {
         match &self.output {
             Ok(attachment) => {
                 let filename = attachment.filename.clone();
-                div().child(SharedString::from(filename))
+
+                // todo!(): make the button link to the actual file to open
+                ButtonLike::new("file-attachment")
+                    .child(
+                        h_flex()
+                            .child(ui::Icon::new(IconName::File))
+                            // Matching up to the mock, which was to show a number of files. We only have one
+                            .child("1"),
+                    )
+                    .tooltip({
+                        move |cx| Tooltip::with_meta("File Attached", None, filename.clone(), cx)
+                    })
+                    .into_any_element()
             }
-            Err(err) => div().child(err.to_string()),
+            // todo!(): show a better error view when the file attaching didn't work
+            Err(err) => div().child(err.to_string()).into_any_element(),
         }
     }
 }

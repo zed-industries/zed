@@ -25,7 +25,7 @@ use semantic_index::{CloudEmbeddingProvider, ProjectIndex, SemanticIndex};
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use ui::{Composer, ProjectIndexButton};
+use ui::{ActiveFileButton, Composer, ProjectIndexButton};
 use util::{maybe, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -115,10 +115,6 @@ impl AssistantPanel {
                     semantic_index.project_index(project.clone(), cx)
                 });
 
-                let mut attachment_store = UserAttachmentStore::new();
-
-                attachment_store.register(ActiveEditorAttachmentTool::new(workspace.clone(), cx));
-
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry
                     .register(
@@ -134,6 +130,9 @@ impl AssistantPanel {
                     )
                     .context("failed to register CreateBufferTool")
                     .log_err();
+
+                let mut attachment_store = UserAttachmentStore::new();
+                attachment_store.register(ActiveEditorAttachmentTool::new(workspace.clone(), cx));
 
                 Self::new(
                     app_state.languages.clone(),
@@ -236,6 +235,7 @@ pub struct AssistantChat {
     language_registry: Arc<LanguageRegistry>,
     composer_editor: View<Editor>,
     project_index_button: Option<View<ProjectIndexButton>>,
+    active_file_button: Option<View<ActiveFileButton>>,
     user_store: Model<UserStore>,
     next_message_id: MessageId,
     collapsed_messages: HashMap<MessageId, bool>,
@@ -277,6 +277,9 @@ impl AssistantChat {
             cx.new_view(|cx| ProjectIndexButton::new(project_index, tool_registry.clone(), cx))
         });
 
+        let active_file_button =
+            Some(cx.new_view(|_cx| ActiveFileButton::new(attachment_store.clone())));
+
         Self {
             model,
             messages: Vec::new(),
@@ -290,6 +293,7 @@ impl AssistantChat {
             user_store,
             language_registry,
             project_index_button,
+            active_file_button,
             project_index,
             next_message_id: MessageId(0),
             editing_message: None,
@@ -380,7 +384,7 @@ impl AssistantChat {
         self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
             let attachments_task = this.update(&mut cx, |this, cx| {
                 let attachment_store = this.attachment_store.clone();
-                attachment_store.call_all_attachments(cx)
+                attachment_store.call_all_attachment_tools(cx)
             });
 
             let attachments = maybe!(async {
@@ -641,6 +645,7 @@ impl AssistantChat {
                         element.child(Composer::new(
                             body.clone(),
                             self.project_index_button.clone(),
+                            self.active_file_button.clone(),
                             crate::ui::ModelSelector::new(
                                 cx.view().downgrade(),
                                 self.model.clone(),
@@ -682,7 +687,7 @@ impl AssistantChat {
                                     }
                                 })),
                             ))
-                            .child(v_flex().gap_2().debug_bg_magenta().children(
+                            .child(h_flex().gap_2().children(
                                 attachments.iter().map(|attachment| attachment.view.clone()),
                             ))
                     }
@@ -825,6 +830,7 @@ impl Render for AssistantChat {
             .child(Composer::new(
                 self.composer_editor.clone(),
                 self.project_index_button.clone(),
+                self.active_file_button.clone(),
                 crate::ui::ModelSelector::new(cx.view().downgrade(), self.model.clone())
                     .into_any_element(),
             ))
