@@ -1,8 +1,12 @@
 # Summary
 
-[Getting Started](./getting_started.md)
+# General
+
+- [Getting Started](./getting_started.md)
   - [System Requirements](./system_requirements.md)
-[Feedback](./feedback.md)
+  - [Telemetry](./telemetry.md)
+  - [Additional Learning Materials](./additional_learning_materials.md)
+- [Feedback](./feedback.md)
 
 # Configuring Zed
 
@@ -27,7 +31,6 @@
 - [Adding Languages](./developing_zed__adding_languages.md)
 - [Adding UI]()
 
----
+# Community
 
-[Telemetry](./telemetry.md)
-[Code of Conduct](./CODE_OF_CONDUCT.md)
+- [Code of Conduct](./CODE_OF_CONDUCT.md)
