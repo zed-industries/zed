@@ -29,7 +29,10 @@ use crate::{
     Size, TouchPhase, WindowParams, X11Window,
 };
 
-use super::{super::SCROLL_LINES, X11Display, X11WindowStatePtr, XcbAtoms};
+use super::{
+    super::{open_uri_internal, SCROLL_LINES},
+    X11Display, X11WindowStatePtr, XcbAtoms,
+};
 use super::{button_of_key, modifiers_from_state};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
@@ -671,6 +674,10 @@ impl LinuxClient for X11Client {
 
     //todo(linux)
     fn set_cursor_style(&self, _style: CursorStyle) {}
+
+    fn open_uri(&self, uri: &str) {
+        open_uri_internal(uri, None);
+    }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
         self.0.borrow_mut().primary.set_contents(item.text);

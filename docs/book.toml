@@ -5,3 +5,9 @@ multilingual = false
 src = "src"
 title = "Zed"
 site-url = "/docs2/"
+
+[output.html]
+no-section-label = true
+
+[output.html.print]
+enable = false

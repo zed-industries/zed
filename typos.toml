@@ -19,6 +19,8 @@ extend-exclude = [
     "extensions/glsl/languages/glsl/",
     # Windows likes its abbreviations
     "crates/gpui/src/platform/windows/",
+    # Some typos in the base mdBook CSS.
+    "docs/theme/css/"
 ]
 
 [default]
