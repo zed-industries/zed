@@ -251,18 +251,6 @@ impl LspAdapter for TypeScriptLspAdapter {
                     None
                 }
             }
-            lsp::CompletionItemKind::METHOD => {
-                let method = "(method) ";
-                if !scan.starts_with(method) {
-                    return None;
-                }
-                scan = &scan[method.len()..];
-                scan = &scan[scan.find('.')? + 1..];
-                let name_end = scan.find(|c| (c == '(') || (c == '<'))?;
-                let source = Rope::from(format!("function {scan}"));
-                let runs = language.highlight_text(&source, func.len()..scan.len() + func.len());
-                Some((trim(scan), 0..name_end, Some(runs)))
-            }
             lsp::CompletionItemKind::FUNCTION => {
                 if scan.starts_with(interface) {
                     None
@@ -307,11 +295,14 @@ impl LspAdapter for TypeScriptLspAdapter {
                     let name_end =
                         scan[new.len()..].find(|c| (c == '(') || (c == '<'))? + new.len();
                     // includes "new "
-                    let full_label = scan[name_end..]
-                        .find('\n')
-                        .map(|i| i + name_end)
-                        .map(|label_end| &scan[..label_end])
-                        .unwrap_or(scan);
+                    let full_label = trim(
+                        scan[name_end..]
+                            .find('\n')
+                            .map(|i| i + name_end)
+                            .map(|label_end| &scan[..label_end])
+                            .unwrap_or(scan),
+                    );
+                    // doesn't include "new "
                     let label = &full_label[new.len()..];
                     let source = Rope::from(format!("function {}", label));
                     let highlight_keyword = language.grammar()?.highlight_id_for_name("keyword")?;
@@ -320,7 +311,7 @@ impl LspAdapter for TypeScriptLspAdapter {
                         new.len(),
                         language.highlight_text(&source, func.len()..func.len() + label.len()),
                     ));
-                    Some((trim(full_label), new.len()..name_end, Some(runs)))
+                    Some((full_label, new.len()..name_end, Some(runs)))
                 } else if scan.starts_with(constant) {
                     let label = &scan[constant.len()..];
                     let name_end = label.find(':')?;
@@ -344,6 +335,19 @@ impl LspAdapter for TypeScriptLspAdapter {
                 let runs = language.highlight_text(&source, constant.len()..scan.len());
                 Some((trim(label), 0..name_end, Some(runs)))
             }
+            lsp::CompletionItemKind::METHOD => {
+                let method = "(method) ";
+                if !scan.starts_with(method) {
+                    return None;
+                }
+                scan = &scan[method.len()..];
+                scan = &scan[scan.find('.')? + 1..];
+                let trimmed = trim(scan);
+                let source = Rope::from(format!("function {}", trimmed.as_ref()));
+                let name_end = trimmed.find(|c| (c == '(') || (c == '<'))?;
+                let runs = language.highlight_text(&source, func.len()..trimmed.len() + func.len());
+                Some((trimmed, 0..name_end, Some(runs)))
+            }
             lsp::CompletionItemKind::PROPERTY | lsp::CompletionItemKind::FIELD => {
                 let property = "(property) ";
                 if !scan.starts_with(property) {
@@ -351,10 +355,11 @@ impl LspAdapter for TypeScriptLspAdapter {
                 }
                 scan = &scan[property.len()..];
                 scan = &scan[scan.find('.')? + 1..];
-                let source = Rope::from(format!("let {scan}"));
-                let runs = language.highlight_text(&source, 4..4 + scan.len());
-                let name_end = scan.find(':')?;
-                Some((trim(scan), 0..name_end, Some(runs)))
+                let trimmed = trim(scan);
+                let source = Rope::from(format!("let {}", trimmed.as_ref()));
+                let runs = language.highlight_text(&source, 4..4 + trimmed.len());
+                let name_end = trimmed.find(':')?;
+                Some((trimmed, 0..name_end, Some(runs)))
             }
             lsp::CompletionItemKind::CONSTRUCTOR => None,
             lsp::CompletionItemKind::INTERFACE => {
@@ -1093,6 +1098,33 @@ mod tests {
                 // (35..36, highlight_keyword),
                 (39..41, highlight_field),
                 (43..44, highlight_type),
+            ],
+        };
+        assert_eq!(
+            adapter
+                .label_for_resolved_completion(&completion, &language)
+                .await
+                .unwrap(),
+            expected_label
+        );
+
+        let completion = CompletionItem {
+            label: "member".to_string(),
+            kind: Some(CompletionItemKind::FIELD),
+            detail: Some(
+                "(property) LocalClass.member: {\n    hi: string;\n    there: string;\n}"
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+        let expected_label = CodeLabel {
+            text: "member: { hi: string; there: string; }".to_string(),
+            filter_range: 0..6,
+            runs: vec![
+                (10..12, highlight_field),
+                (14..20, highlight_type),
+                (22..27, highlight_field),
+                (29..35, highlight_type),
             ],
         };
         assert_eq!(
