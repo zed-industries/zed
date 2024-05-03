@@ -305,8 +305,11 @@ impl WindowsWindowState {
                 lock.display = WindowsDisplay::new_with_handle(monitor);
             }
         }
-        if let Some(ref mut callback) = lock.callbacks.moved {
-            callback()
+        if let Some(mut callback) = lock.callbacks.moved.take() {
+            drop(lock);
+            callback();
+            let mut lock = state.write();
+            lock.callbacks.moved = Some(callback);
         }
         Some(0)
     }
@@ -322,9 +325,12 @@ impl WindowsWindowState {
             width: width as f64,
             height: height as f64,
         });
-        if let Some(ref mut callback) = lock.callbacks.resize {
+        if let Some(mut callback) = lock.callbacks.resize.take() {
+            drop(lock);
             let logical_size = logical_size(new_physical_size, scale_factor);
             callback(logical_size, scale_factor);
+            let mut lock = state.write();
+            lock.callbacks.resize = Some(callback);
         }
         Some(0)
     }
@@ -366,15 +372,12 @@ impl WindowsWindowState {
     fn handle_paint_msg(handle: HWND, state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
         let mut paint_struct = PAINTSTRUCT::default();
         let _hdc = unsafe { BeginPaint(handle, &mut paint_struct) };
-        let mut write_lock = state.as_ref().write();
-        let ptr = write_lock.this.clone();
-        if let Some(mut request_frame) = write_lock.callbacks.request_frame.take() {
-            drop(write_lock);
+        let mut lock = state.as_ref().write();
+        if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
+            drop(lock);
             request_frame();
-            if let Some(inner) = ptr.upgrade() {
-                let mut write_lock = inner.as_ref().write();
-                write_lock.callbacks.request_frame = Some(request_frame);
-            }
+            let mut lock = state.write();
+            lock.callbacks.request_frame = Some(request_frame);
         }
         unsafe { EndPaint(handle, &paint_struct) };
         Some(0)
@@ -382,10 +385,13 @@ impl WindowsWindowState {
 
     fn handle_close_msg(state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
         let mut lock = state.as_ref().write();
-        if let Some(ref mut callback) = lock.callbacks.should_close {
+        if let Some(mut callback) = lock.callbacks.should_close.take() {
+            drop(lock);
             if callback() {
                 return Some(0);
             }
+            let mut lock = state.write();
+            lock.callbacks.should_close = Some(callback);
         }
         None
     }
@@ -393,6 +399,7 @@ impl WindowsWindowState {
     fn handle_destroy_msg(state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
         let mut lock = state.as_ref().write();
         if let Some(callback) = lock.callbacks.close.take() {
+            drop(lock);
             callback();
         }
         // TODO:
@@ -421,8 +428,9 @@ impl WindowsWindowState {
         state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let mut lock = state.as_ref().write();
-        let scale_factor = lock.scale_factor;
-        if let Some(ref mut callback) = lock.callbacks.input {
+        if let Some(mut callback) = lock.callbacks.input.take() {
+            let scale_factor = lock.scale_factor;
+            drop(lock);
             let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
                 flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
                 flags if flags.contains(MK_RBUTTON) => Some(MouseButton::Right),
@@ -442,9 +450,14 @@ impl WindowsWindowState {
                 pressed_button,
                 modifiers: current_modifiers(),
             };
-            if callback(PlatformInput::MouseMove(event)).default_prevented {
-                return Some(0);
-            }
+            let result = if callback(PlatformInput::MouseMove(event)).default_prevented {
+                Some(0)
+            } else {
+                Some(1)
+            };
+            let mut lock = state.write();
+            lock.callbacks.input = Some(callback);
+            return result;
         }
         Some(1)
     }
@@ -461,18 +474,24 @@ impl WindowsWindowState {
             return None;
         };
         let mut lock = state.as_ref().write();
-        let Some(ref mut func) = lock.callbacks.input else {
+        let Some(mut func) = lock.callbacks.input.take() else {
             return None;
         };
+        drop(lock);
         let event = KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
         };
-        if func(PlatformInput::KeyDown(event)).default_prevented {
+        let result = if func(PlatformInput::KeyDown(event)).default_prevented {
             invalidate_client_area(handle);
-            return Some(0);
-        }
-        None
+            Some(0)
+        } else {
+            None
+        };
+        let mut lock = state.write();
+        lock.callbacks.input = Some(func);
+
+        result
     }
 
     fn handle_syskeyup_msg(
@@ -486,15 +505,21 @@ impl WindowsWindowState {
             return None;
         };
         let mut lock = state.as_ref().write();
-        let Some(ref mut func) = lock.callbacks.input else {
+        let Some(mut func) = lock.callbacks.input.take() else {
             return None;
         };
+        drop(lock);
         let event = KeyUpEvent { keystroke };
-        if func(PlatformInput::KeyUp(event)).default_prevented {
+        let result = if func(PlatformInput::KeyUp(event)).default_prevented {
             invalidate_client_area(handle);
-            return Some(0);
-        }
-        None
+            Some(0)
+        } else {
+            Some(1)
+        };
+        let mut lock = state.write();
+        lock.callbacks.input = Some(func);
+
+        result
     }
 
     fn handle_keydown_msg(
@@ -507,18 +532,24 @@ impl WindowsWindowState {
             return Some(1);
         };
         let mut lock = state.as_ref().write();
-        let Some(ref mut func) = lock.callbacks.input else {
+        let Some(mut func) = lock.callbacks.input.take() else {
             return Some(1);
         };
+        drop(lock);
         let event = KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
         };
-        if func(PlatformInput::KeyDown(event)).default_prevented {
+        let result = if func(PlatformInput::KeyDown(event)).default_prevented {
             invalidate_client_area(handle);
-            return Some(0);
-        }
-        Some(1)
+            Some(0)
+        } else {
+            Some(1)
+        };
+        let mut lock = state.write();
+        lock.callbacks.input = Some(func);
+
+        result
     }
 
     fn handle_keyup_msg(
@@ -530,15 +561,21 @@ impl WindowsWindowState {
             return Some(1);
         };
         let mut lock = state.as_ref().write();
-        let Some(ref mut func) = lock.callbacks.input else {
+        let Some(mut func) = lock.callbacks.input.take() else {
             return Some(1);
         };
+        drop(lock);
         let event = KeyUpEvent { keystroke };
-        if func(PlatformInput::KeyUp(event)).default_prevented {
+        let result = if func(PlatformInput::KeyUp(event)).default_prevented {
             invalidate_client_area(handle);
-            return Some(0);
-        }
-        Some(1)
+            Some(0)
+        } else {
+            Some(1)
+        };
+        let mut lock = state.write();
+        lock.callbacks.input = Some(func);
+
+        result
     }
 
     fn handle_char_msg(
@@ -551,9 +588,10 @@ impl WindowsWindowState {
             return Some(1);
         };
         let mut lock = state.as_ref().write();
-        let Some(ref mut func) = lock.callbacks.input else {
+        let Some(mut func) = lock.callbacks.input.take() else {
             return Some(1);
         };
+        drop(lock);
         let ime_key = keystroke.ime_key.clone();
         let event = KeyDownEvent {
             keystroke,
@@ -563,17 +601,24 @@ impl WindowsWindowState {
         let dispatch_event_result = func(PlatformInput::KeyDown(event));
         if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
             invalidate_client_area(handle);
+            let mut lock = state.write();
+            lock.callbacks.input = Some(func);
             return Some(0);
         }
         let Some(ime_char) = ime_key else {
+            let mut lock = state.write();
+            lock.callbacks.input = Some(func);
             return Some(1);
         };
+        let mut lock = state.write();
         let Some(mut input_handler) = lock.input_handler.take() else {
+            lock.callbacks.input = Some(func);
             return Some(1);
         };
         input_handler.replace_text_in_range(None, &ime_char);
-        lock.input_handler = Some(input_handler);
         invalidate_client_area(handle);
+        lock.callbacks.input = Some(func);
+        lock.input_handler = Some(input_handler);
 
         Some(0)
     }
@@ -590,6 +635,8 @@ impl WindowsWindowState {
             let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
             let click_count = lock.click_state.update(button, physical_point);
             let scale_factor = lock.scale_factor;
+            drop(lock);
+
             let event = MouseDownEvent {
                 button,
                 position: logical_point(x, y, scale_factor),
@@ -597,12 +644,18 @@ impl WindowsWindowState {
                 click_count,
                 first_mouse: false,
             };
-            if callback(PlatformInput::MouseDown(event)).default_prevented {
-                return Some(0);
-            }
+            let result = if callback(PlatformInput::MouseDown(event)).default_prevented {
+                Some(0)
+            } else {
+                Some(1)
+            };
+            let mut lock = state.write();
             lock.callbacks.input = Some(callback);
+
+            result
+        } else {
+            Some(1)
         }
-        Some(1)
     }
 
     fn handle_mouse_up_msg(
@@ -616,18 +669,26 @@ impl WindowsWindowState {
             let y = lparam.signed_hiword() as f32;
             let click_count = lock.click_state.current_count;
             let scale_factor = lock.scale_factor;
+            drop(lock);
+
             let event = MouseUpEvent {
                 button,
                 position: logical_point(x, y, scale_factor),
                 modifiers: current_modifiers(),
                 click_count,
             };
-            if callback(PlatformInput::MouseUp(event)).default_prevented {
-                return Some(0);
-            }
+            let result = if callback(PlatformInput::MouseUp(event)).default_prevented {
+                Some(0)
+            } else {
+                Some(1)
+            };
+            let mut lock = state.write();
             lock.callbacks.input = Some(callback);
+
+            result
+        } else {
+            Some(1)
         }
-        Some(1)
     }
 
     fn handle_xbutton_msg(
@@ -651,8 +712,9 @@ impl WindowsWindowState {
         state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let mut lock = state.as_ref().write();
-        let scale_factor = lock.scale_factor;
-        if let Some(ref mut callback) = lock.callbacks.input {
+        if let Some(mut callback) = lock.callbacks.input.take() {
+            let scale_factor = lock.scale_factor;
+            drop(lock);
             let wheel_distance = wparam.signed_hiword() as f32 / WHEEL_DELTA as f32;
             // let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
             // * self.platform_inner.settings.borrow().wheel_scroll_lines as f32;
@@ -670,10 +732,18 @@ impl WindowsWindowState {
                 modifiers: current_modifiers(),
                 touch_phase: TouchPhase::Moved,
             };
-            callback(PlatformInput::ScrollWheel(event));
-            return Some(0);
+            let result = if callback(PlatformInput::ScrollWheel(event)).default_prevented {
+                Some(0)
+            } else {
+                Some(1)
+            };
+            let mut lock = state.write();
+            lock.callbacks.input = Some(callback);
+
+            result
+        } else {
+            Some(1)
         }
-        Some(1)
     }
 
     fn handle_mouse_horizontal_wheel_msg(
@@ -683,8 +753,9 @@ impl WindowsWindowState {
         state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         let mut lock = state.as_ref().write();
-        let scale_factor = lock.scale_factor;
-        if let Some(ref mut callback) = lock.callbacks.input {
+        if let Some(mut callback) = lock.callbacks.input.take() {
+            let scale_factor = lock.scale_factor;
+            drop(lock);
             let wheel_distance = wparam.signed_hiword() as f32 / WHEEL_DELTA as f32;
             // let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
             //     * self.platform_inner.settings.borrow().wheel_scroll_chars as f32;
@@ -702,11 +773,18 @@ impl WindowsWindowState {
                 modifiers: current_modifiers(),
                 touch_phase: TouchPhase::Moved,
             };
-            if callback(PlatformInput::ScrollWheel(event)).default_prevented {
-                return Some(0);
-            }
+            let result = if callback(PlatformInput::ScrollWheel(event)).default_prevented {
+                Some(0)
+            } else {
+                Some(1)
+            };
+            let mut lock = state.write();
+            lock.callbacks.input = Some(callback);
+
+            result
+        } else {
+            Some(1)
         }
-        Some(1)
     }
 
     fn handle_ime_position(handle: HWND, state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
@@ -835,20 +913,20 @@ impl WindowsWindowState {
         let activated = wparam.loword() > 0;
         let lock = state.as_ref().read();
         let executor = lock.executor.clone();
-        let weak = lock.this.clone();
+        drop(lock);
         executor
             .spawn(async move {
-                let Some(state) = weak.upgrade() else {
-                    return;
-                };
-                let mut lock = state.write();
+                let mut lock = state.as_ref().write();
                 if lock.hide_title_bar {
                     if let Some(titlebar_rect) = lock.get_titlebar_rect().log_err() {
                         unsafe { InvalidateRect(handle, Some(&titlebar_rect), FALSE) };
                     }
                 }
-                if let Some(ref mut cb) = lock.callbacks.active_status_change {
+                if let Some(mut cb) = lock.callbacks.active_status_change.take() {
+                    drop(lock);
                     cb(activated);
+                    let mut lock = state.write();
+                    lock.callbacks.active_status_change = Some(cb);
                 }
             })
             .detach();
@@ -865,37 +943,38 @@ impl WindowsWindowState {
 
         let lock = state.as_ref().read();
         if lock.hide_title_bar {
+            drop(lock);
             // Inform the application of the frame change to force redrawing with the new
             // client area that is extended into the title bar
-            let executor = lock.executor.clone();
-            executor
-                .spawn(async move {
-                    unsafe {
-                        SetWindowPos(
-                            handle,
-                            None,
-                            size_rect.left,
-                            size_rect.top,
-                            width,
-                            height,
-                            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
-                        )
-                        .log_err()
-                    }
-                })
-                .detach();
-            // unsafe {
-            //     SetWindowPos(
-            //         handle,
-            //         None,
-            //         size_rect.left,
-            //         size_rect.top,
-            //         width,
-            //         height,
-            //         SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
-            //     )
-            //     .log_err()
-            // };
+            // let executor = lock.executor.clone();
+            // executor
+            //     .spawn(async move {
+            //         unsafe {
+            //             SetWindowPos(
+            //                 handle,
+            //                 None,
+            //                 size_rect.left,
+            //                 size_rect.top,
+            //                 width,
+            //                 height,
+            //                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
+            //             )
+            //             .log_err()
+            //         }
+            //     })
+            //     .detach();
+            unsafe {
+                SetWindowPos(
+                    handle,
+                    None,
+                    size_rect.left,
+                    size_rect.top,
+                    width,
+                    height,
+                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
+                )
+                .log_err()
+            };
         }
 
         Some(0)
@@ -1011,9 +1090,10 @@ impl WindowsWindowState {
             return None;
         }
 
-        let scale_factor = lock.scale_factor;
         let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-        if let Some(ref mut callback) = lock.callbacks.input {
+        if let Some(mut callback) = lock.callbacks.input.take() {
+            let scale_factor = lock.scale_factor;
+            drop(lock);
             let mut cursor_point = POINT {
                 x: lparam.signed_loword().into(),
                 y: lparam.signed_hiword().into(),
@@ -1024,11 +1104,18 @@ impl WindowsWindowState {
                 pressed_button: None,
                 modifiers: current_modifiers(),
             };
-            if callback(PlatformInput::MouseMove(event)).default_prevented {
-                return Some(0);
-            }
+            let result = if callback(PlatformInput::MouseMove(event)).default_prevented {
+                Some(0)
+            } else {
+                Some(1)
+            };
+            let mut lock = state.write();
+            lock.callbacks.input = Some(callback);
+
+            result
+        } else {
+            None
         }
-        None
     }
 
     fn handle_nc_mouse_down_msg(
@@ -1044,7 +1131,8 @@ impl WindowsWindowState {
         }
 
         let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-        if let Some(mut callback) = lock.callbacks.input.take() {
+        let result = if let Some(mut callback) = lock.callbacks.input.take() {
+            let scale_factor = lock.scale_factor;
             let mut cursor_point = POINT {
                 x: lparam.signed_loword().into(),
                 y: lparam.signed_hiword().into(),
@@ -1052,7 +1140,7 @@ impl WindowsWindowState {
             unsafe { ScreenToClient(handle, &mut cursor_point) };
             let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
             let click_count = lock.click_state.update(button, physical_point);
-            let scale_factor = lock.scale_factor;
+            drop(lock);
             let event = MouseDownEvent {
                 button,
                 position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
@@ -1060,14 +1148,22 @@ impl WindowsWindowState {
                 click_count,
                 first_mouse: false,
             };
-            if callback(PlatformInput::MouseDown(event)).default_prevented {
-                return Some(0);
-            }
+            let result = if callback(PlatformInput::MouseDown(event)).default_prevented {
+                Some(0)
+            } else {
+                None
+            };
+            let mut lock = state.write();
             lock.callbacks.input = Some(callback);
-        }
+
+            result
+        } else {
+            None
+        };
 
         // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
-        matches!(wparam.0 as u32, HTMINBUTTON | HTMAXBUTTON | HTCLOSE).then_some(0)
+        result
+            .or_else(|| matches!(wparam.0 as u32, HTMINBUTTON | HTMAXBUTTON | HTCLOSE).then_some(0))
     }
 
     fn handle_nc_mouse_up_msg(
@@ -1082,9 +1178,10 @@ impl WindowsWindowState {
             return None;
         }
 
-        let scale_factor = lock.scale_factor;
         let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-        if let Some(ref mut callback) = lock.callbacks.input {
+        let result = if let Some(mut callback) = lock.callbacks.input.take() {
+            let scale_factor = lock.scale_factor;
+            drop(lock);
             let mut cursor_point = POINT {
                 x: lparam.signed_loword().into(),
                 y: lparam.signed_hiword().into(),
@@ -1096,11 +1193,22 @@ impl WindowsWindowState {
                 modifiers: current_modifiers(),
                 click_count: 1,
             };
-            if callback(PlatformInput::MouseUp(event)).default_prevented {
-                return Some(0);
-            }
+            let result = if callback(PlatformInput::MouseUp(event)).default_prevented {
+                Some(0)
+            } else {
+                None
+            };
+            let mut lock = state.write();
+            lock.callbacks.input = Some(callback);
+
+            result
+        } else {
+            drop(lock);
+            None
+        };
+        if result.is_some() {
+            return result;
         }
-        drop(lock);
 
         let lock = state.as_ref().read();
         if button == MouseButton::Left {
