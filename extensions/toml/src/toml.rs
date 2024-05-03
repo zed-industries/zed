@@ -31,7 +31,7 @@ impl TomlExtension {
 
         let (platform, arch) = zed::current_platform();
         let asset_name = format!(
-            "taplo-full-{os}-{arch}.{extension}",
+            "taplo-full-{os}-{arch}.gz",
             arch = match arch {
                 zed::Architecture::Aarch64 => "aarch64",
                 zed::Architecture::X86 => "x86",
@@ -42,10 +42,6 @@ impl TomlExtension {
                 zed::Os::Linux => "linux",
                 zed::Os::Windows => "windows",
             },
-            extension = match platform {
-                zed::Os::Mac | zed::Os::Linux => "gz",
-                zed::Os::Windows => "zip",
-            }
         );
 
         let asset = release
@@ -58,7 +54,13 @@ impl TomlExtension {
         fs::create_dir_all(&version_dir)
             .map_err(|err| format!("failed to create directory '{version_dir}': {err}"))?;
 
-        let binary_path = format!("{version_dir}/taplo");
+        let binary_path = format!(
+            "{version_dir}/{bin_name}",
+            bin_name = match platform {
+                zed::Os::Windows => "taplo.exe",
+                zed::Os::Mac | zed::Os::Linux => "taplo",
+            }
+        );
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
             zed::set_language_server_installation_status(
@@ -69,10 +71,7 @@ impl TomlExtension {
             zed::download_file(
                 &asset.download_url,
                 &binary_path,
-                match platform {
-                    zed::Os::Mac | zed::Os::Linux => zed::DownloadedFileType::Gzip,
-                    zed::Os::Windows => zed::DownloadedFileType::Zip,
-                },
+                zed::DownloadedFileType::Gzip,
             )
             .map_err(|err| format!("failed to download file: {err}"))?;
 
