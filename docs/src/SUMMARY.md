@@ -1,8 +1,10 @@
 # Summary
 
-[Getting Started](./getting_started.md)
-  - [System Requirements](./system_requirements.md)
-[Feedback](./feedback.md)
+# General
+
+- [Getting Started](./getting_started.md)
+- [System Requirements](./system_requirements.md)
+- [Feedback](./feedback.md)
 
 # Configuring Zed
 
