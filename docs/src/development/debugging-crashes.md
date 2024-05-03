@@ -1,3 +1,5 @@
+# Debugging Crashes
+
 ## Crashes
 
 When an app crashes, macOS creates a `.ips` file in `~/Library/Logs/DiagnosticReports`. You can view these using the built in Console app (`cmd-space Console`) under "Crash Reports".

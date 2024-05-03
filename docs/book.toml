@@ -11,3 +11,9 @@ no-section-label = true
 
 [output.html.print]
 enable = false
+
+[output.html.redirect]
+"/elixir" = "languages/elixir"
+"/javascript" = "languages/javascript"
+"/ruby" = "languages/ruby"
+"/python" = "languages/python"
