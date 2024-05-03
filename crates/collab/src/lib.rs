@@ -138,6 +138,7 @@ pub struct Config {
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
+    pub supermaven_api_key: Option<Arc<str>>,
 }
 
 impl Config {
