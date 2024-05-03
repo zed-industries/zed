@@ -49,9 +49,7 @@ impl LineWrapper {
                     continue;
                 }
 
-                // '⋯' is special for Editor fold indicator, to keep it in the same line.
-                // https://github.com/zed-industries/zed/blob/6cf62a5b02ba0aa59e25984182fb6535820a9365/crates/editor/src/display_map.rs#L1329
-                if c.is_ascii_alphanumeric() || c.is_ascii_punctuation() || c == '⋯' {
+                if Self::is_word_char(c) {
                     if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
                         last_candidate_ix = ix;
                         last_candidate_width = width;
@@ -98,6 +96,13 @@ impl LineWrapper {
 
             None
         })
+    }
+
+    pub(crate) fn is_word_char(c: char) -> bool {
+        c.is_ascii_alphanumeric() ||
+        // The punctuation characters that can be part of a word.
+        // https://doc.rust-lang.org/std/primitive.char.html#method.is_ascii_punctuation
+        matches!(c, '-' | '_' | '.' | '?' | '$' | '%' | '&' | '@' | '^' | '~' | ':' | '⋯')
     }
 
     #[inline(always)]
@@ -220,6 +225,21 @@ mod tests {
                 ]
             );
         });
+    }
+
+    #[test]
+    fn test_is_word_char() {
+        for c in "@hello-123_456.jpg$%&@^~:⋯".chars() {
+            assert!(LineWrapper::is_word_char(c), "assertion failed for '{}'", c);
+        }
+
+        for c in r"\/()[]{}<>,;好😀".chars() {
+            assert!(
+                !LineWrapper::is_word_char(c),
+                "assertion failed for '{}'",
+                c
+            );
+        }
     }
 
     // For compatibility with the test macro
