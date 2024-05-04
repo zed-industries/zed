@@ -39,8 +39,13 @@ use windows::{
 use crate::*;
 
 pub(crate) struct WindowsPlatform {
-    inner: Rc<WindowsPlatformInner>,
+    inner: Rc<WindowsPlatformState>,
+    // below will never change through the app life cycle
     icon: HICON,
+    background_executor: BackgroundExecutor,
+    foreground_executor: ForegroundExecutor,
+    text_system: Arc<dyn PlatformTextSystem>,
+    dispatch_event: OwnedHandle,
 }
 
 /// Windows settings pulled from SystemParametersInfo
@@ -58,20 +63,16 @@ pub(crate) struct MouseWheelSettings {
     pub(crate) wheel_scroll_lines: u32,
 }
 
-pub(crate) struct WindowsPlatformInner {
-    background_executor: BackgroundExecutor,
-    pub(crate) foreground_executor: ForegroundExecutor,
+pub(crate) struct WindowsPlatformState {
     main_receiver: flume::Receiver<Runnable>,
-    text_system: Arc<dyn PlatformTextSystem>,
     callbacks: Mutex<Callbacks>,
-    pub(crate) dispatch_event: OwnedHandle,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Cell<HCURSOR>,
     pub(crate) raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
 }
 
-impl WindowsPlatformInner {
+impl WindowsPlatformState {
     #[inline]
     pub fn run_foreground_tasks(&self) {
         for runnable in self.main_receiver.drain() {
@@ -173,19 +174,22 @@ impl WindowsPlatform {
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
         let icon = load_icon().unwrap_or_default();
         let current_cursor = Cell::new(load_cursor(CursorStyle::Arrow));
-        let inner = Rc::new(WindowsPlatformInner {
-            background_executor,
-            foreground_executor,
+        let inner = Rc::new(WindowsPlatformState {
             main_receiver,
-            text_system,
             callbacks,
-            dispatch_event,
             settings,
             current_cursor,
             raw_window_handles,
         });
 
-        Self { inner, icon }
+        Self {
+            inner,
+            icon,
+            background_executor,
+            foreground_executor,
+            text_system,
+            dispatch_event,
+        }
     }
 
     #[inline]
@@ -233,20 +237,20 @@ impl WindowsPlatform {
 
 impl Platform for WindowsPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
-        self.inner.background_executor.clone()
+        self.background_executor.clone()
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {
-        self.inner.foreground_executor.clone()
+        self.foreground_executor.clone()
     }
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.inner.text_system.clone()
+        self.text_system.clone()
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let dispatch_event = self.inner.dispatch_event.to_raw();
+        let dispatch_event = self.dispatch_event.to_raw();
         let vsync_event = create_event().unwrap();
         let timer_stop_event = create_event().unwrap();
         let raw_timer_stop_event = timer_stop_event.to_raw();
@@ -393,6 +397,7 @@ impl Platform for WindowsPlatform {
             handle,
             options,
             self.icon,
+            self.foreground_executor.clone(),
             self.inner.clone(),
         ))
     }

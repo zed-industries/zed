@@ -34,7 +34,7 @@ use crate::*;
 
 pub(crate) struct WindowsWindowState {
     pub(crate) hwnd: HWND,
-    pub(crate) platform_inner: Rc<WindowsPlatformInner>,
+    pub(crate) platform_inner: Rc<WindowsPlatformState>,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) origin: Point<DevicePixels>,
     pub(crate) physical_size: Size<DevicePixels>,
@@ -59,7 +59,8 @@ impl WindowsWindowState {
         hide_title_bar: bool,
         display: WindowsDisplay,
         transparent: bool,
-        platform_inner: Rc<WindowsPlatformInner>,
+        executor: ForegroundExecutor,
+        platform_inner: Rc<WindowsPlatformState>,
     ) -> Rc<RefCell<Self>> {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = point(cs.x.into(), cs.y.into());
@@ -109,7 +110,6 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let click_state = ClickState::new();
         let fullscreen = None;
-        let executor = platform_inner.foreground_executor.clone();
         let current_cursor = platform_inner.current_cursor.get();
         let mouse_wheel_settings = platform_inner.settings.borrow().mouse_wheel_settings;
 
@@ -234,7 +234,8 @@ struct WindowCreateContext {
     hide_title_bar: bool,
     display: WindowsDisplay,
     transparent: bool,
-    platform_inner: Rc<WindowsPlatformInner>,
+    executor: ForegroundExecutor,
+    platform_inner: Rc<WindowsPlatformState>,
 }
 
 impl WindowsWindow {
@@ -242,7 +243,8 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         options: WindowParams,
         icon: HICON,
-        platform_inner: Rc<WindowsPlatformInner>,
+        executor: ForegroundExecutor,
+        platform_inner: Rc<WindowsPlatformState>,
     ) -> Self {
         let classname = register_wnd_class(icon);
         let hide_title_bar = options
@@ -274,6 +276,7 @@ impl WindowsWindow {
             // options.display_id
             display: WindowsDisplay::primary_monitor().unwrap(),
             transparent: options.window_background != WindowBackgroundAppearance::Opaque,
+            executor,
             platform_inner: platform_inner.clone(),
         };
         let lpparam = Some(&context as *const _ as *const _);
@@ -858,6 +861,7 @@ unsafe extern "system" fn wnd_proc(
             ctx.hide_title_bar,
             ctx.display.clone(),
             ctx.transparent,
+            ctx.executor.clone(),
             ctx.platform_inner.clone(),
         );
         let weak = Box::new(Rc::downgrade(&inner));
