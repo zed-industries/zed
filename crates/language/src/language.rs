@@ -616,14 +616,6 @@ pub struct LanguageMatcher {
     /// Given a list of `LanguageConfig`'s, the language of a file can be determined based on the path extension matching any of the `path_suffixes`.
     #[serde(default)]
     pub path_suffixes: Vec<String>,
-    /// A Regex pattern that determines whether the language should be assigned to a file based on the name of the file.
-    #[serde(
-        default,
-        serialize_with = "serialize_regex",
-        deserialize_with = "deserialize_regex"
-    )]
-    #[schemars(schema_with = "regex_json_schema")]
-    pub path_regex: Option<Regex>,
     /// A regex pattern that determines whether the language should be assigned to a file or not.
     #[serde(
         default,

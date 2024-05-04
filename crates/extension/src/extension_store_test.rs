@@ -198,7 +198,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["erb".into()],
                         first_line_pattern: None,
-                        path_regex: None,
                     },
                 },
             ),
@@ -211,7 +210,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["rb".into()],
                         first_line_pattern: None,
-                        path_regex: None,
                     },
                 },
             ),
