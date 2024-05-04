@@ -38,7 +38,7 @@ use windows::{
 use crate::*;
 
 pub(crate) struct WindowsPlatform {
-    inner: Rc<RefCell<WindowsPlatformState>>,
+    inner: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     // below will never change through the app life cycle
     icon: HICON,
@@ -164,11 +164,11 @@ impl WindowsPlatform {
         let settings = WindowsPlatformSystemSettings::new();
         let icon = load_icon().unwrap_or_default();
         let current_cursor = load_cursor(CursorStyle::Arrow);
-        let inner = Rc::new(RefCell::new(WindowsPlatformState {
+        let inner = RefCell::new(WindowsPlatformState {
             callbacks,
             settings,
             current_cursor,
-        }));
+        });
 
         Self {
             inner,
@@ -285,7 +285,7 @@ impl Platform for WindowsPlatform {
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                             if msg.message == WM_SETTINGCHANGE {
-                                self.inner.as_ref().borrow_mut().settings.update_all();
+                                self.inner.borrow_mut().settings.update_all();
                                 self.post_message(
                                     MOUSE_WHEEL_SETTINGS_CHANGED,
                                     WPARAM(0),
@@ -314,7 +314,7 @@ impl Platform for WindowsPlatform {
         }
         end_vsync_timer(raw_timer_stop_event);
 
-        let mut lock = self.inner.as_ref().borrow_mut();
+        let mut lock = self.inner.borrow_mut();
         if let Some(ref mut callback) = lock.callbacks.quit {
             // drop(lock);
             callback();
@@ -401,14 +401,17 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
+        let lock = self.inner.borrow();
         let window = WindowsWindow::new(
             handle,
             options,
             self.icon,
             self.foreground_executor.clone(),
             self.main_receiver.clone(),
-            self.inner.clone(),
+            lock.settings.mouse_wheel_settings,
+            lock.current_cursor,
         );
+        drop(lock);
         let handle = window.get_raw_handle();
         let mut lock = self.raw_window_handles.write();
         lock.push(handle);
@@ -435,7 +438,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.inner.as_ref().borrow_mut().callbacks.open_urls = Some(callback);
+        self.inner.borrow_mut().callbacks.open_urls = Some(callback);
     }
 
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
@@ -555,34 +558,26 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.inner.as_ref().borrow_mut().callbacks.quit = Some(callback);
+        self.inner.borrow_mut().callbacks.quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.inner.as_ref().borrow_mut().callbacks.reopen = Some(callback);
+        self.inner.borrow_mut().callbacks.reopen = Some(callback);
     }
 
     // todo(windows)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.inner.as_ref().borrow_mut().callbacks.app_menu_action = Some(callback);
+        self.inner.borrow_mut().callbacks.app_menu_action = Some(callback);
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.inner
-            .as_ref()
-            .borrow_mut()
-            .callbacks
-            .will_open_app_menu = Some(callback);
+        self.inner.borrow_mut().callbacks.will_open_app_menu = Some(callback);
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.inner
-            .as_ref()
-            .borrow_mut()
-            .callbacks
-            .validate_app_menu_command = Some(callback);
+        self.inner.borrow_mut().callbacks.validate_app_menu_command = Some(callback);
     }
 
     fn os_name(&self) -> &'static str {

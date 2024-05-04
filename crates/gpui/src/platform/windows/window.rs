@@ -35,7 +35,6 @@ use crate::*;
 
 pub(crate) struct WindowsWindowState {
     pub(crate) hwnd: HWND,
-    pub(crate) platform_inner: Rc<RefCell<WindowsPlatformState>>,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) origin: Point<DevicePixels>,
     pub(crate) physical_size: Size<DevicePixels>,
@@ -63,7 +62,8 @@ impl WindowsWindowState {
         transparent: bool,
         executor: ForegroundExecutor,
         main_receiver: flume::Receiver<Runnable>,
-        platform_inner: Rc<RefCell<WindowsPlatformState>>,
+        mouse_wheel_settings: MouseWheelSettings,
+        current_cursor: HCURSOR,
     ) -> Rc<RefCell<Self>> {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = point(cs.x.into(), cs.y.into());
@@ -113,16 +113,9 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let click_state = ClickState::new();
         let fullscreen = None;
-        let current_cursor = platform_inner.as_ref().borrow().current_cursor;
-        let mouse_wheel_settings = platform_inner
-            .as_ref()
-            .borrow()
-            .settings
-            .mouse_wheel_settings;
 
         Rc::new(RefCell::new(Self {
             hwnd,
-            platform_inner,
             executor,
             origin,
             physical_size,
@@ -250,7 +243,8 @@ struct WindowCreateContext {
     transparent: bool,
     executor: ForegroundExecutor,
     main_receiver: flume::Receiver<Runnable>,
-    platform_inner: Rc<RefCell<WindowsPlatformState>>,
+    mouse_wheel_settings: MouseWheelSettings,
+    current_cursor: HCURSOR,
 }
 
 impl WindowsWindow {
@@ -260,7 +254,8 @@ impl WindowsWindow {
         icon: HICON,
         executor: ForegroundExecutor,
         main_receiver: flume::Receiver<Runnable>,
-        platform_inner: Rc<RefCell<WindowsPlatformState>>,
+        mouse_wheel_settings: MouseWheelSettings,
+        current_cursor: HCURSOR,
     ) -> Self {
         let classname = register_wnd_class(icon);
         let hide_title_bar = options
@@ -294,7 +289,8 @@ impl WindowsWindow {
             transparent: options.window_background != WindowBackgroundAppearance::Opaque,
             executor,
             main_receiver,
-            platform_inner: platform_inner.clone(),
+            mouse_wheel_settings,
+            current_cursor,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let raw_hwnd = unsafe {
@@ -877,7 +873,8 @@ unsafe extern "system" fn wnd_proc(
             ctx.transparent,
             ctx.executor.clone(),
             ctx.main_receiver.clone(),
-            ctx.platform_inner.clone(),
+            ctx.mouse_wheel_settings,
+            ctx.current_cursor,
         );
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
