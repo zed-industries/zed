@@ -56,7 +56,7 @@ pub(crate) struct WindowsPlatformSystemSettings {
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy)]
 pub(crate) struct MouseWheelSettings {
     /// SEE: SPI_GETWHEELSCROLLCHARS
     pub(crate) wheel_scroll_chars: u32,
@@ -84,38 +84,24 @@ struct Callbacks {
 impl WindowsPlatformSystemSettings {
     fn new() -> Self {
         let mut settings = Self::default();
-        settings.update_all();
+        settings.init();
         settings
     }
 
-    pub fn update_all(&mut self) {
+    fn init(&mut self) {
         self.mouse_wheel_settings.update();
     }
 }
 
 impl MouseWheelSettings {
-    pub fn update(&mut self) {
-        self.update_wheel_scroll_lines();
-        self.update_wheel_scroll_chars();
+    pub fn update(&mut self) -> (Option<u32>, Option<u32>) {
+        (
+            self.update_wheel_scroll_chars(),
+            self.update_wheel_scroll_lines(),
+        )
     }
 
-    fn update_wheel_scroll_lines(&mut self) {
-        let mut value = c_uint::default();
-        let result = unsafe {
-            SystemParametersInfoW(
-                SPI_GETWHEELSCROLLLINES,
-                0,
-                Some((&mut value) as *mut c_uint as *mut c_void),
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
-            )
-        };
-
-        if result.log_err() != None {
-            self.wheel_scroll_lines = value;
-        }
-    }
-
-    fn update_wheel_scroll_chars(&mut self) {
+    fn update_wheel_scroll_chars(&mut self) -> Option<u32> {
         let mut value = c_uint::default();
         let result = unsafe {
             SystemParametersInfoW(
@@ -126,17 +112,30 @@ impl MouseWheelSettings {
             )
         };
 
-        if result.log_err() != None {
+        if result.log_err() != None && self.wheel_scroll_chars != value {
             self.wheel_scroll_chars = value;
+            Some(value)
+        } else {
+            None
         }
     }
-}
 
-impl Default for MouseWheelSettings {
-    fn default() -> Self {
-        Self {
-            wheel_scroll_chars: 1,
-            wheel_scroll_lines: 1,
+    fn update_wheel_scroll_lines(&mut self) -> Option<u32> {
+        let mut value = c_uint::default();
+        let result = unsafe {
+            SystemParametersInfoW(
+                SPI_GETWHEELSCROLLLINES,
+                0,
+                Some((&mut value) as *mut c_uint as *mut c_void),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
+            )
+        };
+
+        if result.log_err() != None && self.wheel_scroll_lines != value {
+            self.wheel_scroll_lines = value;
+            Some(value)
+        } else {
+            None
         }
     }
 }
@@ -232,10 +231,31 @@ impl WindowsPlatform {
             .unwrap();
         lock.remove(index);
         if lock.is_empty() {
-            drop(lock);
             true
         } else {
             false
+        }
+    }
+
+    fn update_system_settings(&self) {
+        let mut lock = self.inner.borrow_mut();
+        // mouse wheel
+        {
+            let (scroll_chars, scroll_lines) = lock.settings.mouse_wheel_settings.update();
+            if let Some(scroll_chars) = scroll_chars {
+                self.post_message(
+                    MOUSE_WHEEL_SETTINGS_CHANGED,
+                    WPARAM(scroll_chars as usize),
+                    LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_CHARS_CHANGED),
+                );
+            }
+            if let Some(scroll_lines) = scroll_lines {
+                self.post_message(
+                    MOUSE_WHEEL_SETTINGS_CHANGED,
+                    WPARAM(scroll_lines as usize),
+                    LPARAM(MOUSE_WHEEL_SETTINGS_SCROLL_LINES_CHANGED),
+                );
+            }
         }
     }
 }
@@ -285,12 +305,7 @@ impl Platform for WindowsPlatform {
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                             if msg.message == WM_SETTINGCHANGE {
-                                self.inner.borrow_mut().settings.update_all();
-                                self.post_message(
-                                    MOUSE_WHEEL_SETTINGS_CHANGED,
-                                    WPARAM(0),
-                                    LPARAM(0),
-                                );
+                                self.update_system_settings();
                                 continue;
                             }
                             if msg.message == CLOSE_ONE_WINDOW

@@ -17,6 +17,8 @@ use crate::*;
 
 pub(crate) const CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const MOUSE_WHEEL_SETTINGS_CHANGED: u32 = WM_USER + 2;
+pub(crate) const MOUSE_WHEEL_SETTINGS_SCROLL_CHARS_CHANGED: isize = 1;
+pub(crate) const MOUSE_WHEEL_SETTINGS_SCROLL_LINES_CHANGED: isize = 2;
 pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 3;
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
@@ -76,6 +78,7 @@ pub(crate) fn handle_msg(
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state),
         WM_SETCURSOR => handle_set_cursor(lparam, state),
         CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state),
+        MOUSE_WHEEL_SETTINGS_CHANGED => handle_mouse_wheel_settings_msg(wparam, lparam, state),
         _ => None,
     };
     if let Some(n) = handled {
@@ -1030,6 +1033,21 @@ fn handle_set_cursor(lparam: LPARAM, state: Rc<RefCell<WindowsWindowState>>) -> 
     let lock = state.as_ref().borrow();
     unsafe { SetCursor(lock.current_cursor) };
     Some(1)
+}
+
+fn handle_mouse_wheel_settings_msg(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state: Rc<RefCell<WindowsWindowState>>,
+) -> Option<isize> {
+    let mut lock = state.as_ref().borrow_mut();
+    match lparam.0 {
+        1 => lock.mouse_wheel_settings.wheel_scroll_chars = wparam.0 as u32,
+        2 => lock.mouse_wheel_settings.wheel_scroll_lines = wparam.0 as u32,
+        _ => unreachable!(),
+    }
+    drop(lock);
+    Some(0)
 }
 
 fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
