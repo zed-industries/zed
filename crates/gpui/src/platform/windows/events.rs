@@ -594,12 +594,12 @@ fn handle_ime_position(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> 
         let Some(mut input_handler) = lock.input_handler.take() else {
             return Some(1);
         };
+        let scale_factor = lock.scale_factor;
+        drop(lock);
         // we are composing, this should never fail
         let caret_range = input_handler.selected_text_range().unwrap();
         let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
-        lock.input_handler = Some(input_handler);
-        let scale_factor = lock.scale_factor;
-        drop(lock);
+        state.as_ref().borrow_mut().input_handler = Some(input_handler);
         let config = CANDIDATEFORM {
             dwStyle: CFS_CANDIDATEPOS,
             // logical to physical
@@ -622,16 +622,17 @@ fn handle_ime_composition(
     state: Rc<RefCell<WindowsWindowState>>,
 ) -> Option<isize> {
     let mut ime_input = None;
-    let mut lock = state.as_ref().borrow_mut();
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
         let Some((string, string_len)) = parse_ime_compostion_string(handle) else {
             return None;
         };
+        let mut lock = state.as_ref().borrow_mut();
         let Some(mut input_handler) = lock.input_handler.take() else {
             return None;
         };
+        drop(lock);
         input_handler.replace_and_mark_text_in_range(None, string.as_str(), Some(0..string_len));
-        lock.input_handler = Some(input_handler);
+        state.as_ref().borrow_mut().input_handler = Some(input_handler);
         ime_input = Some(string);
     }
     if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
@@ -639,21 +640,25 @@ fn handle_ime_composition(
             return None;
         };
         let caret_pos = retrieve_composition_cursor_position(handle);
+        let mut lock = state.as_ref().borrow_mut();
         let Some(mut input_handler) = lock.input_handler.take() else {
             return None;
         };
+        drop(lock);
         input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
-        lock.input_handler = Some(input_handler);
+        state.as_ref().borrow_mut().input_handler = Some(input_handler);
     }
     if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
         let Some(comp_result) = parse_ime_compostion_result(handle) else {
             return None;
         };
+        let mut lock = state.as_ref().borrow_mut();
         let Some(mut input_handler) = lock.input_handler.take() else {
             return Some(1);
         };
+        drop(lock);
         input_handler.replace_text_in_range(None, &comp_result);
-        lock.input_handler = Some(input_handler);
+        state.as_ref().borrow_mut().input_handler = Some(input_handler);
         invalidate_client_area(handle);
         return Some(0);
     }
