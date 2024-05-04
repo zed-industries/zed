@@ -258,8 +258,7 @@ fn handle_mouse_move_msg(
         } else {
             Some(1)
         };
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.input = Some(callback);
+        state.as_ref().borrow_mut().callbacks.input = Some(callback);
         return result;
     }
     Some(1)
@@ -291,8 +290,7 @@ fn handle_syskeydown_msg(
     } else {
         None
     };
-    let mut lock = state.as_ref().borrow_mut();
-    lock.callbacks.input = Some(func);
+    state.as_ref().borrow_mut().callbacks.input = Some(func);
 
     result
 }
@@ -319,8 +317,7 @@ fn handle_syskeyup_msg(
     } else {
         Some(1)
     };
-    let mut lock = state.as_ref().borrow_mut();
-    lock.callbacks.input = Some(func);
+    state.as_ref().borrow_mut().callbacks.input = Some(func);
 
     result
 }
@@ -349,8 +346,7 @@ fn handle_keydown_msg(
     } else {
         Some(1)
     };
-    let mut lock = state.as_ref().borrow_mut();
-    lock.callbacks.input = Some(func);
+    state.as_ref().borrow_mut().callbacks.input = Some(func);
 
     result
 }
@@ -375,8 +371,7 @@ fn handle_keyup_msg(
     } else {
         Some(1)
     };
-    let mut lock = state.as_ref().borrow_mut();
-    lock.callbacks.input = Some(func);
+    state.as_ref().borrow_mut().callbacks.input = Some(func);
 
     result
 }
@@ -391,9 +386,10 @@ fn handle_char_msg(
         return Some(1);
     };
     let mut lock = state.as_ref().borrow_mut();
-    let Some(ref mut func) = lock.callbacks.input else {
+    let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
     };
+    drop(lock);
     let ime_key = keystroke.ime_key.clone();
     let event = KeyDownEvent {
         keystroke,
@@ -401,6 +397,8 @@ fn handle_char_msg(
     };
 
     let dispatch_event_result = func(PlatformInput::KeyDown(event));
+    let mut lock = state.as_ref().borrow_mut();
+    lock.callbacks.input = Some(func);
     if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
         invalidate_client_area(handle);
         return Some(0);
@@ -414,8 +412,7 @@ fn handle_char_msg(
     drop(lock);
     input_handler.replace_text_in_range(None, &ime_char);
     invalidate_client_area(handle);
-    let mut lock = state.as_ref().borrow_mut();
-    lock.input_handler = Some(input_handler);
+    state.as_ref().borrow_mut().input_handler = Some(input_handler);
 
     Some(0)
 }
@@ -446,8 +443,7 @@ fn handle_mouse_down_msg(
         } else {
             Some(1)
         };
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.input = Some(callback);
+        state.as_ref().borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -479,8 +475,7 @@ fn handle_mouse_up_msg(
         } else {
             Some(1)
         };
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.input = Some(callback);
+        state.as_ref().borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -534,8 +529,7 @@ fn handle_mouse_wheel_msg(
         } else {
             Some(1)
         };
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.input = Some(callback);
+        state.as_ref().borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -575,8 +569,7 @@ fn handle_mouse_horizontal_wheel_msg(
         } else {
             Some(1)
         };
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.input = Some(callback);
+        state.as_ref().borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -894,8 +887,7 @@ fn handle_nc_mouse_move_msg(
         } else {
             Some(1)
         };
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.input = Some(callback);
+        state.as_ref().borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -937,8 +929,7 @@ fn handle_nc_mouse_down_msg(
         } else {
             None
         };
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.input = Some(callback);
+        state.as_ref().borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -980,23 +971,21 @@ fn handle_nc_mouse_up_msg(
         } else {
             None
         };
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.input = Some(callback);
+        state.as_ref().borrow_mut().callbacks.input = Some(callback);
         if result.is_some() {
             return result;
         }
-        drop(lock);
     } else {
         drop(lock);
     }
 
-    let lock = state.as_ref().borrow();
     if button == MouseButton::Left {
         match wparam.0 as u32 {
             HTMINBUTTON => unsafe {
                 ShowWindowAsync(handle, SW_MINIMIZE);
             },
             HTMAXBUTTON => unsafe {
+                let lock = state.as_ref().borrow();
                 if lock.is_maximized() {
                     ShowWindowAsync(handle, SW_NORMAL);
                 } else {
