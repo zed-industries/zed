@@ -9,16 +9,14 @@ mod zed;
 use anyhow::{anyhow, Context as _, Result};
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{parse_zed_link, telemetry::Telemetry, Client, DevServerToken, UserStore};
+use client::{parse_zed_link, Client, DevServerToken, UserStore};
 use collab_ui::channel_view::ChannelView;
-use copilot::Copilot;
-use copilot_ui::CopilotCompletionProvider;
 use db::kvp::KEY_VALUE_STORE;
-use editor::{Editor, EditorMode};
+use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
-use gpui::{App, AppContext, AsyncAppContext, Context, Task, ViewContext, VisualContext};
+use gpui::{App, AppContext, AsyncAppContext, Context, Task, VisualContext};
 use image_viewer;
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -54,6 +52,8 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, IsOnlyInstance,
     OpenListener, OpenRequest,
 };
+
+use crate::zed::inline_completion_registry;
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -270,17 +270,20 @@ fn init_ui(args: Args) {
         editor::init(cx);
         image_viewer::init(cx);
         diagnostics::init(cx);
+
+        // Initialize each completion provider. Settings are used for toggling between them.
         copilot::init(
             copilot_language_server_id,
             client.http_client(),
             node_runtime.clone(),
             cx,
         );
+        supermaven::init(client.clone(), cx);
 
         assistant::init(client.clone(), cx);
         assistant2::init(client.clone(), cx);
 
-        init_inline_completion_provider(client.telemetry().clone(), cx);
+        inline_completion_registry::init(client.telemetry().clone(), cx);
 
         extension::init(
             fs.clone(),
@@ -888,45 +891,3 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 
 #[cfg(not(debug_assertions))]
 fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
-
-fn init_inline_completion_provider(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
-    if let Some(copilot) = Copilot::global(cx) {
-        cx.observe_new_views(move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
-            if editor.mode() == EditorMode::Full {
-                // We renamed some of these actions to not be copilot-specific, but that
-                // would have not been backwards-compatible. So here we are re-registering
-                // the actions with the old names to not break people's keymaps.
-                editor
-                    .register_action(cx.listener(
-                        |editor, _: &copilot::Suggest, cx: &mut ViewContext<Editor>| {
-                            editor.show_inline_completion(&Default::default(), cx);
-                        },
-                    ))
-                    .register_action(cx.listener(
-                        |editor, _: &copilot::NextSuggestion, cx: &mut ViewContext<Editor>| {
-                            editor.next_inline_completion(&Default::default(), cx);
-                        },
-                    ))
-                    .register_action(cx.listener(
-                        |editor, _: &copilot::PreviousSuggestion, cx: &mut ViewContext<Editor>| {
-                            editor.previous_inline_completion(&Default::default(), cx);
-                        },
-                    ))
-                    .register_action(cx.listener(
-                        |editor,
-                         _: &editor::actions::AcceptPartialCopilotSuggestion,
-                         cx: &mut ViewContext<Editor>| {
-                            editor.accept_partial_inline_completion(&Default::default(), cx);
-                        },
-                    ));
-
-                let provider = cx.new_model(|_| {
-                    CopilotCompletionProvider::new(copilot.clone())
-                        .with_telemetry(telemetry.clone())
-                });
-                editor.set_inline_completion_provider(provider, cx)
-            }
-        })
-        .detach();
-    }
-}

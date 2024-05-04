@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::{DiffHunk, DiffHunkStatus};
@@ -14,7 +14,8 @@ use util::{debug_panic, RangeExt};
 use crate::{
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle, DiffRowHighlight,
-    Editor, ExpandAllHunkDiffs, RangeToAnchorExt, ToDisplayPoint, ToggleHunkDiff,
+    Editor, ExpandAllHunkDiffs, RangeToAnchorExt, RevertSelectedHunks, ToDisplayPoint,
+    ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -215,34 +216,29 @@ impl Editor {
         let hunk_end = hunk.multi_buffer_range.end;
 
         let buffer = self.buffer().clone();
-        let (diff_base_buffer, deleted_text_range, deleted_text_lines) =
-            buffer.update(cx, |buffer, cx| {
-                let snapshot = buffer.snapshot(cx);
-                let hunk = buffer_diff_hunk(&snapshot, multi_buffer_row_range.clone())?;
-                let mut buffer_ranges = buffer.range_to_buffer_ranges(multi_buffer_row_range, cx);
-                if buffer_ranges.len() == 1 {
-                    let (buffer, _, _) = buffer_ranges.pop()?;
-                    let diff_base_buffer = diff_base_buffer
-                        .or_else(|| self.current_diff_base_buffer(&buffer, cx))
-                        .or_else(|| create_diff_base_buffer(&buffer, cx));
-                    let buffer = buffer.read(cx);
-                    let deleted_text_lines = buffer.diff_base().and_then(|diff_base| {
-                        Some(
-                            diff_base
-                                .get(hunk.diff_base_byte_range.clone())?
-                                .lines()
-                                .count(),
-                        )
-                    });
-                    Some((
-                        diff_base_buffer?,
-                        hunk.diff_base_byte_range,
-                        deleted_text_lines,
-                    ))
-                } else {
-                    None
-                }
-            })?;
+        let (diff_base_buffer, deleted_text_lines) = buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot(cx);
+            let hunk = buffer_diff_hunk(&snapshot, multi_buffer_row_range.clone())?;
+            let mut buffer_ranges = buffer.range_to_buffer_ranges(multi_buffer_row_range, cx);
+            if buffer_ranges.len() == 1 {
+                let (buffer, _, _) = buffer_ranges.pop()?;
+                let diff_base_buffer = diff_base_buffer
+                    .or_else(|| self.current_diff_base_buffer(&buffer, cx))
+                    .or_else(|| create_diff_base_buffer(&buffer, cx))?;
+                let buffer = buffer.read(cx);
+                let deleted_text_lines = buffer.diff_base().map(|diff_base| {
+                    let diff_start_row = diff_base
+                        .offset_to_point(hunk.diff_base_byte_range.start)
+                        .row;
+                    let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
+                    let line_count = diff_end_row - diff_start_row;
+                    line_count as u8
+                })?;
+                Some((diff_base_buffer, deleted_text_lines))
+            } else {
+                None
+            }
+        })?;
 
         let block_insert_index = match self.expanded_hunks.hunks.binary_search_by(|probe| {
             probe
@@ -255,13 +251,9 @@ impl Editor {
         };
 
         let block = match hunk.status {
-            DiffHunkStatus::Removed => self.add_deleted_lines(
-                deleted_text_lines,
-                hunk_start,
-                diff_base_buffer,
-                deleted_text_range,
-                cx,
-            ),
+            DiffHunkStatus::Removed => {
+                self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, &hunk, cx)
+            }
             DiffHunkStatus::Added => {
                 self.highlight_rows::<DiffRowHighlight>(
                     hunk_start..hunk_end,
@@ -276,13 +268,7 @@ impl Editor {
                     Some(added_hunk_color(cx)),
                     cx,
                 );
-                self.add_deleted_lines(
-                    deleted_text_lines,
-                    hunk_start,
-                    diff_base_buffer,
-                    deleted_text_range,
-                    cx,
-                )
+                self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, &hunk, cx)
             }
         };
         self.expanded_hunks.hunks.insert(
@@ -299,43 +285,20 @@ impl Editor {
         Some(())
     }
 
-    fn add_deleted_lines(
-        &mut self,
-        deleted_text_lines: Option<usize>,
-        hunk_start: Anchor,
-        diff_base_buffer: Model<Buffer>,
-        deleted_text_range: Range<usize>,
-        cx: &mut ViewContext<'_, Self>,
-    ) -> Option<BlockId> {
-        if let Some(deleted_text_lines) = deleted_text_lines {
-            self.insert_deleted_text_block(
-                hunk_start,
-                diff_base_buffer,
-                deleted_text_range,
-                deleted_text_lines as u8,
-                cx,
-            )
-        } else {
-            debug_panic!("Found no deleted text for removed hunk on position {hunk_start:?}");
-            None
-        }
-    }
-
     fn insert_deleted_text_block(
         &mut self,
-        position: Anchor,
         diff_base_buffer: Model<Buffer>,
-        deleted_text_range: Range<usize>,
         deleted_text_height: u8,
+        hunk: &HunkToExpand,
         cx: &mut ViewContext<'_, Self>,
     ) -> Option<BlockId> {
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
-            editor_with_deleted_text(diff_base_buffer, deleted_text_range, deleted_hunk_color, cx);
+            editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
         let parent_gutter_offset = self.gutter_dimensions.width + self.gutter_dimensions.margin;
         let mut new_block_ids = self.insert_blocks(
             Some(BlockProperties {
-                position,
+                position: hunk.multi_buffer_range.start,
                 height: editor_height.max(deleted_text_height),
                 style: BlockStyle::Flex,
                 render: Box::new(move |_| {
@@ -542,12 +505,12 @@ fn create_diff_base_buffer(buffer: &Model<Buffer>, cx: &mut AppContext) -> Optio
     buffer
         .update(cx, |buffer, _| {
             let language = buffer.language().cloned();
-            let diff_base = buffer.diff_base().map(|s| s.to_owned());
-            Some((diff_base?, language))
+            let diff_base = buffer.diff_base()?.clone();
+            Some((buffer.line_ending(), diff_base, language))
         })
-        .map(|(diff_base, language)| {
+        .map(|(line_ending, diff_base, language)| {
             cx.new_model(|cx| {
-                let buffer = Buffer::local(diff_base, cx);
+                let buffer = Buffer::local_normalized(diff_base, line_ending, cx);
                 match language {
                     Some(language) => buffer.with_language(language, cx),
                     None => buffer,
@@ -570,10 +533,11 @@ fn deleted_hunk_color(cx: &AppContext) -> Hsla {
 
 fn editor_with_deleted_text(
     diff_base_buffer: Model<Buffer>,
-    deleted_text_range: Range<usize>,
     deleted_color: Hsla,
+    hunk: &HunkToExpand,
     cx: &mut ViewContext<'_, Editor>,
 ) -> (u8, View<Editor>) {
+    let parent_editor = cx.view().downgrade();
     let editor = cx.new_view(|cx| {
         let multi_buffer =
             cx.new_model(|_| MultiBuffer::without_headers(0, language::Capability::ReadOnly));
@@ -581,7 +545,7 @@ fn editor_with_deleted_text(
             multi_buffer.push_excerpts(
                 diff_base_buffer,
                 Some(ExcerptRange {
-                    context: deleted_text_range,
+                    context: hunk.diff_base_byte_range.clone(),
                     primary: None,
                 }),
                 cx,
@@ -602,6 +566,40 @@ fn editor_with_deleted_text(
             .anchor_after(editor.buffer.read(cx).len(cx));
 
         editor.highlight_rows::<DiffRowHighlight>(start..end, Some(deleted_color), cx);
+        let hunk_related_subscription = cx.on_blur(&editor.focus_handle, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.try_cancel();
+            });
+        });
+        editor._subscriptions.push(hunk_related_subscription);
+        let original_multi_buffer_range = hunk.multi_buffer_range.clone();
+        let diff_base_range = hunk.diff_base_byte_range.clone();
+        editor.register_action::<RevertSelectedHunks>(move |_, cx| {
+            parent_editor
+                .update(cx, |editor, cx| {
+                    let Some((buffer, original_text)) = editor.buffer().update(cx, |buffer, cx| {
+                        let (_, buffer, _) =
+                            buffer.excerpt_containing(original_multi_buffer_range.start, cx)?;
+                        let original_text =
+                            buffer.read(cx).diff_base()?.slice(diff_base_range.clone());
+                        Some((buffer, Arc::from(original_text.to_string())))
+                    }) else {
+                        return;
+                    };
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.edit(
+                            Some((
+                                original_multi_buffer_range.start.text_anchor
+                                    ..original_multi_buffer_range.end.text_anchor,
+                                original_text,
+                            )),
+                            None,
+                            cx,
+                        )
+                    });
+                })
+                .ok();
+        });
         editor
     });
 

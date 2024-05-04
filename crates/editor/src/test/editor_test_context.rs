@@ -21,6 +21,7 @@ use std::{
         Arc,
     },
 };
+use text::Rope;
 use ui::Context;
 use util::{
     assert_set_eq,
@@ -271,7 +272,7 @@ impl EditorTestContext {
     }
 
     pub fn set_diff_base(&mut self, diff_base: Option<&str>) {
-        let diff_base = diff_base.map(String::from);
+        let diff_base = diff_base.map(Rope::from);
         self.update_buffer(|buffer, cx| buffer.set_diff_base(diff_base, cx));
     }
 

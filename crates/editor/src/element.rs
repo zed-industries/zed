@@ -427,10 +427,12 @@ impl EditorElement {
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
 
-        if gutter_hitbox.is_hovered(cx) {
-            click_count = 3; // Simulate triple-click when clicking the gutter to select lines
-        } else if let Some(hovered_hunk) = hovered_hunk {
+        if let Some(hovered_hunk) = hovered_hunk {
             editor.expand_diff_hunk(None, hovered_hunk, cx);
+            cx.notify();
+            return;
+        } else if gutter_hitbox.is_hovered(cx) {
+            click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_hitbox.is_hovered(cx) {
             return;
         }

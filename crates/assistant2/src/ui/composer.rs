@@ -1,108 +1,116 @@
-use assistant_tooling::ToolRegistry;
-use client::User;
+use crate::{
+    ui::{ActiveFileButton, ProjectIndexButton},
+    AssistantChat, CompletionProvider,
+};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{AnyElement, FontStyle, FontWeight, TextStyle, View, WeakView, WhiteSpace};
 use settings::Settings;
-use std::sync::Arc;
 use theme::ThemeSettings;
-use ui::{popover_menu, prelude::*, Avatar, ButtonLike, ContextMenu, Tooltip};
-
-use crate::{AssistantChat, CompletionProvider};
+use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Divider, Tooltip};
 
 #[derive(IntoElement)]
 pub struct Composer {
     editor: View<Editor>,
-    player: Option<Arc<User>>,
-    tool_registry: Arc<ToolRegistry>,
+    project_index_button: Option<View<ProjectIndexButton>>,
+    active_file_button: Option<View<ActiveFileButton>>,
     model_selector: AnyElement,
 }
 
 impl Composer {
     pub fn new(
         editor: View<Editor>,
-        player: Option<Arc<User>>,
-        tool_registry: Arc<ToolRegistry>,
+        project_index_button: Option<View<ProjectIndexButton>>,
+        active_file_button: Option<View<ActiveFileButton>>,
         model_selector: AnyElement,
     ) -> Self {
         Self {
             editor,
-            player,
-            tool_registry,
+            project_index_button,
+            active_file_button,
             model_selector,
         }
+    }
+
+    fn render_tools(&mut self, _cx: &mut WindowContext) -> impl IntoElement {
+        h_flex().children(
+            self.project_index_button
+                .clone()
+                .map(|view| view.into_any_element()),
+        )
+    }
+
+    fn render_attachment_tools(&mut self, _cx: &mut WindowContext) -> impl IntoElement {
+        h_flex().children(
+            self.active_file_button
+                .clone()
+                .map(|view| view.into_any_element()),
+        )
     }
 }
 
 impl RenderOnce for Composer {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let mut player_avatar = div().size(rems_from_px(20.)).into_any_element();
-        if let Some(player) = self.player.clone() {
-            player_avatar = Avatar::new(player.avatar_uri.clone())
-                .size(rems_from_px(20.))
-                .into_any_element();
-        }
-
+    fn render(mut self, cx: &mut WindowContext) -> impl IntoElement {
         let font_size = rems(0.875);
         let line_height = font_size.to_pixels(cx.rem_size()) * 1.3;
 
-        h_flex()
-            .w_full()
-            .items_start()
-            .mt_4()
-            .gap_3()
-            .child(player_avatar)
-            .child(
-                v_flex().size_full().gap_1().child(
-                    v_flex()
-                        .w_full()
-                        .p_4()
-                        .bg(cx.theme().colors().editor_background)
-                        .rounded_lg()
-                        .child(
-                            v_flex()
-                                .justify_between()
-                                .w_full()
-                                .gap_2()
-                                .child({
-                                    let settings = ThemeSettings::get_global(cx);
-                                    let text_style = TextStyle {
-                                        color: cx.theme().colors().editor_foreground,
-                                        font_family: settings.buffer_font.family.clone(),
-                                        font_features: settings.buffer_font.features.clone(),
-                                        font_size: font_size.into(),
-                                        font_weight: FontWeight::NORMAL,
-                                        font_style: FontStyle::Normal,
-                                        line_height: line_height.into(),
-                                        background_color: None,
-                                        underline: None,
-                                        strikethrough: None,
-                                        white_space: WhiteSpace::Normal,
-                                    };
+        h_flex().w_full().items_start().mt_2().child(
+            v_flex().size_full().gap_1().child(
+                v_flex()
+                    .w_full()
+                    .p_3()
+                    .bg(cx.theme().colors().editor_background)
+                    .rounded_lg()
+                    .child(
+                        v_flex()
+                            .justify_between()
+                            .w_full()
+                            .gap_2()
+                            .child({
+                                let settings = ThemeSettings::get_global(cx);
+                                let text_style = TextStyle {
+                                    color: cx.theme().colors().editor_foreground,
+                                    font_family: settings.buffer_font.family.clone(),
+                                    font_features: settings.buffer_font.features.clone(),
+                                    font_size: font_size.into(),
+                                    font_weight: FontWeight::NORMAL,
+                                    font_style: FontStyle::Normal,
+                                    line_height: line_height.into(),
+                                    background_color: None,
+                                    underline: None,
+                                    strikethrough: None,
+                                    white_space: WhiteSpace::Normal,
+                                };
 
-                                    EditorElement::new(
-                                        &self.editor,
-                                        EditorStyle {
-                                            background: cx.theme().colors().editor_background,
-                                            local_player: cx.theme().players().local(),
-                                            text: text_style,
-                                            ..Default::default()
-                                        },
+                                EditorElement::new(
+                                    &self.editor,
+                                    EditorStyle {
+                                        background: cx.theme().colors().editor_background,
+                                        local_player: cx.theme().players().local(),
+                                        text: text_style,
+                                        ..Default::default()
+                                    },
+                                )
+                            })
+                            .child(
+                                h_flex()
+                                    .flex_none()
+                                    .gap_2()
+                                    .justify_between()
+                                    .w_full()
+                                    .child(
+                                        h_flex().gap_1().child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(self.render_tools(cx))
+                                                .child(Divider::vertical())
+                                                .child(self.render_attachment_tools(cx)),
+                                        ),
                                     )
-                                })
-                                .child(
-                                    h_flex()
-                                        .flex_none()
-                                        .gap_2()
-                                        .justify_between()
-                                        .w_full()
-                                        .child(h_flex().gap_1().children(
-                                            self.tool_registry.status_views().iter().cloned(),
-                                        ))
-                                        .child(h_flex().gap_1().child(self.model_selector)),
-                                ),
-                        ),
-                ),
-            )
+                                    .child(h_flex().gap_1().child(self.model_selector)),
+                            ),
+                    ),
+            ),
+        )
     }
 }
 

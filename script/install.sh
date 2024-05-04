@@ -51,24 +51,52 @@ linux() {
         suffix="-$channel"
     fi
 
+    appid=""
+    case "$channel" in
+      stable)
+        appid="dev.zed.Zed"
+        ;;
+      nightly)
+        appid="dev.zed.Zed-Nightly"
+        ;;
+      preview)
+        appid="dev.zed.Zed-Preview"
+        ;;
+      dev)
+        appid="dev.zed.Zed-Dev"
+        ;;
+      *)
+        echo "Unknown release channel: ${channel}. Using stable app ID."
+        appid="dev.zed.Zed"
+        ;;
+    esac
+
+    # Unpack
     rm -rf "$HOME/.local/zed$suffix.app"
     mkdir -p "$HOME/.local/zed$suffix.app"
     tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
 
+    # Setup ~/.local directories
     mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
-    ln -sf ~/.local/zed$suffix.app/bin/zed ~/.local/bin/
-    cp ~/.local/zed$suffix.app/share/applications/zed$suffix.desktop ~/.local/share/applications/
-    sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/zed$suffix.desktop
-    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" ~/.local/share/applications/zed$suffix.desktop
 
-    if which zed >/dev/null 2>&1; then
-        echo "Zed has been installed. Run with 'zed'"
+    # Link the binary
+    binary_name="zed${suffix}"
+    ln -sf ~/.local/zed$suffix.app/bin/zed "$HOME/.local/bin/${binary_name}"
+
+    # Copy .desktop file
+    desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
+    cp ~/.local/zed$suffix.app/share/applications/zed$suffix.desktop "${desktop_file_path}"
+    sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
+    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
+
+    if which "${binary_name}" >/dev/null 2>&1; then
+        echo "Zed has been installed. Run with '${binary_name}'"
     else
-        echo "To run zed from your terminal, you must add ~/.local/bin to your PATH"
+        echo "To run Zed from your terminal, you must add ~/.local/bin to your PATH"
         echo "Run:"
         echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
         echo "   source ~/.bashrc"
-        echo "To run zed now, '~/.local/bin/zed'"
+        echo "To run Zed now, '~/.local/bin/${binary_name}'"
     fi
 }
 

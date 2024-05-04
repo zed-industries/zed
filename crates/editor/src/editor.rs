@@ -1757,19 +1757,22 @@ impl Editor {
         self.completion_provider = Some(hub);
     }
 
-    pub fn set_inline_completion_provider(
+    pub fn set_inline_completion_provider<T>(
         &mut self,
-        provider: Model<impl InlineCompletionProvider>,
+        provider: Option<Model<T>>,
         cx: &mut ViewContext<Self>,
-    ) {
-        self.inline_completion_provider = Some(RegisteredInlineCompletionProvider {
-            _subscription: cx.observe(&provider, |this, _, cx| {
-                if this.focus_handle.is_focused(cx) {
-                    this.update_visible_inline_completion(cx);
-                }
-            }),
-            provider: Arc::new(provider),
-        });
+    ) where
+        T: InlineCompletionProvider,
+    {
+        self.inline_completion_provider =
+            provider.map(|provider| RegisteredInlineCompletionProvider {
+                _subscription: cx.observe(&provider, |this, _, cx| {
+                    if this.focus_handle.is_focused(cx) {
+                        this.update_visible_inline_completion(cx);
+                    }
+                }),
+                provider: Arc::new(provider),
+            });
         self.refresh_inline_completion(false, cx);
     }
 
@@ -2676,7 +2679,7 @@ impl Editor {
             }
 
             drop(snapshot);
-            let had_active_copilot_completion = this.has_active_inline_completion(cx);
+            let had_active_inline_completion = this.has_active_inline_completion(cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
 
             if brace_inserted {
@@ -2692,7 +2695,7 @@ impl Editor {
                 }
             }
 
-            if had_active_copilot_completion {
+            if had_active_inline_completion {
                 this.refresh_inline_completion(true, cx);
                 if !this.has_active_inline_completion(cx) {
                     this.trigger_completion_on_input(&text, cx);
@@ -2765,7 +2768,7 @@ impl Editor {
                         indent.len = cmp::min(indent.len, start_point.column);
                         let start = selection.start;
                         let end = selection.end;
-                        let is_cursor = start == end;
+                        let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
                         let (comment_delimiter, insert_extra_newline) = if let Some(language) =
                             &language_scope
@@ -2799,13 +2802,18 @@ impl Editor {
                                             pair_start,
                                         )
                                 });
+
                             // Comment extension on newline is allowed only for cursor selections
-                            let comment_delimiter = language.line_comment_prefixes().filter(|_| {
-                                let is_comment_extension_enabled =
-                                    multi_buffer.settings_at(0, cx).extend_comment_on_newline;
-                                is_cursor && is_comment_extension_enabled
-                            });
-                            let get_comment_delimiter = |delimiters: &[Arc<str>]| {
+                            let comment_delimiter = maybe!({
+                                if !selection_is_empty {
+                                    return None;
+                                }
+
+                                if !multi_buffer.settings_at(0, cx).extend_comment_on_newline {
+                                    return None;
+                                }
+
+                                let delimiters = language.line_comment_prefixes();
                                 let max_len_of_delimiter =
                                     delimiters.iter().map(|delimiter| delimiter.len()).max()?;
                                 let (snapshot, range) =
@@ -2834,12 +2842,7 @@ impl Editor {
                                 } else {
                                     None
                                 }
-                            };
-                            let comment_delimiter = if let Some(delimiters) = comment_delimiter {
-                                get_comment_delimiter(delimiters)
-                            } else {
-                                None
-                            };
+                            });
                             (comment_delimiter, insert_extra_newline)
                         } else {
                             (None, false)
@@ -4005,7 +4008,7 @@ impl Editor {
         if !self.show_inline_completions
             || !provider.is_enabled(&buffer, cursor_buffer_position, cx)
         {
-            self.clear_inline_completion(cx);
+            self.discard_inline_completion(cx);
             return None;
         }
 
@@ -4204,13 +4207,6 @@ impl Editor {
             }
         }
 
-        self.discard_inline_completion(cx);
-    }
-
-    fn clear_inline_completion(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(old_completion) = self.active_inline_completion.take() {
-            self.splice_inlays(vec![old_completion.id], Vec::new(), cx);
-        }
         self.discard_inline_completion(cx);
     }
 
@@ -4977,10 +4973,16 @@ impl Editor {
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
                 editor.buffer().update(cx, |multi_buffer, cx| {
-                    for (buffer_id, buffer_revert_ranges) in revert_changes {
+                    for (buffer_id, changes) in revert_changes {
                         if let Some(buffer) = multi_buffer.buffer(buffer_id) {
                             buffer.update(cx, |buffer, cx| {
-                                buffer.edit(buffer_revert_ranges, None, cx);
+                                buffer.edit(
+                                    changes.into_iter().map(|(range, text)| {
+                                        (range, text.to_string().map(Arc::<str>::from))
+                                    }),
+                                    None,
+                                    cx,
+                                );
                             });
                         }
                     }
@@ -5013,7 +5015,7 @@ impl Editor {
         &mut self,
         selections: &[Selection<Anchor>],
         cx: &mut ViewContext<'_, Editor>,
-    ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>> {
+    ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>> {
         let mut revert_changes = HashMap::default();
         self.buffer.update(cx, |multi_buffer, cx| {
             let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -5025,14 +5027,14 @@ impl Editor {
     }
 
     fn prepare_revert_change(
-        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Arc<str>)>>,
+        revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
         multi_buffer: &MultiBuffer,
         hunk: &DiffHunk<u32>,
         cx: &mut AppContext,
     ) -> Option<()> {
         let buffer = multi_buffer.buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
-        let original_text = buffer.diff_base()?.get(hunk.diff_base_byte_range.clone())?;
+        let original_text = buffer.diff_base()?.slice(hunk.diff_base_byte_range.clone());
         let buffer_snapshot = buffer.snapshot();
         let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
         if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
@@ -5041,9 +5043,8 @@ impl Editor {
                 .start
                 .cmp(&hunk.buffer_range.start, &buffer_snapshot)
                 .then(probe.0.end.cmp(&hunk.buffer_range.end, &buffer_snapshot))
-                .then(probe.1.as_ref().cmp(original_text))
         }) {
-            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), Arc::from(original_text)));
+            buffer_revert_changes.insert(i, (hunk.buffer_range.clone(), original_text));
             Some(())
         } else {
             None
@@ -7180,10 +7181,8 @@ impl Editor {
                 }
 
                 // If the language has line comments, toggle those.
-                if let Some(full_comment_prefixes) = language
-                    .line_comment_prefixes()
-                    .filter(|prefixes| !prefixes.is_empty())
-                {
+                let full_comment_prefixes = language.line_comment_prefixes();
+                if !full_comment_prefixes.is_empty() {
                     let first_prefix = full_comment_prefixes
                         .first()
                         .expect("prefixes is non-empty");
@@ -9942,12 +9941,14 @@ impl Editor {
             .raw_user_settings()
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
-        let copilot_enabled = all_language_settings(file, cx).copilot_enabled(None, None);
+
+        let copilot_enabled = all_language_settings(file, cx).inline_completions.provider
+            == language::language_settings::InlineCompletionProvider::Copilot;
         let copilot_enabled_for_language = self
             .buffer
             .read(cx)
             .settings_at(0, cx)
-            .show_copilot_suggestions;
+            .show_inline_completions;
 
         let telemetry = project.read(cx).client().telemetry().clone();
         telemetry.report_editor_event(
