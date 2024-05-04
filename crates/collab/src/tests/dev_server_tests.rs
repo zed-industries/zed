@@ -16,7 +16,7 @@ use super::TestClient;
 async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppContext) {
     let (server, client) = TestServer::start1(cx).await;
 
-    let store = cx.update(|cx| remote_projects::Store::global(cx).clone());
+    let store = cx.update(|cx| dev_server_projects::Store::global(cx).clone());
 
     let resp = store
         .update(cx, |store, cx| {
@@ -51,7 +51,7 @@ async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppC
 
     store
         .update(cx, |store, cx| {
-            store.create_remote_project(
+            store.create_dev_server_project(
                 client::DevServerId(resp.dev_server_id),
                 "/remote".to_string(),
                 cx,
@@ -64,10 +64,10 @@ async fn test_dev_server(cx: &mut gpui::TestAppContext, cx2: &mut gpui::TestAppC
 
     let remote_workspace = store
         .update(cx, |store, cx| {
-            let projects = store.remote_projects();
+            let projects = store.dev_server_projects();
             assert_eq!(projects.len(), 1);
             assert_eq!(projects[0].path, "/remote");
-            workspace::join_remote_project(
+            workspace::join_dev_server_project(
                 projects[0].project_id.unwrap(),
                 client.app_state.clone(),
                 None,
@@ -110,7 +110,7 @@ async fn test_dev_server_env_files(
     let (server, client1, client2, channel_id) = TestServer::start2(cx1, cx2).await;
 
     let (_dev_server, remote_workspace) =
-        create_remote_project(&server, client1.app_state.clone(), cx1, cx3).await;
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx3).await;
 
     cx1.executor().run_until_parked();
 
@@ -157,13 +157,13 @@ async fn test_dev_server_env_files(
     });
 }
 
-async fn create_remote_project(
+async fn create_dev_server_project(
     server: &TestServer,
     client_app_state: Arc<AppState>,
     cx: &mut TestAppContext,
     cx_devserver: &mut TestAppContext,
 ) -> (TestClient, WindowHandle<Workspace>) {
-    let store = cx.update(|cx| remote_projects::Store::global(cx).clone());
+    let store = cx.update(|cx| dev_server_projects::Store::global(cx).clone());
 
     let resp = store
         .update(cx, |store, cx| {
@@ -190,7 +190,7 @@ async fn create_remote_project(
 
     store
         .update(cx, |store, cx| {
-            store.create_remote_project(
+            store.create_dev_server_project(
                 client::DevServerId(resp.dev_server_id),
                 "/remote".to_string(),
                 cx,
@@ -203,10 +203,10 @@ async fn create_remote_project(
 
     let workspace = store
         .update(cx, |store, cx| {
-            let projects = store.remote_projects();
+            let projects = store.dev_server_projects();
             assert_eq!(projects.len(), 1);
             assert_eq!(projects[0].path, "/remote");
-            workspace::join_remote_project(
+            workspace::join_dev_server_project(
                 projects[0].project_id.unwrap(),
                 client_app_state,
                 None,
@@ -230,7 +230,7 @@ async fn test_dev_server_leave_room(
     let (server, client1, client2, channel_id) = TestServer::start2(cx1, cx2).await;
 
     let (_dev_server, remote_workspace) =
-        create_remote_project(&server, client1.app_state.clone(), cx1, cx3).await;
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx3).await;
 
     cx1.update(|cx| {
         workspace::join_channel(
@@ -264,6 +264,58 @@ async fn test_dev_server_leave_room(
 }
 
 #[gpui::test]
+async fn test_dev_server_delete(
+    cx1: &mut gpui::TestAppContext,
+    cx2: &mut gpui::TestAppContext,
+    cx3: &mut gpui::TestAppContext,
+) {
+    let (server, client1, client2, channel_id) = TestServer::start2(cx1, cx2).await;
+
+    let (_dev_server, remote_workspace) =
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx3).await;
+
+    cx1.update(|cx| {
+        workspace::join_channel(
+            channel_id,
+            client1.app_state.clone(),
+            Some(remote_workspace),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    cx1.executor().run_until_parked();
+
+    remote_workspace
+        .update(cx1, |ws, cx| {
+            assert!(ws.project().read(cx).is_shared());
+        })
+        .unwrap();
+
+    join_channel(channel_id, &client2, cx2).await.unwrap();
+    cx2.executor().run_until_parked();
+
+    cx1.update(|cx| {
+        dev_server_projects::Store::global(cx).update(cx, |store, cx| {
+            store.delete_dev_server_project(store.dev_server_projects().first().unwrap().id, cx)
+        })
+    })
+    .await
+    .unwrap();
+
+    cx1.executor().run_until_parked();
+
+    let (workspace, cx2) = client2.active_workspace(cx2);
+    cx2.update(|cx| assert!(workspace.read(cx).project().read(cx).is_disconnected()));
+
+    cx1.update(|cx| {
+        dev_server_projects::Store::global(cx).update(cx, |store, _| {
+            assert_eq!(store.dev_server_projects().len(), 0);
+        })
+    })
+}
+
+#[gpui::test]
 async fn test_dev_server_reconnect(
     cx1: &mut gpui::TestAppContext,
     cx2: &mut gpui::TestAppContext,
@@ -275,7 +327,7 @@ async fn test_dev_server_reconnect(
         .await;
 
     let (_dev_server, remote_workspace) =
-        create_remote_project(&server, client1.app_state.clone(), cx1, cx3).await;
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx3).await;
 
     cx1.update(|cx| {
         workspace::join_channel(
@@ -299,12 +351,12 @@ async fn test_dev_server_reconnect(
 
     let client2 = server.create_client(cx2, "user_a").await;
 
-    let store = cx2.update(|cx| remote_projects::Store::global(cx).clone());
+    let store = cx2.update(|cx| dev_server_projects::Store::global(cx).clone());
 
     store
         .update(cx2, |store, cx| {
-            let projects = store.remote_projects();
-            workspace::join_remote_project(
+            let projects = store.dev_server_projects();
+            workspace::join_dev_server_project(
                 projects[0].project_id.unwrap(),
                 client2.app_state.clone(),
                 None,
@@ -316,7 +368,7 @@ async fn test_dev_server_reconnect(
 }
 
 #[gpui::test]
-async fn test_create_remote_project_path_validation(
+async fn test_create_dev_server_project_path_validation(
     cx1: &mut gpui::TestAppContext,
     cx2: &mut gpui::TestAppContext,
     cx3: &mut gpui::TestAppContext,
@@ -328,11 +380,11 @@ async fn test_create_remote_project_path_validation(
 
     // Creating a project with a path that does exist should not fail
     let (_dev_server, _) =
-        create_remote_project(&server, client1.app_state.clone(), cx1, cx2).await;
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx2).await;
 
     cx1.executor().run_until_parked();
 
-    let store = cx1.update(|cx| remote_projects::Store::global(cx).clone());
+    let store = cx1.update(|cx| dev_server_projects::Store::global(cx).clone());
 
     let resp = store
         .update(cx1, |store, cx| {
@@ -350,7 +402,7 @@ async fn test_create_remote_project_path_validation(
     // Creating a remote project with a path that does not exist should fail
     let result = store
         .update(cx1, |store, cx| {
-            store.create_remote_project(
+            store.create_dev_server_project(
                 client::DevServerId(resp.dev_server_id),
                 "/notfound".to_string(),
                 cx,
@@ -363,7 +415,7 @@ async fn test_create_remote_project_path_validation(
     let error = result.unwrap_err();
     assert!(matches!(
         error.error_code(),
-        ErrorCode::RemoteProjectPathDoesNotExist
+        ErrorCode::DevServerProjectPathDoesNotExist
     ));
 }
 
@@ -373,7 +425,7 @@ async fn test_save_as_remote(cx1: &mut gpui::TestAppContext, cx2: &mut gpui::Tes
 
     // Creating a project with a path that does exist should not fail
     let (dev_server, remote_workspace) =
-        create_remote_project(&server, client1.app_state.clone(), cx1, cx2).await;
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx2).await;
 
     let mut cx = VisualTestContext::from_window(remote_workspace.into(), cx1);
 
@@ -405,7 +457,7 @@ async fn test_new_file_remote(cx1: &mut gpui::TestAppContext, cx2: &mut gpui::Te
 
     // Creating a project with a path that does exist should not fail
     let (dev_server, remote_workspace) =
-        create_remote_project(&server, client1.app_state.clone(), cx1, cx2).await;
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx2).await;
 
     let mut cx = VisualTestContext::from_window(remote_workspace.into(), cx1);
 

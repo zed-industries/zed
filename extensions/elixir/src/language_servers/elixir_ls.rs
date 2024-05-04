@@ -1,7 +1,8 @@
 use std::fs;
 
 use zed::lsp::{Completion, CompletionKind, Symbol, SymbolKind};
-use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
+use zed::settings::LspSettings;
+use zed::{serde_json, CodeLabel, CodeLabelSpan, LanguageServerId};
 use zed_extension_api::{self as zed, Result};
 
 pub struct ElixirLs {
@@ -87,6 +88,20 @@ impl ElixirLs {
 
         self.cached_binary_path = Some(binary_path.clone());
         Ok(binary_path)
+    }
+
+    pub fn language_server_workspace_configuration(
+        &mut self,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        let settings = LspSettings::for_worktree("elixir-ls", worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .unwrap_or_default();
+
+        Ok(Some(serde_json::json!({
+            "elixirLS": settings
+        })))
     }
 
     pub fn label_for_completion(&self, completion: Completion) -> Option<CodeLabel> {

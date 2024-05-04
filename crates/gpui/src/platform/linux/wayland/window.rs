@@ -251,6 +251,10 @@ impl WaylandWindow {
 }
 
 impl WaylandWindowStatePtr {
+    pub fn surface(&self) -> wl_surface::WlSurface {
+        self.state.borrow().surface.clone()
+    }
+
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.state, &other.state)
     }

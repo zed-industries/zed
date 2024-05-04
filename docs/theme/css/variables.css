@@ -1,0 +1,58 @@
+/* Globals */
+
+:root {
+    --sidebar-width: 300px;
+    --sidebar-resize-indicator-width: 8px;
+    --sidebar-resize-indicator-space: 2px;
+    --page-padding: 15px;
+    --content-max-width: 750px;
+    --menu-bar-height: 50px;
+    --font: "IA Writer Quattro S", sans-serif;
+    --title-font: "Agrandir", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        Liberation Mono, Courier New, monospace;
+    --code-font-size: 0.875em
+        /* please adjust the ace font size accordingly in editor.js */;
+
+    --bg: rgb(246, 245, 240);
+    --fg: rgb(75, 83, 97);
+    --title-color: rgb(8, 76, 207);
+
+    --sidebar-fg: hsl(0, 0%, 0%);
+    --sidebar-non-existant: #aaaaaa;
+    --sidebar-active: rgb(8, 76, 207);
+    --sidebar-spacer: #f4f4f4;
+
+    --scrollbar: #8f8f8f;
+
+    --icons: #747474;
+    --icons-hover: #000000;
+
+    --links: rgb(8, 76, 207);
+
+    --inline-code-color: #301900;
+
+    --theme-popup-bg: #fafafa;
+    --theme-popup-border: #cccccc;
+    --theme-hover: #e6e6e6;
+
+    --quote-bg: hsl(197, 37%, 96%);
+    --quote-border: hsl(197, 37%, 91%);
+
+    --warning-border: #ff8e00;
+
+    --table-border-color: hsl(0, 0%, 95%);
+    --table-header-bg: hsl(0, 0%, 80%);
+    --table-alternate-bg: hsl(0, 0%, 97%);
+
+    --searchbar-border-color: #aaa;
+    --searchbar-bg: #fafafa;
+    --searchbar-fg: #000;
+    --searchbar-shadow-color: #aaa;
+    --searchresults-header-fg: #666;
+    --searchresults-border-color: #888;
+    --searchresults-li-bg: #e4f2fe;
+    --search-mark-bg: #a2cff5;
+
+    --color-scheme: light;
+}

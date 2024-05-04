@@ -3,8 +3,8 @@ use crate::{
         all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
     },
     task_context::ContextProvider,
-    CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
+    with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
+    LanguageServerName, LspAdapter, LspAdapterDelegate, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
@@ -668,8 +668,7 @@ impl LanguageRegistry {
                                     .file_stem()
                                     .and_then(OsStr::to_str)
                                     .ok_or_else(|| anyhow!("invalid grammar filename"))?;
-                                anyhow::Ok(PARSER.with(|parser| {
-                                    let mut parser = parser.borrow_mut();
+                                anyhow::Ok(with_parser(|parser| {
                                     let mut store = parser.take_wasm_store().unwrap();
                                     let grammar = store.load_language(&grammar_name, &wasm_bytes);
                                     parser.set_wasm_store(store).unwrap();
