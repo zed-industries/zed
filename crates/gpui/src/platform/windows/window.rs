@@ -142,15 +142,12 @@ impl WindowsWindowState {
         unsafe { IsIconic(self.hwnd) }.as_bool()
     }
 
+    #[inline]
     pub(crate) fn is_fullscreen(&self) -> bool {
-        // let fullscreen = self.fullscreen.take();
-        // let is_fullscreen = fullscreen.is_some();
-        // self.fullscreen.insert(fullscreen);
-        // is_fullscreen
         self.fullscreen.is_some()
     }
 
-    pub fn bounds(&self) -> Bounds<DevicePixels> {
+    fn bounds(&self) -> Bounds<DevicePixels> {
         Bounds {
             origin: self.origin,
             size: self.physical_size,
@@ -161,12 +158,8 @@ impl WindowsWindowState {
     ///
     /// Currently, GPUI uses logical size of the app to handle mouse interactions (such as
     /// whether the mouse collides with other elements of GPUI).
-    pub fn content_size(&self) -> Size<Pixels> {
+    fn content_size(&self) -> Size<Pixels> {
         logical_size(self.physical_size, self.scale_factor)
-    }
-
-    pub fn scale_factor(&self) -> f32 {
-        self.scale_factor
     }
 
     pub(crate) fn title_bar_padding(&self) -> Pixels {
@@ -398,7 +391,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn scale_factor(&self) -> f32 {
-        self.state.as_ref().borrow().scale_factor()
+        self.state.as_ref().borrow().scale_factor
     }
 
     // todo(windows)
@@ -414,7 +407,7 @@ impl PlatformWindow for WindowsWindow {
     fn mouse_position(&self) -> Point<Pixels> {
         let lock = self.state.as_ref().borrow();
         let handle = lock.hwnd;
-        let scale_factor = lock.scale_factor();
+        let scale_factor = lock.scale_factor;
         drop(lock);
         let point = unsafe {
             let mut point: POINT = std::mem::zeroed();
