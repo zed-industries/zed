@@ -41,7 +41,7 @@ pub(crate) fn handle_msg(
         WM_DPICHANGED => handle_dpi_changed_msg(handle, wparam, lparam, state),
         WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state),
         WM_PAINT => handle_paint_msg(handle, state),
-        WM_CLOSE => handle_close_msg(handle, state),
+        WM_CLOSE => handle_close_msg(state),
         WM_DESTROY => handle_destroy_msg(handle, state),
         WM_MOUSEMOVE => handle_mouse_move_msg(lparam, wparam, state),
         WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state),
@@ -167,9 +167,7 @@ fn handle_timer_msg(
     state: Rc<RefCell<WindowsWindowState>>,
 ) -> Option<isize> {
     if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
-        let lock = state.as_ref().borrow();
-        lock.run_foreground_tasks();
-        drop(lock);
+        state.as_ref().borrow().run_foreground_tasks();
         handle_paint_msg(handle, state)
     } else {
         None
@@ -189,21 +187,16 @@ fn handle_paint_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Opt
     Some(0)
 }
 
-fn handle_close_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
+fn handle_close_msg(state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
     let mut lock = state.as_ref().borrow_mut();
     if let Some(mut callback) = lock.callbacks.should_close.take() {
         drop(lock);
         let should_close = callback();
         state.as_ref().borrow_mut().callbacks.should_close = Some(callback);
-        println!(
-            "======================= should close: {} =====================",
-            should_close
-        );
-        // TODO:
         if should_close {
             None
         } else {
-            None
+            Some(0)
         }
     } else {
         None
@@ -221,18 +214,7 @@ fn handle_destroy_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> O
     unsafe {
         PostMessageW(None, CLOSE_ONE_WINDOW, None, LPARAM(handle.0)).log_err();
     }
-    // let lock = state.as_ref().borrow();
-    // let executor = lock.executor.clone();
-    // drop(lock);
-    // executor
-    //     .spawn(async move {
-    //         unsafe {
-    //             PostMessageW(None, CLOSE_ONE_WINDOW, None, LPARAM(handle.0)).log_err();
-    //         }
-    //     })
-    //     .detach();
-
-    Some(1)
+    Some(0)
 }
 
 fn handle_mouse_move_msg(

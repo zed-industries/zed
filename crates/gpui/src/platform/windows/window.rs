@@ -349,13 +349,32 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
-        unsafe {
-            let mut lock = self.state.as_ref().borrow_mut();
-            let _ = RevokeDragDrop(lock.hwnd);
-            lock.renderer.destroy();
-        }
+        let this = self.state.clone();
+        let mut lock = this.as_ref().borrow_mut();
+        lock.renderer.destroy();
+        let executor = lock.executor.clone();
+        drop(lock);
+        executor
+            .spawn(async move {
+                let handle = this.as_ref().borrow().hwnd;
+                unsafe {
+                    RevokeDragDrop(handle).log_err();
+                    DestroyWindow(handle).log_err();
+                }
+            })
+            .detach();
     }
 }
+
+// impl Drop for WindowsWindowState {
+//     fn drop(&mut self) {
+//         unsafe {
+//             self.renderer.destroy();
+//             RevokeDragDrop(self.hwnd).log_err();
+//             DestroyWindow(self.hwnd).log_err();
+//         }
+//     }
+// }
 
 impl PlatformWindow for WindowsWindow {
     fn bounds(&self) -> Bounds<DevicePixels> {
@@ -899,8 +918,10 @@ unsafe extern "system" fn wnd_proc(
     }
     INDENT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let r = if let Some(state) = inner.upgrade() {
+        println!("              1");
         handle_msg(hwnd, msg, wparam, lparam, state)
     } else {
+        println!("              2");
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     };
     INDENT_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
