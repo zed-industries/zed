@@ -53,6 +53,7 @@ pub(crate) struct WindowsWindowState {
     display: WindowsDisplay,
     click_state: ClickState,
     fullscreen: Option<StyleAndBounds>,
+    cursor: HCURSOR,
 }
 
 unsafe impl Send for WindowsWindowState {}
@@ -61,11 +62,12 @@ impl WindowsWindowState {
     fn new(
         hwnd: HWND,
         cs: &CREATESTRUCTW,
-        platform_inner: Rc<WindowsPlatformInner>,
+        executor: ForegroundExecutor,
         handle: AnyWindowHandle,
         hide_title_bar: bool,
         display: WindowsDisplay,
         transparent: bool,
+        cursor: HCURSOR,
     ) -> Arc<RwLock<Self>> {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = point(cs.x.into(), cs.y.into());
@@ -120,19 +122,19 @@ impl WindowsWindowState {
             RwLock::new(Self {
                 this: this.clone(),
                 hwnd,
-                executor: platform_inner.foreground_executor.clone(),
+                executor,
                 origin,
                 physical_size,
                 scale_factor,
                 input_handler,
                 renderer,
                 callbacks,
-                // platform_inner,
                 handle,
                 hide_title_bar,
                 display,
                 click_state,
                 fullscreen,
+                cursor,
             })
         })
     }
@@ -270,7 +272,8 @@ impl WindowsWindowState {
             WM_CHAR => Self::handle_char_msg(handle, wparam, lparam, state),
             WM_IME_STARTCOMPOSITION => Self::handle_ime_position(handle, state),
             WM_IME_COMPOSITION => Self::handle_ime_composition(handle, lparam, state),
-            // WM_SETCURSOR => self.handle_set_cursor(lparam),
+            WM_SETCURSOR => Self::handle_set_cursor(lparam, state),
+            1025 => Self::handle_cursor_changed(lparam, state),
             _ => None,
         };
         if let Some(n) = handled {
@@ -1225,7 +1228,16 @@ impl WindowsWindowState {
         None
     }
 
-    fn handle_set_cursor(&self, lparam: LPARAM) -> Option<isize> {
+    fn handle_cursor_changed(
+        lparam: LPARAM,
+        state: Arc<RwLock<WindowsWindowState>>,
+    ) -> Option<isize> {
+        let mut lock = state.as_ref().write();
+        lock.cursor = HCURSOR(lparam.0);
+        Some(0)
+    }
+
+    fn handle_set_cursor(lparam: LPARAM, state: Arc<RwLock<WindowsWindowState>>) -> Option<isize> {
         if matches!(
             lparam.loword() as u32,
             HTLEFT
@@ -1239,8 +1251,9 @@ impl WindowsWindowState {
         ) {
             return None;
         }
-        // TODO:
-        // unsafe { SetCursor(self.platform_inner.current_cursor.get()) };
+
+        let lock = state.as_ref().read();
+        unsafe { SetCursor(lock.cursor) };
         Some(1)
     }
 }
@@ -1264,20 +1277,23 @@ pub(crate) struct WindowsWindow {
 
 struct WindowCreateContext {
     inner: Option<Arc<RwLock<WindowsWindowState>>>,
-    platform_inner: Rc<WindowsPlatformInner>,
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: WindowsDisplay,
     transparent: bool,
+    executor: ForegroundExecutor,
+    cursor: HCURSOR,
 }
 
 impl WindowsWindow {
     pub(crate) fn new(
-        platform_inner: Rc<WindowsPlatformInner>,
         handle: AnyWindowHandle,
         options: WindowParams,
+        icon: HICON,
+        executor: ForegroundExecutor,
+        cursor: HCURSOR,
     ) -> (Self, HWND) {
-        let classname = register_wnd_class(platform_inner.icon);
+        let classname = register_wnd_class(icon);
         let hide_title_bar = options
             .titlebar
             .as_ref()
@@ -1301,13 +1317,14 @@ impl WindowsWindow {
         let hinstance = get_module_handle();
         let mut context = WindowCreateContext {
             inner: None,
-            platform_inner: platform_inner.clone(),
             handle,
             hide_title_bar,
             // todo(windows) move window to target monitor
             // options.display_id
             display: WindowsDisplay::primary_monitor().unwrap(),
             transparent: options.window_background != WindowBackgroundAppearance::Opaque,
+            executor,
+            cursor,
         };
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
@@ -1881,11 +1898,12 @@ unsafe extern "system" fn wnd_proc(
         let inner = WindowsWindowState::new(
             hwnd,
             cs,
-            ctx.platform_inner.clone(),
+            ctx.executor.clone(),
             ctx.handle,
             ctx.hide_title_bar,
             ctx.display.clone(),
             ctx.transparent,
+            ctx.cursor,
         );
         let weak = Box::new(Arc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };

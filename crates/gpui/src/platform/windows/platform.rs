@@ -40,6 +40,10 @@ use crate::*;
 
 pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
+    raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
+    // NOTE: standard cursor handles don't need to close.
+    current_cursor: Cell<HCURSOR>,
+    icon: HICON,
 }
 
 /// Windows settings pulled from SystemParametersInfo
@@ -59,26 +63,11 @@ pub(crate) struct WindowsPlatformInner {
     main_receiver: flume::Receiver<Runnable>,
     text_system: Arc<dyn PlatformTextSystem>,
     callbacks: Mutex<Callbacks>,
-    pub raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     pub(crate) dispatch_event: OwnedHandle,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
-    pub icon: HICON,
-    // NOTE: standard cursor handles don't need to close.
-    pub(crate) current_cursor: Cell<HCURSOR>,
 }
 
 impl WindowsPlatformInner {
-    pub(crate) fn try_get_windows_inner_from_hwnd(
-        &self,
-        hwnd: HWND,
-    ) -> Option<Arc<RwLock<WindowsWindowState>>> {
-        self.raw_window_handles
-            .read()
-            .iter()
-            .find(|entry| *entry == &hwnd)
-            .and_then(|hwnd| try_get_window_inner(*hwnd))
-    }
-
     #[inline]
     pub fn run_foreground_tasks(&self) {
         for runnable in self.main_receiver.drain() {
@@ -177,13 +166,16 @@ impl WindowsPlatform {
             main_receiver,
             text_system,
             callbacks,
-            raw_window_handles,
             dispatch_event,
             settings,
-            icon,
-            current_cursor,
         });
-        Self { inner }
+
+        Self {
+            inner,
+            raw_window_handles,
+            current_cursor,
+            icon,
+        }
     }
 
     #[inline]
@@ -192,7 +184,7 @@ impl WindowsPlatform {
     }
 
     fn redraw_all(&self) {
-        for handle in self.inner.raw_window_handles.read().iter() {
+        for handle in self.raw_window_handles.read().iter() {
             // unsafe {
             // RedrawWindow(
             //     *handle,
@@ -203,6 +195,27 @@ impl WindowsPlatform {
             // }
             unsafe { InvalidateRect(*handle, None, FALSE) };
         }
+    }
+
+    pub fn try_get_windows_inner_from_hwnd(
+        &self,
+        hwnd: HWND,
+    ) -> Option<Arc<RwLock<WindowsWindowState>>> {
+        self.raw_window_handles
+            .read()
+            .iter()
+            .find(|entry| *entry == &hwnd)
+            .and_then(|hwnd| try_get_window_inner(*hwnd))
+    }
+
+    #[inline]
+    pub fn post_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) {
+        self.raw_window_handles
+            .read()
+            .iter()
+            .for_each(|handle| unsafe {
+                PostMessageW(*handle, message, wparam, lparam).log_err();
+            });
     }
 }
 
@@ -350,8 +363,7 @@ impl Platform for WindowsPlatform {
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let active_window_hwnd = unsafe { GetActiveWindow() };
-        self.inner
-            .try_get_windows_inner_from_hwnd(active_window_hwnd)
+        self.try_get_windows_inner_from_hwnd(active_window_hwnd)
             .map(|inner| inner.as_ref().read().handle)
     }
 
@@ -360,8 +372,14 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
-        let (window, handle) = WindowsWindow::new(self.inner.clone(), handle, options);
-        self.inner.raw_window_handles.write().push(handle);
+        let (window, handle) = WindowsWindow::new(
+            handle,
+            options,
+            self.icon,
+            self.inner.foreground_executor.clone(),
+            self.current_cursor.get(),
+        );
+        self.raw_window_handles.write().push(handle);
         Box::new(window)
     }
 
@@ -670,7 +688,8 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        self.inner.current_cursor.set(load_cursor(style));
+        self.current_cursor.set(load_cursor(style));
+        self.post_message(WM_USER + 1, WPARAM(0), LPARAM(self.current_cursor.get().0));
     }
 
     // todo(windows)
