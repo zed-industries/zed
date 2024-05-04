@@ -185,8 +185,7 @@ fn handle_paint_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Opt
     if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
         drop(lock);
         request_frame();
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.request_frame = Some(request_frame);
+        state.as_ref().borrow_mut().callbacks.request_frame = Some(request_frame);
     }
     unsafe { EndPaint(handle, &paint_struct) };
     Some(0)
