@@ -712,8 +712,7 @@ fn handle_activate_msg(
             if let Some(mut cb) = lock.callbacks.active_status_change.take() {
                 drop(lock);
                 cb(activated);
-                let mut lock = state.as_ref().borrow_mut();
-                lock.callbacks.active_status_change = Some(cb);
+                state.as_ref().borrow_mut().callbacks.active_status_change = Some(cb);
             }
         })
         .detach();
