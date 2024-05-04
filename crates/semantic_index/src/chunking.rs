@@ -222,6 +222,7 @@ mod tests {
                 }
 
                 /// Returns the first name
+                /// something something something
                 fn first_name(&self) -> &str {
                     &self.first_name
                 }
@@ -230,8 +231,8 @@ mod tests {
                     &self.last_name
                 }
 
-                fn age(&self) -> usize {
-                    self.ages
+                fn age(&self) -> u32 {
+                    self.age
                 }
             }
         "
@@ -256,7 +257,7 @@ mod tests {
                 "struct Person {", // ...
                 "impl Person {",
                 "    /// Returns the first name",
-                "    fn age",
+                "    fn last_name",
             ],
         );
 
