@@ -141,7 +141,6 @@ pub(crate) struct WaylandClientState {
     horizontal_modifier: f32,
     scroll_event_received: bool,
     enter_token: Option<()>,
-    focusing_click: bool,
     button_pressed: Option<MouseButton>,
     mouse_focused_window: Option<WaylandWindowStatePtr>,
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
@@ -353,7 +352,6 @@ impl WaylandClient {
             keyboard_focused_window: None,
             loop_handle: handle.clone(),
             enter_token: None,
-            focusing_click: false,
             cursor_style: None,
             cursor,
             clipboard: Some(clipboard),
@@ -756,7 +754,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             } => {
                 state.serial = serial;
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
-                state.focusing_click = state.enter_token.is_some();
+                state.enter_token = Some(());
 
                 if let Some(window) = state.keyboard_focused_window.clone() {
                     drop(state);
@@ -769,6 +767,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 state.serial = serial;
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
+                state.enter_token.take();
 
                 if let Some(window) = keyboard_focused_window {
                     drop(state);
@@ -923,8 +922,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
-                    state.enter_token = Some(());
                     state.mouse_focused_window = Some(window.clone());
+                    if state.enter_token.is_some() {
+                        state.enter_token = None;
+                    }
                     if let Some(style) = state.cursor_style {
                         if let Some(cursor_shape_device) = &state.cursor_shape_device {
                             cursor_shape_device.set_shape(serial, style.to_shape());
@@ -940,7 +941,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
             }
             wl_pointer::Event::Leave { surface, .. } => {
                 if let Some(focused_window) = state.mouse_focused_window.clone() {
-                    state.enter_token.take();
                     let input = PlatformInput::MouseExited(MouseExitEvent {
                         position: state.mouse_location.unwrap(),
                         pressed_button: state.button_pressed,
@@ -1013,9 +1013,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                                 position: state.mouse_location.unwrap(),
                                 modifiers: state.modifiers,
                                 click_count: state.click.current_count,
-                                first_mouse: state.focusing_click,
+                                first_mouse: state.enter_token.take().is_some(),
                             });
-                            state.focusing_click = false;
                             drop(state);
                             window.handle_input(input);
                         }
