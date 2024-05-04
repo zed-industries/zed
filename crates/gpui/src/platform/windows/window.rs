@@ -569,6 +569,7 @@ impl PlatformWindow for WindowsWindow {
         executor
             .spawn(async move {
                 let mut lock = window_state.as_ref().borrow_mut();
+                let handle = lock.hwnd;
                 let StyleAndBounds {
                     style,
                     x,
@@ -603,10 +604,11 @@ impl PlatformWindow for WindowsWindow {
                         cy: bounds.size.height.0,
                     }
                 };
-                unsafe { set_window_long(lock.hwnd, GWL_STYLE, style.0 as isize) };
+                drop(lock);
+                unsafe { set_window_long(handle, GWL_STYLE, style.0 as isize) };
                 unsafe {
                     SetWindowPos(
-                        lock.hwnd,
+                        handle,
                         HWND::default(),
                         x,
                         y,
