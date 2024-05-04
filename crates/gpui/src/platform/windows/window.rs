@@ -34,7 +34,7 @@ use crate::*;
 
 pub(crate) struct WindowsWindowState {
     pub(crate) hwnd: HWND,
-    pub(crate) platform_inner: Rc<WindowsPlatformState>,
+    pub(crate) platform_inner: Rc<RefCell<WindowsPlatformState>>,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) origin: Point<DevicePixels>,
     pub(crate) physical_size: Size<DevicePixels>,
@@ -60,7 +60,7 @@ impl WindowsWindowState {
         display: WindowsDisplay,
         transparent: bool,
         executor: ForegroundExecutor,
-        platform_inner: Rc<WindowsPlatformState>,
+        platform_inner: Rc<RefCell<WindowsPlatformState>>,
     ) -> Rc<RefCell<Self>> {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = point(cs.x.into(), cs.y.into());
@@ -110,8 +110,12 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let click_state = ClickState::new();
         let fullscreen = None;
-        let current_cursor = platform_inner.current_cursor.get();
-        let mouse_wheel_settings = platform_inner.settings.borrow().mouse_wheel_settings;
+        let current_cursor = platform_inner.as_ref().borrow().current_cursor;
+        let mouse_wheel_settings = platform_inner
+            .as_ref()
+            .borrow()
+            .settings
+            .mouse_wheel_settings;
 
         Rc::new(RefCell::new(Self {
             hwnd,
@@ -235,7 +239,7 @@ struct WindowCreateContext {
     display: WindowsDisplay,
     transparent: bool,
     executor: ForegroundExecutor,
-    platform_inner: Rc<WindowsPlatformState>,
+    platform_inner: Rc<RefCell<WindowsPlatformState>>,
 }
 
 impl WindowsWindow {
@@ -244,7 +248,7 @@ impl WindowsWindow {
         options: WindowParams,
         icon: HICON,
         executor: ForegroundExecutor,
-        platform_inner: Rc<WindowsPlatformState>,
+        platform_inner: Rc<RefCell<WindowsPlatformState>>,
     ) -> Self {
         let classname = register_wnd_class(icon);
         let hide_title_bar = options
@@ -310,9 +314,6 @@ impl WindowsWindow {
             state: context.inner.unwrap(),
             drag_drop_handler,
         };
-        let mut lock = platform_inner.raw_window_handles.write();
-        lock.push(raw_hwnd);
-        drop(lock);
 
         unsafe { ShowWindow(raw_hwnd, SW_SHOW) };
 

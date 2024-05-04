@@ -17,6 +17,7 @@ use crate::*;
 
 pub(crate) const CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const MOUSE_WHEEL_SETTINGS_CHANGED: u32 = WM_USER + 2;
+pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 3;
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
 pub(crate) fn handle_msg(
@@ -166,7 +167,7 @@ fn handle_timer_msg(
 ) -> Option<isize> {
     if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
         let lock = state.as_ref().borrow();
-        lock.platform_inner.run_foreground_tasks();
+        lock.platform_inner.as_ref().borrow().run_foreground_tasks();
         drop(lock);
         handle_paint_msg(handle, state)
     } else {
@@ -208,23 +209,17 @@ fn handle_destroy_msg(state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
         callback();
     }
     let lock = state.as_ref().borrow();
-    let mut handle_vec_lock = lock.platform_inner.raw_window_handles.write();
-    let window_handle = lock.hwnd;
+    let handle = lock.hwnd;
     let executor = lock.executor.clone();
-    let index = handle_vec_lock
-        .iter()
-        .position(|handle| *handle == window_handle)
-        .unwrap();
-    handle_vec_lock.remove(index);
-    if handle_vec_lock.is_empty() {
-        drop(handle_vec_lock);
-        drop(lock);
-        executor
-            .spawn(async {
-                unsafe { PostQuitMessage(0) };
-            })
-            .detach();
-    }
+    drop(lock);
+    executor
+        .spawn(async move {
+            unsafe {
+                PostMessageW(None, CLOSE_ONE_WINDOW, None, LPARAM(handle.0)).log_err();
+            }
+        })
+        .detach();
+
     Some(1)
 }
 

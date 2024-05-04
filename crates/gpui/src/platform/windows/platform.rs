@@ -39,7 +39,8 @@ use windows::{
 use crate::*;
 
 pub(crate) struct WindowsPlatform {
-    inner: Rc<WindowsPlatformState>,
+    inner: Rc<RefCell<WindowsPlatformState>>,
+    raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     // below will never change through the app life cycle
     icon: HICON,
     background_executor: BackgroundExecutor,
@@ -65,11 +66,10 @@ pub(crate) struct MouseWheelSettings {
 
 pub(crate) struct WindowsPlatformState {
     main_receiver: flume::Receiver<Runnable>,
-    callbacks: Mutex<Callbacks>,
-    pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
+    callbacks: Callbacks,
+    pub(crate) settings: WindowsPlatformSystemSettings,
     // NOTE: standard cursor handles don't need to close.
-    pub(crate) current_cursor: Cell<HCURSOR>,
-    pub(crate) raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
+    pub(crate) current_cursor: HCURSOR,
 }
 
 impl WindowsPlatformState {
@@ -169,21 +169,21 @@ impl WindowsPlatform {
             log::info!("Using cosmic text system.");
             Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
         };
-        let callbacks = Mutex::new(Callbacks::default());
+        let callbacks = Callbacks::default();
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let settings = RefCell::new(WindowsPlatformSystemSettings::new());
+        let settings = WindowsPlatformSystemSettings::new();
         let icon = load_icon().unwrap_or_default();
-        let current_cursor = Cell::new(load_cursor(CursorStyle::Arrow));
-        let inner = Rc::new(WindowsPlatformState {
+        let current_cursor = load_cursor(CursorStyle::Arrow);
+        let inner = Rc::new(RefCell::new(WindowsPlatformState {
             main_receiver,
             callbacks,
             settings,
             current_cursor,
-            raw_window_handles,
-        });
+        }));
 
         Self {
             inner,
+            raw_window_handles,
             icon,
             background_executor,
             foreground_executor,
@@ -194,11 +194,11 @@ impl WindowsPlatform {
 
     #[inline]
     fn run_foreground_tasks(&self) {
-        self.inner.run_foreground_tasks();
+        self.inner.borrow().run_foreground_tasks();
     }
 
     fn redraw_all(&self) {
-        for handle in self.inner.raw_window_handles.read().iter() {
+        for handle in self.raw_window_handles.read().iter() {
             // unsafe {
             // RedrawWindow(
             //     *handle,
@@ -215,8 +215,7 @@ impl WindowsPlatform {
         &self,
         hwnd: HWND,
     ) -> Option<Arc<RwLock<WindowsWindowState>>> {
-        self.inner
-            .raw_window_handles
+        self.raw_window_handles
             .read()
             .iter()
             .find(|entry| *entry == &hwnd)
@@ -225,13 +224,27 @@ impl WindowsPlatform {
 
     #[inline]
     pub fn post_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) {
-        self.inner
-            .raw_window_handles
+        self.raw_window_handles
             .read()
             .iter()
             .for_each(|handle| unsafe {
                 PostMessageW(*handle, message, wparam, lparam).log_err();
             });
+    }
+
+    fn close_one_window(&self, target_window: HWND) -> bool {
+        let mut lock = self.raw_window_handles.write();
+        let index = lock
+            .iter()
+            .position(|handle| *handle == target_window)
+            .unwrap();
+        lock.remove(index);
+        if lock.is_empty() {
+            drop(lock);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -279,17 +292,20 @@ impl Platform for WindowsPlatform {
                     let mut msg = MSG::default();
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                            if msg.message == WM_QUIT {
-                                break 'a;
-                            }
                             if msg.message == WM_SETTINGCHANGE {
-                                self.inner.settings.borrow_mut().update_all();
+                                self.inner.as_ref().borrow_mut().settings.update_all();
                                 self.post_message(
                                     MOUSE_WHEEL_SETTINGS_CHANGED,
                                     WPARAM(0),
                                     LPARAM(0),
                                 );
                                 continue;
+                            }
+                            if msg.message == CLOSE_ONE_WINDOW {
+                                println!("==================={:?}", msg);
+                                if self.close_one_window(HWND(msg.lParam.0)) {
+                                    break 'a;
+                                }
                             }
                             TranslateMessage(&msg);
                             DispatchMessageW(&msg);
@@ -307,9 +323,10 @@ impl Platform for WindowsPlatform {
         }
         end_vsync_timer(raw_timer_stop_event);
 
-        let mut callbacks = self.inner.callbacks.lock();
-        if let Some(callback) = callbacks.quit.as_mut() {
-            callback()
+        let mut lock = self.inner.as_ref().borrow_mut();
+        if let Some(mut callback) = lock.callbacks.quit.take() {
+            drop(lock);
+            callback();
         }
     }
 
@@ -393,13 +410,19 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
-        Box::new(WindowsWindow::new(
+        let window = WindowsWindow::new(
             handle,
             options,
             self.icon,
             self.foreground_executor.clone(),
             self.inner.clone(),
-        ))
+        );
+        let handle = window.get_raw_handle();
+        let mut lock = self.raw_window_handles.write();
+        lock.push(handle);
+        drop(lock);
+
+        Box::new(window)
     }
 
     // todo(windows)
@@ -419,9 +442,8 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    // todo(windows)
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.inner.callbacks.lock().open_urls = Some(callback);
+        self.inner.as_ref().borrow_mut().callbacks.open_urls = Some(callback);
     }
 
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
@@ -541,26 +563,34 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().quit = Some(callback);
+        self.inner.as_ref().borrow_mut().callbacks.quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().reopen = Some(callback);
+        self.inner.as_ref().borrow_mut().callbacks.reopen = Some(callback);
     }
 
     // todo(windows)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.inner.callbacks.lock().app_menu_action = Some(callback);
+        self.inner.as_ref().borrow_mut().callbacks.app_menu_action = Some(callback);
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.inner.callbacks.lock().will_open_app_menu = Some(callback);
+        self.inner
+            .as_ref()
+            .borrow_mut()
+            .callbacks
+            .will_open_app_menu = Some(callback);
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.inner.callbacks.lock().validate_app_menu_command = Some(callback);
+        self.inner
+            .as_ref()
+            .borrow_mut()
+            .callbacks
+            .validate_app_menu_command = Some(callback);
     }
 
     fn os_name(&self) -> &'static str {
@@ -707,12 +737,8 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        self.inner.current_cursor.set(load_cursor(style));
-        self.post_message(
-            CURSOR_STYLE_CHANGED,
-            WPARAM(0),
-            LPARAM(self.inner.current_cursor.get().0),
-        );
+        let hcursor = load_cursor(style);
+        self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
     }
 
     // todo(windows)
