@@ -41,8 +41,8 @@ pub(crate) fn handle_msg(
         WM_DPICHANGED => handle_dpi_changed_msg(handle, wparam, lparam, state),
         WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state),
         WM_PAINT => handle_paint_msg(handle, state),
-        WM_CLOSE => handle_close_msg(state),
-        WM_DESTROY => handle_destroy_msg(state),
+        WM_CLOSE => handle_close_msg(handle, state),
+        WM_DESTROY => handle_destroy_msg(handle, state),
         WM_MOUSEMOVE => handle_mouse_move_msg(lparam, wparam, state),
         WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state),
         WM_NCLBUTTONDOWN => {
@@ -189,41 +189,48 @@ fn handle_paint_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Opt
     Some(0)
 }
 
-fn handle_close_msg(state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
+fn handle_close_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
     let mut lock = state.as_ref().borrow_mut();
     if let Some(mut callback) = lock.callbacks.should_close.take() {
-        let handle = lock.hwnd;
         drop(lock);
         let should_close = callback();
         state.as_ref().borrow_mut().callbacks.should_close = Some(callback);
+        println!(
+            "======================= should close: {} =====================",
+            should_close
+        );
+        // TODO:
         if should_close {
-            unsafe { DestroyWindow(handle).log_err() };
-            Some(0)
+            None
         } else {
-            Some(0)
+            None
         }
     } else {
         None
     }
 }
 
-fn handle_destroy_msg(state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
-    if let Some(callback) = lock.callbacks.close.take() {
-        drop(lock);
+fn handle_destroy_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
+    let callback = {
+        let mut lock = state.as_ref().borrow_mut();
+        lock.callbacks.close.take()
+    };
+    if let Some(callback) = callback {
         callback();
     }
-    let lock = state.as_ref().borrow();
-    let handle = lock.hwnd;
-    let executor = lock.executor.clone();
-    drop(lock);
-    executor
-        .spawn(async move {
-            unsafe {
-                PostMessageW(None, CLOSE_ONE_WINDOW, None, LPARAM(handle.0)).log_err();
-            }
-        })
-        .detach();
+    unsafe {
+        PostMessageW(None, CLOSE_ONE_WINDOW, None, LPARAM(handle.0)).log_err();
+    }
+    // let lock = state.as_ref().borrow();
+    // let executor = lock.executor.clone();
+    // drop(lock);
+    // executor
+    //     .spawn(async move {
+    //         unsafe {
+    //             PostMessageW(None, CLOSE_ONE_WINDOW, None, LPARAM(handle.0)).log_err();
+    //         }
+    //     })
+    //     .detach();
 
     Some(1)
 }

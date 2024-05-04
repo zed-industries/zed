@@ -304,6 +304,9 @@ impl Platform for WindowsPlatform {
                     let mut msg = MSG::default();
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                            if msg.message == WM_QUIT {
+                                break 'a;
+                            }
                             if msg.message == WM_SETTINGCHANGE {
                                 self.update_system_settings();
                                 continue;

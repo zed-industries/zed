@@ -893,7 +893,9 @@ unsafe extern "system" fn wnd_proc(
         for _ in 0..indent_count {
             pre_indent.push_str(INDENT_STRING);
         }
-        println!("{}Handling MSG: {}", pre_indent, msg);
+        if msg != 15 {
+            println!("{}Handling MSG: {}", pre_indent, msg);
+        }
     }
     INDENT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let r = if let Some(state) = inner.upgrade() {
@@ -908,7 +910,9 @@ unsafe extern "system" fn wnd_proc(
         for _ in 0..indent_count {
             pre_indent.push_str(INDENT_STRING);
         }
-        println!("{}Finished handling: {}", pre_indent, msg);
+        if msg != 15 {
+            println!("{}Finished handling: {}", pre_indent, msg);
+        }
     }
     if msg == WM_NCDESTROY {
         unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
