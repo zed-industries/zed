@@ -2,7 +2,6 @@
 
 use std::{
     cell::RefCell,
-    iter::once,
     num::NonZeroIsize,
     path::PathBuf,
     rc::{Rc, Weak},
@@ -16,7 +15,7 @@ use anyhow::Context;
 use blade_graphics as gpu;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use parking_lot::RwLock;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::result::Result;
@@ -25,7 +24,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*, Threading::SetEvent},
+        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{
             Controls::*,
             HiDpi::*,
@@ -1291,7 +1290,6 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         options: WindowParams,
         icon: HICON,
-        executor: ForegroundExecutor,
         platform_inner: Rc<WindowsPlatformInner>,
     ) -> Self {
         let classname = register_wnd_class(icon);
@@ -1507,17 +1505,17 @@ impl PlatformWindow for WindowsWindow {
                     };
                     config.pszWindowTitle = title;
                     config.Anonymous1.pszMainIcon = main_icon;
-                    let instruction = msg.encode_utf16().chain(once(0)).collect_vec();
+                    let instruction = msg.encode_utf16().chain(Some(0)).collect_vec();
                     config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
                     let hints_encoded;
                     if let Some(ref hints) = detail_string {
-                        hints_encoded = hints.encode_utf16().chain(once(0)).collect_vec();
+                        hints_encoded = hints.encode_utf16().chain(Some(0)).collect_vec();
                         config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
                     };
                     let mut buttons = Vec::new();
                     let mut btn_encoded = Vec::new();
                     for (index, btn_string) in answers.iter().enumerate() {
-                        let encoded = btn_string.encode_utf16().chain(once(0)).collect_vec();
+                        let encoded = btn_string.encode_utf16().chain(Some(0)).collect_vec();
                         buttons.push(TASKDIALOG_BUTTON {
                             nButtonID: index as _,
                             pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),

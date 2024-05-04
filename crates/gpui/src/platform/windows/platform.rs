@@ -375,7 +375,6 @@ impl Platform for WindowsPlatform {
             handle,
             options,
             self.icon,
-            self.inner.foreground_executor.clone(),
             self.inner.clone(),
         ))
     }
