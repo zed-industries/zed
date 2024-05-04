@@ -190,22 +190,22 @@ impl WindowsPlatform {
 
     fn redraw_all(&self) {
         for handle in self.raw_window_handles.read().iter() {
-            // unsafe {
-            // RedrawWindow(
-            //     *handle,
-            //     None,
-            //     HRGN::default(),
-            //     RDW_INVALIDATE | RDW_UPDATENOW,
-            // );
-            // }
-            unsafe { InvalidateRect(*handle, None, FALSE) };
+            unsafe {
+                RedrawWindow(
+                    *handle,
+                    None,
+                    HRGN::default(),
+                    RDW_INVALIDATE | RDW_UPDATENOW,
+                );
+            }
+            // unsafe { InvalidateRect(*handle, None, FALSE) };
         }
     }
 
     pub fn try_get_windows_inner_from_hwnd(
         &self,
         hwnd: HWND,
-    ) -> Option<Arc<RwLock<WindowsWindowState>>> {
+    ) -> Option<Rc<RefCell<WindowsWindowState>>> {
         self.raw_window_handles
             .read()
             .iter()
@@ -332,9 +332,7 @@ impl Platform for WindowsPlatform {
         }
         end_vsync_timer(raw_timer_stop_event);
 
-        let mut lock = self.inner.borrow_mut();
-        if let Some(ref mut callback) = lock.callbacks.quit {
-            // drop(lock);
+        if let Some(ref mut callback) = self.inner.borrow_mut().callbacks.quit {
             callback();
         }
     }
@@ -411,7 +409,7 @@ impl Platform for WindowsPlatform {
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let active_window_hwnd = unsafe { GetActiveWindow() };
         self.try_get_windows_inner_from_hwnd(active_window_hwnd)
-            .map(|inner| inner.as_ref().read().handle)
+            .map(|inner| inner.as_ref().borrow().handle)
     }
 
     fn open_window(
@@ -744,6 +742,7 @@ impl Platform for WindowsPlatform {
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
         self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
+        self.inner.borrow_mut().current_cursor = hcursor;
     }
 
     // todo(windows)

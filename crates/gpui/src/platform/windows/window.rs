@@ -16,7 +16,6 @@ use async_task::Runnable;
 use blade_graphics as gpu;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
-use parking_lot::RwLock;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::result::Result;
@@ -47,8 +46,8 @@ pub(crate) struct WindowsWindowState {
     pub(crate) display: WindowsDisplay,
     pub(crate) click_state: ClickState,
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
-    pub(crate) fullscreen: Option<StyleAndBounds>,
     pub(crate) current_cursor: HCURSOR,
+    fullscreen: Option<StyleAndBounds>,
     main_receiver: flume::Receiver<Runnable>,
 }
 
@@ -128,8 +127,8 @@ impl WindowsWindowState {
             display,
             click_state,
             mouse_wheel_settings,
-            fullscreen,
             current_cursor,
+            fullscreen,
             main_receiver,
         }))
     }
@@ -200,13 +199,6 @@ impl WindowsWindowState {
         for runnable in self.main_receiver.drain() {
             runnable.run();
         }
-    }
-
-    fn handle_drag_drop(&mut self, input: PlatformInput) {
-        let Some(ref mut func) = self.callbacks.input else {
-            return;
-        };
-        func(input);
     }
 }
 
@@ -342,12 +334,11 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
-        let this = self.state.clone();
-        let mut lock = this.as_ref().borrow_mut();
+        let mut lock = self.state.as_ref().borrow_mut();
         lock.renderer.destroy();
-        let executor = lock.executor.clone();
-        drop(lock);
-        executor
+        // clone this `Rc` to prevent early release of the pointer
+        let this = self.state.clone();
+        lock.executor
             .spawn(async move {
                 let handle = this.as_ref().borrow().hwnd;
                 unsafe {
@@ -358,16 +349,6 @@ impl Drop for WindowsWindow {
             .detach();
     }
 }
-
-// impl Drop for WindowsWindowState {
-//     fn drop(&mut self) {
-//         unsafe {
-//             self.renderer.destroy();
-//             RevokeDragDrop(self.hwnd).log_err();
-//             DestroyWindow(self.hwnd).log_err();
-//         }
-//     }
-// }
 
 impl PlatformWindow for WindowsWindow {
     fn bounds(&self) -> Bounds<DevicePixels> {
@@ -427,12 +408,7 @@ impl PlatformWindow for WindowsWindow {
 
     // todo(windows)
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        let _ = self
-            .state
-            .as_ref()
-            .borrow_mut()
-            .input_handler
-            .insert(input_handler);
+        self.state.as_ref().borrow_mut().input_handler = Some(input_handler);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
@@ -526,7 +502,6 @@ impl PlatformWindow for WindowsWindow {
         self.state.as_ref().borrow().hwnd == unsafe { GetActiveWindow() }
     }
 
-    // todo(windows)
     fn set_title(&mut self, title: &str) {
         unsafe { SetWindowTextW(self.state.as_ref().borrow().hwnd, &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))
@@ -675,6 +650,17 @@ impl PlatformWindow for WindowsWindow {
 #[implement(IDropTarget)]
 struct WindowsDragDropHandler(pub Rc<RefCell<WindowsWindowState>>);
 
+impl WindowsDragDropHandler {
+    fn handle_drag_drop(&self, input: PlatformInput) {
+        let mut lock = self.0.as_ref().borrow_mut();
+        if let Some(mut func) = lock.callbacks.input.take() {
+            drop(lock);
+            func(input);
+            self.0.as_ref().borrow_mut().callbacks.input = Some(func);
+        }
+    }
+}
+
 #[allow(non_snake_case)]
 impl IDropTarget_Impl for WindowsDragDropHandler {
     fn DragEnter(
@@ -735,7 +721,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                     ),
                     paths: ExternalPaths(paths),
                 });
-                self.0.as_ref().borrow_mut().handle_drag_drop(input);
+                self.handle_drag_drop(input);
             } else {
                 *pdweffect = DROPEFFECT_NONE;
             }
@@ -761,14 +747,14 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                 scale_factor,
             ),
         });
-        self.0.as_ref().borrow_mut().handle_drag_drop(input);
+        self.handle_drag_drop(input);
 
         Ok(())
     }
 
     fn DragLeave(&self) -> windows::core::Result<()> {
         let input = PlatformInput::FileDrop(FileDropEvent::Exited);
-        self.0.as_ref().borrow_mut().handle_drag_drop(input);
+        self.handle_drag_drop(input);
 
         Ok(())
     }
@@ -792,18 +778,10 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                 scale_factor,
             ),
         });
-        self.0.as_ref().borrow_mut().handle_drag_drop(input);
+        self.handle_drag_drop(input);
 
         Ok(())
     }
-}
-
-pub(crate) struct StyleAndBounds {
-    style: WINDOW_STYLE,
-    x: i32,
-    y: i32,
-    cx: i32,
-    cy: i32,
 }
 
 #[derive(Debug)]
@@ -846,6 +824,14 @@ impl ClickState {
             && diff.x.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
             && diff.y.0.abs() <= DOUBLE_CLICK_SPATIAL_TOLERANCE
     }
+}
+
+struct StyleAndBounds {
+    style: WINDOW_STYLE,
+    x: i32,
+    y: i32,
+    cx: i32,
+    cy: i32,
 }
 
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
@@ -913,13 +899,13 @@ unsafe extern "system" fn wnd_proc(
     r
 }
 
-pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Arc<RwLock<WindowsWindowState>>> {
+pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<RefCell<WindowsWindowState>>> {
     if hwnd == HWND(0) {
         return None;
     }
 
-    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) }
-        as *mut std::sync::Weak<RwLock<WindowsWindowState>>;
+    let ptr =
+        unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<RefCell<WindowsWindowState>>;
     if !ptr.is_null() {
         let inner = unsafe { &*ptr };
         inner.upgrade()
