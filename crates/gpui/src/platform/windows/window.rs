@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     str::FromStr,
-    sync::{atomic::AtomicUsize, Arc, Once},
+    sync::{Arc, Once},
     time::{Duration, Instant},
 };
 
