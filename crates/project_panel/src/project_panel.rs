@@ -1721,7 +1721,7 @@ impl ProjectPanel {
                         .ml_1(),
                     )
                     .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
-                        if event.down.button == MouseButton::Right {
+                        if event.down.button == MouseButton::Right || event.down.first_mouse {
                             return;
                         }
                         if !show_editor {
