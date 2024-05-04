@@ -40,7 +40,7 @@ use crate::*;
 
 pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
-    raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
+    raw_window_handles: Arc<RwLock<SmallVec<[HWND; 4]>>>,
     // NOTE: standard cursor handles don't need to close.
     current_cursor: Cell<HCURSOR>,
     icon: HICON,
@@ -156,7 +156,7 @@ impl WindowsPlatform {
             Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
         };
         let callbacks = Mutex::new(Callbacks::default());
-        let raw_window_handles = RwLock::new(SmallVec::new());
+        let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
         let icon = load_icon().unwrap_or_default();
         let current_cursor = Cell::new(load_cursor(CursorStyle::Arrow));
@@ -372,14 +372,14 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
-        let (window, handle) = WindowsWindow::new(
+        let window = WindowsWindow::new(
             handle,
             options,
+            self.raw_window_handles.clone(),
             self.icon,
             self.inner.foreground_executor.clone(),
             self.current_cursor.get(),
         );
-        self.raw_window_handles.write().push(handle);
         Box::new(window)
     }
 

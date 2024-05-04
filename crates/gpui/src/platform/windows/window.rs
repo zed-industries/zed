@@ -54,6 +54,7 @@ pub(crate) struct WindowsWindowState {
     click_state: ClickState,
     fullscreen: Option<StyleAndBounds>,
     cursor: HCURSOR,
+    raw_window_handles: Arc<RwLock<SmallVec<[HWND; 4]>>>,
 }
 
 unsafe impl Send for WindowsWindowState {}
@@ -68,6 +69,7 @@ impl WindowsWindowState {
         display: WindowsDisplay,
         transparent: bool,
         cursor: HCURSOR,
+        raw_window_handles: Arc<RwLock<SmallVec<[HWND; 4]>>>,
     ) -> Arc<RwLock<Self>> {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = point(cs.x.into(), cs.y.into());
@@ -135,6 +137,7 @@ impl WindowsWindowState {
                 click_state,
                 fullscreen,
                 cursor,
+                raw_window_handles,
             })
         })
     }
@@ -405,23 +408,24 @@ impl WindowsWindowState {
             drop(lock);
             callback();
         }
-        // TODO:
-        // let index = self
-        //     .platform_inner
-        //     .raw_window_handles
-        //     .read()
-        //     .iter()
-        //     .position(|handle| *handle == self.hwnd)
-        //     .unwrap();
-        // self.platform_inner.raw_window_handles.write().remove(index);
-        // if self.platform_inner.raw_window_handles.read().is_empty() {
-        //     self.platform_inner
-        //         .foreground_executor
-        //         .spawn(async {
-        //             unsafe { PostQuitMessage(0) };
-        //         })
-        //         .detach();
-        // }
+        let lock = state.as_ref().read();
+        let mut handle_vec_lock = lock.raw_window_handles.write();
+        let window_handle = lock.hwnd;
+        let executor = lock.executor.clone();
+        let index = handle_vec_lock
+            .iter()
+            .position(|handle| *handle == window_handle)
+            .unwrap();
+        handle_vec_lock.remove(index);
+        if handle_vec_lock.is_empty() {
+            drop(handle_vec_lock);
+            drop(lock);
+            executor
+                .spawn(async {
+                    unsafe { PostQuitMessage(0) };
+                })
+                .detach();
+        }
         Some(1)
     }
 
@@ -1283,16 +1287,18 @@ struct WindowCreateContext {
     transparent: bool,
     executor: ForegroundExecutor,
     cursor: HCURSOR,
+    raw_window_handles: Arc<RwLock<SmallVec<[HWND; 4]>>>,
 }
 
 impl WindowsWindow {
     pub(crate) fn new(
         handle: AnyWindowHandle,
         options: WindowParams,
+        raw_window_handles: Arc<RwLock<SmallVec<[HWND; 4]>>>,
         icon: HICON,
         executor: ForegroundExecutor,
         cursor: HCURSOR,
-    ) -> (Self, HWND) {
+    ) -> Self {
         let classname = register_wnd_class(icon);
         let hide_title_bar = options
             .titlebar
@@ -1325,6 +1331,7 @@ impl WindowsWindow {
             transparent: options.window_background != WindowBackgroundAppearance::Opaque,
             executor,
             cursor,
+            raw_window_handles: raw_window_handles.clone(),
         };
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
@@ -1358,11 +1365,11 @@ impl WindowsWindow {
             state: context.inner.unwrap(),
             drag_drop_handler,
         };
-        // platform_inner.raw_window_handles.write().push(raw_hwnd);
+        raw_window_handles.as_ref().write().push(raw_hwnd);
 
         unsafe { ShowWindow(raw_hwnd, SW_SHOW) };
 
-        (wnd, raw_hwnd)
+        wnd
     }
 }
 
@@ -1904,6 +1911,7 @@ unsafe extern "system" fn wnd_proc(
             ctx.display.clone(),
             ctx.transparent,
             ctx.cursor,
+            ctx.raw_window_handles.clone(),
         );
         let weak = Box::new(Arc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
