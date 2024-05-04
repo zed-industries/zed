@@ -3,8 +3,8 @@ use crate::{
         all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
     },
     task_context::ContextProvider,
-    with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, LspAdapterDelegate, PLAIN_TEXT,
+    CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
+    LanguageServerName, LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
@@ -509,17 +509,17 @@ impl LanguageRegistry {
         let filename = path.file_name().and_then(|name| name.to_str());
         let extension = path.extension_or_hidden_file_name();
         let path_suffixes = [extension, filename];
+        let filename_parts: Vec<&str> = filename.unwrap_or("").split('.').collect();
         let empty = Vec::new();
 
         let rx = self.get_or_load_language(move |language_name, config| {
-            let path_matches_default_suffix = config
-                .path_suffixes
-                .iter()
-                .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
-            let path_matches_regex = config
-                .path_regex
-                .as_ref()
-                .map_or(false, |regex| filename.map_or(false, |p| regex.is_match(p)));
+            let path_matches_default_suffix = config.path_suffixes.iter().any(|suffix| {
+                suffix
+                    .split('.')
+                    .rev()
+                    .zip(filename_parts.iter().rev())
+                    .all(|(s, f)| s == *f)
+            });
             let path_matches_custom_suffix = user_file_types
                 .and_then(|types| types.get(language_name))
                 .unwrap_or(&empty)
@@ -536,7 +536,7 @@ impl LanguageRegistry {
             );
             if path_matches_custom_suffix {
                 2
-            } else if path_matches_default_suffix || content_matches || path_matches_regex {
+            } else if path_matches_default_suffix || content_matches {
                 1
             } else {
                 0
@@ -672,7 +672,8 @@ impl LanguageRegistry {
                                     .file_stem()
                                     .and_then(OsStr::to_str)
                                     .ok_or_else(|| anyhow!("invalid grammar filename"))?;
-                                anyhow::Ok(with_parser(|parser| {
+                                anyhow::Ok(PARSER.with(|parser| {
+                                    let mut parser = parser.borrow_mut();
                                     let mut store = parser.take_wasm_store().unwrap();
                                     let grammar = store.load_language(&grammar_name, &wasm_bytes);
                                     parser.set_wasm_store(store).unwrap();
