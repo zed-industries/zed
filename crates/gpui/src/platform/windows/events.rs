@@ -192,14 +192,19 @@ fn handle_paint_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Opt
 fn handle_close_msg(state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
     let mut lock = state.as_ref().borrow_mut();
     if let Some(mut callback) = lock.callbacks.should_close.take() {
+        let handle = lock.hwnd;
         drop(lock);
-        if callback() {
-            return Some(0);
+        let should_close = callback();
+        state.as_ref().borrow_mut().callbacks.should_close = Some(callback);
+        if should_close {
+            unsafe { DestroyWindow(handle).log_err() };
+            Some(0)
+        } else {
+            Some(0)
         }
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.should_close = Some(callback);
+    } else {
+        None
     }
-    None
 }
 
 fn handle_destroy_msg(state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
