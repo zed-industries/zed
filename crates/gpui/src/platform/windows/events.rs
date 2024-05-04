@@ -116,8 +116,7 @@ fn handle_move_msg(
     if let Some(mut callback) = lock.callbacks.moved.take() {
         drop(lock);
         callback();
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.moved = Some(callback);
+        state.as_ref().borrow_mut().callbacks.moved = Some(callback);
     }
     Some(0)
 }
