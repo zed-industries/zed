@@ -224,8 +224,6 @@ impl WindowsPlatform {
     }
 
     fn close_one_window(&self, target_window: HWND) -> bool {
-        println!("");
-        println!("==> Entering close window");
         let mut lock = self.raw_window_handles.write();
         let index = lock
             .iter()
@@ -233,11 +231,8 @@ impl WindowsPlatform {
             .unwrap();
         lock.remove(index);
         if lock.is_empty() {
-            drop(lock);
-            println!("window empty");
             true
         } else {
-            println!("window not empty: {}", self.raw_window_handles.read().len());
             false
         }
     }

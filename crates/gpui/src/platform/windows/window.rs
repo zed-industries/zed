@@ -906,44 +906,17 @@ unsafe extern "system" fn wnd_proc(
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
     let inner = unsafe { &*ptr };
-    {
-        let indent_count = INDENT_COUNT.load(std::sync::atomic::Ordering::Relaxed);
-        let mut pre_indent = "".to_owned();
-        for _ in 0..indent_count {
-            pre_indent.push_str(INDENT_STRING);
-        }
-        if msg != 15 {
-            println!("{}Handling MSG: {}", pre_indent, msg);
-        }
-    }
-    INDENT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let r = if let Some(state) = inner.upgrade() {
-        println!("              1");
         handle_msg(hwnd, msg, wparam, lparam, state)
     } else {
-        println!("              2");
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     };
-    INDENT_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-    {
-        let indent_count = INDENT_COUNT.load(std::sync::atomic::Ordering::Relaxed);
-        let mut pre_indent = "".to_owned();
-        for _ in 0..indent_count {
-            pre_indent.push_str(INDENT_STRING);
-        }
-        if msg != 15 {
-            println!("{}Finished handling: {}", pre_indent, msg);
-        }
-    }
     if msg == WM_NCDESTROY {
         unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
         unsafe { drop(Box::from_raw(ptr)) };
     }
     r
 }
-
-static INDENT_COUNT: AtomicUsize = AtomicUsize::new(0);
-const INDENT_STRING: &str = "   ";
 
 pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Arc<RwLock<WindowsWindowState>>> {
     if hwnd == HWND(0) {
