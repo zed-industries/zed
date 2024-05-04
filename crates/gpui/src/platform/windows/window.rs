@@ -46,6 +46,7 @@ pub(crate) struct WindowsWindowState {
     pub(crate) hide_title_bar: bool,
     pub(crate) display: WindowsDisplay,
     pub(crate) click_state: ClickState,
+    pub(crate) mouse_wheel_settings: MouseWheelSettings,
     pub(crate) fullscreen: Option<StyleAndBounds>,
     pub(crate) current_cursor: HCURSOR,
 }
@@ -110,6 +111,7 @@ impl WindowsWindowState {
         let fullscreen = None;
         let executor = platform_inner.foreground_executor.clone();
         let current_cursor = platform_inner.current_cursor.get();
+        let mouse_wheel_settings = platform_inner.settings.borrow().mouse_wheel_settings;
 
         Rc::new(RefCell::new(Self {
             hwnd,
@@ -125,6 +127,7 @@ impl WindowsWindowState {
             hide_title_bar,
             display,
             click_state,
+            mouse_wheel_settings,
             fullscreen,
             current_cursor,
         }))

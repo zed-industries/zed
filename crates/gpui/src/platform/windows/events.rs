@@ -16,6 +16,7 @@ use windows::Win32::{
 use crate::*;
 
 pub(crate) const CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
+pub(crate) const MOUSE_WHEEL_SETTINGS_CHANGED: u32 = WM_USER + 2;
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
 pub(crate) fn handle_msg(
@@ -513,10 +514,10 @@ fn handle_mouse_wheel_msg(
     let mut lock = state.as_ref().borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
+        let wheel_scroll_lines = lock.mouse_wheel_settings.wheel_scroll_lines;
         drop(lock);
-        let wheel_distance = wparam.signed_hiword() as f32 / WHEEL_DELTA as f32;
-        // let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
-        // * self.platform_inner.settings.borrow().wheel_scroll_lines as f32;
+        let wheel_distance =
+            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_lines as f32;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
@@ -554,10 +555,10 @@ fn handle_mouse_horizontal_wheel_msg(
     let mut lock = state.as_ref().borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
+        let wheel_scroll_chars = lock.mouse_wheel_settings.wheel_scroll_chars;
         drop(lock);
-        let wheel_distance = wparam.signed_hiword() as f32 / WHEEL_DELTA as f32;
-        // let wheel_distance = (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32)
-        //     * self.platform_inner.settings.borrow().wheel_scroll_chars as f32;
+        let wheel_distance =
+            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
