@@ -379,6 +379,7 @@ impl Platform for WindowsPlatform {
             self.icon,
             self.inner.foreground_executor.clone(),
             self.current_cursor.get(),
+            self.inner.dispatch_event.to_raw(),
         );
         Box::new(window)
     }

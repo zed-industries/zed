@@ -24,7 +24,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*, Threading::SetEvent},
         UI::{
             Controls::*,
             HiDpi::*,
@@ -55,6 +55,7 @@ pub(crate) struct WindowsWindowState {
     fullscreen: Option<StyleAndBounds>,
     cursor: HCURSOR,
     raw_window_handles: Arc<RwLock<SmallVec<[HWND; 4]>>>,
+    dispatch_event: HANDLE,
 }
 
 unsafe impl Send for WindowsWindowState {}
@@ -70,6 +71,7 @@ impl WindowsWindowState {
         transparent: bool,
         cursor: HCURSOR,
         raw_window_handles: Arc<RwLock<SmallVec<[HWND; 4]>>>,
+        dispatch_event: HANDLE,
     ) -> Arc<RwLock<Self>> {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = point(cs.x.into(), cs.y.into());
@@ -138,6 +140,7 @@ impl WindowsWindowState {
                 fullscreen,
                 cursor,
                 raw_window_handles,
+                dispatch_event,
             })
         })
     }
@@ -367,8 +370,11 @@ impl WindowsWindowState {
         state: Arc<RwLock<WindowsWindowState>>,
     ) -> Option<isize> {
         if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
-            // TODO:
-            // self.platform_inner.run_foreground_tasks();
+            let dispatch_event = {
+                let lock = state.as_ref().read();
+                lock.dispatch_event
+            };
+            unsafe { SetEvent(dispatch_event) }.ok();
             Self::handle_paint_msg(handle, state)
         } else {
             None
@@ -1288,6 +1294,7 @@ struct WindowCreateContext {
     executor: ForegroundExecutor,
     cursor: HCURSOR,
     raw_window_handles: Arc<RwLock<SmallVec<[HWND; 4]>>>,
+    dispatch_event: HANDLE,
 }
 
 impl WindowsWindow {
@@ -1298,6 +1305,7 @@ impl WindowsWindow {
         icon: HICON,
         executor: ForegroundExecutor,
         cursor: HCURSOR,
+        dispatch_event: HANDLE,
     ) -> Self {
         let classname = register_wnd_class(icon);
         let hide_title_bar = options
@@ -1332,6 +1340,7 @@ impl WindowsWindow {
             executor,
             cursor,
             raw_window_handles: raw_window_handles.clone(),
+            dispatch_event,
         };
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
@@ -1912,6 +1921,7 @@ unsafe extern "system" fn wnd_proc(
             ctx.transparent,
             ctx.cursor,
             ctx.raw_window_handles.clone(),
+            ctx.dispatch_event,
         );
         let weak = Box::new(Arc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };

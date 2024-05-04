@@ -74,6 +74,7 @@ pub(crate) unsafe fn set_window_long(
     }
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct OwnedHandle(HANDLE);
 
 impl OwnedHandle {
