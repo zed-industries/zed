@@ -40,9 +40,6 @@ use crate::*;
 
 pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
-    raw_window_handles: Arc<RwLock<SmallVec<[HWND; 4]>>>,
-    // NOTE: standard cursor handles don't need to close.
-    current_cursor: Cell<HCURSOR>,
     icon: HICON,
 }
 
@@ -65,6 +62,9 @@ pub(crate) struct WindowsPlatformInner {
     callbacks: Mutex<Callbacks>,
     pub(crate) dispatch_event: OwnedHandle,
     pub(crate) settings: RefCell<WindowsPlatformSystemSettings>,
+    // NOTE: standard cursor handles don't need to close.
+    pub(crate) current_cursor: Cell<HCURSOR>,
+    pub(crate) raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
 }
 
 impl WindowsPlatformInner {
@@ -156,7 +156,7 @@ impl WindowsPlatform {
             Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
         };
         let callbacks = Mutex::new(Callbacks::default());
-        let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
+        let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = RefCell::new(WindowsPlatformSystemSettings::new());
         let icon = load_icon().unwrap_or_default();
         let current_cursor = Cell::new(load_cursor(CursorStyle::Arrow));
@@ -168,14 +168,11 @@ impl WindowsPlatform {
             callbacks,
             dispatch_event,
             settings,
+            current_cursor,
+            raw_window_handles,
         });
 
-        Self {
-            inner,
-            raw_window_handles,
-            current_cursor,
-            icon,
-        }
+        Self { inner, icon }
     }
 
     #[inline]
@@ -184,7 +181,7 @@ impl WindowsPlatform {
     }
 
     fn redraw_all(&self) {
-        for handle in self.raw_window_handles.read().iter() {
+        for handle in self.inner.raw_window_handles.read().iter() {
             // unsafe {
             // RedrawWindow(
             //     *handle,
@@ -201,7 +198,8 @@ impl WindowsPlatform {
         &self,
         hwnd: HWND,
     ) -> Option<Arc<RwLock<WindowsWindowState>>> {
-        self.raw_window_handles
+        self.inner
+            .raw_window_handles
             .read()
             .iter()
             .find(|entry| *entry == &hwnd)
@@ -210,7 +208,8 @@ impl WindowsPlatform {
 
     #[inline]
     pub fn post_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) {
-        self.raw_window_handles
+        self.inner
+            .raw_window_handles
             .read()
             .iter()
             .for_each(|handle| unsafe {
@@ -372,16 +371,13 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
-        let window = WindowsWindow::new(
+        Box::new(WindowsWindow::new(
             handle,
             options,
-            self.raw_window_handles.clone(),
             self.icon,
             self.inner.foreground_executor.clone(),
-            self.current_cursor.get(),
-            self.inner.dispatch_event.to_raw(),
-        );
-        Box::new(window)
+            self.inner.clone(),
+        ))
     }
 
     // todo(windows)
@@ -689,8 +685,12 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
-        self.current_cursor.set(load_cursor(style));
-        self.post_message(WM_USER + 1, WPARAM(0), LPARAM(self.current_cursor.get().0));
+        self.inner.current_cursor.set(load_cursor(style));
+        self.post_message(
+            WM_USER + 1,
+            WPARAM(0),
+            LPARAM(self.inner.current_cursor.get().0),
+        );
     }
 
     // todo(windows)
