@@ -686,7 +686,7 @@ impl Platform for WindowsPlatform {
     fn set_cursor_style(&self, style: CursorStyle) {
         self.inner.current_cursor.set(load_cursor(style));
         self.post_message(
-            WM_USER + 1,
+            CURSOR_STYLE_CHANGED,
             WPARAM(0),
             LPARAM(self.inner.current_cursor.get().0),
         );

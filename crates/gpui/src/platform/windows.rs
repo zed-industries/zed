@@ -1,6 +1,7 @@
 mod direct_write;
 mod dispatcher;
 mod display;
+mod events;
 mod platform;
 mod util;
 mod window;
@@ -8,6 +9,7 @@ mod window;
 pub(crate) use direct_write::*;
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
+pub(crate) use events::*;
 pub(crate) use platform::*;
 pub(crate) use util::*;
 pub(crate) use window::*;
