@@ -12,6 +12,7 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::Context;
+use async_task::Runnable;
 use blade_graphics as gpu;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
@@ -49,6 +50,7 @@ pub(crate) struct WindowsWindowState {
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
     pub(crate) fullscreen: Option<StyleAndBounds>,
     pub(crate) current_cursor: HCURSOR,
+    main_receiver: flume::Receiver<Runnable>,
 }
 
 impl WindowsWindowState {
@@ -60,6 +62,7 @@ impl WindowsWindowState {
         display: WindowsDisplay,
         transparent: bool,
         executor: ForegroundExecutor,
+        main_receiver: flume::Receiver<Runnable>,
         platform_inner: Rc<RefCell<WindowsPlatformState>>,
     ) -> Rc<RefCell<Self>> {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -134,6 +137,7 @@ impl WindowsWindowState {
             mouse_wheel_settings,
             fullscreen,
             current_cursor,
+            main_receiver,
         }))
     }
 
@@ -206,6 +210,12 @@ impl WindowsWindowState {
         Ok(rect)
     }
 
+    pub(crate) fn run_foreground_tasks(&self) {
+        for runnable in self.main_receiver.drain() {
+            runnable.run();
+        }
+    }
+
     fn handle_drag_drop(&mut self, input: PlatformInput) {
         let Some(ref mut func) = self.callbacks.input else {
             return;
@@ -239,6 +249,7 @@ struct WindowCreateContext {
     display: WindowsDisplay,
     transparent: bool,
     executor: ForegroundExecutor,
+    main_receiver: flume::Receiver<Runnable>,
     platform_inner: Rc<RefCell<WindowsPlatformState>>,
 }
 
@@ -248,6 +259,7 @@ impl WindowsWindow {
         options: WindowParams,
         icon: HICON,
         executor: ForegroundExecutor,
+        main_receiver: flume::Receiver<Runnable>,
         platform_inner: Rc<RefCell<WindowsPlatformState>>,
     ) -> Self {
         let classname = register_wnd_class(icon);
@@ -281,6 +293,7 @@ impl WindowsWindow {
             display: WindowsDisplay::primary_monitor().unwrap(),
             transparent: options.window_background != WindowBackgroundAppearance::Opaque,
             executor,
+            main_receiver,
             platform_inner: platform_inner.clone(),
         };
         let lpparam = Some(&context as *const _ as *const _);
@@ -863,6 +876,7 @@ unsafe extern "system" fn wnd_proc(
             ctx.display.clone(),
             ctx.transparent,
             ctx.executor.clone(),
+            ctx.main_receiver.clone(),
             ctx.platform_inner.clone(),
         );
         let weak = Box::new(Rc::downgrade(&inner));

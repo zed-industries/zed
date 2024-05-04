@@ -4,7 +4,6 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_uint, c_void, OsString},
-    iter::once,
     mem::transmute,
     os::windows::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
@@ -18,7 +17,7 @@ use async_task::Runnable;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use semantic_version::SemanticVersion;
 use smallvec::SmallVec;
 use time::UtcOffset;
@@ -43,6 +42,7 @@ pub(crate) struct WindowsPlatform {
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     // below will never change through the app life cycle
     icon: HICON,
+    main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
@@ -65,20 +65,10 @@ pub(crate) struct MouseWheelSettings {
 }
 
 pub(crate) struct WindowsPlatformState {
-    main_receiver: flume::Receiver<Runnable>,
     callbacks: Callbacks,
     pub(crate) settings: WindowsPlatformSystemSettings,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
-}
-
-impl WindowsPlatformState {
-    #[inline]
-    pub fn run_foreground_tasks(&self) {
-        for runnable in self.main_receiver.drain() {
-            runnable.run();
-        }
-    }
 }
 
 #[derive(Default)]
@@ -175,7 +165,6 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let current_cursor = load_cursor(CursorStyle::Arrow);
         let inner = Rc::new(RefCell::new(WindowsPlatformState {
-            main_receiver,
             callbacks,
             settings,
             current_cursor,
@@ -185,6 +174,7 @@ impl WindowsPlatform {
             inner,
             raw_window_handles,
             icon,
+            main_receiver,
             background_executor,
             foreground_executor,
             text_system,
@@ -194,7 +184,9 @@ impl WindowsPlatform {
 
     #[inline]
     fn run_foreground_tasks(&self) {
-        self.inner.borrow().run_foreground_tasks();
+        for runnable in self.main_receiver.drain() {
+            runnable.run();
+        }
     }
 
     fn redraw_all(&self) {
@@ -301,11 +293,10 @@ impl Platform for WindowsPlatform {
                                 );
                                 continue;
                             }
-                            if msg.message == CLOSE_ONE_WINDOW {
-                                println!("==================={:?}", msg);
-                                if self.close_one_window(HWND(msg.lParam.0)) {
-                                    break 'a;
-                                }
+                            if msg.message == CLOSE_ONE_WINDOW
+                                && self.close_one_window(HWND(msg.lParam.0))
+                            {
+                                break 'a;
                             }
                             TranslateMessage(&msg);
                             DispatchMessageW(&msg);
@@ -324,8 +315,8 @@ impl Platform for WindowsPlatform {
         end_vsync_timer(raw_timer_stop_event);
 
         let mut lock = self.inner.as_ref().borrow_mut();
-        if let Some(mut callback) = lock.callbacks.quit.take() {
-            drop(lock);
+        if let Some(ref mut callback) = lock.callbacks.quit {
+            // drop(lock);
             callback();
         }
     }
@@ -415,6 +406,7 @@ impl Platform for WindowsPlatform {
             options,
             self.icon,
             self.foreground_executor.clone(),
+            self.main_receiver.clone(),
             self.inner.clone(),
         );
         let handle = window.get_raw_handle();
@@ -770,10 +762,10 @@ impl Platform for WindowsPlatform {
 
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>> {
         let mut password = password.to_vec();
-        let mut username = username.encode_utf16().chain(once(0)).collect_vec();
+        let mut username = username.encode_utf16().chain(Some(0)).collect_vec();
         let mut target_name = windows_credentials_target_name(url)
             .encode_utf16()
-            .chain(once(0))
+            .chain(Some(0))
             .collect_vec();
         self.foreground_executor().spawn(async move {
             let credentials = CREDENTIALW {
@@ -795,7 +787,7 @@ impl Platform for WindowsPlatform {
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>> {
         let mut target_name = windows_credentials_target_name(url)
             .encode_utf16()
-            .chain(once(0))
+            .chain(Some(0))
             .collect_vec();
         self.foreground_executor().spawn(async move {
             let mut credentials: *mut CREDENTIALW = std::ptr::null_mut();
@@ -828,7 +820,7 @@ impl Platform for WindowsPlatform {
     fn delete_credentials(&self, url: &str) -> Task<Result<()>> {
         let mut target_name = windows_credentials_target_name(url)
             .encode_utf16()
-            .chain(once(0))
+            .chain(Some(0))
             .collect_vec();
         self.foreground_executor().spawn(async move {
             unsafe { CredDeleteW(PCWSTR::from_raw(target_name.as_ptr()), CRED_TYPE_GENERIC, 0)? };

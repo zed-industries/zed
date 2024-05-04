@@ -167,7 +167,7 @@ fn handle_timer_msg(
 ) -> Option<isize> {
     if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
         let lock = state.as_ref().borrow();
-        lock.platform_inner.as_ref().borrow().run_foreground_tasks();
+        lock.run_foreground_tasks();
         drop(lock);
         handle_paint_msg(handle, state)
     } else {
@@ -697,16 +697,16 @@ fn handle_activate_msg(
 ) -> Option<isize> {
     let activated = wparam.loword() > 0;
     let lock = state.as_ref().borrow();
+    if lock.hide_title_bar {
+        if let Some(titlebar_rect) = lock.get_titlebar_rect().log_err() {
+            unsafe { InvalidateRect(handle, Some(&titlebar_rect), FALSE) };
+        }
+    }
     let executor = lock.executor.clone();
     drop(lock);
     executor
         .spawn(async move {
             let mut lock = state.as_ref().borrow_mut();
-            if lock.hide_title_bar {
-                if let Some(titlebar_rect) = lock.get_titlebar_rect().log_err() {
-                    unsafe { InvalidateRect(handle, Some(&titlebar_rect), FALSE) };
-                }
-            }
             if let Some(mut cb) = lock.callbacks.active_status_change.take() {
                 drop(lock);
                 cb(activated);
