@@ -125,9 +125,9 @@ fn handle_move_msg(
 fn handle_size_msg(lparam: LPARAM, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
+    let new_physical_size = size(width.into(), height.into());
     let mut lock = state.as_ref().borrow_mut();
     let scale_factor = lock.scale_factor;
-    let new_physical_size = size(width.into(), height.into());
     lock.physical_size = new_physical_size;
     lock.renderer.update_drawable_size(Size {
         width: width as f64,
@@ -137,8 +137,7 @@ fn handle_size_msg(lparam: LPARAM, state: Rc<RefCell<WindowsWindowState>>) -> Op
         drop(lock);
         let logical_size = logical_size(new_physical_size, scale_factor);
         callback(logical_size, scale_factor);
-        let mut lock = state.as_ref().borrow_mut();
-        lock.callbacks.resize = Some(callback);
+        state.as_ref().borrow_mut().callbacks.resize = Some(callback);
     }
     Some(0)
 }
