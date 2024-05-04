@@ -1,5 +1,6 @@
 mod chunking;
 mod embedding;
+mod project_index_debug_view;
 
 use anyhow::{anyhow, Context as _, Result};
 use chunking::{chunk_text, Chunk};
@@ -30,6 +31,8 @@ use std::{
 };
 use util::ResultExt;
 use worktree::LocalSnapshot;
+
+pub use project_index_debug_view::ProjectIndexDebugView;
 
 pub struct SemanticIndex {
     embedding_provider: Arc<dyn EmbeddingProvider>,
@@ -397,26 +400,35 @@ impl ProjectIndex {
         Ok(result)
     }
 
-    pub fn debug(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let indices = self
+    pub(crate) fn worktree_index(
+        &self,
+        worktree_id: WorktreeId,
+        cx: &AppContext,
+    ) -> Option<Model<WorktreeIndex>> {
+        for index in self.worktree_indices.values() {
+            if let WorktreeIndexHandle::Loaded { index, .. } = index {
+                if index.read(cx).worktree.read(cx).id() == worktree_id {
+                    return Some(index.clone());
+                }
+            }
+        }
+        None
+    }
+
+    pub(crate) fn worktree_indices(&self, cx: &AppContext) -> Vec<Model<WorktreeIndex>> {
+        let mut result = self
             .worktree_indices
             .values()
-            .filter_map(|worktree_index| {
-                if let WorktreeIndexHandle::Loaded { index, .. } = worktree_index {
+            .filter_map(|index| {
+                if let WorktreeIndexHandle::Loaded { index, .. } = index {
                     Some(index.clone())
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
-
-        cx.spawn(|_, mut cx| async move {
-            eprintln!("semantic index contents:");
-            for index in indices {
-                index.update(&mut cx, |index, cx| index.debug(cx))?.await?
-            }
-            Ok(())
-        })
+        result.sort_by_key(|index| index.read(cx).worktree.read(cx).id());
+        result
     }
 }
 
@@ -726,10 +738,8 @@ impl WorktreeIndex {
                                     .language_for_file_path(&entry.path)
                                     .await
                                     .ok();
-                                let grammar =
-                                    language.as_ref().and_then(|language| language.grammar());
                                 let chunked_file = ChunkedFile {
-                                    chunks: chunk_text(&text, grammar),
+                                    chunks: chunk_text(&text, language.as_ref(), &entry.path),
                                     handle,
                                     path: entry.path,
                                     mtime: entry.mtime,
@@ -861,7 +871,6 @@ impl WorktreeIndex {
                     db.put(&mut txn, &key, file)?;
                 }
                 txn.commit()?;
-                eprintln!("committed {:?}", embedded_files.len());
 
                 drop(embedded_files);
                 log::debug!("committed");
@@ -871,18 +880,38 @@ impl WorktreeIndex {
         })
     }
 
-    fn debug(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn paths(&self, cx: &AppContext) -> Task<Result<Vec<Arc<Path>>>> {
         let connection = self.db_connection.clone();
         let db = self.db;
         cx.background_executor().spawn(async move {
             let tx = connection
                 .read_txn()
                 .context("failed to create read transaction")?;
-            for record in db.iter(&tx)? {
-                let (key, _) = record?;
-                eprintln!("{}", path_for_db_key(key));
-            }
-            Ok(())
+            let result = db
+                .iter(&tx)?
+                .map(|entry| Ok(entry?.1.path.clone()))
+                .collect::<Result<Vec<Arc<Path>>>>();
+            drop(tx);
+            result
+        })
+    }
+
+    fn chunks_for_path(
+        &self,
+        path: Arc<Path>,
+        cx: &AppContext,
+    ) -> Task<Result<Vec<EmbeddedChunk>>> {
+        let connection = self.db_connection.clone();
+        let db = self.db;
+        cx.background_executor().spawn(async move {
+            let tx = connection
+                .read_txn()
+                .context("failed to create read transaction")?;
+            Ok(db
+                .get(&tx, &db_key_for_path(&path))?
+                .ok_or_else(|| anyhow!("no such path"))?
+                .chunks
+                .clone())
         })
     }
 
@@ -927,7 +956,7 @@ struct EmbeddedFile {
     chunks: Vec<EmbeddedChunk>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct EmbeddedChunk {
     chunk: Chunk,
     embedding: Embedding,
@@ -979,10 +1008,6 @@ impl Drop for IndexingEntryHandle {
 
 fn db_key_for_path(path: &Arc<Path>) -> String {
     path.to_string_lossy().replace('/', "\0")
-}
-
-fn path_for_db_key(key: &str) -> String {
-    key.replace('\0', "/")
 }
 
 #[cfg(test)]

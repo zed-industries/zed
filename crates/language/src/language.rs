@@ -20,6 +20,7 @@ mod task_context;
 mod buffer_tests;
 pub mod markdown;
 
+use crate::language_settings::SoftWrap;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
@@ -41,12 +42,11 @@ use smol::future::FutureExt as _;
 use std::num::NonZeroU32;
 use std::{
     any::Any,
-    cell::RefCell,
     ffi::OsStr,
     fmt::Debug,
     hash::Hash,
     mem,
-    ops::Range,
+    ops::{DerefMut, Range},
     path::{Path, PathBuf},
     pin::Pin,
     str,
@@ -74,8 +74,6 @@ pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer};
 pub use text::LineEnding;
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 
-use crate::language_settings::SoftWrap;
-
 /// Initializes the `language` crate.
 ///
 /// This should be called before making use of items from the create.
@@ -83,29 +81,30 @@ pub fn init(cx: &mut AppContext) {
     language_settings::init(cx);
 }
 
-thread_local! {
-    static PARSER: RefCell<Parser> = {
-        let mut parser = Parser::new();
-        parser.set_wasm_store(WasmStore::new(WASM_ENGINE.clone()).unwrap()).unwrap();
-        RefCell::new(parser)
-    };
-}
+static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
+static PARSERS: Mutex<Vec<Parser>> = Mutex::new(vec![]);
 
 pub fn with_parser<F, R>(func: F) -> R
 where
     F: FnOnce(&mut Parser) -> R,
 {
-    PARSER.with(|parser| {
-        let mut parser = parser.borrow_mut();
-        func(&mut parser)
-    })
+    let mut parser = PARSERS.lock().pop().unwrap_or_else(|| {
+        let mut parser = Parser::new();
+        parser
+            .set_wasm_store(WasmStore::new(WASM_ENGINE.clone()).unwrap())
+            .unwrap();
+        parser
+    });
+    parser.set_included_ranges(&[]).unwrap();
+    let result = func(&mut parser);
+    PARSERS.lock().push(parser);
+    result
 }
 
 pub fn with_query_cursor<F, R>(func: F) -> R
 where
     F: FnOnce(&mut QueryCursor) -> R,
 {
-    use std::ops::DerefMut;
     let mut cursor = QueryCursorHandle::new();
     func(cursor.deref_mut())
 }
@@ -1340,11 +1339,12 @@ impl LanguageScope {
 
     /// Returns line prefix that is inserted in e.g. line continuations or
     /// in `toggle comments` action.
-    pub fn line_comment_prefixes(&self) -> Option<&Vec<Arc<str>>> {
+    pub fn line_comment_prefixes(&self) -> &[Arc<str>] {
         Override::as_option(
             self.config_override().map(|o| &o.line_comments),
             Some(&self.language.config.line_comments),
         )
+        .map_or(&[] as &[_], |e| e.as_slice())
     }
 
     pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
@@ -1445,8 +1445,7 @@ impl Grammar {
     }
 
     fn parse_text(&self, text: &Rope, old_tree: Option<Tree>) -> Tree {
-        PARSER.with(|parser| {
-            let mut parser = parser.borrow_mut();
+        with_parser(|parser| {
             parser
                 .set_language(&self.ts_language)
                 .expect("incompatible grammar");

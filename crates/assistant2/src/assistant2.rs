@@ -21,7 +21,7 @@ use gpui::{
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use rich_text::RichText;
-use semantic_index::{CloudEmbeddingProvider, ProjectIndex, SemanticIndex};
+use semantic_index::{CloudEmbeddingProvider, ProjectIndex, ProjectIndexDebugView, SemanticIndex};
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -83,6 +83,14 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 workspace.toggle_panel_focus::<AssistantPanel>(cx);
             });
+            workspace.register_action(|workspace, _: &DebugProjectIndex, cx| {
+                if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                    if let Some(index) = panel.read(cx).chat.read(cx).project_index.clone() {
+                        let view = cx.new_view(|cx| ProjectIndexDebugView::new(index, cx));
+                        workspace.add_item_to_center(Box::new(view), cx);
+                    }
+                }
+            });
         },
     )
     .detach();
@@ -107,8 +115,6 @@ impl AssistantPanel {
                 (workspace.app_state().clone(), workspace.project().clone())
             })?;
 
-            let user_store = app_state.user_store.clone();
-
             cx.new_view(|cx| {
                 let project_index = cx.update_global(|semantic_index: &mut SemanticIndex, cx| {
                     semantic_index.project_index(project.clone(), cx)
@@ -117,7 +123,7 @@ impl AssistantPanel {
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry
                     .register(
-                        ProjectIndexTool::new(project_index.clone(), app_state.fs.clone()),
+                        ProjectIndexTool::new(project_index.clone(), project.read(cx).fs().clone()),
                         cx,
                     )
                     .context("failed to register ProjectIndexTool")
@@ -135,9 +141,9 @@ impl AssistantPanel {
 
                 Self::new(
                     app_state.languages.clone(),
-                    Arc::new(attachment_store),
                     Arc::new(tool_registry),
-                    user_store,
+                    Arc::new(attachment_store),
+                    app_state.user_store.clone(),
                     Some(project_index),
                     workspace,
                     cx,
@@ -148,8 +154,8 @@ impl AssistantPanel {
 
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
-        attachment_store: Arc<UserAttachmentStore>,
         tool_registry: Arc<ToolRegistry>,
+        attachment_store: Arc<UserAttachmentStore>,
         user_store: Model<UserStore>,
         project_index: Option<Model<ProjectIndex>>,
         workspace: WeakView<Workspace>,
@@ -157,9 +163,9 @@ impl AssistantPanel {
     ) -> Self {
         let chat = cx.new_view(|cx| {
             AssistantChat::new(
-                language_registry.clone(),
-                attachment_store.clone(),
+                language_registry,
                 tool_registry.clone(),
+                attachment_store,
                 user_store,
                 project_index,
                 workspace,
@@ -257,8 +263,8 @@ struct EditingMessage {
 impl AssistantChat {
     fn new(
         language_registry: Arc<LanguageRegistry>,
-        attachment_store: Arc<UserAttachmentStore>,
         tool_registry: Arc<ToolRegistry>,
+        attachment_store: Arc<UserAttachmentStore>,
         user_store: Model<UserStore>,
         project_index: Option<Model<ProjectIndex>>,
         workspace: WeakView<Workspace>,
@@ -427,14 +433,6 @@ impl AssistantChat {
             .context("Failed to push new user message")
             .log_err();
         }));
-    }
-
-    fn debug_project_index(&mut self, _: &DebugProjectIndex, cx: &mut ViewContext<Self>) {
-        if let Some(index) = &self.project_index {
-            index.update(cx, |project_index, cx| {
-                project_index.debug(cx).detach_and_log_err(cx)
-            });
-        }
     }
 
     async fn request_completion(
@@ -846,7 +844,6 @@ impl Render for AssistantChat {
             .key_context("AssistantChat")
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(Self::debug_project_index))
             .text_color(Color::Default.color(cx))
             .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(

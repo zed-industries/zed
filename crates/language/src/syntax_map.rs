@@ -1,10 +1,11 @@
 #[cfg(test)]
 mod syntax_map_tests;
 
-use crate::{Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry};
+use crate::{
+    with_parser, Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS,
+};
 use collections::HashMap;
 use futures::FutureExt;
-use parking_lot::Mutex;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
@@ -16,10 +17,6 @@ use std::{
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
-
-use super::PARSER;
-
-static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 
 #[derive(Default)]
 pub struct SyntaxMap {
@@ -1177,8 +1174,7 @@ fn parse_text(
     ranges: Vec<tree_sitter::Range>,
     old_tree: Option<Tree>,
 ) -> anyhow::Result<Tree> {
-    PARSER.with(|parser| {
-        let mut parser = parser.borrow_mut();
+    with_parser(|parser| {
         let mut chunks = text.chunks_in_range(start_byte..text.len());
         parser.set_included_ranges(&ranges)?;
         parser.set_language(&grammar.ts_language)?;

@@ -2768,7 +2768,7 @@ impl Editor {
                         indent.len = cmp::min(indent.len, start_point.column);
                         let start = selection.start;
                         let end = selection.end;
-                        let is_cursor = start == end;
+                        let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
                         let (comment_delimiter, insert_extra_newline) = if let Some(language) =
                             &language_scope
@@ -2802,13 +2802,18 @@ impl Editor {
                                             pair_start,
                                         )
                                 });
+
                             // Comment extension on newline is allowed only for cursor selections
-                            let comment_delimiter = language.line_comment_prefixes().filter(|_| {
-                                let is_comment_extension_enabled =
-                                    multi_buffer.settings_at(0, cx).extend_comment_on_newline;
-                                is_cursor && is_comment_extension_enabled
-                            });
-                            let get_comment_delimiter = |delimiters: &[Arc<str>]| {
+                            let comment_delimiter = maybe!({
+                                if !selection_is_empty {
+                                    return None;
+                                }
+
+                                if !multi_buffer.settings_at(0, cx).extend_comment_on_newline {
+                                    return None;
+                                }
+
+                                let delimiters = language.line_comment_prefixes();
                                 let max_len_of_delimiter =
                                     delimiters.iter().map(|delimiter| delimiter.len()).max()?;
                                 let (snapshot, range) =
@@ -2837,12 +2842,7 @@ impl Editor {
                                 } else {
                                     None
                                 }
-                            };
-                            let comment_delimiter = if let Some(delimiters) = comment_delimiter {
-                                get_comment_delimiter(delimiters)
-                            } else {
-                                None
-                            };
+                            });
                             (comment_delimiter, insert_extra_newline)
                         } else {
                             (None, false)
@@ -7181,10 +7181,8 @@ impl Editor {
                 }
 
                 // If the language has line comments, toggle those.
-                if let Some(full_comment_prefixes) = language
-                    .line_comment_prefixes()
-                    .filter(|prefixes| !prefixes.is_empty())
-                {
+                let full_comment_prefixes = language.line_comment_prefixes();
+                if !full_comment_prefixes.is_empty() {
                     let first_prefix = full_comment_prefixes
                         .first()
                         .expect("prefixes is non-empty");
