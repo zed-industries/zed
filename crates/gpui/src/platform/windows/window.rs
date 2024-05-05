@@ -56,7 +56,6 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
-    // drag_drop_handler: IDropTarget,
     pub(crate) executor: ForegroundExecutor,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
 }
@@ -271,18 +270,7 @@ impl WindowsWindow {
             )
         };
         let state_ptr = Rc::clone(context.inner.as_ref().unwrap());
-        {
-            // let drag_drop_handler = {
-            // let inner = context.inner.as_ref().unwrap();
-            let handler = WindowsDragDropHandler(Rc::clone(&state_ptr));
-            let drag_drop_handler: IDropTarget = handler.into();
-            unsafe {
-                RegisterDragDrop(raw_hwnd, &drag_drop_handler)
-                    .expect("unable to register drag-drop event")
-            };
-            //     drag_drop_handler
-            // };
-        }
+        register_drag_drop(state_ptr.clone());
         let wnd = Self(state_ptr);
 
         unsafe { ShowWindow(raw_hwnd, SW_SHOW) };
@@ -874,6 +862,19 @@ fn get_module_handle() -> HMODULE {
 
         h_module
     }
+}
+
+fn register_drag_drop(state_ptr: Rc<WindowsWindowStatePtr>) {
+    let window_handle = state_ptr.hwnd;
+    let handler = WindowsDragDropHandler(state_ptr);
+    // The lifetime of `IDropTarget` is handled by Windows, it wont release untill
+    // we call `RevokeDragDrop`.
+    // So, it's safe to drop it here.
+    let drag_drop_handler: IDropTarget = handler.into();
+    unsafe {
+        RegisterDragDrop(window_handle, &drag_drop_handler)
+            .expect("unable to register drag-drop event")
+    };
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
