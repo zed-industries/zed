@@ -394,11 +394,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
-        if let Some(display) = WindowsDisplay::primary_monitor() {
-            Some(Rc::new(display) as Rc<dyn PlatformDisplay>)
-        } else {
-            None
-        }
+        WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
