@@ -167,7 +167,10 @@ fn handle_timer_msg(
     state: Rc<RefCell<WindowsWindowState>>,
 ) -> Option<isize> {
     if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
-        state.as_ref().borrow().run_foreground_tasks();
+        let receiver = state.as_ref().borrow().main_receiver.clone();
+        for runnable in receiver.drain() {
+            runnable.run();
+        }
         handle_paint_msg(handle, state)
     } else {
         None

@@ -47,8 +47,8 @@ pub(crate) struct WindowsWindowState {
     pub(crate) click_state: ClickState,
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
     pub(crate) current_cursor: HCURSOR,
+    pub(crate) main_receiver: flume::Receiver<Runnable>,
     fullscreen: Option<StyleAndBounds>,
-    main_receiver: flume::Receiver<Runnable>,
 }
 
 impl WindowsWindowState {
@@ -129,8 +129,8 @@ impl WindowsWindowState {
             click_state,
             mouse_wheel_settings,
             current_cursor,
-            fullscreen,
             main_receiver,
+            fullscreen,
         }))
     }
 
@@ -194,12 +194,6 @@ impl WindowsWindowState {
         unsafe { GetClientRect(self.hwnd, &mut rect) }?;
         rect.bottom = rect.top + ((height.0 * self.scale_factor).round() as i32);
         Ok(rect)
-    }
-
-    pub(crate) fn run_foreground_tasks(&self) {
-        for runnable in self.main_receiver.drain() {
-            runnable.run();
-        }
     }
 }
 
