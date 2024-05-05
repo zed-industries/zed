@@ -107,7 +107,7 @@ impl RenderOnce for TabBar {
                     h_flex()
                         .flex_none()
                         .gap(Spacing::Small.rems(cx))
-                        .px(Spacing::Small.rems(cx))
+                        .px(Spacing::Medium.rems(cx))
                         .border_b()
                         .border_r()
                         .border_color(cx.theme().colors().border)
