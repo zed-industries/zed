@@ -1522,7 +1522,13 @@ impl MultiBuffer {
             .map(|state| state.buffer.clone())
     }
 
-    pub fn is_completion_trigger(&self, position: Anchor, text: &str, cx: &AppContext) -> bool {
+    pub fn is_completion_trigger(
+        &self,
+        position: Anchor,
+        text: &str,
+        trigger_in_words: bool,
+        cx: &AppContext,
+    ) -> bool {
         let mut chars = text.chars();
         let char = if let Some(char) = chars.next() {
             char
@@ -1536,7 +1542,7 @@ impl MultiBuffer {
         let snapshot = self.snapshot(cx);
         let position = position.to_offset(&snapshot);
         let scope = snapshot.language_scope_at(position);
-        if char_kind(&scope, char) == CharKind::Word {
+        if trigger_in_words && char_kind(&scope, char) == CharKind::Word {
             return true;
         }
 
