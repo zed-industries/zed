@@ -1008,6 +1008,23 @@ impl SearchableItem for Editor {
         self.has_background_highlights::<SearchWithinRange>()
     }
 
+    // Move the button out of the text box
+    // Remote SearchOptions::SELECTION (and use the has_fitlered_search_ranges)
+    // Clear search highlights when search bar closes
+    // Not auto-fill search with multiline
+    // Multi-buffer support ?!><!?
+
+    fn toggle_filtered_search_ranges(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
+        if self.has_filtered_search_ranges() {
+            self.clear_background_highlights::<SearchWithinRange>(cx);
+        }
+
+        if enabled {
+            let ranges = self.selections.disjoint_anchor_ranges();
+            self.set_search_within_ranges(&ranges, cx);
+        }
+    }
+
     fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
         let snapshot = &self.snapshot(cx).buffer_snapshot;
@@ -1136,7 +1153,6 @@ impl SearchableItem for Editor {
         query: Arc<project::search::SearchQuery>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
-        let selections = self.selections.all::<Point>(cx);
         let buffer = self.buffer().read(cx).snapshot(cx);
         let search_within_ranges = self
             .background_highlights
@@ -1148,30 +1164,8 @@ impl SearchableItem for Editor {
                     .collect::<Vec<_>>()
             });
 
-        let selection = query.selection();
-        let selection_line_mode = self.selections.line_mode;
         cx.background_executor().spawn(async move {
-            let search_ranges = if selection {
-                dbg!(&selections);
-                selections
-                    .into_iter()
-                    .map(|selection| {
-                        let mut start = selection.start;
-                        let mut end = selection.end;
-                        let max_point = buffer.max_point();
-                        let is_entire_line = selection.is_empty() || selection_line_mode;
-                        if is_entire_line {
-                            start = Point::new(start.row, 0);
-                            end = cmp::min(max_point, Point::new(end.row + 1, 0));
-                        }
-
-                        Some(Range {
-                            start: buffer.point_to_offset(start),
-                            end: buffer.point_to_offset(end),
-                        })
-                    })
-                    .collect()
-            } else if let Some(search_within_ranges) = search_within_ranges {
+            let search_ranges = if let Some(search_within_ranges) = search_within_ranges {
                 search_within_ranges
                     .into_iter()
                     .map(|range| Some(range))
@@ -1180,10 +1174,9 @@ impl SearchableItem for Editor {
                 vec![None]
             };
 
-            dbg!(&search_ranges);
-
             let mut ranges = Vec::new();
             if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
+                // search_ranges is likely length 1 (very rarely longer)
                 ranges.extend(
                     join_all(search_ranges.into_iter().map(|range| async {
                         let offset = if let Some(range) = &range {
@@ -1206,6 +1199,9 @@ impl SearchableItem for Editor {
                     .flatten(),
                 );
             } else {
+                // Selections ranges
+                // Excerpt ranges
+                // Intersect those to find the ranges to search in
                 for excerpt in buffer.excerpt_boundaries_in_range(0..buffer.len()) {
                     if let Some(next_excerpt) = excerpt.next {
                         let excerpt_range =

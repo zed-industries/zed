@@ -48,6 +48,8 @@ pub struct Deploy {
     pub focus: bool,
     #[serde(default)]
     pub replace_enabled: bool,
+    #[serde(default)]
+    pub selection_search_enabled: bool,
 }
 
 impl_actions!(buffer_search, [Deploy]);
@@ -59,6 +61,7 @@ impl Deploy {
         Self {
             focus: true,
             replace_enabled: false,
+            selection_search_enabled: false,
         }
     }
 }
@@ -90,6 +93,7 @@ pub struct BufferSearchBar {
     search_history: SearchHistory,
     search_history_cursor: SearchHistoryCursor,
     replace_enabled: bool,
+    selection_search_enabled: bool,
     scroll_handle: ScrollHandle,
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
@@ -228,14 +232,6 @@ impl Render for BufferSearchBar {
                                 }),
                             )
                         }))
-                        .children(supported_options.selection.then(|| {
-                            self.render_search_option_button(
-                                SearchOptions::SELECTION,
-                                cx.listener(|this, _, cx| {
-                                    this.toggle_selection(&ToggleSelection, cx)
-                                }),
-                            )
-                        }))
                         .children(supported_options.regex.then(|| {
                             self.render_search_option_button(
                                 SearchOptions::REGEX,
@@ -257,6 +253,26 @@ impl Render for BufferSearchBar {
                         .selected(self.replace_enabled)
                         .size(ButtonSize::Compact)
                         .tooltip(|cx| Tooltip::for_action("Toggle replace", &ToggleReplace, cx)),
+                )
+            })
+            .when(supported_options.selection, |this| {
+                this.child(
+                    IconButton::new(
+                        "buffer-search-bar-toggle-search-selection-button",
+                        IconName::SearchSelection,
+                    )
+                    .style(ButtonStyle::Subtle)
+                    .when(self.selection_search_enabled, |button| {
+                        button.style(ButtonStyle::Filled)
+                    })
+                    .on_click(cx.listener(|this, _: &ClickEvent, cx| {
+                        this.toggle_selection(&ToggleSelection, cx);
+                    }))
+                    .selected(self.selection_search_enabled)
+                    .size(ButtonSize::Compact)
+                    .tooltip(|cx| {
+                        Tooltip::for_action("Toggle search selection", &ToggleSelection, cx)
+                    }),
                 )
             })
             .child(
@@ -513,6 +529,7 @@ impl BufferSearchBar {
             search_history_cursor: Default::default(),
             active_search: None,
             replace_enabled: false,
+            selection_search_enabled: false,
             scroll_handle: ScrollHandle::new(),
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
@@ -548,6 +565,7 @@ impl BufferSearchBar {
         if self.show(cx) {
             self.search_suggested(cx);
             self.replace_enabled = deploy.replace_enabled;
+            self.selection_search_enabled = deploy.selection_search_enabled;
             if deploy.focus {
                 let mut handle = self.query_editor.focus_handle(cx).clone();
                 let mut select_query = true;
@@ -840,7 +858,12 @@ impl BufferSearchBar {
     }
 
     fn toggle_selection(&mut self, _: &ToggleSelection, cx: &mut ViewContext<Self>) {
-        self.toggle_search_option(SearchOptions::SELECTION, cx)
+        if let Some(active_item) = &mut self.active_searchable_item {
+            self.selection_search_enabled = !self.selection_search_enabled;
+            active_item.toggle_filtered_search_ranges(self.selection_search_enabled, cx);
+            let _ = self.update_matches(cx);
+            cx.notify();
+        }
     }
 
     fn toggle_regex(&mut self, _: &ToggleRegex, cx: &mut ViewContext<Self>) {
@@ -896,7 +919,6 @@ impl BufferSearchBar {
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         false,
-                        self.search_options.contains(SearchOptions::SELECTION),
                         Vec::new(),
                         Vec::new(),
                     ) {
@@ -914,7 +936,6 @@ impl BufferSearchBar {
                         self.search_options.contains(SearchOptions::WHOLE_WORD),
                         self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                         false,
-                        self.search_options.contains(SearchOptions::SELECTION),
                         Vec::new(),
                         Vec::new(),
                     ) {
@@ -2052,6 +2073,26 @@ mod tests {
             .unindent(),
         })
         .await;
+    }
+
+    // cargo test -p search test_query_suggestion
+    #[gpui::test]
+    async fn test_query_suggestion(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |s| {
+                s.select_range(Point::new(1, 0)..Point::new(2, 4))
+            })
+        });
+
+        search_bar.update(cx, |search_bar, cx| {
+            search_bar.deploy(&Default::default(), cx);
+        });
+
+        cx.run_until_parked();
+
+        search_bar.update(cx, |search_bar, cx| assert_eq!(search_bar.query(cx), ""));
     }
 
     #[gpui::test]
