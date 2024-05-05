@@ -1408,6 +1408,11 @@ impl CollabPanel {
             });
         }
 
+        if self.context_menu.is_some() {
+            self.context_menu.take();
+            cx.notify();
+        }
+
         self.update_entries(false, cx);
     }
 
