@@ -313,8 +313,11 @@ impl Pane {
             custom_drop_handle: None,
             can_split: true,
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
+                // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
+                // `end_slot`, but due to needing a view here that isn't possible.
                 h_flex()
-                    .gap_2()
+                    // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
+                    .gap(Spacing::Small.rems(cx))
                     .child(
                         IconButton::new("plus", IconName::Plus)
                             .icon_size(IconSize::Small)
