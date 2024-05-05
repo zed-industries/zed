@@ -13,12 +13,10 @@ use std::{
 use ::util::ResultExt;
 use anyhow::Context;
 use async_task::Runnable;
-use blade_graphics as gpu;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
-use std::result::Result;
 use windows::{
     core::*,
     Win32::{
@@ -34,20 +32,25 @@ use crate::*;
 
 pub(crate) struct WindowsWindowState {
     pub(crate) hwnd: HWND,
+    pub(crate) handle: AnyWindowHandle,
     pub(crate) executor: ForegroundExecutor,
+    pub(crate) main_receiver: flume::Receiver<Runnable>,
+
     pub(crate) origin: Point<DevicePixels>,
     pub(crate) physical_size: Size<DevicePixels>,
     pub(crate) scale_factor: f32,
-    pub(crate) input_handler: Option<PlatformInputHandler>,
-    pub(crate) renderer: BladeRenderer,
+
     pub(crate) callbacks: Callbacks,
-    pub(crate) handle: AnyWindowHandle,
+    pub(crate) input_handler: Option<PlatformInputHandler>,
+
     pub(crate) hide_title_bar: bool,
-    pub(crate) display: WindowsDisplay,
+    pub(crate) renderer: BladeRenderer,
+
     pub(crate) click_state: ClickState,
     pub(crate) mouse_wheel_settings: MouseWheelSettings,
     pub(crate) current_cursor: HCURSOR,
-    pub(crate) main_receiver: flume::Receiver<Runnable>,
+
+    pub(crate) display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
 }
 
@@ -55,81 +58,44 @@ impl WindowsWindowState {
     #[allow(clippy::too_many_arguments)]
     fn new(
         hwnd: HWND,
-        cs: &CREATESTRUCTW,
         handle: AnyWindowHandle,
-        hide_title_bar: bool,
-        display: WindowsDisplay,
         transparent: bool,
         executor: ForegroundExecutor,
         main_receiver: flume::Receiver<Runnable>,
+        cs: &CREATESTRUCTW,
+        hide_title_bar: bool,
         mouse_wheel_settings: MouseWheelSettings,
         current_cursor: HCURSOR,
+        display: WindowsDisplay,
     ) -> Rc<RefCell<Self>> {
-        let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = point(cs.x.into(), cs.y.into());
         let physical_size = size(cs.cx.into(), cs.cy.into());
-        let scale_factor = monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32;
-        let input_handler = None;
-        struct RawWindow {
-            hwnd: isize,
-        }
-        impl rwh::HasWindowHandle for RawWindow {
-            fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-                Ok(unsafe {
-                    let hwnd = NonZeroIsize::new_unchecked(self.hwnd);
-                    let mut handle = rwh::Win32WindowHandle::new(hwnd);
-                    let hinstance = get_window_long(HWND(self.hwnd), GWLP_HINSTANCE);
-                    handle.hinstance = NonZeroIsize::new(hinstance);
-                    rwh::WindowHandle::borrow_raw(handle.into())
-                })
-            }
-        }
-        impl rwh::HasDisplayHandle for RawWindow {
-            fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-                let handle = rwh::WindowsDisplayHandle::new();
-                Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
-            }
-        }
-
-        let raw = RawWindow { hwnd: hwnd.0 };
-        let gpu = Arc::new(
-            unsafe {
-                gpu::Context::init_windowed(
-                    &raw,
-                    gpu::ContextDesc {
-                        validation: false,
-                        capture: false,
-                        overlay: false,
-                    },
-                )
-            }
-            .unwrap(),
-        );
-        let config = BladeSurfaceConfig {
-            size: gpu::Extent::default(),
-            transparent,
+        let scale_factor = {
+            let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
+            monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
         };
-        let renderer = BladeRenderer::new(gpu, config);
+        let renderer = windows_renderer::windows_renderer(hwnd);
         let callbacks = Callbacks::default();
+        let input_handler = None;
         let click_state = ClickState::new();
         let fullscreen = None;
 
         Rc::new(RefCell::new(Self {
             hwnd,
+            handle,
             executor,
+            main_receiver,
             origin,
             physical_size,
             scale_factor,
-            input_handler,
-            renderer,
             callbacks,
-            handle,
+            input_handler,
             hide_title_bar,
-            display,
+            renderer,
             click_state,
             mouse_wheel_settings,
             current_cursor,
-            main_receiver,
+            display,
             fullscreen,
         }))
     }
@@ -311,7 +277,7 @@ impl WindowsWindow {
 }
 
 impl rwh::HasWindowHandle for WindowsWindow {
-    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+    fn window_handle(&self) -> std::result::Result<rwh::WindowHandle<'_>, rwh::HandleError> {
         let raw = rwh::Win32WindowHandle::new(unsafe {
             NonZeroIsize::new_unchecked(self.state.borrow().hwnd.0)
         })
@@ -322,7 +288,7 @@ impl rwh::HasWindowHandle for WindowsWindow {
 
 // todo(windows)
 impl rwh::HasDisplayHandle for WindowsWindow {
-    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+    fn display_handle(&self) -> std::result::Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
 }
@@ -376,8 +342,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn display(&self) -> Rc<dyn PlatformDisplay> {
-        let display = self.state.as_ref().borrow().display.clone();
-        Rc::new(display)
+        Rc::new(self.state.as_ref().borrow().display)
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
@@ -861,15 +826,15 @@ unsafe extern "system" fn wnd_proc(
         let ctx = unsafe { &mut *ctx };
         let inner = WindowsWindowState::new(
             hwnd,
-            cs,
             ctx.handle,
-            ctx.hide_title_bar,
-            ctx.display.clone(),
             ctx.transparent,
             ctx.executor.clone(),
             ctx.main_receiver.clone(),
+            cs,
+            ctx.hide_title_bar,
             ctx.mouse_wheel_settings,
             ctx.current_cursor,
+            ctx.display,
         );
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
@@ -929,6 +894,62 @@ const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetrics
 const DOUBLE_CLICK_SPATIAL_TOLERANCE: i32 = 4;
+
+mod windows_renderer {
+    use blade_graphics as gpu;
+    use raw_window_handle as rwh;
+    use std::{num::NonZeroIsize, sync::Arc};
+    use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
+
+    use crate::{get_window_long, platform::blade::BladeRenderer};
+
+    pub(super) fn windows_renderer(hwnd: HWND) -> BladeRenderer {
+        let raw = RawWindow { hwnd: hwnd.0 as _ };
+        let gpu: Arc<gpu::Context> = Arc::new(
+            unsafe {
+                gpu::Context::init_windowed(
+                    &raw,
+                    gpu::ContextDesc {
+                        validation: false,
+                        capture: false,
+                        overlay: false,
+                    },
+                )
+            }
+            .unwrap(),
+        );
+        let extent = gpu::Extent {
+            width: 1,
+            height: 1,
+            depth: 1,
+        };
+
+        BladeRenderer::new(gpu, extent)
+    }
+
+    struct RawWindow {
+        hwnd: isize,
+    }
+
+    impl rwh::HasWindowHandle for RawWindow {
+        fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+            Ok(unsafe {
+                let hwnd = NonZeroIsize::new_unchecked(self.hwnd);
+                let mut handle = rwh::Win32WindowHandle::new(hwnd);
+                let hinstance = get_window_long(HWND(self.hwnd), GWLP_HINSTANCE);
+                handle.hinstance = NonZeroIsize::new(hinstance);
+                rwh::WindowHandle::borrow_raw(handle.into())
+            })
+        }
+    }
+
+    impl rwh::HasDisplayHandle for RawWindow {
+        fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+            let handle = rwh::WindowsDisplayHandle::new();
+            Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

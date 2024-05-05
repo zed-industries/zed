@@ -38,9 +38,9 @@ use windows::{
 use crate::*;
 
 pub(crate) struct WindowsPlatform {
-    inner: RefCell<WindowsPlatformState>,
+    state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
-    // below will never change through the app life cycle
+    // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
@@ -65,14 +65,14 @@ pub(crate) struct MouseWheelSettings {
 }
 
 pub(crate) struct WindowsPlatformState {
-    callbacks: Callbacks,
+    callbacks: PlatformCallbacks,
     pub(crate) settings: WindowsPlatformSystemSettings,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
 
 #[derive(Default)]
-struct Callbacks {
+struct PlatformCallbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     quit: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
@@ -158,7 +158,7 @@ impl WindowsPlatform {
             log::info!("Using cosmic text system.");
             Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
         };
-        let callbacks = Callbacks::default();
+        let callbacks = PlatformCallbacks::default();
         let raw_window_handles = RwLock::new(SmallVec::new());
         let settings = WindowsPlatformSystemSettings::new();
         let icon = load_icon().unwrap_or_default();
@@ -170,7 +170,7 @@ impl WindowsPlatform {
         });
 
         Self {
-            inner,
+            state: inner,
             raw_window_handles,
             icon,
             main_receiver,
@@ -198,7 +198,6 @@ impl WindowsPlatform {
                     RDW_INVALIDATE | RDW_UPDATENOW,
                 );
             }
-            // unsafe { InvalidateRect(*handle, None, FALSE) };
         }
     }
 
@@ -214,7 +213,7 @@ impl WindowsPlatform {
     }
 
     #[inline]
-    pub fn post_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) {
+    fn post_message(&self, message: u32, wparam: WPARAM, lparam: LPARAM) {
         self.raw_window_handles
             .read()
             .iter()
@@ -235,7 +234,7 @@ impl WindowsPlatform {
     }
 
     fn update_system_settings(&self) {
-        let mut lock = self.inner.borrow_mut();
+        let mut lock = self.state.borrow_mut();
         // mouse wheel
         {
             let (scroll_chars, scroll_lines) = lock.settings.mouse_wheel_settings.update();
@@ -329,7 +328,7 @@ impl Platform for WindowsPlatform {
         }
         end_vsync_timer(raw_timer_stop_event);
 
-        if let Some(ref mut callback) = self.inner.borrow_mut().callbacks.quit {
+        if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
             callback();
         }
     }
@@ -414,7 +413,7 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Box<dyn PlatformWindow> {
-        let lock = self.inner.borrow();
+        let lock = self.state.borrow();
         let window = WindowsWindow::new(
             handle,
             options,
@@ -426,9 +425,7 @@ impl Platform for WindowsPlatform {
         );
         drop(lock);
         let handle = window.get_raw_handle();
-        let mut lock = self.raw_window_handles.write();
-        lock.push(handle);
-        drop(lock);
+        self.raw_window_handles.write().push(handle);
 
         Box::new(window)
     }
@@ -451,7 +448,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.inner.borrow_mut().callbacks.open_urls = Some(callback);
+        self.state.borrow_mut().callbacks.open_urls = Some(callback);
     }
 
     fn prompt_for_paths(&self, options: PathPromptOptions) -> Receiver<Option<Vec<PathBuf>>> {
@@ -571,26 +568,26 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.inner.borrow_mut().callbacks.quit = Some(callback);
+        self.state.borrow_mut().callbacks.quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.inner.borrow_mut().callbacks.reopen = Some(callback);
+        self.state.borrow_mut().callbacks.reopen = Some(callback);
     }
 
     // todo(windows)
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.inner.borrow_mut().callbacks.app_menu_action = Some(callback);
+        self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.inner.borrow_mut().callbacks.will_open_app_menu = Some(callback);
+        self.state.borrow_mut().callbacks.will_open_app_menu = Some(callback);
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.inner.borrow_mut().callbacks.validate_app_menu_command = Some(callback);
+        self.state.borrow_mut().callbacks.validate_app_menu_command = Some(callback);
     }
 
     fn os_name(&self) -> &'static str {
@@ -739,7 +736,7 @@ impl Platform for WindowsPlatform {
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
         self.post_message(CURSOR_STYLE_CHANGED, WPARAM(0), LPARAM(hcursor.0));
-        self.inner.borrow_mut().current_cursor = hcursor;
+        self.state.borrow_mut().current_cursor = hcursor;
     }
 
     // todo(windows)
