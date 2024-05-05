@@ -2,8 +2,9 @@ use super::*;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
-        assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-        editor_test_context::EditorTestContext, select_ranges,
+        assert_text_with_selections, build_editor, editor_hunks,
+        editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        expanded_hunks, expanded_hunks_background_highlights, select_ranges,
     },
     JoinLines,
 };
@@ -1044,6 +1045,13 @@ fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
 #[gpui::test]
 fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
+    let move_to_beg = MoveToBeginningOfLine {
+        stop_at_soft_wraps: true,
+    };
+
+    let move_to_end = MoveToEndOfLine {
+        stop_at_soft_wraps: true,
+    };
 
     let view = cx.add_window(|cx| {
         let buffer = MultiBuffer::build_simple("abc\n  def", cx);
@@ -1059,7 +1067,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+        view.move_to_beginning_of_line(&move_to_beg, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1070,7 +1078,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+        view.move_to_beginning_of_line(&move_to_beg, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1081,7 +1089,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+        view.move_to_beginning_of_line(&move_to_beg, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1092,7 +1100,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = view.update(cx, |view, cx| {
-        view.move_to_end_of_line(&MoveToEndOfLine, cx);
+        view.move_to_end_of_line(&move_to_end, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1104,7 +1112,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
 
     // Moving to the end of line again is a no-op.
     _ = view.update(cx, |view, cx| {
-        view.move_to_end_of_line(&MoveToEndOfLine, cx);
+        view.move_to_end_of_line(&move_to_end, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
             &[
@@ -1200,6 +1208,95 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
                 DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                 DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
             ]
+        );
+    });
+}
+
+#[gpui::test]
+fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let move_to_beg = MoveToBeginningOfLine {
+        stop_at_soft_wraps: false,
+    };
+
+    let move_to_end = MoveToEndOfLine {
+        stop_at_soft_wraps: false,
+    };
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple("thequickbrownfox\njumpedoverthelazydogs", cx);
+        build_editor(buffer, cx)
+    });
+
+    _ = view.update(cx, |view, cx| {
+        view.set_wrap_width(Some(140.0.into()), cx);
+
+        // We expect the following lines after wrapping
+        // ```
+        // thequickbrownfox
+        // jumpedoverthelazydo
+        // gs
+        // ```
+        // The final `gs` was soft-wrapped onto a new line.
+        assert_eq!(
+            "thequickbrownfox\njumpedoverthelaz\nydogs",
+            view.display_text(cx),
+        );
+
+        // First, let's assert behavior on the first line, that was not soft-wrapped.
+        // Start the cursor at the `k` on the first line
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7)]);
+        });
+
+        // Moving to the beginning of the line should put us at the beginning of the line.
+        view.move_to_beginning_of_line(&move_to_beg, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),],
+            view.selections.display_ranges(cx)
+        );
+
+        // Moving to the end of the line should put us at the end of the line.
+        view.move_to_end_of_line(&move_to_end, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(0, 16)..DisplayPoint::new(0, 16),],
+            view.selections.display_ranges(cx)
+        );
+
+        // Now, let's assert behavior on the second line, that ended up being soft-wrapped.
+        // Start the cursor at the last line (`y` that was wrapped to a new line)
+        view.change_selections(None, cx, |s| {
+            s.select_display_ranges([DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0)]);
+        });
+
+        // Moving to the beginning of the line should put us at the start of the second line of
+        // display text, i.e., the `j`.
+        view.move_to_beginning_of_line(&move_to_beg, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),],
+            view.selections.display_ranges(cx)
+        );
+
+        // Moving to the beginning of the line again should be a no-op.
+        view.move_to_beginning_of_line(&move_to_beg, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),],
+            view.selections.display_ranges(cx)
+        );
+
+        // Moving to the end of the line should put us right after the `s` that was soft-wrapped to the
+        // next display line.
+        view.move_to_end_of_line(&move_to_end, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),],
+            view.selections.display_ranges(cx)
+        );
+
+        // Moving to the end of the line again should be a no-op.
+        view.move_to_end_of_line(&move_to_end, cx);
+        assert_eq!(
+            vec![DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),],
+            view.selections.display_ranges(cx)
         );
     });
 }
@@ -3140,6 +3237,14 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     cx.update_editor(|e, cx| e.convert_to_lower_camel_case(&ConvertToLowerCamelCase, cx));
     cx.assert_editor_state(indoc! {"
         «aaaBbbˇ» «bbbCccˇ» «cccDddˇ»
+    "});
+
+    cx.set_state(indoc! {"
+        «hElLo, WoRld!ˇ»
+    "});
+    cx.update_editor(|e, cx| e.convert_to_opposite_case(&ConvertToOppositeCase, cx));
+    cx.assert_editor_state(indoc! {"
+        «HeLlO, wOrLD!ˇ»
     "});
 }
 
@@ -7356,9 +7461,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
     let buffer = project.update(cx, |project, cx| {
-        let buffer = project
-            .create_buffer(&sample_text(16, 8, 'a'), None, cx)
-            .unwrap();
+        let buffer = project.create_local_buffer(&sample_text(16, 8, 'a'), None, cx);
         cx.new_model(|cx| MultiBuffer::singleton(buffer, cx))
     });
     let leader = cx.add_window(|cx| build_editor(buffer.clone(), cx));
@@ -7565,12 +7668,8 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
 
     let (buffer_1, buffer_2) = project.update(cx, |project, cx| {
         (
-            project
-                .create_buffer("abc\ndef\nghi\njkl\n", None, cx)
-                .unwrap(),
-            project
-                .create_buffer("mno\npqr\nstu\nvwx\n", None, cx)
-                .unwrap(),
+            project.create_local_buffer("abc\ndef\nghi\njkl\n", None, cx),
+            project.create_local_buffer("mno\npqr\nstu\nvwx\n", None, cx),
         )
     });
 
@@ -8927,7 +9026,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
                     .collect::<String>(),
                 cx,
             );
-            buffer.set_diff_base(Some(sample_text), cx);
+            buffer.set_diff_base(Some(sample_text.into()), cx);
         });
         cx.executor().run_until_parked();
     }
@@ -9333,6 +9432,1761 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
         .unwrap();
 }
 
+#[gpui::test]
+async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod;
+
+        const A: u32 = 42;
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        use some::modified;
+
+        ˇ
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    let unexpanded_hunks = vec![
+        (
+            "use some::mod;\n".to_string(),
+            DiffHunkStatus::Modified,
+            0..1,
+        ),
+        (
+            "const A: u32 = 42;\n".to_string(),
+            DiffHunkStatus::Removed,
+            2..2,
+        ),
+        (
+            "    println!(\"hello\");\n".to_string(),
+            DiffHunkStatus::Modified,
+            4..5,
+        ),
+        ("".to_string(), DiffHunkStatus::Added, 6..7),
+    ];
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(all_hunks, unexpanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        for _ in 0..4 {
+            editor.go_to_hunk(&GoToHunk, cx);
+            editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+        }
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::modified;
+
+        ˇ
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![1..2, 7..8, 9..10],
+            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                ("use some::mod;\n".to_string(), DiffHunkStatus::Modified, 1..2),
+                ("const A: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, 4..4),
+                ("    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, 7..8),
+                ("".to_string(), DiffHunkStatus::Added, 9..10),
+            ],
+            "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
+            (from modified and removed hunks)"
+        );
+        assert_eq!(
+            all_hunks, all_expanded_hunks,
+            "Editor hunks should not change and all be expanded"
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.cancel(&Cancel, cx);
+
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new(),
+            "After cancelling in editor, no git highlights should be left"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            Vec::new(),
+            "After cancelling in editor, no hunks should be expanded"
+        );
+        assert_eq!(
+            all_hunks, unexpanded_hunks,
+            "After cancelling in editor, regular hunks' coordinates should get back to normal"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_toggled_diff_base_change(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            //println!("hello");
+
+            println!("world");
+            //
+            //
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    3..3
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    5..7
+                ),
+                ("".to_string(), DiffHunkStatus::Added, 9..11),
+            ]
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            //println!("hello");
+
+            println!("world");
+            //
+            //
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![9..11, 13..15],
+            "After expanding, all git additions should be highlighted for Modified (split into added and removed) and Added hunks"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                ("use some::mod1;\n".to_string(), DiffHunkStatus::Removed, 1..1),
+                ("const B: u32 = 42;\n".to_string(), DiffHunkStatus::Removed, 5..5),
+                ("fn main(ˇ) {\n    println!(\"hello\");\n".to_string(), DiffHunkStatus::Modified, 9..11),
+                ("".to_string(), DiffHunkStatus::Added, 13..15),
+            ],
+            "After expanding, all hunks' display rows should have shifted by the amount of deleted lines added \
+            (from modified and removed hunks)"
+        );
+        assert_eq!(
+            all_hunks, all_expanded_hunks,
+            "Editor hunks should not change and all be expanded"
+        );
+    });
+
+    cx.set_diff_base(Some("new diff base!"));
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new(),
+            "After diff base is changed, old git highlights should be removed"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            Vec::new(),
+            "After diff base is changed, old git hunk expansions should be removed"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "new diff base!".to_string(),
+                DiffHunkStatus::Modified,
+                0..snapshot.display_snapshot.max_point().row()
+            )],
+            "After diff base is changed, hunks should update"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_unfold_diff(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+
+        fn main(ˇ) {
+            println!("hello");
+
+            println!("world");
+        }
+
+        fn another() {
+            println!("another");
+        }
+
+        fn another2() {
+            println!("another2");
+        }
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //ˇ»
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    3..3
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    5..7
+                ),
+                ("".to_string(), DiffHunkStatus::Added, 9..11),
+                ("".to_string(), DiffHunkStatus::Added, 15..16),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    18..18
+                ),
+            ]
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //ˇ»
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![9..11, 13..15, 19..20]
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    1..1
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    5..5
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    9..11
+                ),
+                ("".to_string(), DiffHunkStatus::Added, 13..15),
+                ("".to_string(), DiffHunkStatus::Added, 19..20),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    23..23
+                ),
+            ],
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| editor.fold_selected_ranges(&FoldSelectedRanges, cx));
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //ˇ»
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![5..6],
+            "Only one hunk is left not folded, its highlight should be visible"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    0..0
+                ),
+                ("".to_string(), DiffHunkStatus::Added, 0..1),
+                ("".to_string(), DiffHunkStatus::Added, 5..6),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    9..9
+                ),
+            ],
+            "Hunk list should still return shifted folded hunks"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            vec![
+                ("".to_string(), DiffHunkStatus::Added, 5..6),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    9..9
+                ),
+            ],
+            "Only non-folded hunks should be left expanded"
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.select_all(&SelectAll, cx);
+        editor.unfold_lines(&UnfoldLines, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        «use some::mod2;
+
+        const A: u32 = 42;
+        const C: u32 = 42;
+
+        fn main() {
+            //println!("hello");
+
+            println!("world");
+            //
+            //
+        }
+
+        fn another() {
+            println!("another");
+            println!("another");
+        }
+
+            println!("another2");
+        }
+        ˇ»"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![9..11, 13..15, 19..20],
+            "After unfolding, all hunk diffs should be visible again"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    1..1
+                ),
+                (
+                    "const B: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    5..5
+                ),
+                (
+                    "fn main(ˇ) {\n    println!(\"hello\");\n".to_string(),
+                    DiffHunkStatus::Modified,
+                    9..11
+                ),
+                ("".to_string(), DiffHunkStatus::Added, 13..15),
+                ("".to_string(), DiffHunkStatus::Added, 19..20),
+                (
+                    "fn another2() {\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    23..23
+                ),
+            ],
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+}
+
+#[gpui::test]
+async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let cols = 4;
+    let rows = 10;
+    let sample_text_1 = sample_text(rows, cols, 'a');
+    assert_eq!(
+        sample_text_1,
+        "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj"
+    );
+    let modified_sample_text_1 = "aaaa\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj";
+    let sample_text_2 = sample_text(rows, cols, 'l');
+    assert_eq!(
+        sample_text_2,
+        "llll\nmmmm\nnnnn\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu"
+    );
+    let modified_sample_text_2 = "llll\nmmmm\n1n1n1n1n1\noooo\npppp\nqqqq\nrrrr\nssss\ntttt\nuuuu";
+    let sample_text_3 = sample_text(rows, cols, 'v');
+    assert_eq!(
+        sample_text_3,
+        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}"
+    );
+    let modified_sample_text_3 =
+        "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n@@@@\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}";
+    let buffer_1 = cx.new_model(|cx| {
+        let mut buffer = Buffer::local(modified_sample_text_1.to_string(), cx);
+        buffer.set_diff_base(Some(sample_text_1.clone().into()), cx);
+        buffer
+    });
+    let buffer_2 = cx.new_model(|cx| {
+        let mut buffer = Buffer::local(modified_sample_text_2.to_string(), cx);
+        buffer.set_diff_base(Some(sample_text_2.clone().into()), cx);
+        buffer
+    });
+    let buffer_3 = cx.new_model(|cx| {
+        let mut buffer = Buffer::local(modified_sample_text_3.to_string(), cx);
+        buffer.set_diff_base(Some(sample_text_3.clone().into()), cx);
+        buffer
+    });
+
+    let multi_buffer = cx.new_model(|cx| {
+        let mut multibuffer = MultiBuffer::new(0, ReadWrite);
+        multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer.push_excerpts(
+            buffer_3.clone(),
+            [
+                ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(3, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(5, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 4),
+                    primary: None,
+                },
+            ],
+            cx,
+        );
+        multibuffer
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": modified_sample_text_1,
+            "other.rs": modified_sample_text_2,
+            "lib.rs": modified_sample_text_3,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let multi_buffer_editor =
+        cx.new_view(|cx| Editor::new(EditorMode::Full, multi_buffer, Some(project.clone()), cx));
+    cx.executor().run_until_parked();
+
+    let expected_all_hunks = vec![
+        ("bbbb\n".to_string(), DiffHunkStatus::Removed, 3..3),
+        ("nnnn\n".to_string(), DiffHunkStatus::Modified, 16..17),
+        ("".to_string(), DiffHunkStatus::Added, 31..32),
+    ];
+    let expected_all_hunks_shifted = vec![
+        ("bbbb\n".to_string(), DiffHunkStatus::Removed, 4..4),
+        ("nnnn\n".to_string(), DiffHunkStatus::Modified, 18..19),
+        ("".to_string(), DiffHunkStatus::Added, 33..34),
+    ];
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new(),
+        );
+        assert_eq!(all_hunks, expected_all_hunks);
+        assert_eq!(all_expanded_hunks, Vec::new());
+    });
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.select_all(&SelectAll, cx);
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+    });
+    cx.executor().run_until_parked();
+    multi_buffer_editor.update(cx, |editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![18..19, 33..34],
+        );
+        assert_eq!(all_hunks, expected_all_hunks_shifted);
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+    });
+    cx.executor().run_until_parked();
+    multi_buffer_editor.update(cx, |editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new(),
+        );
+        assert_eq!(all_hunks, expected_all_hunks);
+        assert_eq!(all_expanded_hunks, Vec::new());
+    });
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+    });
+    cx.executor().run_until_parked();
+    multi_buffer_editor.update(cx, |editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![18..19, 33..34],
+        );
+        assert_eq!(all_hunks, expected_all_hunks_shifted);
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+    });
+    cx.executor().run_until_parked();
+    multi_buffer_editor.update(cx, |editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new(),
+        );
+        assert_eq!(all_hunks, expected_all_hunks);
+        assert_eq!(all_expanded_hunks, Vec::new());
+    });
+}
+
+#[gpui::test]
+async fn test_edits_around_toggled_additions(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 4..7)]
+        );
+    });
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 4..7)]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![4..7]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| editor.handle_input("const D: u32 = 42;\n", cx));
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        const D: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 4..8)]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![4..8],
+            "Edited hunk should have one more line added"
+        );
+        assert_eq!(
+            all_hunks, all_expanded_hunks,
+            "Expanded hunk should also grow with the addition"
+        );
+    });
+
+    cx.update_editor(|editor, cx| editor.handle_input("const E: u32 = 42;\n", cx));
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        const D: u32 = 42;
+        const E: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 4..9)]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![4..9],
+            "Edited hunk should have one more line added"
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        const D: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 4..8)]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![4..8],
+            "Deleting a line should shrint the hunk"
+        );
+        assert_eq!(
+            all_hunks, all_expanded_hunks,
+            "Expanded hunk should also shrink with the addition"
+        );
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![("".to_string(), DiffHunkStatus::Added, 5..6)]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![5..6]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.select_up_by_lines(&SelectUpByLines { lines: 5 }, cx);
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![
+                (
+                    "use some::mod1;\nuse some::mod2;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    0..0
+                ),
+                (
+                    "const A: u32 = 42;\n".to_string(),
+                    DiffHunkStatus::Removed,
+                    2..2
+                )
+            ]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new(),
+            "Should close all stale expanded addition hunks"
+        );
+        assert_eq!(
+            all_expanded_hunks,
+            vec![(
+                "const A: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                2..2
+            )],
+            "Should open hunks that were adjacent to the stale addition one"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_edits_around_toggled_deletions(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇconst B: u32 = 42;
+        const C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                3..3
+            )]
+        );
+    });
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇconst B: u32 = 42;
+        const C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new()
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                4..4
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇconst C: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new(),
+            "Deleted hunks do not highlight current editor's background"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                5..5
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        ˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new()
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Removed,
+                6..6
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("replacement", cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        replacementˇ
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n\n".to_string(),
+                DiffHunkStatus::Modified,
+                7..8
+            )]
+        );
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![7..8],
+            "Modified expanded hunks should display additions and highlight their background"
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+}
+
+#[gpui::test]
+async fn test_edits_around_toggled_modifications(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 43ˇ
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                5..6
+            )]
+        );
+    });
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 43ˇ
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![6..7],
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                6..7
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("\nnew_line\n", cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            const A: u32 = 42;
+            const B: u32 = 42;
+            const C: u32 = 43
+            new_line
+            ˇ
+            const D: u32 = 42;
+
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![6..9],
+            "Modified hunk should grow highlighted lines on more text additions"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                6..9
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.delete_line(&DeleteLine, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            const A: u32 = 42;
+            ˇconst C: u32 = 43
+            new_line
+
+            const D: u32 = 42;
+
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![6..9],
+            "Modified hunk should grow deleted lines on text deletions above"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                6..9
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.handle_input("v", cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            vˇconst A: u32 = 42;
+            const C: u32 = 43
+            new_line
+
+            const D: u32 = 42;
+
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![6..10],
+            "Modified hunk should grow deleted lines on text modifications above"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                6..10
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&MoveDown, cx);
+        editor.move_down(&MoveDown, cx);
+        editor.delete_line(&DeleteLine, cx)
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            vconst A: u32 = 42;
+            const C: u32 = 43
+            ˇ
+            const D: u32 = 42;
+
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![6..9],
+            "Modified hunk should grow shrink lines on modification lines removal"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                6..9
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.move_up(&MoveUp, cx);
+        editor.move_up(&MoveUp, cx);
+        editor.select_down_by_lines(&SelectDownByLines { lines: 4 }, cx);
+        editor.delete_line(&DeleteLine, cx)
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            ˇ
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            Vec::new(),
+            "Modified hunk should turn into a removed one on all modified lines removal"
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const A: u32 = 42;\nconst B: u32 = 42;\nconst C: u32 = 42;\nconst D: u32 = 42;\n"
+                    .to_string(),
+                DiffHunkStatus::Removed,
+                7..7
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+}
+
+#[gpui::test]
+async fn test_multiple_expanded_hunks_merge(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 42;
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 43ˇ
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+        .unindent(),
+    );
+
+    cx.set_diff_base(Some(&diff_base));
+    executor.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                5..6
+            )]
+        );
+    });
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+        use some::mod1;
+        use some::mod2;
+
+        const A: u32 = 42;
+        const B: u32 = 42;
+        const C: u32 = 43ˇ
+        const D: u32 = 42;
+
+
+        fn main() {
+            println!("hello");
+
+            println!("world");
+        }"#
+        .unindent(),
+    );
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let all_hunks = editor_hunks(editor, &snapshot, cx);
+        let all_expanded_hunks = expanded_hunks(&editor, &snapshot, cx);
+        assert_eq!(
+            expanded_hunks_background_highlights(editor, &snapshot),
+            vec![6..7],
+        );
+        assert_eq!(
+            all_hunks,
+            vec![(
+                "const C: u32 = 42;\n".to_string(),
+                DiffHunkStatus::Modified,
+                6..7
+            )]
+        );
+        assert_eq!(all_hunks, all_expanded_hunks);
+    });
+
+    cx.update_editor(|editor, cx| {
+        editor.handle_input("\nnew_line\n", cx);
+    });
+    executor.run_until_parked();
+    cx.assert_editor_state(
+        &r#"
+            use some::mod1;
+            use some::mod2;
+
+            const A: u32 = 42;
+            const B: u32 = 42;
+            const C: u32 = 43
+            new_line
+            ˇ
+            const D: u32 = 42;
+
+
+            fn main() {
+                println!("hello");
+
+                println!("world");
+            }"#
+        .unindent(),
+    );
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point
@@ -9497,7 +11351,7 @@ fn assert_hunk_revert(
             .as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| {
-                buffer.set_diff_base(Some(base_text.to_string()), cx);
+                buffer.set_diff_base(Some(base_text.into()), cx);
             });
     });
     cx.executor().run_until_parked();

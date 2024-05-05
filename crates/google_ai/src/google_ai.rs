@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -5,8 +7,8 @@ use util::http::HttpClient;
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
-pub async fn stream_generate_content<T: HttpClient>(
-    client: &T,
+pub async fn stream_generate_content(
+    client: Arc<dyn HttpClient>,
     api_url: &str,
     api_key: &str,
     request: GenerateContentRequest,

@@ -1,6 +1,5 @@
 mod assets;
 mod color;
-mod util;
 mod vscode;
 
 use std::fs::File;

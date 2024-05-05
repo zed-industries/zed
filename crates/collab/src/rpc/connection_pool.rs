@@ -21,7 +21,7 @@ struct ConnectedPrincipal {
     connection_ids: HashSet<ConnectionId>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Copy, Clone, Debug, Serialize, PartialOrd, PartialEq, Eq, Ord)]
 pub struct ZedVersion(pub SemanticVersion);
 
 impl fmt::Display for ZedVersion {
@@ -33,6 +33,32 @@ impl fmt::Display for ZedVersion {
 impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
         self.0 >= SemanticVersion::new(0, 129, 2)
+    }
+
+    pub fn with_save_as() -> ZedVersion {
+        ZedVersion(SemanticVersion::new(0, 134, 0))
+    }
+}
+
+pub trait VersionedMessage {
+    fn required_host_version(&self) -> Option<ZedVersion> {
+        None
+    }
+}
+
+impl VersionedMessage for proto::SaveBuffer {
+    fn required_host_version(&self) -> Option<ZedVersion> {
+        if self.new_path.is_some() {
+            Some(ZedVersion::with_save_as())
+        } else {
+            None
+        }
+    }
+}
+
+impl VersionedMessage for proto::OpenNewBuffer {
+    fn required_host_version(&self) -> Option<ZedVersion> {
+        Some(ZedVersion::with_save_as())
     }
 }
 
@@ -48,6 +74,10 @@ impl ConnectionPool {
         self.connections.clear();
         self.connected_users.clear();
         self.channels.clear();
+    }
+
+    pub fn connection(&mut self, connection_id: ConnectionId) -> Option<&Connection> {
+        self.connections.get(&connection_id)
     }
 
     #[instrument(skip(self))]

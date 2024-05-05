@@ -16,7 +16,6 @@ dependencies = [
  "project",
  "smallvec",
  "ui",
- "util",
  "workspace",
 ]
 
@@ -383,7 +382,6 @@ dependencies = [
  "editor",
  "env_logger",
  "feature_flags",
- "fs",
  "futures 0.3.28",
  "gpui",
  "language",
@@ -401,6 +399,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "story",
  "theme",
  "ui",
  "util",
@@ -2272,6 +2271,7 @@ dependencies = [
  "collections",
  "ctor",
  "dashmap",
+ "dev_server_projects",
  "editor",
  "env_logger",
  "envy",
@@ -2301,7 +2301,6 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "release_channel",
- "remote_projects",
  "reqwest",
  "rpc",
  "rustc-demangle",
@@ -2316,6 +2315,7 @@ dependencies = [
  "sha2 0.10.7",
  "sqlx",
  "subtle",
+ "supermaven_api",
  "telemetry_events",
  "text",
  "theme",
@@ -2344,6 +2344,7 @@ dependencies = [
  "clock",
  "collections",
  "db",
+ "dev_server_projects",
  "editor",
  "emojis",
  "extensions_ui",
@@ -2359,6 +2360,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "recent_projects",
+ "release_channel",
  "rich_text",
  "rpc",
  "schemars",
@@ -2510,30 +2512,10 @@ dependencies = [
  "async-compression",
  "async-std",
  "async-tar",
+ "client",
  "clock",
  "collections",
  "command_palette_hooks",
- "fs",
- "futures 0.3.28",
- "gpui",
- "language",
- "lsp",
- "node_runtime",
- "parking_lot",
- "rpc",
- "serde",
- "settings",
- "smol",
- "util",
-]
-
-[[package]]
-name = "copilot_ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "copilot",
  "editor",
  "fs",
  "futures 0.3.28",
@@ -2542,14 +2524,18 @@ dependencies = [
  "language",
  "lsp",
  "menu",
+ "node_runtime",
+ "parking_lot",
  "project",
+ "rpc",
+ "serde",
  "serde_json",
  "settings",
+ "smol",
  "theme",
  "ui",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -3174,6 +3160,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "dev_server_projects"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "gpui",
+ "rpc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4106,6 +4104,7 @@ name = "fsevent"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.4.2",
+ "core-foundation",
  "fsevent-sys 3.1.0",
  "parking_lot",
  "tempfile",
@@ -4467,6 +4466,7 @@ name = "go_to_line"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "editor",
  "gpui",
  "indoc",
@@ -5129,6 +5129,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "inline_completion_button"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot",
+ "editor",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "indoc",
+ "language",
+ "lsp",
+ "project",
+ "serde_json",
+ "settings",
+ "supermaven",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "inotify"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5533,6 +5557,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "copilot",
  "editor",
  "env_logger",
  "futures 0.3.28",
@@ -5676,9 +5701,9 @@ checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 
 [[package]]
 name = "libmimalloc-sys"
-version = "0.1.35"
+version = "0.1.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3979b5c37ece694f1f5e51e7ecc871fdb0f517ed04ee45f88d15d6d553cb9664"
+checksum = "81eb4061c0582dedea1cbc7aff2240300dd6982e0239d1c99e65c1dbf4a30ba7"
 dependencies = [
  "cc",
  "libc",
@@ -6043,9 +6068,9 @@ dependencies = [
 
 [[package]]
 name = "mimalloc"
-version = "0.1.39"
+version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa01922b5ea280a911e323e4d2fd24b7fe5cc4042e0d2cda3c40775cdc4bdc9c"
+checksum = "9f41a2280ded0da56c8cf898babb86e8f10651a34adcfff190ae9a1159c6908d"
 dependencies = [
  "libmimalloc-sys",
 ]
@@ -6787,6 +6812,7 @@ dependencies = [
 name = "outline"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "editor",
  "fuzzy",
  "gpui",
@@ -7406,7 +7432,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "copilot",
  "env_logger",
  "fs",
  "futures 0.3.28",
@@ -7790,6 +7815,7 @@ name = "recent_projects"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dev_server_projects",
  "editor",
  "feature_flags",
  "fuzzy",
@@ -7799,7 +7825,6 @@ dependencies = [
  "ordered-float 2.10.0",
  "picker",
  "project",
- "remote_projects",
  "rpc",
  "serde",
  "serde_json",
@@ -7932,18 +7957,6 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "once_cell",
-]
-
-[[package]]
-name = "remote_projects"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "gpui",
- "rpc",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -8701,7 +8714,12 @@ dependencies = [
  "sha2 0.10.7",
  "smol",
  "tempfile",
+ "theme",
+ "tree-sitter",
+ "ui",
+ "unindent",
  "util",
+ "workspace",
  "worktree",
 ]
 
@@ -9499,6 +9517,7 @@ name = "storybook"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant2",
  "clap 4.4.4",
  "collab_ui",
  "ctrlc",
@@ -9585,6 +9604,43 @@ dependencies = [
  "log",
  "rand 0.8.5",
  "rayon",
+]
+
+[[package]]
+name = "supermaven"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "editor",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "log",
+ "postage",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "supermaven_api",
+ "theme",
+ "ui",
+ "util",
+]
+
+[[package]]
+name = "supermaven_api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "serde",
+ "serde_json",
+ "smol",
+ "util",
 ]
 
 [[package]]
@@ -11791,11 +11847,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "copilot_ui",
  "db",
  "editor",
+ "extensions_ui",
  "fuzzy",
  "gpui",
+ "inline_completion_button",
  "install_cli",
  "picker",
  "project",
@@ -12402,6 +12459,7 @@ dependencies = [
  "collections",
  "db",
  "derive_more",
+ "dev_server_projects",
  "env_logger",
  "fs",
  "futures 0.3.28",
@@ -12414,7 +12472,6 @@ dependencies = [
  "parking_lot",
  "postage",
  "project",
- "remote_projects",
  "schemars",
  "serde",
  "serde_json",
@@ -12653,7 +12710,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.134.0"
+version = "0.135.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -12675,8 +12732,8 @@ dependencies = [
  "collections",
  "command_palette",
  "copilot",
- "copilot_ui",
  "db",
+ "dev_server_projects",
  "diagnostics",
  "editor",
  "env_logger",
@@ -12691,6 +12748,7 @@ dependencies = [
  "gpui",
  "headless",
  "image_viewer",
+ "inline_completion_button",
  "install_cli",
  "isahc",
  "journal",
@@ -12714,7 +12772,6 @@ dependencies = [
  "quick_action_bar",
  "recent_projects",
  "release_channel",
- "remote_projects",
  "rope",
  "search",
  "serde",
@@ -12722,6 +12779,7 @@ dependencies = [
  "settings",
  "simplelog",
  "smol",
+ "supermaven",
  "tab_switcher",
  "task",
  "tasks_ui",
@@ -12785,7 +12843,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.1"
+version = "0.0.3"
 dependencies = [
  "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -12919,7 +12977,7 @@ dependencies = [
 
 [[package]]
 name = "zed_toml"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

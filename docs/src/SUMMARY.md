@@ -1,33 +1,50 @@
 # Summary
 
-[Getting Started](./getting_started.md)
-  - [System Requirements](./system_requirements.md)
-[Feedback](./feedback.md)
+# General
 
-# Configuring Zed
+- [Getting Started](./getting-started.md)
+  - [System Requirements](./system-requirements.md)
+  - [Telemetry](./telemetry.md)
+  - [Additional Learning Materials](./additional-learning-materials.md)
 
-- [Settings](./configuring_zed.md)
-- [Key bindings](./configuring_zed__key_bindings.md)
-- [Vim Mode](./configuring_zed__configuring_vim.md)
+# Configuration
+
+- [Configuring Zed](./configuring-zed.md)
+- [Key bindings](./key-bindings.md)
+- [Themes](./themes.md)
+- [Vim](./vim.md)
 
 # Using Zed
 
-- [Workflows]()
-- [Collaboration]()
-- [Using AI]()
+- [Assistant Panel](./assistant-panel.md)
+- [Channels](./channels.md)
+- [Collaboration](./collaboration.md)
 - [Tasks](./tasks.md)
+- [Remote Development](./remote-development.md)
 
-# Contributing to Zed
+# Language Support
 
-- [How to Contribute]()
-- [Building from Source](./developing_zed__building_zed.md)
-  - [macOS](./developing_zed__building_zed_macos.md)
-  - [Linux](./developing_zed__building_zed_linux.md)
-- [Local Collaboration](./developing_zed__local_collaboration.md)
-- [Adding Languages](./developing_zed__adding_languages.md)
-- [Adding UI]()
+- [Elixir](./languages/elixir.md)
+- [Go](./languages/go.md)
+- [JavaScript](./languages/javascript.md)
+- [Python](./languages/python.md)
+- [Ruby](./languages/ruby.md)
+- [Rust](./languages/rust.md)
 
----
+# Developing Zed
 
-[Telemetry](./telemetry.md)
-[Code of Conduct](./CODE_OF_CONDUCT.md)
+- [Adding New Languages](./adding-new-languages.md)
+- [Developing Zed](./developing-zed.md)
+  - [macOS](./development/macos.md)
+  - [Linux](./development/linux.md)
+  - [Windows](./development/windows.md)
+  - [Local Collaboration](./development/local-collaboration.md)
+- [Release Process](./development/releases.md)
+- [Debugging Crashes](./development/debugging-crashes.md)
+
+# Community
+
+- [Code of Conduct](./code-of-conduct.md)
+- [Contributing to Zed](./contribute-to-zed.md)
+- [Conversations](./conversations.md)
+- [Feedback and Support](./feedback-and-support.md)

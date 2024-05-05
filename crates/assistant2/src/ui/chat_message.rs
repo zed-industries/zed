@@ -15,7 +15,8 @@ pub enum UserOrAssistant {
 pub struct ChatMessage {
     id: MessageId,
     player: UserOrAssistant,
-    message: AnyElement,
+    message: Option<AnyElement>,
+    tools_used: Option<AnyElement>,
     collapsed: bool,
     on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
 }
@@ -24,7 +25,8 @@ impl ChatMessage {
     pub fn new(
         id: MessageId,
         player: UserOrAssistant,
-        message: AnyElement,
+        message: Option<AnyElement>,
+        tools_used: Option<AnyElement>,
         collapsed: bool,
         on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
     ) -> Self {
@@ -32,6 +34,7 @@ impl ChatMessage {
             id,
             player,
             message,
+            tools_used,
             collapsed,
             on_collapse_handle_click,
         }
@@ -40,10 +43,6 @@ impl ChatMessage {
 
 impl RenderOnce for ChatMessage {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        // TODO: This should be top padding + 1.5x line height
-        // Set the message height to cut off at exactly 1.5 lines when collapsed
-        let collapsed_height = rems(2.875);
-
         let collapse_handle_id = SharedString::from(format!("{}_collapse_handle", self.id.0));
         let collapse_handle = h_flex()
             .id(collapse_handle_id.clone())
@@ -65,19 +64,30 @@ impl RenderOnce for ChatMessage {
                         this.bg(cx.theme().colors().element_hover)
                     }),
             );
-        let content = div()
-            .overflow_hidden()
-            .w_full()
-            .p_4()
-            .rounded_lg()
-            .when(self.collapsed, |this| this.h(collapsed_height))
-            .bg(cx.theme().colors().surface_background)
-            .child(self.message);
+
+        let content_padding = rems(1.);
+        // Clamp the message height to exactly 1.5 lines when collapsed.
+        let collapsed_height = content_padding.to_pixels(cx.rem_size()) + cx.line_height() * 1.5;
 
         v_flex()
             .gap_1()
             .child(ChatMessageHeader::new(self.player))
-            .child(h_flex().gap_3().child(collapse_handle).child(content))
+            .when(self.message.is_some() || self.tools_used.is_some(), |el| {
+                el.child(
+                    h_flex().gap_3().child(collapse_handle).child(
+                        div()
+                            .overflow_hidden()
+                            .w_full()
+                            .p(content_padding)
+                            .gap_3()
+                            .rounded_lg()
+                            .when(self.collapsed, |this| this.h(collapsed_height))
+                            .bg(cx.theme().colors().surface_background)
+                            .children(self.message)
+                            .children(self.tools_used),
+                    ),
+                )
+            })
     }
 }
 
@@ -115,7 +125,7 @@ impl RenderOnce for ChatMessageHeader {
                 h_flex()
                     .gap_3()
                     .map(|this| {
-                        let avatar_size = rems(20.0 / 16.0);
+                        let avatar_size = rems_from_px(20.);
                         if let Some(avatar_uri) = avatar_uri {
                             this.child(Avatar::new(avatar_uri).size(avatar_size))
                         } else {

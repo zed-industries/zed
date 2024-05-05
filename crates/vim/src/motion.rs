@@ -447,6 +447,7 @@ pub(crate) fn motion(motion: Motion, cx: &mut WindowContext) {
         vim.clear_operator(cx);
         if let Some(operator) = waiting_operator {
             vim.push_operator(operator, cx);
+            vim.update_state(|state| state.pre_count = count)
         }
     });
 }
@@ -755,7 +756,7 @@ impl Motion {
             },
             NextLineStart => (next_line_start(map, point, times), SelectionGoal::None),
             StartOfLineDownward => (next_line_start(map, point, times - 1), SelectionGoal::None),
-            EndOfLineDownward => (next_line_end(map, point, times), SelectionGoal::None),
+            EndOfLineDownward => (last_non_whitespace(map, point, times), SelectionGoal::None),
             GoToColumn => (go_to_column(map, point, times), SelectionGoal::None),
             WindowTop => window_top(map, point, &text_layout_details, times - 1),
             WindowMiddle => window_middle(map, point, &text_layout_details),
@@ -1422,6 +1423,26 @@ pub(crate) fn first_non_whitespace(
     start_offset.to_display_point(map)
 }
 
+pub(crate) fn last_non_whitespace(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    count: usize,
+) -> DisplayPoint {
+    let mut end_of_line = end_of_line(map, false, from, count).to_offset(map, Bias::Left);
+    let scope = map.buffer_snapshot.language_scope_at(from.to_point(map));
+    for (ch, offset) in map.reverse_buffer_chars_at(end_of_line) {
+        if ch == '\n' {
+            break;
+        }
+        end_of_line = offset;
+        if char_kind(&scope, ch) != CharKind::Whitespace || ch == '\n' {
+            break;
+        }
+    }
+
+    end_of_line.to_display_point(map)
+}
+
 pub(crate) fn start_of_line(
     map: &DisplaySnapshot,
     display_lines: bool,
@@ -1897,6 +1918,16 @@ mod test {
         cx.set_shared_state("ˇone\n  two\nthree").await;
         cx.simulate_shared_keystrokes(["enter"]).await;
         cx.assert_shared_state("one\n  ˇtwo\nthree").await;
+    }
+
+    #[gpui::test]
+    async fn test_end_of_line_downward(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇ one \n two \nthree").await;
+        cx.simulate_shared_keystrokes(["g", "_"]).await;
+        cx.assert_shared_state(" onˇe \n two \nthree").await;
+        cx.simulate_shared_keystrokes(["2", "g", "_"]).await;
+        cx.assert_shared_state(" one \n twˇo \nthree").await;
     }
 
     #[gpui::test]

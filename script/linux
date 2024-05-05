@@ -13,6 +13,8 @@ maysudo=$(command -v sudo || command -v doas || true)
 apt=$(command -v apt-get || true)
 if [[ -n $apt ]]; then
   deps=(
+    gcc
+    g++
     libasound2-dev
     libfontconfig-dev
     libwayland-dev
