@@ -176,17 +176,31 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets cursor style when hovering over an element to `ew-resize`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_ew_resize(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ResizeLeftRight);
+        self
+    }
+
+    /// Sets cursor style when hovering over an element to `ns-resize`.
+    /// [Docs](https://tailwindcss.com/docs/cursor)
+    fn cursor_ns_resize(mut self) -> Self {
+        self.style().mouse_cursor = Some(CursorStyle::ResizeUpDown);
+        self
+    }
+
     /// Sets cursor style when hovering over an element to `col-resize`.
     /// [Docs](https://tailwindcss.com/docs/cursor)
     fn cursor_col_resize(mut self) -> Self {
-        self.style().mouse_cursor = Some(CursorStyle::ResizeLeftRight);
+        self.style().mouse_cursor = Some(CursorStyle::ResizeColumn);
         self
     }
 
     /// Sets cursor style when hovering over an element to `row-resize`.
     /// [Docs](https://tailwindcss.com/docs/cursor)
     fn cursor_row_resize(mut self) -> Self {
-        self.style().mouse_cursor = Some(CursorStyle::ResizeUpDown);
+        self.style().mouse_cursor = Some(CursorStyle::ResizeRow);
         self
     }
 
