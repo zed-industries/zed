@@ -7695,6 +7695,14 @@ impl Editor {
         snapshot: &DisplaySnapshot,
         cx: &WindowContext,
     ) -> Vec<(u32, RunnableTasks)> {
+        if self
+            .project
+            .as_ref()
+            .map_or(false, |project| project.read(cx).is_remote())
+        {
+            // Do not display any test indicators in remote projects.
+            return vec![];
+        }
         snapshot
             .buffer_snapshot
             .runnable_ranges(range)
