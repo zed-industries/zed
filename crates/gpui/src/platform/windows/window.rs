@@ -52,6 +52,7 @@ pub(crate) struct WindowsWindowState {
 }
 
 impl WindowsWindowState {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         hwnd: HWND,
         cs: &CREATESTRUCTW,

@@ -230,11 +230,8 @@ impl WindowsPlatform {
             .position(|handle| *handle == target_window)
             .unwrap();
         lock.remove(index);
-        if lock.is_empty() {
-            true
-        } else {
-            false
-        }
+
+        lock.is_empty()
     }
 
     fn update_system_settings(&self) {
