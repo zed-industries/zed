@@ -896,15 +896,16 @@ const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 const DOUBLE_CLICK_SPATIAL_TOLERANCE: i32 = 4;
 
 mod windows_renderer {
+    use std::{num::NonZeroIsize, sync::Arc};
+
     use blade_graphics as gpu;
     use raw_window_handle as rwh;
-    use std::{num::NonZeroIsize, sync::Arc};
     use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
 
     use crate::{get_window_long, platform::blade::BladeRenderer};
 
     pub(super) fn windows_renderer(hwnd: HWND) -> BladeRenderer {
-        let raw = RawWindow { hwnd: hwnd.0 as _ };
+        let raw = RawWindow { hwnd: hwnd.0 };
         let gpu: Arc<gpu::Context> = Arc::new(
             unsafe {
                 gpu::Context::init_windowed(
