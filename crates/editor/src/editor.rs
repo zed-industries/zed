@@ -1357,6 +1357,27 @@ impl InlayHintRefreshReason {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct IndentGuide {
+    pub start: u32,
+    pub end: u32,
+    pub depth: u32,
+    pub size: u32,
+    pub active: bool,
+}
+
+impl IndentGuide {
+    fn new(start: u32, end: u32, depth: u32, size: u32) -> Self {
+        Self {
+            start,
+            end,
+            depth,
+            size,
+            active: false,
+        }
+    }
+}
+
 impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
@@ -9584,6 +9605,185 @@ impl Editor {
                     ..range.end.to_display_point(display_snapshot)
             })
             .collect()
+    }
+
+    fn indent_guides_in_range(
+        &self,
+        buffer_rows: impl Iterator<Item = Option<u32>>,
+        snapshot: &DisplaySnapshot,
+        cx: &WindowContext,
+    ) -> Vec<IndentGuide> {
+        fn indent_size_for_row(
+            this: &Editor,
+            row: u32,
+            snapshot: &DisplaySnapshot,
+            cx: &WindowContext,
+        ) -> NonZeroU32 {
+            let language = this.language_at(DisplayPoint::new(row, 0).to_point(snapshot), cx);
+            language::language_settings::language_settings(language.as_ref(), None, cx).tab_size
+        }
+
+        let indents: Vec<_> = buffer_rows.filter_map(|row| row).collect();
+
+        let mut result_vec = vec![];
+        let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
+        let mut visible_rows = indents.into_iter();
+
+        // let excerpt_boundaries = snapshot.buffer_snapshot.excerpt_boundaries_in_range(range);
+        // How to flush the stack:
+        // 1. Update all indent guides in the stack to extend to the current line
+        // 2. Push to result vec
+        // 3. Update the current excerpt boundary
+        // let current_excerpt_boundary = excerpt_boundaries.next();
+        // get excerpt boundaries, convert those boundaries into display rows
+
+        while let Some(first_row) = visible_rows.next() {
+            let current_depth = indent_stack.len() as u32;
+
+            let (mut line_indent, empty) = snapshot.line_indent_for_buffer_row(first_row);
+
+            let mut indent_size = indent_size_for_row(self, first_row, snapshot, cx);
+
+            // When encountering empty, continue until found useful line indent
+            // then add to the indent stack with the depth found
+            let mut found_indent = false;
+            let mut last_row = first_row;
+            if empty {
+                while let Some(display_row) = visible_rows.next() {
+                    let (new_line_indent, empty) = snapshot.line_indent_for_buffer_row(display_row);
+                    if empty {
+                        continue;
+                    }
+                    last_row = display_row;
+                    line_indent = new_line_indent;
+                    found_indent = true;
+                    indent_size = indent_size_for_row(self, first_row, snapshot, cx);
+                    break;
+                }
+            } else {
+                found_indent = true
+            }
+
+            let depth = if found_indent {
+                line_indent / indent_size + ((line_indent % indent_size) > 0) as u32
+            } else {
+                current_depth
+            };
+
+            if depth < current_depth {
+                for _ in 0..(current_depth - depth) {
+                    let mut indent = indent_stack.pop().unwrap();
+                    if last_row != first_row {
+                        // In this case, we landed on an empty row, had to seek forward,
+                        // and discovered that the indent we where on is ending.
+                        // This means that the last display row must
+                        // be on line that ends this indent range, so we
+                        // should display the range up to the row before this
+                        indent.end = last_row - 1;
+                    }
+                    result_vec.push(indent)
+                }
+            } else if depth > current_depth {
+                for next_depth in current_depth..depth {
+                    indent_stack.push(IndentGuide::new(
+                        first_row,
+                        last_row,
+                        next_depth,
+                        (next_depth) * indent_size.get() as u32,
+                    ));
+                }
+            }
+
+            for indent in indent_stack.iter_mut() {
+                indent.end = last_row;
+            }
+        }
+
+        result_vec.extend(indent_stack.into_iter());
+
+        if let Some(active_indent_index) =
+            self.find_active_indent_index(&mut result_vec, snapshot, cx)
+        {
+            let active_indent = &mut result_vec[active_indent_index];
+            active_indent.active = true;
+        }
+
+        result_vec
+    }
+
+    fn find_active_indent_index(
+        &self,
+        indents: &[IndentGuide],
+        snapshot: &DisplaySnapshot,
+        cx: &WindowContext,
+    ) -> Option<usize> {
+        let selection = self.selections.newest::<Point>(cx);
+        let range = selection.range().sorted();
+        let buffer_start_row = range.start.row;
+
+        let mut containing_range = None;
+        let mut target_indent = None;
+        for row in (0..=range.end.row).rev() {
+            let fold_range = snapshot.foldable_range(row);
+
+            if let Some(fold_range) = fold_range {
+                if fold_range.end.row >= buffer_start_row {
+                    containing_range = Some(fold_range);
+                    target_indent = Some(snapshot.line_indent_for_buffer_row(row).0);
+                    if row <= range.start.row {
+                        break;
+                    }
+                }
+            }
+        }
+        let cursor_fold_range = containing_range?;
+        let target_indent = target_indent?;
+
+        let start_row = indents.iter().map(|i| i.start).min()?;
+        let end_row = indents.iter().map(|i| i.end).max()?;
+
+        // Check if it intersects with our visible range
+        if cursor_fold_range.end.row < start_row || cursor_fold_range.start.row > end_row {
+            return None;
+        }
+
+        // Find exact match
+        for (i, indent) in indents.iter().enumerate() {
+            if cursor_fold_range.start.row + 1 == indent.start
+                && indent.end == cursor_fold_range.end.row
+                && indent.size == target_indent
+            {
+                return Some(i);
+            }
+        }
+
+        // Find match that is partially on screen (start/end of fold is the same as the indent start)
+        for (i, indent) in indents.iter().enumerate() {
+            if cursor_fold_range.start.row + 1 <= indent.start
+                && indent.end == cursor_fold_range.end.row
+                && indent.size == target_indent
+            {
+                return Some(i);
+            }
+            if cursor_fold_range.start.row + 1 == indent.start
+                && indent.end <= cursor_fold_range.end.row
+                && indent.size == target_indent
+            {
+                return Some(i);
+            }
+        }
+
+        // Find match that where the start and the end is not on screen
+        for (i, indent) in indents.iter().enumerate() {
+            if cursor_fold_range.start.row <= indent.start
+                && indent.end <= cursor_fold_range.end.row
+                && target_indent == indent.size
+            {
+                return Some(i);
+            }
+        }
+
+        None
     }
 
     pub fn highlight_text<T: 'static>(

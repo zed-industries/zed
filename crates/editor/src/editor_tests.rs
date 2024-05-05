@@ -11187,6 +11187,223 @@ async fn test_multiple_expanded_hunks_merge(
     );
 }
 
+async fn assert_indent_guides(
+    text: &str,
+    range: impl Iterator<Item = Option<u32>>,
+    expected: Vec<IndentGuide>,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let indent_guides = cx.update_editor(|editor, cx| {
+        editor.set_text(text, cx);
+        let snapshot = editor.snapshot(cx).display_snapshot;
+        let mut indent_guides = editor.indent_guides_in_range(range, &snapshot, cx);
+        indent_guides.sort_by(|a, b| {
+            a.depth
+                .cmp(&b.depth)
+                .then(a.start.cmp(&b.start).then(a.end.cmp(&b.end)))
+        });
+        indent_guides
+    });
+    assert_eq!(indent_guides, expected);
+}
+
+#[gpui::test]
+async fn test_indent_guides_single_line(cx: &mut gpui::TestAppContext) {
+    assert_indent_guides(
+        &"
+        fn main() {
+            let a = 1;
+        }"
+        .unindent(),
+        (0..=2).into_iter().map(Some),
+        vec![IndentGuide::new(1, 1, 0, 0)],
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_indent_guides_simple_block(cx: &mut gpui::TestAppContext) {
+    assert_indent_guides(
+        &"
+        fn main() {
+            let a = 1;
+            let b = 2;
+        }"
+        .unindent(),
+        (0..=2).into_iter().map(Some),
+        vec![IndentGuide::new(1, 2, 0, 0)],
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_indent_guides_nested(cx: &mut gpui::TestAppContext) {
+    assert_indent_guides(
+        &"
+        fn main() {
+            let a = 1;
+            if a == 3 {
+                let b = 2;
+            } else {
+                let c = 3;
+            }
+        }"
+        .unindent(),
+        (0..=7).into_iter().map(Some),
+        vec![
+            IndentGuide::new(1, 6, 0, 0),
+            IndentGuide::new(3, 3, 1, 4),
+            IndentGuide::new(5, 5, 1, 4),
+        ],
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_indent_guides_tab(cx: &mut gpui::TestAppContext) {
+    assert_indent_guides(
+        &"
+        fn main() {
+            let a = 1;
+                let b = 2;
+            let c = 3;
+        }"
+        .unindent(),
+        (0..=4).into_iter().map(Some),
+        vec![IndentGuide::new(1, 3, 0, 0), IndentGuide::new(2, 2, 1, 4)],
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_indent_guides_continues_on_empty_line(cx: &mut gpui::TestAppContext) {
+    assert_indent_guides(
+        &"
+        fn main() {
+            let a = 1;
+
+            let c = 3;
+        }"
+        .unindent(),
+        (0..=4).into_iter().map(Some),
+        vec![IndentGuide::new(1, 3, 0, 0)],
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_indent_guides_complex(cx: &mut gpui::TestAppContext) {
+    assert_indent_guides(
+        &"
+        fn main() {
+            let a = 1;
+
+            let c = 3;
+
+            if a == 3 {
+                let b = 2;
+            } else {
+                let c = 3;
+            }
+        }"
+        .unindent(),
+        (0..=9).into_iter().map(Some),
+        vec![
+            IndentGuide::new(1, 9, 0, 0),
+            IndentGuide::new(6, 6, 1, 4),
+            IndentGuide::new(8, 8, 1, 4),
+        ],
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_indent_guides_starts_off_screen(cx: &mut gpui::TestAppContext) {
+    assert_indent_guides(
+        &"
+        fn main() {
+            let a = 1;
+
+            let c = 3;
+
+            if a == 3 {
+                let b = 2;
+            } else {
+                let c = 3;
+            }
+        }"
+        .unindent(),
+        (1..=10).into_iter().map(Some),
+        vec![
+            IndentGuide::new(1, 9, 0, 0),
+            IndentGuide::new(6, 6, 1, 4),
+            IndentGuide::new(8, 8, 1, 4),
+        ],
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_indent_guides_ends_off_screen(cx: &mut gpui::TestAppContext) {
+    assert_indent_guides(
+        &"
+        fn main() {
+            let a = 1;
+
+            let c = 3;
+
+            if a == 3 {
+                let b = 2;
+            } else {
+                let c = 3;
+            }
+        }"
+        .unindent(),
+        (0..=9).into_iter().map(Some),
+        vec![
+            IndentGuide::new(1, 9, 0, 0),
+            IndentGuide::new(6, 6, 1, 4),
+            IndentGuide::new(8, 8, 1, 4),
+        ],
+        cx,
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_indent_guides_without_brackets(cx: &mut gpui::TestAppContext) {
+    assert_indent_guides(
+        &"
+        block1
+            block2
+                block3
+                    block4
+            block2
+        block1
+        block1"
+            .unindent(),
+        (0..=6).into_iter().map(Some),
+        vec![
+            IndentGuide::new(1, 4, 0, 0),
+            IndentGuide::new(2, 3, 1, 4),
+            IndentGuide::new(3, 3, 2, 8),
+        ],
+        cx,
+    )
+    .await;
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(row as u32, column as u32);
     point..point

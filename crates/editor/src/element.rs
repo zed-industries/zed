@@ -1374,6 +1374,42 @@ impl EditorElement {
         Some(shaped_lines)
     }
 
+    fn layout_indent_guides(
+        &self,
+        buffer_rows: impl Iterator<Item = Option<u32>>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        text_hitbox: &Hitbox,
+        snapshot: &DisplaySnapshot,
+        cx: &mut WindowContext,
+    ) -> Vec<IndentGuideLayout> {
+        let indent_guides = self
+            .editor
+            .read(cx)
+            .indent_guides_in_range(buffer_rows, snapshot, cx);
+
+        indent_guides
+            .into_iter()
+            .filter_map(|guide| {
+                let start_x = text_hitbox.origin.x + self.column_pixels(guide.size as usize, cx)
+                    - scroll_pixel_position.x;
+
+                if start_x >= text_hitbox.origin.x {
+                    let start_y = text_hitbox.origin.y + guide.start as f32 * line_height
+                        - scroll_pixel_position.y;
+                    let absolute_offset = point(start_x, start_y);
+                    Some(IndentGuideLayout {
+                        origin: absolute_offset,
+                        length: line_height * (guide.end as f32 - guide.start as f32 + 1.),
+                        active: guide.active,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     fn layout_code_actions_indicator(
         &self,
         line_height: Pixels,
@@ -2303,6 +2339,23 @@ impl EditorElement {
                 }
             }
         })
+    }
+
+    fn paint_indent_guides(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
+        for indent_guide in layout.indent_guides.iter() {
+            let color = if indent_guide.active {
+                cx.theme().colors().editor_active_wrap_guide
+            } else {
+                cx.theme().colors().editor_wrap_guide
+            };
+            cx.paint_quad(fill(
+                Bounds {
+                    origin: point(indent_guide.origin.x + px(3.), indent_guide.origin.y),
+                    size: size(px(1.), indent_guide.length),
+                },
+                color,
+            ));
+        }
     }
 
     fn paint_gutter(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
@@ -3831,12 +3884,21 @@ impl Element for EditorElement {
                 }
 
                 let blamed_display_rows = self.layout_blame_entries(
-                    buffer_rows,
+                    buffer_rows.clone(),
                     em_width,
                     scroll_position,
                     line_height,
                     &gutter_hitbox,
                     gutter_dimensions.git_blame_entries_width,
+                    cx,
+                );
+
+                let indent_guides = self.layout_indent_guides(
+                    buffer_rows,
+                    scroll_pixel_position,
+                    line_height,
+                    &text_hitbox,
+                    &snapshot,
                     cx,
                 );
 
@@ -4030,6 +4092,7 @@ impl Element for EditorElement {
                     }),
                     visible_display_row_range: start_row..end_row,
                     wrap_guides,
+                    indent_guides,
                     hitbox,
                     text_hitbox,
                     gutter_hitbox,
@@ -4115,6 +4178,7 @@ impl Element for EditorElement {
             cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
                 self.paint_mouse_listeners(layout, hovered_hunk, cx);
                 self.paint_background(layout, cx);
+                self.paint_indent_guides(layout, cx);
                 if layout.gutter_hitbox.size.width > Pixels::ZERO {
                     self.paint_gutter(layout, cx)
                 }
@@ -4154,6 +4218,7 @@ pub struct EditorLayout {
     scrollbar_layout: Option<ScrollbarLayout>,
     mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
+    indent_guides: Vec<IndentGuideLayout>,
     visible_display_row_range: Range<u32>,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: BTreeMap<u32, Hsla>,
@@ -4405,6 +4470,12 @@ fn layout_line(
             strikethrough: None,
         }],
     )
+}
+
+pub struct IndentGuideLayout {
+    origin: gpui::Point<Pixels>,
+    length: Pixels,
+    active: bool,
 }
 
 pub struct CursorLayout {
