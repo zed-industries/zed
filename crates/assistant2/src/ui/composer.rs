@@ -144,7 +144,7 @@ impl RenderOnce for ModelSelector {
                                 let assistant_chat = self.assistant_chat.clone();
                                 move |cx| {
                                     _ = assistant_chat.update(cx, |assistant_chat, cx| {
-                                        assistant_chat.model = model.clone();
+                                        assistant_chat.model.clone_from(&model);
                                         cx.notify();
                                     });
                                 }

@@ -3322,7 +3322,7 @@ impl Workspace {
         }
 
         if &update.id != &self.last_active_view_id {
-            self.last_active_view_id = update.id.clone();
+            self.last_active_view_id.clone_from(&update.id);
             self.update_followers(
                 is_project_item,
                 proto::update_followers::Variant::UpdateActiveView(update),

@@ -2072,7 +2072,7 @@ impl Buffer {
 
     /// Override current completion triggers with the user-provided completion triggers.
     pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
-        self.completion_triggers = triggers.clone();
+        self.completion_triggers.clone_from(&triggers);
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
         self.send_operation(
             Operation::UpdateCompletionTriggers {

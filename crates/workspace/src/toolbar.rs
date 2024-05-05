@@ -18,13 +18,6 @@ pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
     ) -> ToolbarItemLocation;
 
     fn pane_focus_update(&mut self, _pane_focused: bool, _cx: &mut ViewContext<Self>) {}
-
-    /// Number of times toolbar's height will be repeated to get the effective height.
-    /// Useful when multiple rows one under each other are needed.
-    /// The rows have the same width and act as a whole when reacting to resizes and similar events.
-    fn row_count(&self, _cx: &WindowContext) -> usize {
-        1
-    }
 }
 
 trait ToolbarItemViewHandle: Send {
@@ -36,7 +29,6 @@ trait ToolbarItemViewHandle: Send {
         cx: &mut WindowContext,
     ) -> ToolbarItemLocation;
     fn focus_changed(&mut self, pane_focused: bool, cx: &mut WindowContext);
-    fn row_count(&self, cx: &WindowContext) -> usize;
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -238,9 +230,5 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for View<T> {
             this.pane_focus_update(pane_focused, cx);
             cx.notify();
         });
-    }
-
-    fn row_count(&self, cx: &WindowContext) -> usize {
-        self.read(cx).row_count(cx)
     }
 }

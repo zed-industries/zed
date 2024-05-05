@@ -1167,7 +1167,7 @@ impl CompletionsMenu {
 
         for mat in &mut matches {
             let completion = &completions[mat.candidate_id];
-            mat.string = completion.label.text.clone();
+            mat.string.clone_from(&completion.label.text);
             for position in &mut mat.positions {
                 *position += completion.label.filter_range.start;
             }
@@ -10837,34 +10837,12 @@ impl ViewInputHandler for Editor {
 }
 
 trait SelectionExt {
-    fn offset_range(&self, buffer: &MultiBufferSnapshot) -> Range<usize>;
-    fn point_range(&self, buffer: &MultiBufferSnapshot) -> Range<Point>;
     fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint>;
     fn spanned_rows(&self, include_end_if_at_line_start: bool, map: &DisplaySnapshot)
         -> Range<u32>;
 }
 
 impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
-    fn point_range(&self, buffer: &MultiBufferSnapshot) -> Range<Point> {
-        let start = self.start.to_point(buffer);
-        let end = self.end.to_point(buffer);
-        if self.reversed {
-            end..start
-        } else {
-            start..end
-        }
-    }
-
-    fn offset_range(&self, buffer: &MultiBufferSnapshot) -> Range<usize> {
-        let start = self.start.to_offset(buffer);
-        let end = self.end.to_offset(buffer);
-        if self.reversed {
-            end..start
-        } else {
-            start..end
-        }
-    }
-
     fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint> {
         let start = self
             .start

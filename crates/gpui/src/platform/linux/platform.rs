@@ -199,10 +199,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        self.display(id)
-    }
-
     // todo(linux)
     fn active_window(&self) -> Option<AnyWindowHandle> {
         None
@@ -306,18 +302,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         open::that(dir);
     }
 
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| {
-            common.callbacks.become_active = Some(callback);
-        });
-    }
-
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| {
-            common.callbacks.resign_active = Some(callback);
-        });
-    }
-
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| {
             common.callbacks.quit = Some(callback);
@@ -327,12 +311,6 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| {
             common.callbacks.reopen = Some(callback);
-        });
-    }
-
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.with_common(|common| {
-            common.callbacks.event = Some(callback);
         });
     }
 

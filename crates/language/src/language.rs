@@ -1126,7 +1126,7 @@ impl Language {
                 for setting in query.property_settings(ix) {
                     match setting.key.as_ref() {
                         "language" => {
-                            config.language = setting.value.clone();
+                            config.language.clone_from(&setting.value);
                         }
                         "combined" => {
                             config.combined = true;
