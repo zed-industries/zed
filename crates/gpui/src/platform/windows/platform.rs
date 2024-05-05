@@ -66,6 +66,20 @@ struct PlatformCallbacks {
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
 }
 
+impl WindowsPlatformState {
+    fn new() -> Self {
+        let callbacks = PlatformCallbacks::default();
+        let settings = WindowsPlatformSystemSettings::new();
+        let current_cursor = load_cursor(CursorStyle::Arrow);
+
+        Self {
+            callbacks,
+            settings,
+            current_cursor,
+        }
+    }
+}
+
 impl WindowsPlatform {
     pub(crate) fn new() -> Self {
         unsafe {
@@ -84,19 +98,12 @@ impl WindowsPlatform {
             log::info!("Using cosmic text system.");
             Arc::new(CosmicTextSystem::new()) as Arc<dyn PlatformTextSystem>
         };
-        let callbacks = PlatformCallbacks::default();
-        let raw_window_handles = RwLock::new(SmallVec::new());
-        let settings = WindowsPlatformSystemSettings::new();
         let icon = load_icon().unwrap_or_default();
-        let current_cursor = load_cursor(CursorStyle::Arrow);
-        let inner = RefCell::new(WindowsPlatformState {
-            callbacks,
-            settings,
-            current_cursor,
-        });
+        let state = RefCell::new(WindowsPlatformState::new());
+        let raw_window_handles = RwLock::new(SmallVec::new());
 
         Self {
-            state: inner,
+            state,
             raw_window_handles,
             icon,
             main_receiver,
