@@ -249,11 +249,10 @@ impl CachedLspAdapter {
     }
 
     pub fn language_id(&self, language: &Language) -> String {
-        let language_name = language.name();
         self.language_ids
-            .get(language_name.as_ref())
+            .get(language.name().as_ref())
             .cloned()
-            .unwrap_or_else(|| language_name.to_lowercase())
+            .unwrap_or_else(|| language.lsp_id())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1380,6 +1379,13 @@ impl Language {
 
     pub fn prettier_plugins(&self) -> &Vec<Arc<str>> {
         &self.config.prettier_plugins
+    }
+
+    pub fn lsp_id(&self) -> String {
+        match self.config.name.as_ref() {
+            "Plain Text" => "plaintext".to_string(),
+            language_name => language_name.to_lowercase(),
+        }
     }
 }
 

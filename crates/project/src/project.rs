@@ -2402,13 +2402,12 @@ impl Project {
                         None => continue,
                     };
 
-                    let language_id = adapter.language_id(&language);
                     server
                         .notify::<lsp::notification::DidOpenTextDocument>(
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
                                     uri.clone(),
-                                    language_id,
+                                    adapter.language_id(&language),
                                     0,
                                     initial_snapshot.text(),
                                 ),
