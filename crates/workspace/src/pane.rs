@@ -318,7 +318,6 @@ impl Pane {
                     .child(
                         IconButton::new("plus", IconName::Plus)
                             .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
                             .on_click(cx.listener(|pane, _, cx| {
                                 let menu = ContextMenu::build(cx, |menu, _| {
                                     menu.action("New File", NewFile.boxed_clone())
@@ -340,7 +339,6 @@ impl Pane {
                     .child(
                         IconButton::new("split", IconName::Split)
                             .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
                             .on_click(cx.listener(|pane, _, cx| {
                                 let menu = ContextMenu::build(cx, |menu, _| {
                                     menu.action("Split Right", SplitRight.boxed_clone())
@@ -361,7 +359,6 @@ impl Pane {
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
                             .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
                             .selected(zoomed)
                             .selected_icon(IconName::Minimize)
                             .on_click(cx.listener(|pane, _, cx| {
