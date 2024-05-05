@@ -580,7 +580,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
-        self.0.inner.borrow_mut().callbacks.appearance_changed = Some(callback);
+        self.0.state.borrow_mut().callbacks.appearance_changed = Some(callback);
     }
 
     fn draw(&self, scene: &Scene) {
