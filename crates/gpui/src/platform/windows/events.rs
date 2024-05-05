@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use ::util::ResultExt;
 use anyhow::Context;
@@ -27,58 +27,62 @@ pub(crate) fn handle_msg(
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> LRESULT {
     let handled = match msg {
-        WM_ACTIVATE => handle_activate_msg(handle, wparam, state),
-        WM_CREATE => handle_create_msg(handle, state),
-        WM_MOVE => handle_move_msg(handle, lparam, state),
-        WM_SIZE => handle_size_msg(lparam, state),
+        WM_ACTIVATE => handle_activate_msg(handle, wparam, state_ptr),
+        WM_CREATE => handle_create_msg(handle, state_ptr),
+        WM_MOVE => handle_move_msg(handle, lparam, state_ptr),
+        WM_SIZE => handle_size_msg(lparam, state_ptr),
         WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => handle_size_move_loop(handle),
         WM_EXITSIZEMOVE | WM_EXITMENULOOP => handle_size_move_loop_exit(handle),
-        WM_TIMER => handle_timer_msg(handle, wparam, state),
-        WM_NCCALCSIZE => handle_calc_client_size(handle, wparam, lparam, state),
-        WM_DPICHANGED => handle_dpi_changed_msg(handle, wparam, lparam, state),
-        WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state),
-        WM_PAINT => handle_paint_msg(handle, state),
-        WM_CLOSE => handle_close_msg(state),
-        WM_DESTROY => handle_destroy_msg(handle, state),
-        WM_MOUSEMOVE => handle_mouse_move_msg(lparam, wparam, state),
-        WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state),
+        WM_TIMER => handle_timer_msg(handle, wparam, state_ptr),
+        WM_NCCALCSIZE => handle_calc_client_size(handle, wparam, lparam, state_ptr),
+        WM_DPICHANGED => handle_dpi_changed_msg(handle, wparam, lparam, state_ptr),
+        WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state_ptr),
+        WM_PAINT => handle_paint_msg(handle, state_ptr),
+        WM_CLOSE => handle_close_msg(state_ptr),
+        WM_DESTROY => handle_destroy_msg(handle, state_ptr),
+        WM_MOUSEMOVE => handle_mouse_move_msg(lparam, wparam, state_ptr),
+        WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state_ptr),
         WM_NCLBUTTONDOWN => {
-            handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state)
+            handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
         }
         WM_NCRBUTTONDOWN => {
-            handle_nc_mouse_down_msg(handle, MouseButton::Right, wparam, lparam, state)
+            handle_nc_mouse_down_msg(handle, MouseButton::Right, wparam, lparam, state_ptr)
         }
         WM_NCMBUTTONDOWN => {
-            handle_nc_mouse_down_msg(handle, MouseButton::Middle, wparam, lparam, state)
+            handle_nc_mouse_down_msg(handle, MouseButton::Middle, wparam, lparam, state_ptr)
         }
-        WM_NCLBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Left, wparam, lparam, state),
-        WM_NCRBUTTONUP => handle_nc_mouse_up_msg(handle, MouseButton::Right, wparam, lparam, state),
+        WM_NCLBUTTONUP => {
+            handle_nc_mouse_up_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
+        }
+        WM_NCRBUTTONUP => {
+            handle_nc_mouse_up_msg(handle, MouseButton::Right, wparam, lparam, state_ptr)
+        }
         WM_NCMBUTTONUP => {
-            handle_nc_mouse_up_msg(handle, MouseButton::Middle, wparam, lparam, state)
+            handle_nc_mouse_up_msg(handle, MouseButton::Middle, wparam, lparam, state_ptr)
         }
-        WM_LBUTTONDOWN => handle_mouse_down_msg(MouseButton::Left, lparam, state),
-        WM_RBUTTONDOWN => handle_mouse_down_msg(MouseButton::Right, lparam, state),
-        WM_MBUTTONDOWN => handle_mouse_down_msg(MouseButton::Middle, lparam, state),
-        WM_XBUTTONDOWN => handle_xbutton_msg(wparam, lparam, handle_mouse_down_msg, state),
-        WM_LBUTTONUP => handle_mouse_up_msg(MouseButton::Left, lparam, state),
-        WM_RBUTTONUP => handle_mouse_up_msg(MouseButton::Right, lparam, state),
-        WM_MBUTTONUP => handle_mouse_up_msg(MouseButton::Middle, lparam, state),
-        WM_XBUTTONUP => handle_xbutton_msg(wparam, lparam, handle_mouse_up_msg, state),
-        WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state),
-        WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state),
-        WM_SYSKEYDOWN => handle_syskeydown_msg(handle, wparam, lparam, state),
-        WM_SYSKEYUP => handle_syskeyup_msg(handle, wparam, state),
-        WM_KEYDOWN => handle_keydown_msg(handle, wparam, lparam, state),
-        WM_KEYUP => handle_keyup_msg(handle, wparam, state),
-        WM_CHAR => handle_char_msg(handle, wparam, lparam, state),
-        WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state),
-        WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state),
-        WM_SETCURSOR => handle_set_cursor(lparam, state),
-        CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state),
-        MOUSE_WHEEL_SETTINGS_CHANGED => handle_mouse_wheel_settings_msg(wparam, lparam, state),
+        WM_LBUTTONDOWN => handle_mouse_down_msg(MouseButton::Left, lparam, state_ptr),
+        WM_RBUTTONDOWN => handle_mouse_down_msg(MouseButton::Right, lparam, state_ptr),
+        WM_MBUTTONDOWN => handle_mouse_down_msg(MouseButton::Middle, lparam, state_ptr),
+        WM_XBUTTONDOWN => handle_xbutton_msg(wparam, lparam, handle_mouse_down_msg, state_ptr),
+        WM_LBUTTONUP => handle_mouse_up_msg(MouseButton::Left, lparam, state_ptr),
+        WM_RBUTTONUP => handle_mouse_up_msg(MouseButton::Right, lparam, state_ptr),
+        WM_MBUTTONUP => handle_mouse_up_msg(MouseButton::Middle, lparam, state_ptr),
+        WM_XBUTTONUP => handle_xbutton_msg(wparam, lparam, handle_mouse_up_msg, state_ptr),
+        WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state_ptr),
+        WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
+        WM_SYSKEYDOWN => handle_syskeydown_msg(handle, wparam, lparam, state_ptr),
+        WM_SYSKEYUP => handle_syskeyup_msg(handle, wparam, state_ptr),
+        WM_KEYDOWN => handle_keydown_msg(handle, wparam, lparam, state_ptr),
+        WM_KEYUP => handle_keyup_msg(handle, wparam, state_ptr),
+        WM_CHAR => handle_char_msg(handle, wparam, lparam, state_ptr),
+        WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
+        WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
+        WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
+        CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
+        MOUSE_WHEEL_SETTINGS_CHANGED => handle_mouse_wheel_settings_msg(wparam, lparam, state_ptr),
         _ => None,
     };
     if let Some(n) = handled {
@@ -91,11 +95,11 @@ pub(crate) fn handle_msg(
 fn handle_move_msg(
     handle: HWND,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let x = lparam.signed_loword() as i32;
     let y = lparam.signed_hiword() as i32;
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     lock.origin = point(x.into(), y.into());
     let size = lock.physical_size;
     let center_x = x + size.width.0 / 2;
@@ -116,16 +120,16 @@ fn handle_move_msg(
     if let Some(mut callback) = lock.callbacks.moved.take() {
         drop(lock);
         callback();
-        state.as_ref().borrow_mut().callbacks.moved = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.moved = Some(callback);
     }
     Some(0)
 }
 
-fn handle_size_msg(lparam: LPARAM, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
+fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
     let new_physical_size = size(width.into(), height.into());
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     let scale_factor = lock.scale_factor;
     lock.physical_size = new_physical_size;
     lock.renderer.update_drawable_size(Size {
@@ -136,7 +140,7 @@ fn handle_size_msg(lparam: LPARAM, state: Rc<RefCell<WindowsWindowState>>) -> Op
         drop(lock);
         let logical_size = logical_size(new_physical_size, scale_factor);
         callback(logical_size, scale_factor);
-        state.as_ref().borrow_mut().callbacks.resize = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.resize = Some(callback);
     }
     Some(0)
 }
@@ -164,38 +168,37 @@ fn handle_size_move_loop_exit(handle: HWND) -> Option<isize> {
 fn handle_timer_msg(
     handle: HWND,
     wparam: WPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     if wparam.0 == SIZE_MOVE_LOOP_TIMER_ID {
-        let receiver = state.as_ref().borrow().main_receiver.clone();
-        for runnable in receiver.drain() {
+        for runnable in state_ptr.main_receiver.drain() {
             runnable.run();
         }
-        handle_paint_msg(handle, state)
+        handle_paint_msg(handle, state_ptr)
     } else {
         None
     }
 }
 
-fn handle_paint_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
+fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let mut paint_struct = PAINTSTRUCT::default();
     let _hdc = unsafe { BeginPaint(handle, &mut paint_struct) };
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
         drop(lock);
         request_frame();
-        state.as_ref().borrow_mut().callbacks.request_frame = Some(request_frame);
+        state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
     }
     unsafe { EndPaint(handle, &paint_struct) };
     Some(0)
 }
 
-fn handle_close_msg(state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
+fn handle_close_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.should_close.take() {
         drop(lock);
         let should_close = callback();
-        state.as_ref().borrow_mut().callbacks.should_close = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.should_close = Some(callback);
         if should_close {
             None
         } else {
@@ -206,9 +209,9 @@ fn handle_close_msg(state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
     }
 }
 
-fn handle_destroy_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
+fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let callback = {
-        let mut lock = state.as_ref().borrow_mut();
+        let mut lock = state_ptr.state.borrow_mut();
         lock.callbacks.close.take()
     };
     if let Some(callback) = callback {
@@ -223,9 +226,9 @@ fn handle_destroy_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> O
 fn handle_mouse_move_msg(
     lparam: LPARAM,
     wparam: WPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         drop(lock);
@@ -253,7 +256,7 @@ fn handle_mouse_move_msg(
         } else {
             Some(1)
         };
-        state.as_ref().borrow_mut().callbacks.input = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
         return result;
     }
     Some(1)
@@ -263,14 +266,14 @@ fn handle_syskeydown_msg(
     handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
     let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
         return None;
     };
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     let Some(mut func) = lock.callbacks.input.take() else {
         return None;
     };
@@ -285,7 +288,7 @@ fn handle_syskeydown_msg(
     } else {
         None
     };
-    state.as_ref().borrow_mut().callbacks.input = Some(func);
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
     result
 }
@@ -293,14 +296,14 @@ fn handle_syskeydown_msg(
 fn handle_syskeyup_msg(
     handle: HWND,
     wparam: WPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
     // shortcuts.
     let Some(keystroke) = parse_syskeydown_msg_keystroke(wparam) else {
         return None;
     };
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     let Some(mut func) = lock.callbacks.input.take() else {
         return None;
     };
@@ -312,7 +315,7 @@ fn handle_syskeyup_msg(
     } else {
         Some(1)
     };
-    state.as_ref().borrow_mut().callbacks.input = Some(func);
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
     result
 }
@@ -321,12 +324,12 @@ fn handle_keydown_msg(
     handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let Some(keystroke) = parse_keydown_msg_keystroke(wparam) else {
         return Some(1);
     };
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
     };
@@ -341,7 +344,7 @@ fn handle_keydown_msg(
     } else {
         Some(1)
     };
-    state.as_ref().borrow_mut().callbacks.input = Some(func);
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
     result
 }
@@ -349,12 +352,12 @@ fn handle_keydown_msg(
 fn handle_keyup_msg(
     handle: HWND,
     wparam: WPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let Some(keystroke) = parse_keydown_msg_keystroke(wparam) else {
         return Some(1);
     };
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
     };
@@ -366,7 +369,7 @@ fn handle_keyup_msg(
     } else {
         Some(1)
     };
-    state.as_ref().borrow_mut().callbacks.input = Some(func);
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
     result
 }
@@ -375,12 +378,12 @@ fn handle_char_msg(
     handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let Some(keystroke) = parse_char_msg_keystroke(wparam) else {
         return Some(1);
     };
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
     };
@@ -392,7 +395,7 @@ fn handle_char_msg(
     };
 
     let dispatch_event_result = func(PlatformInput::KeyDown(event));
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     lock.callbacks.input = Some(func);
     if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
         invalidate_client_area(handle);
@@ -407,7 +410,7 @@ fn handle_char_msg(
     drop(lock);
     input_handler.replace_text_in_range(None, &ime_char);
     invalidate_client_area(handle);
-    state.as_ref().borrow_mut().input_handler = Some(input_handler);
+    state_ptr.state.borrow_mut().input_handler = Some(input_handler);
 
     Some(0)
 }
@@ -415,9 +418,9 @@ fn handle_char_msg(
 fn handle_mouse_down_msg(
     button: MouseButton,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let x = lparam.signed_loword() as f32;
         let y = lparam.signed_hiword() as f32;
@@ -438,7 +441,7 @@ fn handle_mouse_down_msg(
         } else {
             Some(1)
         };
-        state.as_ref().borrow_mut().callbacks.input = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -449,9 +452,9 @@ fn handle_mouse_down_msg(
 fn handle_mouse_up_msg(
     button: MouseButton,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let x = lparam.signed_loword() as f32;
         let y = lparam.signed_hiword() as f32;
@@ -470,7 +473,7 @@ fn handle_mouse_up_msg(
         } else {
             Some(1)
         };
-        state.as_ref().borrow_mut().callbacks.input = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -481,24 +484,24 @@ fn handle_mouse_up_msg(
 fn handle_xbutton_msg(
     wparam: WPARAM,
     lparam: LPARAM,
-    handler: impl Fn(MouseButton, LPARAM, Rc<RefCell<WindowsWindowState>>) -> Option<isize>,
-    state: Rc<RefCell<WindowsWindowState>>,
+    handler: impl Fn(MouseButton, LPARAM, Rc<WindowsWindowStatePtr>) -> Option<isize>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let nav_dir = match wparam.hiword() {
         XBUTTON1 => NavigationDirection::Back,
         XBUTTON2 => NavigationDirection::Forward,
         _ => return Some(1),
     };
-    handler(MouseButton::Navigate(nav_dir), lparam, state)
+    handler(MouseButton::Navigate(nav_dir), lparam, state_ptr)
 }
 
 fn handle_mouse_wheel_msg(
     handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         let wheel_scroll_lines = lock.mouse_wheel_settings.wheel_scroll_lines;
@@ -524,7 +527,7 @@ fn handle_mouse_wheel_msg(
         } else {
             Some(1)
         };
-        state.as_ref().borrow_mut().callbacks.input = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -536,9 +539,9 @@ fn handle_mouse_horizontal_wheel_msg(
     handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         let wheel_scroll_chars = lock.mouse_wheel_settings.wheel_scroll_chars;
@@ -564,7 +567,7 @@ fn handle_mouse_horizontal_wheel_msg(
         } else {
             Some(1)
         };
-        state.as_ref().borrow_mut().callbacks.input = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -572,9 +575,9 @@ fn handle_mouse_horizontal_wheel_msg(
     }
 }
 
-fn handle_ime_position(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
+fn handle_ime_position(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     unsafe {
-        let mut lock = state.as_ref().borrow_mut();
+        let mut lock = state_ptr.state.borrow_mut();
         let ctx = ImmGetContext(handle);
         let Some(mut input_handler) = lock.input_handler.take() else {
             return Some(1);
@@ -584,7 +587,7 @@ fn handle_ime_position(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> 
         // we are composing, this should never fail
         let caret_range = input_handler.selected_text_range().unwrap();
         let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
-        state.as_ref().borrow_mut().input_handler = Some(input_handler);
+        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
         let config = CANDIDATEFORM {
             dwStyle: CFS_CANDIDATEPOS,
             // logical to physical
@@ -604,20 +607,20 @@ fn handle_ime_position(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> 
 fn handle_ime_composition(
     handle: HWND,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
         let Some((string, string_len)) = parse_ime_compostion_string(handle) else {
             return None;
         };
-        let mut lock = state.as_ref().borrow_mut();
+        let mut lock = state_ptr.state.borrow_mut();
         let Some(mut input_handler) = lock.input_handler.take() else {
             return None;
         };
         drop(lock);
         input_handler.replace_and_mark_text_in_range(None, string.as_str(), Some(0..string_len));
-        state.as_ref().borrow_mut().input_handler = Some(input_handler);
+        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
         ime_input = Some(string);
     }
     if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
@@ -625,25 +628,25 @@ fn handle_ime_composition(
             return None;
         };
         let caret_pos = retrieve_composition_cursor_position(handle);
-        let mut lock = state.as_ref().borrow_mut();
+        let mut lock = state_ptr.state.borrow_mut();
         let Some(mut input_handler) = lock.input_handler.take() else {
             return None;
         };
         drop(lock);
         input_handler.replace_and_mark_text_in_range(None, comp_string, Some(0..caret_pos));
-        state.as_ref().borrow_mut().input_handler = Some(input_handler);
+        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     }
     if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
         let Some(comp_result) = parse_ime_compostion_result(handle) else {
             return None;
         };
-        let mut lock = state.as_ref().borrow_mut();
+        let mut lock = state_ptr.state.borrow_mut();
         let Some(mut input_handler) = lock.input_handler.take() else {
             return Some(1);
         };
         drop(lock);
         input_handler.replace_text_in_range(None, &comp_result);
-        state.as_ref().borrow_mut().input_handler = Some(input_handler);
+        state_ptr.state.borrow_mut().input_handler = Some(input_handler);
         invalidate_client_area(handle);
         return Some(0);
     }
@@ -656,13 +659,11 @@ fn handle_calc_client_size(
     handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let lock = state.as_ref().borrow();
-    if !lock.hide_title_bar || lock.is_fullscreen() {
+    if !state_ptr.hide_title_bar || state_ptr.state.borrow().is_fullscreen() {
         return None;
     }
-    drop(lock);
 
     if wparam.0 == 0 {
         return None;
@@ -688,24 +689,23 @@ fn handle_calc_client_size(
 fn handle_activate_msg(
     handle: HWND,
     wparam: WPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let activated = wparam.loword() > 0;
-    let lock = state.as_ref().borrow();
-    if lock.hide_title_bar {
-        if let Some(titlebar_rect) = lock.get_titlebar_rect().log_err() {
+    if state_ptr.hide_title_bar {
+        if let Some(titlebar_rect) = state_ptr.state.borrow().get_titlebar_rect().log_err() {
             unsafe { InvalidateRect(handle, Some(&titlebar_rect), FALSE) };
         }
     }
-    let executor = lock.executor.clone();
-    drop(lock);
-    executor
+    let this = state_ptr.clone();
+    state_ptr
+        .executor
         .spawn(async move {
-            let mut lock = state.as_ref().borrow_mut();
+            let mut lock = this.state.borrow_mut();
             if let Some(mut cb) = lock.callbacks.active_status_change.take() {
                 drop(lock);
                 cb(activated);
-                state.as_ref().borrow_mut().callbacks.active_status_change = Some(cb);
+                this.state.borrow_mut().callbacks.active_status_change = Some(cb);
             }
         })
         .detach();
@@ -713,35 +713,14 @@ fn handle_activate_msg(
     None
 }
 
-fn handle_create_msg(handle: HWND, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
+fn handle_create_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let mut size_rect = RECT::default();
     unsafe { GetWindowRect(handle, &mut size_rect).log_err() };
 
     let width = size_rect.right - size_rect.left;
     let height = size_rect.bottom - size_rect.top;
 
-    let lock = state.as_ref().borrow();
-    if lock.hide_title_bar {
-        drop(lock);
-        // Inform the application of the frame change to force redrawing with the new
-        // client area that is extended into the title bar
-        // let executor = lock.executor.clone();
-        // executor
-        //     .spawn(async move {
-        //         unsafe {
-        //             SetWindowPos(
-        //                 handle,
-        //                 None,
-        //                 size_rect.left,
-        //                 size_rect.top,
-        //                 width,
-        //                 height,
-        //                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE,
-        //             )
-        //             .log_err()
-        //         }
-        //     })
-        //     .detach();
+    if state_ptr.hide_title_bar {
         unsafe {
             SetWindowPos(
                 handle,
@@ -763,10 +742,10 @@ fn handle_dpi_changed_msg(
     handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let new_dpi = wparam.loword() as f32;
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     lock.scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
     drop(lock);
 
@@ -799,10 +778,9 @@ fn handle_hit_test_msg(
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let lock = state.as_ref().borrow();
-    if !lock.hide_title_bar {
+    if !state_ptr.hide_title_bar {
         return None;
     }
 
@@ -823,7 +801,7 @@ fn handle_hit_test_msg(
         return Some(hit.0);
     }
 
-    if lock.is_fullscreen() {
+    if state_ptr.state.borrow().is_fullscreen() {
         return Some(HTCLIENT as _);
     }
 
@@ -840,10 +818,11 @@ fn handle_hit_test_msg(
         return Some(HTTOP as _);
     }
 
-    let titlebar_rect = lock.get_titlebar_rect();
+    let titlebar_rect = state_ptr.state.borrow().get_titlebar_rect();
     if let Ok(titlebar_rect) = titlebar_rect {
         if cursor_point.y < titlebar_rect.bottom {
-            let caption_btn_width = (lock.caption_button_width().0 * lock.scale_factor) as i32;
+            let caption_btn_width = (state_ptr.state.borrow().caption_button_width().0
+                * state_ptr.state.borrow().scale_factor) as i32;
             if cursor_point.x >= titlebar_rect.right - caption_btn_width {
                 return Some(HTCLOSE as _);
             } else if cursor_point.x >= titlebar_rect.right - caption_btn_width * 2 {
@@ -862,13 +841,13 @@ fn handle_hit_test_msg(
 fn handle_nc_mouse_move_msg(
     handle: HWND,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
-    if !lock.hide_title_bar {
+    if !state_ptr.hide_title_bar {
         return None;
     }
 
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         drop(lock);
@@ -887,7 +866,7 @@ fn handle_nc_mouse_move_msg(
         } else {
             Some(1)
         };
-        state.as_ref().borrow_mut().callbacks.input = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -900,13 +879,13 @@ fn handle_nc_mouse_down_msg(
     button: MouseButton,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
-    if !lock.hide_title_bar {
+    if !state_ptr.hide_title_bar {
         return None;
     }
 
+    let mut lock = state_ptr.state.borrow_mut();
     let result = if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         let mut cursor_point = POINT {
@@ -929,7 +908,7 @@ fn handle_nc_mouse_down_msg(
         } else {
             None
         };
-        state.as_ref().borrow_mut().callbacks.input = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
 
         result
     } else {
@@ -945,13 +924,13 @@ fn handle_nc_mouse_up_msg(
     button: MouseButton,
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
-    if !lock.hide_title_bar {
+    if !state_ptr.hide_title_bar {
         return None;
     }
 
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         drop(lock);
@@ -971,7 +950,7 @@ fn handle_nc_mouse_up_msg(
         } else {
             None
         };
-        state.as_ref().borrow_mut().callbacks.input = Some(callback);
+        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
         if result.is_some() {
             return result;
         }
@@ -985,8 +964,7 @@ fn handle_nc_mouse_up_msg(
                 ShowWindowAsync(handle, SW_MINIMIZE);
             },
             HTMAXBUTTON => unsafe {
-                let lock = state.as_ref().borrow();
-                if lock.is_maximized() {
+                if state_ptr.state.borrow().is_maximized() {
                     ShowWindowAsync(handle, SW_NORMAL);
                 } else {
                     ShowWindowAsync(handle, SW_MAXIMIZE);
@@ -1003,13 +981,13 @@ fn handle_nc_mouse_up_msg(
     None
 }
 
-fn handle_cursor_changed(lparam: LPARAM, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
+fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
     lock.current_cursor = HCURSOR(lparam.0);
     Some(0)
 }
 
-fn handle_set_cursor(lparam: LPARAM, state: Rc<RefCell<WindowsWindowState>>) -> Option<isize> {
+fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     if matches!(
         lparam.loword() as u32,
         HTLEFT | HTRIGHT | HTTOP | HTTOPLEFT | HTTOPRIGHT | HTBOTTOM | HTBOTTOMLEFT | HTBOTTOMRIGHT
@@ -1017,7 +995,7 @@ fn handle_set_cursor(lparam: LPARAM, state: Rc<RefCell<WindowsWindowState>>) -> 
         return None;
     }
 
-    let lock = state.as_ref().borrow();
+    let lock = state_ptr.state.borrow();
     unsafe { SetCursor(lock.current_cursor) };
     Some(1)
 }
@@ -1025,9 +1003,9 @@ fn handle_set_cursor(lparam: LPARAM, state: Rc<RefCell<WindowsWindowState>>) -> 
 fn handle_mouse_wheel_settings_msg(
     wparam: WPARAM,
     lparam: LPARAM,
-    state: Rc<RefCell<WindowsWindowState>>,
+    state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state.as_ref().borrow_mut();
+    let mut lock = state_ptr.state.borrow_mut();
     match lparam.0 {
         1 => lock.mouse_wheel_settings.wheel_scroll_chars = wparam.0 as u32,
         2 => lock.mouse_wheel_settings.wheel_scroll_lines = wparam.0 as u32,
