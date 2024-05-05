@@ -14,7 +14,7 @@ use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
 use std::task::Poll;
-use task::{TaskContext, TaskSource, TaskTemplate, TaskTemplates};
+use task::{TaskContext, TaskTemplate, TaskTemplates};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree};
 use worktree::WorktreeModelHandle as _;
@@ -168,12 +168,11 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
         let all_tasks = project
             .update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, cx| {
+                project.task_inventory().update(cx, |inventory, _| {
                     let (mut old, new) = inventory.used_and_current_resolved_tasks(
                         None,
                         Some(workree_id),
                         &task_context,
-                        cx,
                     );
                     old.extend(new);
                     old
@@ -215,13 +214,9 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
     project.update(cx, |project, cx| {
         let inventory = project.task_inventory();
-        inventory.update(cx, |inventory, cx| {
-            let (mut old, new) = inventory.used_and_current_resolved_tasks(
-                None,
-                Some(workree_id),
-                &task_context,
-                cx,
-            );
+        inventory.update(cx, |inventory, _| {
+            let (mut old, new) =
+                inventory.used_and_current_resolved_tasks(None, Some(workree_id), &task_context);
             old.extend(new);
             let (_, resolved_task) = old
                 .into_iter()
@@ -231,41 +226,39 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         })
     });
 
+    let tasks = serde_json::to_string(&TaskTemplates(vec![TaskTemplate {
+        label: "cargo check".to_string(),
+        command: "cargo".to_string(),
+        args: vec![
+            "check".to_string(),
+            "--all".to_string(),
+            "--all-targets".to_string(),
+        ],
+        env: HashMap::from_iter(Some((
+            "RUSTFLAGS".to_string(),
+            "-Zunstable-options".to_string(),
+        ))),
+        ..TaskTemplate::default()
+    }]))
+    .unwrap();
+    let (tx, rx) = futures::channel::mpsc::unbounded();
+
+    let templates = cx.update(|cx| TrackedFile::new(rx, cx));
+    tx.unbounded_send(tasks).unwrap();
+
+    let source = StaticSource::new(templates);
+    cx.run_until_parked();
+
     cx.update(|cx| {
         let all_tasks = project
             .update(cx, |project, cx| {
                 project.task_inventory().update(cx, |inventory, cx| {
                     inventory.remove_local_static_source(Path::new("/the-root/.zed/tasks.json"));
-                    inventory.add_source(
-                        global_task_source_kind.clone(),
-                        |cx| {
-                            cx.new_model(|_| {
-                                let source = TestTaskSource {
-                                    tasks: TaskTemplates(vec![TaskTemplate {
-                                        label: "cargo check".to_string(),
-                                        command: "cargo".to_string(),
-                                        args: vec![
-                                            "check".to_string(),
-                                            "--all".to_string(),
-                                            "--all-targets".to_string(),
-                                        ],
-                                        env: HashMap::from_iter(Some((
-                                            "RUSTFLAGS".to_string(),
-                                            "-Zunstable-options".to_string(),
-                                        ))),
-                                        ..TaskTemplate::default()
-                                    }]),
-                                };
-                                Box::new(source) as Box<_>
-                            })
-                        },
-                        cx,
-                    );
+                    inventory.add_source(global_task_source_kind.clone(), source, cx);
                     let (mut old, new) = inventory.used_and_current_resolved_tasks(
                         None,
                         Some(workree_id),
                         &task_context,
-                        cx,
                     );
                     old.extend(new);
                     old
@@ -315,20 +308,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             ]
         );
     });
-}
-
-struct TestTaskSource {
-    tasks: TaskTemplates,
-}
-
-impl TaskSource for TestTaskSource {
-    fn as_any(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
-    fn tasks_to_schedule(&mut self, _: &mut ModelContext<Box<dyn TaskSource>>) -> TaskTemplates {
-        self.tasks.clone()
-    }
 }
 
 #[gpui::test]

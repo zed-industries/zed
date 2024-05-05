@@ -7655,17 +7655,15 @@ impl Project {
                     } else {
                         let fs = self.fs.clone();
                         let task_abs_path = abs_path.clone();
+                        let tasks_file_rx =
+                            watch_config_file(&cx.background_executor(), fs, task_abs_path);
                         task_inventory.add_source(
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
                                 id_base: "local_tasks_for_worktree",
                             },
-                            |cx| {
-                                let tasks_file_rx =
-                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
-                            },
+                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx)),
                             cx,
                         );
                     }
@@ -7677,23 +7675,20 @@ impl Project {
                     } else {
                         let fs = self.fs.clone();
                         let task_abs_path = abs_path.clone();
+                        let tasks_file_rx =
+                            watch_config_file(&cx.background_executor(), fs, task_abs_path);
                         task_inventory.add_source(
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
                                 id_base: "local_vscode_tasks_for_worktree",
                             },
-                            |cx| {
-                                let tasks_file_rx =
-                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(
-                                    TrackedFile::new_convertible::<task::VsCodeTaskFile>(
-                                        tasks_file_rx,
-                                        cx,
-                                    ),
+                            StaticSource::new(
+                                TrackedFile::new_convertible::<task::VsCodeTaskFile>(
+                                    tasks_file_rx,
                                     cx,
-                                )
-                            },
+                                ),
+                            ),
                             cx,
                         );
                     }

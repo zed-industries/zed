@@ -297,7 +297,7 @@ fn init_ui(args: Args) {
 
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
-
+        watch_languages(fs.clone(), languages.clone(), cx);
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
@@ -860,6 +860,37 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     })
     .detach()
 }
+
+#[cfg(debug_assertions)]
+fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &mut AppContext) {
+    use std::time::Duration;
+
+    let path = {
+        let p = Path::new("crates/languages/src");
+        let Ok(full_path) = p.canonicalize() else {
+            return;
+        };
+        full_path
+    };
+
+    cx.spawn(|_| async move {
+        let mut events = fs.watch(path.as_path(), Duration::from_millis(100)).await;
+        while let Some(event) = events.next().await {
+            let has_language_file = event.iter().any(|path| {
+                path.extension()
+                    .map(|ext| ext.to_string_lossy().as_ref() == "scm")
+                    .unwrap_or(false)
+            });
+            if has_language_file {
+                languages.reload();
+            }
+        }
+    })
+    .detach()
+}
+
+#[cfg(not(debug_assertions))]
+fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut AppContext) {}
 
 #[cfg(debug_assertions)]
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {

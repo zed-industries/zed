@@ -56,6 +56,7 @@ pub struct SyntaxMapCapture<'a> {
 
 #[derive(Debug)]
 pub struct SyntaxMapMatch<'a> {
+    pub language: Arc<Language>,
     pub depth: usize,
     pub pattern_index: usize,
     pub captures: &'a [QueryCapture<'a>],
@@ -71,6 +72,7 @@ struct SyntaxMapCapturesLayer<'a> {
 }
 
 struct SyntaxMapMatchesLayer<'a> {
+    language: Arc<Language>,
     depth: usize,
     next_pattern_index: usize,
     next_captures: Vec<QueryCapture<'a>>,
@@ -1016,6 +1018,7 @@ impl<'a> SyntaxMapMatches<'a> {
                     result.grammars.len() - 1
                 });
             let mut layer = SyntaxMapMatchesLayer {
+                language: layer.language.clone(),
                 depth: layer.depth,
                 grammar_index,
                 matches,
@@ -1048,10 +1051,13 @@ impl<'a> SyntaxMapMatches<'a> {
 
     pub fn peek(&self) -> Option<SyntaxMapMatch> {
         let layer = self.layers.first()?;
+
         if !layer.has_next {
             return None;
         }
+
         Some(SyntaxMapMatch {
+            language: layer.language.clone(),
             depth: layer.depth,
             grammar_index: layer.grammar_index,
             pattern_index: layer.next_pattern_index,
