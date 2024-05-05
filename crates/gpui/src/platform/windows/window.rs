@@ -48,7 +48,7 @@ pub struct WindowsWindowState {
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
-    handle: HWND,
+    hwnd: HWND,
 }
 
 pub(crate) struct WindowsWindowStatePtr {
@@ -62,7 +62,7 @@ pub(crate) struct WindowsWindowStatePtr {
 
 impl WindowsWindowState {
     fn new(
-        handle: HWND,
+        hwnd: HWND,
         transparent: bool,
         main_receiver: flume::Receiver<Runnable>,
         cs: &CREATESTRUCTW,
@@ -73,10 +73,10 @@ impl WindowsWindowState {
         let origin = point(cs.x.into(), cs.y.into());
         let physical_size = size(cs.cx.into(), cs.cy.into());
         let scale_factor = {
-            let monitor_dpi = unsafe { GetDpiForWindow(handle) } as f32;
+            let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
         };
-        let renderer = windows_renderer::windows_renderer(handle);
+        let renderer = windows_renderer::windows_renderer(hwnd);
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
@@ -94,7 +94,7 @@ impl WindowsWindowState {
             current_cursor,
             display,
             fullscreen,
-            handle,
+            hwnd,
         }
     }
 
@@ -104,7 +104,7 @@ impl WindowsWindowState {
     }
 
     pub(crate) fn is_maximized(&self) -> bool {
-        !self.is_fullscreen() && unsafe { IsZoomed(self.handle) }.as_bool()
+        !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
     fn bounds(&self) -> Bounds<DevicePixels> {
@@ -151,7 +151,7 @@ impl WindowsWindowState {
     pub(crate) fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
         let height = self.title_bar_height();
         let mut rect = RECT::default();
-        unsafe { GetClientRect(self.handle, &mut rect) }?;
+        unsafe { GetClientRect(self.hwnd, &mut rect) }?;
         rect.bottom = rect.top + ((height.0 * self.scale_factor).round() as i32);
         Ok(rect)
     }
@@ -449,10 +449,10 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn activate(&self) {
-        let handle = self.0.hwnd;
-        unsafe { SetActiveWindow(handle) };
-        unsafe { SetFocus(handle) };
-        unsafe { SetForegroundWindow(handle) };
+        let hwnd = self.0.hwnd;
+        unsafe { SetActiveWindow(hwnd) };
+        unsafe { SetFocus(hwnd) };
+        unsafe { SetForegroundWindow(hwnd) };
     }
 
     fn is_active(&self) -> bool {
