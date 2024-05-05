@@ -2510,10 +2510,10 @@ impl Workspace {
     fn track_alternate_files(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(item) = self.active_item(cx) {
             if let Some(project_path) = item.project_path(cx) {
-                let (current, alternative) = self.alternate_file_paths.clone();
+                let (current, alternative) = &self.alternate_file_paths;
                 match current {
                     Some(current) => {
-                        if current != project_path {
+                        if *current != project_path {
                             self.alternate_file_paths = (Some(project_path), Some(current.clone()));
                         }
                     }
