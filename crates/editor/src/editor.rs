@@ -9554,7 +9554,6 @@ impl Editor {
         Ok(provider.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: &origin_url,
                 sha: &sha,
                 path: &path,
                 selection: selection.map(|selection| {

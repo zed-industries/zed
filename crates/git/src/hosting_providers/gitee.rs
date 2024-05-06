@@ -42,8 +42,12 @@ impl GitHostingProvider for Gitee {
         None
     }
 
-    fn build_commit_permalink(&self, params: BuildCommitPermalinkParams) -> Url {
-        let BuildCommitPermalinkParams { sha, remote } = params;
+    fn build_commit_permalink(
+        &self,
+        remote: &ParsedGitRemote,
+        params: BuildCommitPermalinkParams,
+    ) -> Url {
+        let BuildCommitPermalinkParams { sha } = params;
         let ParsedGitRemote { owner, repo } = remote;
 
         self.base_url()
@@ -57,7 +61,6 @@ impl GitHostingProvider for Gitee {
             sha,
             path,
             selection,
-            ..
         } = params;
 
         let mut permalink = self
@@ -86,7 +89,6 @@ mod tests {
         let permalink = Gitee.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@gitee.com:libkitten/zed.git",
                 sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: None,
@@ -106,7 +108,6 @@ mod tests {
         let permalink = Gitee.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@gitee.com:libkitten/zed.git",
                 sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: Some(6..6),
@@ -126,7 +127,6 @@ mod tests {
         let permalink = Gitee.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@gitee.com:libkitten/zed.git",
                 sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: Some(23..47),
@@ -146,7 +146,6 @@ mod tests {
         let permalink = Gitee.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "https://gitee.com/libkitten/zed.git",
                 sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
                 path: "crates/zed/src/main.rs",
                 selection: None,
@@ -166,7 +165,6 @@ mod tests {
         let permalink = Gitee.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "https://gitee.com/libkitten/zed.git",
                 sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
                 path: "crates/zed/src/main.rs",
                 selection: Some(6..6),
@@ -186,7 +184,6 @@ mod tests {
         let permalink = Gitee.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "https://gitee.com/libkitten/zed.git",
                 sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
                 path: "crates/zed/src/main.rs",
                 selection: Some(23..47),

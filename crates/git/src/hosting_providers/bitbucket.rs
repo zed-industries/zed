@@ -41,8 +41,12 @@ impl GitHostingProvider for Bitbucket {
         None
     }
 
-    fn build_commit_permalink(&self, params: BuildCommitPermalinkParams) -> Url {
-        let BuildCommitPermalinkParams { sha, remote } = params;
+    fn build_commit_permalink(
+        &self,
+        remote: &ParsedGitRemote,
+        params: BuildCommitPermalinkParams,
+    ) -> Url {
+        let BuildCommitPermalinkParams { sha } = params;
         let ParsedGitRemote { owner, repo } = remote;
 
         self.base_url()
@@ -56,7 +60,6 @@ impl GitHostingProvider for Bitbucket {
             sha,
             path,
             selection,
-            ..
         } = params;
 
         let mut permalink = self
@@ -114,7 +117,6 @@ mod tests {
         let permalink = Bitbucket.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@bitbucket.org:thorstenzed/testingrepo.git",
                 sha: "f00b4r",
                 path: "main.rs",
                 selection: None,
@@ -134,7 +136,6 @@ mod tests {
         let permalink = Bitbucket.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@bitbucket.org:thorstenzed/testingrepo.git",
                 sha: "f00b4r",
                 path: "main.rs",
                 selection: Some(6..6),
@@ -155,7 +156,6 @@ mod tests {
         let permalink = Bitbucket.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@bitbucket.org:thorstenzed/testingrepo.git",
                 sha: "f00b4r",
                 path: "main.rs",
                 selection: Some(23..47),

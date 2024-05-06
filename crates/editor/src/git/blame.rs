@@ -448,12 +448,12 @@ async fn parse_commit_messages(
         let parsed_message = parse_markdown(&message, &languages).await;
 
         let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
-            Some(
-                provider.build_commit_permalink(git::BuildCommitPermalinkParams {
-                    remote: git_remote,
+            Some(provider.build_commit_permalink(
+                git_remote,
+                git::BuildCommitPermalinkParams {
                     sha: oid.to_string().as_str(),
-                }),
-            )
+                },
+            ))
         } else {
             // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
             // now do the parsing. This is here for backwards compatibility, so that

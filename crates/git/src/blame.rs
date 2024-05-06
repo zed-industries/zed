@@ -48,10 +48,12 @@ impl Blame {
             // now do the parsing.
             if let Some((provider, remote)) = parsed_remote_url.as_ref() {
                 permalinks.entry(entry.sha).or_insert_with(|| {
-                    provider.build_commit_permalink(BuildCommitPermalinkParams {
+                    provider.build_commit_permalink(
                         remote,
-                        sha: entry.sha.to_string().as_str(),
-                    })
+                        BuildCommitPermalinkParams {
+                            sha: entry.sha.to_string().as_str(),
+                        },
+                    )
                 });
             }
         }

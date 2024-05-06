@@ -15,12 +15,10 @@ pub struct PullRequest {
 }
 
 pub struct BuildCommitPermalinkParams<'a> {
-    pub remote: &'a ParsedGitRemote<'a>,
     pub sha: &'a str,
 }
 
 pub struct BuildPermalinkParams<'a> {
-    pub remote_url: &'a str,
     pub sha: &'a str,
     pub path: &'a str,
     pub selection: Option<Range<u32>>,
@@ -36,7 +34,11 @@ pub trait GitHostingProvider {
     fn base_url(&self) -> Url;
 
     /// Returns a permalink to a Git commit on this hosting provider.
-    fn build_commit_permalink(&self, params: BuildCommitPermalinkParams) -> Url;
+    fn build_commit_permalink(
+        &self,
+        remote: &ParsedGitRemote,
+        params: BuildCommitPermalinkParams,
+    ) -> Url;
 
     /// Returns a permalink to a file and/or selection on this hosting provider.
     fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url;

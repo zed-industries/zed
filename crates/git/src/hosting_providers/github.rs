@@ -57,8 +57,12 @@ impl GitHostingProvider for Github {
         None
     }
 
-    fn build_commit_permalink(&self, params: BuildCommitPermalinkParams) -> Url {
-        let BuildCommitPermalinkParams { sha, remote } = params;
+    fn build_commit_permalink(
+        &self,
+        remote: &ParsedGitRemote,
+        params: BuildCommitPermalinkParams,
+    ) -> Url {
+        let BuildCommitPermalinkParams { sha } = params;
         let ParsedGitRemote { owner, repo } = remote;
 
         self.base_url()
@@ -72,7 +76,6 @@ impl GitHostingProvider for Github {
             sha,
             path,
             selection,
-            ..
         } = params;
 
         let mut permalink = self
@@ -136,7 +139,6 @@ mod tests {
         let permalink = Github.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@github.com:zed-industries/zed.git",
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: None,
@@ -156,7 +158,6 @@ mod tests {
         let permalink = Github.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@github.com:zed-industries/zed.git",
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: Some(6..6),
@@ -176,7 +177,6 @@ mod tests {
         let permalink = Github.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@github.com:zed-industries/zed.git",
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: Some(23..47),
@@ -196,7 +196,6 @@ mod tests {
         let permalink = Github.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "https://github.com/zed-industries/zed.git",
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
                 path: "crates/zed/src/main.rs",
                 selection: None,
@@ -216,7 +215,6 @@ mod tests {
         let permalink = Github.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "https://github.com/zed-industries/zed.git",
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
                 path: "crates/zed/src/main.rs",
                 selection: Some(6..6),
@@ -236,7 +234,6 @@ mod tests {
         let permalink = Github.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "https://github.com/zed-industries/zed.git",
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
                 path: "crates/zed/src/main.rs",
                 selection: Some(23..47),

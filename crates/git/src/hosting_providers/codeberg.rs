@@ -49,8 +49,12 @@ impl GitHostingProvider for Codeberg {
         None
     }
 
-    fn build_commit_permalink(&self, params: BuildCommitPermalinkParams) -> Url {
-        let BuildCommitPermalinkParams { sha, remote } = params;
+    fn build_commit_permalink(
+        &self,
+        remote: &ParsedGitRemote,
+        params: BuildCommitPermalinkParams,
+    ) -> Url {
+        let BuildCommitPermalinkParams { sha } = params;
         let ParsedGitRemote { owner, repo } = remote;
 
         self.base_url()
@@ -64,7 +68,6 @@ impl GitHostingProvider for Codeberg {
             sha,
             path,
             selection,
-            ..
         } = params;
 
         let mut permalink = self
@@ -109,7 +112,6 @@ mod tests {
         let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@codeberg.org:rajveermalviya/zed.git",
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: None,
@@ -129,7 +131,6 @@ mod tests {
         let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@codeberg.org:rajveermalviya/zed.git",
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: Some(6..6),
@@ -149,7 +150,6 @@ mod tests {
         let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "git@codeberg.org:rajveermalviya/zed.git",
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: Some(23..47),
@@ -169,7 +169,6 @@ mod tests {
         let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "https://codeberg.org/rajveermalviya/zed.git",
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/zed/src/main.rs",
                 selection: None,
@@ -189,7 +188,6 @@ mod tests {
         let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "https://codeberg.org/rajveermalviya/zed.git",
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/zed/src/main.rs",
                 selection: Some(6..6),
@@ -209,7 +207,6 @@ mod tests {
         let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                remote_url: "https://codeberg.org/rajveermalviya/zed.git",
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/zed/src/main.rs",
                 selection: Some(23..47),
