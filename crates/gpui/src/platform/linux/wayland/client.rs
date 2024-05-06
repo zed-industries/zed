@@ -55,6 +55,7 @@ use super::super::{open_uri_internal, read_fd, DOUBLE_CLICK_INTERVAL};
 use super::window::{WaylandWindowState, WaylandWindowStatePtr};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::wayland::cursor::Cursor;
+use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
@@ -124,8 +125,7 @@ impl Globals {
 }
 
 pub(crate) struct WaylandClientState {
-    serial: u32, // todo(linux): storing a general serial is wrong
-    pointer_serial: u32,
+    serial_tracker: SerialTracker,
     globals: Globals,
     wl_seat: wl_seat::WlSeat, // todo(linux): multi-seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
@@ -315,8 +315,7 @@ impl WaylandClient {
         let cursor = Cursor::new(&conn, &globals, 24);
 
         let mut state = Rc::new(RefCell::new(WaylandClientState {
-            serial: 0,
-            pointer_serial: 0,
+            serial_tracker: SerialTracker::new(),
             globals,
             wl_seat: seat,
             wl_pointer: None,
@@ -414,7 +413,7 @@ impl LinuxClient for WaylandClient {
             .map_or(true, |current_style| current_style != style);
 
         if need_update {
-            let serial = state.pointer_serial;
+            let serial = state.serial_tracker.get(SerialKind::MouseEnter);
             state.cursor_style = Some(style);
 
             if let Some(cursor_shape_device) = &state.cursor_shape_device {
@@ -440,7 +439,8 @@ impl LinuxClient for WaylandClient {
         ) {
             state.pending_open_uri = Some(uri.to_owned());
             let token = activation.get_activation_token(&state.globals.qh, ());
-            token.set_serial(state.serial, &state.wl_seat);
+            let serial = state.serial_tracker.get(SerialKind::MousePress);
+            token.set_serial(serial, &state.wl_seat);
             token.set_surface(&window.surface());
             token.commit();
         } else {
@@ -692,7 +692,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ObjectId> for WaylandClientStatePtr {
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClientStatePtr {
     fn event(
-        this: &mut Self,
+        _: &mut Self,
         wm_base: &xdg_wm_base::XdgWmBase,
         event: <xdg_wm_base::XdgWmBase as Proxy>::Event,
         _: &(),
@@ -700,9 +700,6 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for WaylandClientStatePtr {
         _: &QueueHandle<Self>,
     ) {
         if let xdg_wm_base::Event::Ping { serial } = event {
-            let client = this.get_client();
-            let mut state = client.borrow_mut();
-            state.serial = serial;
             wm_base.pong(serial);
         }
     }
@@ -802,10 +799,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 state.keymap_state = Some(xkb::State::new(&keymap));
             }
-            wl_keyboard::Event::Enter {
-                serial, surface, ..
-            } => {
-                state.serial = serial;
+            wl_keyboard::Event::Enter { surface, .. } => {
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.enter_token = Some(());
 
@@ -814,10 +808,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     window.set_focused(true);
                 }
             }
-            wl_keyboard::Event::Leave {
-                serial, surface, ..
-            } => {
-                state.serial = serial;
+            wl_keyboard::Event::Leave { surface, .. } => {
                 let keyboard_focused_window = get_window(&mut state, &surface.id());
                 state.keyboard_focused_window = None;
                 state.enter_token.take();
@@ -828,14 +819,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 }
             }
             wl_keyboard::Event::Modifiers {
-                serial,
                 mods_depressed,
                 mods_latched,
                 mods_locked,
                 group,
                 ..
             } => {
-                state.serial = serial;
                 let focused_window = state.keyboard_focused_window.clone();
                 let Some(focused_window) = focused_window else {
                     return;
@@ -853,12 +842,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 focused_window.handle_input(input);
             }
             wl_keyboard::Event::Key {
+                serial,
                 key,
                 state: WEnum::Value(key_state),
-                serial,
                 ..
             } => {
-                state.serial = serial;
+                state.serial_tracker.update(SerialKind::KeyPress, serial);
 
                 let focused_window = state.keyboard_focused_window.clone();
                 let Some(focused_window) = focused_window else {
@@ -971,7 +960,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 surface_y,
                 ..
             } => {
-                state.pointer_serial = serial;
+                state.serial_tracker.update(SerialKind::MouseEnter, serial);
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
@@ -1041,7 +1030,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state: WEnum::Value(button_state),
                 ..
             } => {
-                state.serial = serial;
+                state.serial_tracker.update(SerialKind::MousePress, serial);
                 let button = linux_button_to_gpui(button);
                 let Some(button) = button else { return };
                 if state.mouse_focused_window.is_none() {
@@ -1299,7 +1288,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 y,
                 id: data_offer,
             } => {
-                state.serial = serial;
+                state.serial_tracker.update(SerialKind::DataDevice, serial);
                 if let Some(data_offer) = data_offer {
                     let Some(drag_window) = get_window(&mut state, &surface.id()) else {
                         return;
@@ -1429,7 +1418,8 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
         match event {
             wl_data_offer::Event::Offer { mime_type } => {
                 if mime_type == FILE_LIST_MIME_TYPE {
-                    data_offer.accept(state.serial, Some(mime_type));
+                    let serial = state.serial_tracker.get(SerialKind::DataDevice);
+                    data_offer.accept(serial, Some(mime_type));
                 }
             }
             _ => {}
