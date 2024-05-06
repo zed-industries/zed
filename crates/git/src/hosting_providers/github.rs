@@ -8,7 +8,7 @@ use util::github;
 use util::http::HttpClient;
 
 use crate::hosting_provider::{GitHostingProvider, PullRequest};
-use crate::permalink::{BuildCommitPermalinkParams, ParsedGitRemote};
+use crate::permalink::{BuildCommitPermalinkParams, BuildPermalinkParams, ParsedGitRemote};
 use crate::Oid;
 
 fn pull_request_number_regex() -> &'static Regex {
@@ -63,6 +63,27 @@ impl GitHostingProvider for Github {
         self.base_url()
             .join(&format!("{owner}/{repo}/commit/{sha}"))
             .unwrap()
+    }
+
+    fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url {
+        let ParsedGitRemote { owner, repo } = remote;
+        let BuildPermalinkParams {
+            sha,
+            path,
+            selection,
+            ..
+        } = params;
+
+        let mut permalink = self
+            .base_url()
+            .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
+            .unwrap();
+        permalink.set_fragment(
+            selection
+                .map(|selection| self.line_fragment(&selection))
+                .as_deref(),
+        );
+        permalink
     }
 
     fn extract_pull_request(&self, remote: &ParsedGitRemote, message: &str) -> Option<PullRequest> {

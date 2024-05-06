@@ -1,13 +1,11 @@
-use core::fmt;
 use std::{ops::Range, sync::Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use url::Url;
-use util::{codeberg, github, http::HttpClient};
+use util::http::HttpClient;
 
-use crate::hosting_providers::{Bitbucket, Codeberg, Gitee, Github, Gitlab, Sourcehut};
-use crate::permalink::{BuildCommitPermalinkParams, ParsedGitRemote};
+use crate::permalink::{BuildCommitPermalinkParams, BuildPermalinkParams, ParsedGitRemote};
 use crate::Oid;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -25,7 +23,11 @@ pub trait GitHostingProvider {
     /// Returns the base URL of the provider.
     fn base_url(&self) -> Url;
 
+    /// Returns a permalink to a Git commit on this hosting provider.
     fn build_commit_permalink(&self, params: BuildCommitPermalinkParams) -> Url;
+
+    /// Returns a permalink to a file and/or selection on this hosting provider.
+    fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url;
 
     /// Returns whether this provider supports avatars.
     fn supports_avatars(&self) -> bool;
@@ -68,67 +70,5 @@ pub trait GitHostingProvider {
         _http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         Ok(None)
-    }
-}
-
-pub enum HostingProvider {
-    Github,
-    Gitlab,
-    Gitee,
-    Bitbucket,
-    Sourcehut,
-    Codeberg,
-}
-
-impl HostingProvider {
-    fn provider(&self) -> Arc<dyn GitHostingProvider> {
-        match self {
-            HostingProvider::Github => Arc::new(Github),
-            HostingProvider::Gitlab => Arc::new(Gitlab),
-            HostingProvider::Gitee => Arc::new(Gitee),
-            HostingProvider::Bitbucket => Arc::new(Bitbucket),
-            HostingProvider::Sourcehut => Arc::new(Sourcehut),
-            HostingProvider::Codeberg => Arc::new(Codeberg),
-        }
-    }
-
-    pub fn supports_avatars(&self) -> bool {
-        self.provider().supports_avatars()
-    }
-
-    pub async fn commit_author_avatar_url(
-        &self,
-        repo_owner: &str,
-        repo: &str,
-        commit: Oid,
-        client: Arc<dyn HttpClient>,
-    ) -> Result<Option<Url>> {
-        Ok(match self {
-            HostingProvider::Github => {
-                let commit = commit.to_string();
-                github::fetch_github_commit_author(repo_owner, repo, &commit, &client)
-                    .await?
-                    .map(|author| -> Result<Url, url::ParseError> {
-                        let mut url = Url::parse(&author.avatar_url)?;
-                        url.set_query(Some("size=128"));
-                        Ok(url)
-                    })
-                    .transpose()
-            }
-            HostingProvider::Codeberg => {
-                let commit = commit.to_string();
-                codeberg::fetch_codeberg_commit_author(repo_owner, repo, &commit, &client)
-                    .await?
-                    .map(|author| Url::parse(&author.avatar_url))
-                    .transpose()
-            }
-            _ => Ok(None),
-        }?)
-    }
-}
-
-impl fmt::Display for HostingProvider {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.provider().name())
     }
 }

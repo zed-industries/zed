@@ -1,7 +1,7 @@
 use url::Url;
 
 use crate::hosting_provider::GitHostingProvider;
-use crate::permalink::{BuildCommitPermalinkParams, ParsedGitRemote};
+use crate::permalink::{BuildCommitPermalinkParams, BuildPermalinkParams, ParsedGitRemote};
 
 pub struct Sourcehut;
 
@@ -50,5 +50,26 @@ impl GitHostingProvider for Sourcehut {
         self.base_url()
             .join(&format!("~{owner}/{repo}/commit/{sha}"))
             .unwrap()
+    }
+
+    fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url {
+        let ParsedGitRemote { owner, repo } = remote;
+        let BuildPermalinkParams {
+            sha,
+            path,
+            selection,
+            ..
+        } = params;
+
+        let mut permalink = self
+            .base_url()
+            .join(&format!("~{owner}/{repo}/tree/{sha}/item/{path}"))
+            .unwrap();
+        permalink.set_fragment(
+            selection
+                .map(|selection| self.line_fragment(&selection))
+                .as_deref(),
+        );
+        permalink
     }
 }

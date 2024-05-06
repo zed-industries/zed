@@ -15,21 +15,14 @@ pub struct BuildPermalinkParams<'a> {
 }
 
 pub fn build_permalink(params: BuildPermalinkParams) -> Result<Url> {
-    let BuildPermalinkParams {
-        remote_url,
-        sha,
-        path,
-        selection,
-    } = params;
-
-    let (provider, remote) = parse_git_remote_url(remote_url)
+    let (provider, remote) = parse_git_remote_url(params.remote_url)
         .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
-    let line_fragment = selection.map(|selection| provider.line_fragment(&selection));
+    let line_fragment = params
+        .selection
+        .clone()
+        .map(|selection| provider.line_fragment(&selection));
 
-    let mut permalink = provider.build_commit_permalink(BuildCommitPermalinkParams {
-        remote: &remote,
-        sha,
-    });
+    let mut permalink = provider.build_permalink(remote, params);
     permalink.set_fragment(line_fragment.as_deref());
     Ok(permalink)
 }

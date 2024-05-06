@@ -7,7 +7,7 @@ use util::codeberg;
 use util::http::HttpClient;
 
 use crate::hosting_provider::GitHostingProvider;
-use crate::permalink::{BuildCommitPermalinkParams, ParsedGitRemote};
+use crate::permalink::{BuildCommitPermalinkParams, BuildPermalinkParams, ParsedGitRemote};
 use crate::Oid;
 
 pub struct Codeberg;
@@ -56,6 +56,27 @@ impl GitHostingProvider for Codeberg {
         self.base_url()
             .join(&format!("{owner}/{repo}/commit/{sha}"))
             .unwrap()
+    }
+
+    fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url {
+        let ParsedGitRemote { owner, repo } = remote;
+        let BuildPermalinkParams {
+            sha,
+            path,
+            selection,
+            ..
+        } = params;
+
+        let mut permalink = self
+            .base_url()
+            .join(&format!("{owner}/{repo}/src/commit/{sha}/{path}"))
+            .unwrap();
+        permalink.set_fragment(
+            selection
+                .map(|selection| self.line_fragment(&selection))
+                .as_deref(),
+        );
+        permalink
     }
 
     async fn commit_author_avatar_url(
