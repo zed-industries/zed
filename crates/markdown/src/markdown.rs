@@ -2,8 +2,9 @@ mod parser;
 
 use futures::FutureExt;
 use gpui::{
-    AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, HighlightStyle, Hsla, Render,
-    StrikethroughStyle, StyledText, Task, TextRun, TextStyle, TextStyleRefinement, WrappedLine,
+    AnyElement, Bounds, ClipboardItem, DispatchPhase, FontStyle, FontWeight, GlobalElementId,
+    HighlightStyle, Hsla, MouseDownEvent, Render, StrikethroughStyle, Style, StyledText, Task,
+    TextRun, TextStyle, TextStyleRefinement, UnderlineStyle, WrappedLine,
 };
 use language::{Language, LanguageRegistry};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -82,13 +83,7 @@ impl Markdown {
 
 impl Render for Markdown {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .bg(gpui::white())
-            .child(MarkdownElement::new(
-                self.parsed_markdown.clone(),
-                self.language_registry.clone(),
-            ))
+        MarkdownElement::new(self.parsed_markdown.clone(), self.language_registry.clone())
     }
 }
 
@@ -143,10 +138,10 @@ impl Element for MarkdownElement {
             match event {
                 MarkdownEvent::Start(tag) => match tag {
                     MarkdownTag::Paragraph => {
-                        builder.push_div(div());
+                        builder.push_div(div().line_height(rems(1.3)));
                     }
                     MarkdownTag::Heading { level, .. } => {
-                        let mut heading = div().font_weight(FontWeight::BOLD);
+                        let mut heading = div().font_weight(FontWeight::BOLD).mt_2();
                         heading = match level {
                             pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
                             pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
@@ -158,7 +153,13 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTag::BlockQuote => {
                         // todo!("use the right color")
-                        builder.push_div(div().pl_4().text_color(gpui::red()));
+                        builder.push_div(
+                            div()
+                                .pl_4()
+                                .border_l_4()
+                                .border_color(gpui::green())
+                                .text_color(gpui::red()),
+                        );
                     }
                     MarkdownTag::CodeBlock(kind) => {
                         let language = if let CodeBlockKind::Fenced(language) = kind {
@@ -185,7 +186,7 @@ impl Element for MarkdownElement {
                         if let Some(item_index) = builder.next_list_item_index() {
                             builder.push_text(&format!("{}. ", item_index));
                         } else {
-                            builder.push_text("- ");
+                            builder.push_text("• ");
                         };
                     }
                     MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
@@ -208,7 +209,15 @@ impl Element for MarkdownElement {
                         dest_url,
                         title,
                         id,
-                    } => todo!(),
+                    } => builder.push_text_style(TextStyleRefinement {
+                        color: Some(gpui::blue()),
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: Some(gpui::blue()),
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    }),
                     MarkdownTag::Image {
                         link_type,
                         dest_url,
@@ -218,12 +227,14 @@ impl Element for MarkdownElement {
                     _ => log::info!("unsupported markdown tag {:?}", tag),
                 },
                 MarkdownEvent::End(tag) => match tag {
-                    MarkdownTagEnd::Paragraph => builder.pop_div(),
+                    MarkdownTagEnd::Paragraph => {
+                        builder.pop_div();
+                    }
                     MarkdownTagEnd::Heading(_) => builder.pop_div(),
                     MarkdownTagEnd::BlockQuote => builder.pop_div(),
                     MarkdownTagEnd::CodeBlock => {
-                        builder.pop_code_block();
                         builder.pop_div();
+                        builder.pop_code_block();
                     }
                     MarkdownTagEnd::HtmlBlock => builder.pop_div(),
                     MarkdownTagEnd::List(_) => {
@@ -234,7 +245,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Emphasis => builder.pop_text_style(),
                     MarkdownTagEnd::Strong => builder.pop_text_style(),
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
-                    MarkdownTagEnd::Link => todo!(),
+                    MarkdownTagEnd::Link => builder.pop_text_style(),
                     MarkdownTagEnd::Image => todo!(),
                     _ => log::info!("unsupported markdown tag end: {:?}", tag),
                 },
@@ -250,12 +261,22 @@ impl Element for MarkdownElement {
                 MarkdownEvent::InlineHtml(range) => {
                     builder.push_text(&self.markdown.text[range.clone()]);
                 }
-                _ => todo!(),
+                MarkdownEvent::Rule => {
+                    builder.push_div(div().border_b_1().my_2().border_color(gpui::red()));
+                    builder.pop_div()
+                }
+                MarkdownEvent::FootnoteReference(_) => todo!(),
+                MarkdownEvent::SoftBreak => todo!(),
+                MarkdownEvent::HardBreak => todo!(),
+                MarkdownEvent::TaskListMarker(_) => todo!(),
             }
         }
 
         let mut element = builder.finish().into_any();
-        (element.request_layout(cx), element)
+        let child_layout_id = element.request_layout(cx);
+        let layout_id = cx.request_layout(&Style::default(), [child_layout_id]);
+
+        (layout_id, element)
     }
 
     fn prepaint(
@@ -311,7 +332,7 @@ struct ListStackEntry {
 impl MarkdownElementBuilder {
     fn new(base_text_style: TextStyle) -> Self {
         Self {
-            div_stack: vec![div()],
+            div_stack: vec![div().debug_selector(|| "inner".into())],
             pending_text: String::new(),
             pending_runs: Vec::new(),
             base_text_style,
