@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use dev_server_projects::{DevServer, DevServerId, DevServerProject, DevServerProjectId};
 use editor::Editor;
+use feature_flags::FeatureFlagAppExt;
 use feature_flags::FeatureFlagViewExt;
 use gpui::{
     percentage, Action, Animation, AnimationExt, AnyElement, AppContext, ClipboardItem,
@@ -49,15 +50,23 @@ enum Mode {
 }
 
 impl DevServerProjects {
-    pub fn register(_: &mut Workspace, cx: &mut ViewContext<Workspace>) {
+    pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         cx.observe_flag::<feature_flags::Remoting, _>(|enabled, workspace, _| {
             if enabled {
-                workspace.register_action(|workspace, _: &OpenRemote, cx| {
-                    workspace.toggle_modal(cx, |cx| Self::new(cx))
-                });
+                Self::register_open_remote_action(workspace);
             }
         })
         .detach();
+
+        if cx.has_flag::<feature_flags::Remoting>() {
+            Self::register_open_remote_action(workspace);
+        }
+    }
+
+    fn register_open_remote_action(workspace: &mut Workspace) {
+        workspace.register_action(|workspace, _: &OpenRemote, cx| {
+            workspace.toggle_modal(cx, |cx| Self::new(cx))
+        });
     }
 
     pub fn open(workspace: View<Workspace>, cx: &mut WindowContext) {
