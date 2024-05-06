@@ -1,7 +1,7 @@
 pub mod active_file;
 
 use anyhow::{anyhow, Result};
-use assistant_tooling::{AssistantContext, LanguageModelAttachment, ToolOutput};
+use assistant_tooling::{LanguageModelAttachment, ProjectContext, ToolOutput};
 use editor::Editor;
 use gpui::{Render, Task, View, WeakModel, WeakView};
 use language::Buffer;
@@ -52,10 +52,10 @@ impl Render for FileAttachmentView {
 }
 
 impl ToolOutput for FileAttachmentView {
-    fn generate(&self, output: &mut AssistantContext, cx: &mut WindowContext) -> String {
+    fn generate(&self, project: &mut ProjectContext, cx: &mut WindowContext) -> String {
         if let Ok(result) = &self.output {
             if let Some(path) = &result.path {
-                output.add_file(path.clone());
+                project.add_file(path.clone());
                 return format!("current file: {}", path.path.display());
             } else if let Some(buffer) = result.buffer.upgrade() {
                 return format!("current untitled buffer text:\n{}", buffer.read(cx).text());

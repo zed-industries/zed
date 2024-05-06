@@ -1,5 +1,5 @@
 use anyhow::Result;
-use assistant_tooling::{AssistantContext, LanguageModelTool, ToolOutput};
+use assistant_tooling::{LanguageModelTool, ProjectContext, ToolOutput};
 use editor::Editor;
 use gpui::{prelude::*, Model, Task, View, WeakView};
 use project::Project;
@@ -110,7 +110,7 @@ impl Render for CreateBufferView {
 }
 
 impl ToolOutput for CreateBufferView {
-    fn generate(&self, _: &mut AssistantContext, _: &mut WindowContext) -> String {
+    fn generate(&self, _: &mut ProjectContext, _: &mut WindowContext) -> String {
         match &self.output {
             Ok(_) => format!("Created a new {} buffer", self.language),
             Err(err) => format!("Failed to create buffer: {err:?}"),

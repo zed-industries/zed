@@ -11,7 +11,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering::SeqCst},
 };
 
-use crate::AssistantContext;
+use crate::ProjectContext;
 
 pub struct ToolRegistry {
     registered_tools: HashMap<String, RegisteredTool>,
@@ -31,7 +31,7 @@ pub enum ToolFunctionCallResult {
     ParsingFailed,
     Finished {
         view: AnyView,
-        generate_fn: fn(AnyView, &mut AssistantContext, &mut WindowContext) -> String,
+        generate_fn: fn(AnyView, &mut ProjectContext, &mut WindowContext) -> String,
     },
 }
 
@@ -90,7 +90,7 @@ pub trait LanguageModelTool {
 }
 
 pub trait ToolOutput: Sized {
-    fn generate(&self, output: &mut AssistantContext, cx: &mut WindowContext) -> String;
+    fn generate(&self, project: &mut ProjectContext, cx: &mut WindowContext) -> String;
 }
 
 struct RegisteredTool {
@@ -211,12 +211,12 @@ impl ToolRegistry {
 
         fn generate<T: LanguageModelTool>(
             view: AnyView,
-            output: &mut AssistantContext,
+            project: &mut ProjectContext,
             cx: &mut WindowContext,
         ) -> String {
             view.downcast::<T::View>()
                 .unwrap()
-                .update(cx, |view, cx| T::View::generate(view, output, cx))
+                .update(cx, |view, cx| T::View::generate(view, project, cx))
         }
     }
 
@@ -251,7 +251,7 @@ impl ToolFunctionCallResult {
     pub fn generate(
         &self,
         name: &String,
-        output: &mut AssistantContext,
+        project: &mut ProjectContext,
         cx: &mut WindowContext,
     ) -> String {
         match self {
@@ -260,7 +260,7 @@ impl ToolFunctionCallResult {
                 format!("Unable to parse arguments for {name}")
             }
             ToolFunctionCallResult::Finished { generate_fn, view } => {
-                (generate_fn)(view.clone(), output, cx)
+                (generate_fn)(view.clone(), project, cx)
             }
         }
     }
@@ -326,7 +326,7 @@ mod test {
     }
 
     impl ToolOutput for WeatherView {
-        fn generate(&self, _output: &mut AssistantContext, _cx: &mut WindowContext) -> String {
+        fn generate(&self, _output: &mut ProjectContext, _cx: &mut WindowContext) -> String {
             serde_json::to_string(&self.result).unwrap()
         }
     }

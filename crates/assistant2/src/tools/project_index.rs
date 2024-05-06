@@ -112,7 +112,7 @@ impl Render for ProjectIndexView {
 impl ToolOutput for ProjectIndexView {
     fn generate(
         &self,
-        context: &mut assistant_tooling::AssistantContext,
+        context: &mut assistant_tooling::ProjectContext,
         _: &mut WindowContext,
     ) -> String {
         match &self.output {

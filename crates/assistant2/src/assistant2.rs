@@ -12,7 +12,7 @@ use crate::{
 use ::ui::{div, prelude::*, Color, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{
-    AssistantContext, AttachmentRegistry, ToolFunctionCall, ToolRegistry, UserAttachment,
+    AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry, UserAttachment,
 };
 use client::{proto, Client, UserStore};
 use collections::HashMap;
@@ -766,7 +766,7 @@ impl AssistantChat {
         let project = project_index.project();
         let fs = project_index.fs();
 
-        let mut assistant_context = AssistantContext::new(project, fs);
+        let mut project_context = ProjectContext::new(project, fs);
         let mut completion_messages = Vec::new();
 
         for message in &self.messages {
@@ -775,7 +775,7 @@ impl AssistantChat {
                     body, attachments, ..
                 }) => {
                     for attachment in attachments {
-                        if let Some(content) = attachment.generate(&mut assistant_context, cx) {
+                        if let Some(content) = attachment.generate(&mut project_context, cx) {
                             completion_messages.push(CompletionMessage::System { content });
                         }
                     }
@@ -816,7 +816,7 @@ impl AssistantChat {
                         // Every tool call _must_ have a result by ID, otherwise OpenAI will error.
                         let content = match &tool_call.result {
                             Some(result) => {
-                                result.generate(&tool_call.name, &mut assistant_context, cx)
+                                result.generate(&tool_call.name, &mut project_context, cx)
                             }
                             None => "".to_string(),
                         };
@@ -830,7 +830,7 @@ impl AssistantChat {
             }
         }
 
-        let system_message = assistant_context.generate_system_message(cx);
+        let system_message = project_context.generate_system_message(cx);
 
         cx.background_executor().spawn(async move {
             let content = system_message.await?;

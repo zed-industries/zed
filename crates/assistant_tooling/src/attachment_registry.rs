@@ -1,4 +1,4 @@
-use crate::{AssistantContext, ToolOutput};
+use crate::{ProjectContext, ToolOutput};
 use anyhow::{anyhow, Result};
 use collections::HashMap;
 use futures::future::join_all;
@@ -28,7 +28,7 @@ pub trait LanguageModelAttachment {
 /// A collected attachment from running an attachment tool
 pub struct UserAttachment {
     pub view: AnyView,
-    generate_fn: fn(AnyView, &mut AssistantContext, cx: &mut WindowContext) -> String,
+    generate_fn: fn(AnyView, &mut ProjectContext, cx: &mut WindowContext) -> String,
 }
 
 /// Internal representation of an attachment tool to allow us to treat them dynamically
@@ -70,12 +70,12 @@ impl AttachmentRegistry {
 
         fn generate<T: LanguageModelAttachment>(
             view: AnyView,
-            output: &mut AssistantContext,
+            project: &mut ProjectContext,
             cx: &mut WindowContext,
         ) -> String {
             view.downcast::<T::View>()
                 .unwrap()
-                .update(cx, |view, cx| T::View::generate(view, output, cx))
+                .update(cx, |view, cx| T::View::generate(view, project, cx))
         }
     }
 
@@ -137,11 +137,7 @@ impl AttachmentRegistry {
 }
 
 impl UserAttachment {
-    pub fn generate(
-        &self,
-        output: &mut AssistantContext,
-        cx: &mut WindowContext,
-    ) -> Option<String> {
+    pub fn generate(&self, output: &mut ProjectContext, cx: &mut WindowContext) -> Option<String> {
         let result = (self.generate_fn)(self.view.clone(), output, cx);
         if result.is_empty() {
             None

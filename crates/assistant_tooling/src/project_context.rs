@@ -4,7 +4,7 @@ use project::{Fs, Project, ProjectPath, Worktree};
 use std::{cmp::Ordering, fmt::Write as _, ops::Range, sync::Arc};
 use sum_tree::TreeMap;
 
-pub struct AssistantContext {
+pub struct ProjectContext {
     files: TreeMap<ProjectPath, PathState>,
     project: WeakModel<Project>,
     fs: Arc<dyn Fs>,
@@ -17,7 +17,7 @@ enum PathState {
     Excerpts { ranges: Vec<Range<usize>> },
 }
 
-impl AssistantContext {
+impl ProjectContext {
     pub fn new(project: WeakModel<Project>, fs: Arc<dyn Fs>) -> Self {
         Self {
             files: TreeMap::default(),
@@ -85,9 +85,6 @@ impl AssistantContext {
     }
 
     pub fn generate_system_message(&self, cx: &mut AppContext) -> Task<Result<String>> {
-        // todo!(): handle base case of no files or excerpts, no message
-        // todo!(): figure out how we surface errors from here
-
         let project = self
             .project
             .upgrade()
@@ -230,7 +227,7 @@ mod tests {
                 .collect::<Vec<_>>()
         });
 
-        let mut ax = AssistantContext::new(project.downgrade(), fs);
+        let mut ax = ProjectContext::new(project.downgrade(), fs);
 
         ax.add_file(ProjectPath {
             worktree_id: worktree_ids[0],
