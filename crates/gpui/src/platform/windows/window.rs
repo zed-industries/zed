@@ -1625,16 +1625,16 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                 lindex: -1,
                 tymed: TYMED_HGLOBAL.0 as _,
             };
-            let mut paths = SmallVec::<[PathBuf; 2]>::new();
             if idata_obj.QueryGetData(&config as _) == S_OK {
                 *pdweffect = DROPEFFECT_LINK;
-                let Ok(mut idata) = idata_obj.GetData(&config as _) else {
+                let Some(mut idata) = idata_obj.GetData(&config as _).log_err() else {
                     return Ok(());
                 };
                 if idata.u.hGlobal.is_invalid() {
                     return Ok(());
                 }
                 let hdrop = idata.u.hGlobal.0 as *mut HDROP;
+                let mut paths = SmallVec::<[PathBuf; 2]>::new();
                 let file_count = DragQueryFileW(*hdrop, DRAGDROP_GET_FILES_COUNT, None);
                 for file_index in 0..file_count {
                     let filename_length = DragQueryFileW(*hdrop, file_index, None) as usize;
@@ -1644,19 +1644,25 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                         log::error!("unable to read file name");
                         continue;
                     }
-                    if let Ok(file_name) = String::from_utf16(&buffer[0..filename_length]) {
-                        if let Ok(path) = PathBuf::from_str(&file_name) {
+                    if let Some(file_name) =
+                        String::from_utf16(&buffer[0..filename_length]).log_err()
+                    {
+                        if let Some(path) = PathBuf::from_str(&file_name).log_err() {
                             paths.push(path);
                         }
                     }
                 }
                 ReleaseStgMedium(&mut idata);
-                let input = PlatformInput::FileDrop(crate::FileDropEvent::Entered {
-                    position: Point {
-                        x: Pixels(pt.x as _),
-                        y: Pixels(pt.y as _),
-                    },
-                    paths: crate::ExternalPaths(paths),
+                let mut cursor_position = POINT { x: pt.x, y: pt.y };
+                ScreenToClient(self.0.hwnd, &mut cursor_position);
+                let scale_factor = self.0.scale_factor.get();
+                let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                    position: logical_point(
+                        cursor_position.x as f32,
+                        cursor_position.y as f32,
+                        scale_factor,
+                    ),
+                    paths: ExternalPaths(paths),
                 });
                 self.0.handle_drag_drop(input);
             } else {
@@ -1672,11 +1678,17 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
         pt: &POINTL,
         _pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
-        let input = PlatformInput::FileDrop(crate::FileDropEvent::Pending {
-            position: Point {
-                x: Pixels(pt.x as _),
-                y: Pixels(pt.y as _),
-            },
+        let mut cursor_position = POINT { x: pt.x, y: pt.y };
+        unsafe {
+            ScreenToClient(self.0.hwnd, &mut cursor_position);
+        }
+        let scale_factor = self.0.scale_factor.get();
+        let input = PlatformInput::FileDrop(FileDropEvent::Pending {
+            position: logical_point(
+                cursor_position.x as f32,
+                cursor_position.y as f32,
+                scale_factor,
+            ),
         });
         self.0.handle_drag_drop(input);
 
@@ -1684,7 +1696,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     }
 
     fn DragLeave(&self) -> windows::core::Result<()> {
-        let input = PlatformInput::FileDrop(crate::FileDropEvent::Exited);
+        let input = PlatformInput::FileDrop(FileDropEvent::Exited);
         self.0.handle_drag_drop(input);
 
         Ok(())
@@ -1697,11 +1709,17 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
         pt: &POINTL,
         _pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
-        let input = PlatformInput::FileDrop(crate::FileDropEvent::Submit {
-            position: Point {
-                x: Pixels(pt.x as _),
-                y: Pixels(pt.y as _),
-            },
+        let mut cursor_position = POINT { x: pt.x, y: pt.y };
+        unsafe {
+            ScreenToClient(self.0.hwnd, &mut cursor_position);
+        }
+        let scale_factor = self.0.scale_factor.get();
+        let input = PlatformInput::FileDrop(FileDropEvent::Submit {
+            position: logical_point(
+                cursor_position.x as f32,
+                cursor_position.y as f32,
+                scale_factor,
+            ),
         });
         self.0.handle_drag_drop(input);
 
