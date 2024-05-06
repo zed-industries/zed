@@ -393,7 +393,7 @@ impl RenderOnce for IconWithIndicator {
                         .absolute()
                         .w_2()
                         .h_2()
-                        .border()
+                        .border_1()
                         .border_color(indicator_border_color)
                         .rounded_full()
                         .neg_bottom_0p5()
