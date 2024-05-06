@@ -333,6 +333,7 @@ impl WaylandWindowStatePtr {
                 if fullscreen || maximized {
                     state.restore_bounds = state.bounds.map(|p| DevicePixels(p as i32));
                 }
+                drop(state);
                 self.resize(width, height);
                 self.set_fullscreen(fullscreen);
 
