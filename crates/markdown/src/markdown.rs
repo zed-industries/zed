@@ -1,30 +1,39 @@
-mod events;
+mod parser;
 
-use gpui::{Empty, HighlightStyle, Render, Task};
-use pulldown_cmark::{
-    Alignment, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser, TagEnd,
+use futures::FutureExt;
+use gpui::{
+    AnyElement, Bounds, FontWeight, GlobalElementId, Render, ShapedLine, Task, WrappedLine,
 };
-use std::ops::Range;
+use language::LanguageRegistry;
+use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
+use std::{cell::Cell, iter, rc::Rc, sync::Arc};
 use ui::prelude::*;
 use util::TryFutureExt;
 
+use crate::parser::CodeBlockKind;
+
 pub struct Markdown {
     text: String,
-    parsed_markdown: Option<ParsedMarkdown>,
+    parsed_markdown: ParsedMarkdown,
+    should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
+    language_registry: Arc<LanguageRegistry>,
 }
 
 impl Markdown {
-    pub fn new(text: String, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        text: String,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let mut this = Self {
-            text: text.clone(),
-            parsed_markdown: None,
+            text: text.into(),
+            should_reparse: false,
+            parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
+            language_registry,
         };
-
-        if !text.is_empty() {
-            this.parse(cx)
-        }
+        this.parse(cx);
         this
     }
 
@@ -34,39 +43,32 @@ impl Markdown {
     }
 
     fn parse(&mut self, cx: &mut ViewContext<Self>) {
-        let text = SharedString::from(self.text.clone());
+        if self.text.is_empty() {
+            return;
+        }
+
+        if self.pending_parse.is_some() {
+            self.should_reparse = true;
+            return;
+        }
+
+        let text = self.text.clone();
         let parsed = cx.background_executor().spawn(async move {
-            let parser = Parser::new_ext(text.as_ref(), Options::all());
-
-            for (event, range) in parser.into_offset_iter() {
-                match event {
-                    pulldown_cmark::Event::Start(_) => todo!(),
-                    pulldown_cmark::Event::End(_) => todo!(),
-                    pulldown_cmark::Event::Text(_) => todo!(),
-                    pulldown_cmark::Event::Code(_) => todo!(),
-                    pulldown_cmark::Event::Html(_) => todo!(),
-                    pulldown_cmark::Event::InlineHtml(_) => todo!(),
-                    pulldown_cmark::Event::FootnoteReference(_) => todo!(),
-                    pulldown_cmark::Event::SoftBreak => todo!(),
-                    pulldown_cmark::Event::HardBreak => todo!(),
-                    pulldown_cmark::Event::Rule => todo!(),
-                    pulldown_cmark::Event::TaskListMarker(_) => todo!(),
-                }
-            }
-
-            anyhow::Ok(ParsedMarkdown {
-                text,
-                blocks: Vec::new(),
-                highlights: Vec::new(),
-            })
+            let text = SharedString::from(text);
+            let events = Arc::from(parse_markdown(text.as_ref()));
+            anyhow::Ok(ParsedMarkdown { text, events })
         });
 
+        self.should_reparse = false;
         self.pending_parse = Some(cx.spawn(|this, mut cx| {
             async move {
                 let parsed = parsed.await?;
                 this.update(&mut cx, |this, cx| {
-                    this.parsed_markdown = Some(parsed);
+                    this.parsed_markdown = parsed;
                     this.pending_parse.take();
+                    if this.should_reparse {
+                        this.parse(cx);
+                    }
                     cx.notify();
                 })
                 .ok();
@@ -78,71 +80,230 @@ impl Markdown {
 }
 
 impl Render for Markdown {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        self.parsed_markdown
-            .clone()
-            .map(|parsed| parsed.into_any())
-            .unwrap_or_else(|| Empty.into_any())
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        MarkdownElement {
+            markdown: self.parsed_markdown.clone(),
+            language_registry: self.language_registry.clone(),
+        }
     }
 }
 
 #[derive(Clone)]
 struct ParsedMarkdown {
     text: SharedString,
-    blocks: Vec<MarkdownBlock>,
-    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    events: Arc<[MarkdownEvent]>,
 }
 
-#[derive(Clone)]
-enum MarkdownBlock {
-    Heading { level: u8, range: Range<usize> },
-    Text(Range<usize>),
-    Code(Range<usize>),
+impl Default for ParsedMarkdown {
+    fn default() -> Self {
+        Self {
+            text: SharedString::default(),
+            events: Arc::from([]),
+        }
+    }
 }
 
-impl Element for ParsedMarkdown {
-    type RequestLayoutState = ();
+pub struct MarkdownElement {
+    markdown: ParsedMarkdown,
+    language_registry: Arc<LanguageRegistry>,
+}
 
+impl Element for MarkdownElement {
+    type RequestLayoutState = AnyElement;
     type PrepaintState = ();
 
-    fn id(&self) -> Option<ui::prelude::ElementId> {
-        todo!()
+    fn id(&self) -> Option<ElementId> {
+        None
     }
 
     fn request_layout(
         &mut self,
-        id: Option<&gpui::GlobalElementId>,
-        cx: &mut ui::prelude::WindowContext,
+        id: Option<&GlobalElementId>,
+        cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        todo!()
+        let mut bold_depth = 0;
+        let mut italic_depth = 0;
+        let mut strikethrough_depth = 0;
+
+        let mut current_language = None;
+        let mut div_stack = vec![div()];
+        let mut list_stack = Vec::new();
+
+        for event in self.markdown.events.iter() {
+            match event {
+                MarkdownEvent::Start(tag) => match tag {
+                    MarkdownTag::Paragraph => {
+                        div_stack.push(div());
+                    }
+                    MarkdownTag::Heading {
+                        level,
+                        id,
+                        classes,
+                        attrs,
+                    } => {
+                        let mut heading = div().font_weight(FontWeight::BOLD);
+                        heading = match level {
+                            pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
+                            pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
+                            pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
+                            pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
+                            _ => heading,
+                        };
+                        div_stack.push(heading);
+                    }
+                    MarkdownTag::BlockQuote => {
+                        // todo!("use the right color")
+                        div_stack.push(div().pl_2().text_color(gpui::red()));
+                    }
+                    MarkdownTag::CodeBlock(kind) => {
+                        if let CodeBlockKind::Fenced(language) = kind {
+                            current_language = self
+                                .language_registry
+                                .language_for_name(language.as_ref())
+                                .now_or_never()
+                                .and_then(Result::ok);
+                        }
+
+                        // todo!("use the right color")
+                        div_stack.push(div().p_4().w_full().bg(gpui::green()));
+                    }
+                    MarkdownTag::HtmlBlock => div_stack.push(div()),
+                    MarkdownTag::List(number) => {
+                        list_stack.push(*number);
+                        div_stack.push(div().pl_2());
+                    }
+                    MarkdownTag::Item => {
+                        let item_prefix = if let Some(Some(number)) = list_stack.last_mut() {
+                            let prefix = SharedString::from(format!("{}. ", *number));
+                            *number += 1;
+                            prefix
+                        } else {
+                            SharedString::from("- ")
+                        };
+
+                        div_stack.push(div().flex_col().child(item_prefix));
+                    }
+                    MarkdownTag::Emphasis => italic_depth += 1,
+                    MarkdownTag::Strong => bold_depth += 1,
+                    MarkdownTag::Strikethrough => strikethrough_depth += 1,
+                    MarkdownTag::Link {
+                        link_type,
+                        dest_url,
+                        title,
+                        id,
+                    } => todo!(),
+                    MarkdownTag::Image {
+                        link_type,
+                        dest_url,
+                        title,
+                        id,
+                    } => todo!(),
+                    _ => log::info!("unsupported markdown tag {:?}", tag),
+                },
+                MarkdownEvent::End(tag) => match tag {
+                    MarkdownTagEnd::Paragraph => {
+                        let div = div_stack.pop().unwrap().into_any();
+                        div_stack.last_mut().unwrap().extend(iter::once(div));
+                    }
+                    MarkdownTagEnd::Heading(_) => {
+                        let div = div_stack.pop().unwrap().into_any();
+                        div_stack.last_mut().unwrap().extend(iter::once(div));
+                    }
+                    MarkdownTagEnd::BlockQuote => {
+                        let div = div_stack.pop().unwrap().into_any();
+                        div_stack.last_mut().unwrap().extend(iter::once(div));
+                    }
+                    MarkdownTagEnd::CodeBlock => {
+                        let div = div_stack.pop().unwrap().into_any();
+                        div_stack.last_mut().unwrap().extend(iter::once(div));
+                    }
+                    MarkdownTagEnd::HtmlBlock => {
+                        let div = div_stack.pop().unwrap().into_any();
+                        div_stack.last_mut().unwrap().extend(iter::once(div));
+                    }
+                    MarkdownTagEnd::List(_) => {
+                        let div = div_stack.pop().unwrap().into_any();
+                        div_stack.last_mut().unwrap().extend(iter::once(div));
+                    }
+                    MarkdownTagEnd::Item => {
+                        let div = div_stack.pop().unwrap().into_any();
+                        div_stack.last_mut().unwrap().extend(iter::once(div));
+                    }
+                    MarkdownTagEnd::Emphasis => italic_depth -= 1,
+                    MarkdownTagEnd::Strong => bold_depth -= 1,
+                    MarkdownTagEnd::Strikethrough => strikethrough_depth -= 1,
+                    MarkdownTagEnd::Link => todo!(),
+                    MarkdownTagEnd::Image => todo!(),
+                    _ => log::info!("unsupported markdown tag end: {:?}", tag),
+                },
+                MarkdownEvent::Text(range) => {
+                    let text = self.markdown.text[range.clone()].to_string();
+                    div_stack
+                        .last_mut()
+                        .unwrap()
+                        .extend(iter::once(SharedString::from(text).into_any()));
+                }
+                MarkdownEvent::Code(range) => {
+                    let text = self.markdown.text[range.clone()].to_string();
+                    div_stack
+                        .last_mut()
+                        .unwrap()
+                        .extend(iter::once(SharedString::from(text).into_any()));
+                }
+                MarkdownEvent::Html(range) => {
+                    let text = self.markdown.text[range.clone()].to_string();
+                    div_stack
+                        .last_mut()
+                        .unwrap()
+                        .extend(iter::once(SharedString::from(text).into_any()));
+                }
+                MarkdownEvent::InlineHtml(range) => {
+                    let text = self.markdown.text[range.clone()].to_string();
+                    div_stack
+                        .last_mut()
+                        .unwrap()
+                        .extend(iter::once(SharedString::from(text).into_any()));
+                }
+                _ => todo!(),
+            }
+        }
+
+        let mut element = div_stack.pop().unwrap().into_any();
+        (element.request_layout(cx), element)
     }
 
     fn prepaint(
         &mut self,
-        id: Option<&gpui::GlobalElementId>,
-        bounds: gpui::Bounds<ui::prelude::Pixels>,
+        id: Option<&GlobalElementId>,
+        bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        cx: &mut ui::prelude::WindowContext,
+        cx: &mut WindowContext,
     ) -> Self::PrepaintState {
-        todo!()
+        request_layout.prepaint(cx);
     }
 
     fn paint(
         &mut self,
-        id: Option<&gpui::GlobalElementId>,
-        bounds: gpui::Bounds<ui::prelude::Pixels>,
+        id: Option<&GlobalElementId>,
+        bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        cx: &mut ui::prelude::WindowContext,
+        cx: &mut WindowContext,
     ) {
-        todo!()
+        request_layout.paint(cx);
     }
 }
 
-impl IntoElement for ParsedMarkdown {
+impl IntoElement for MarkdownElement {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {
         self
     }
+}
+
+#[derive(Clone)]
+struct TextBlock {
+    bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    line: WrappedLine,
 }

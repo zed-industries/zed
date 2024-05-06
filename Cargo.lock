@@ -5935,9 +5935,11 @@ name = "markdown"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures 0.3.28",
  "gpui",
  "language",
  "linkify",
+ "log",
  "pulldown-cmark",
  "theme",
  "ui",

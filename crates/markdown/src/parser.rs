@@ -1,18 +1,39 @@
+use gpui::SharedString;
+pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
+use pulldown_cmark::{Alignment, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser};
 use std::ops::Range;
 
-use pulldown_cmark::{LinkType, MetadataBlockKind, TagEnd};
-use ui::SharedString;
+pub fn parse_markdown(text: &str) -> Vec<MarkdownEvent> {
+    Parser::new_ext(text, Options::all())
+        .into_offset_iter()
+        .map(|(pulldown_event, range)| match pulldown_event {
+            pulldown_cmark::Event::Start(tag) => MarkdownEvent::Start(tag.into()),
+            pulldown_cmark::Event::End(tag) => MarkdownEvent::End(MarkdownTagEnd::from(tag)),
+            pulldown_cmark::Event::Text(_) => MarkdownEvent::Text(range),
+            pulldown_cmark::Event::Code(_) => MarkdownEvent::Code(range),
+            pulldown_cmark::Event::Html(_) => MarkdownEvent::Html(range),
+            pulldown_cmark::Event::InlineHtml(_) => MarkdownEvent::InlineHtml(range),
+            pulldown_cmark::Event::FootnoteReference(_) => MarkdownEvent::FootnoteReference(range),
+            pulldown_cmark::Event::SoftBreak => MarkdownEvent::SoftBreak,
+            pulldown_cmark::Event::HardBreak => MarkdownEvent::HardBreak,
+            pulldown_cmark::Event::Rule => MarkdownEvent::Rule,
+            pulldown_cmark::Event::TaskListMarker(checked) => {
+                MarkdownEvent::TaskListMarker(checked)
+            }
+        })
+        .collect()
+}
 
 /// A static-lifetime equivalent of pulldown_cmark::Event so we can cache the
 /// parse result for rendering without resorting to unsafe lifetime coercion.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Event {
+pub enum MarkdownEvent {
     /// Start of a tagged element. Events that are yielded after this event
     /// and before its corresponding `End` event are inside this element.
     /// Start and end events are guaranteed to be balanced.
-    Start(Tag),
+    Start(MarkdownTag),
     /// End of a tagged element.
-    End(TagEnd),
+    End(MarkdownTagEnd),
     /// A text node.
     Text(Range<usize>),
     /// An inline code node.
@@ -35,29 +56,19 @@ pub enum Event {
     TaskListMarker(bool),
 }
 
-impl From<pulldown_cmark::Event<'_>> for Event {
-    fn from(event: pulldown_cmark::Event) -> Self {
-        match event {
-            pulldown_cmark::Event::Start(tag) => Event::Start(tag.into()),
-            pulldown_cmark::Event::End(tag) => Event::End(TagEnd::from(tag)),
-            pulldown_cmark::Event::Text(text) => Event::Text(text.into()),
-            pulldown_cmark::Event::Code(code) => Event::Code(code.into()),
-            pulldown_cmark::Event::Html(html) => Event::Html(html.into()),
-            pulldown_cmark::Event::InlineHtml(inline_html) => Event::InlineHtml(inline_html.into()),
-            pulldown_cmark::Event::FootnoteReference(footnote) => {
-                Event::FootnoteReference(footnote.into())
-            }
-            pulldown_cmark::Event::SoftBreak => Event::SoftBreak,
-            pulldown_cmark::Event::HardBreak => Event::HardBreak,
-            pulldown_cmark::Event::Rule => Event::Rule,
-            pulldown_cmark::Event::TaskListMarker(checked) => Event::TaskListMarker(checked),
+impl MarkdownEvent {
+    pub fn as_tag_end(&self) -> Option<MarkdownTagEnd> {
+        if let Self::End(tag) = self {
+            Some(*tag)
+        } else {
+            None
         }
     }
 }
 
 /// Tags for elements that can contain other elements.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Tag {
+pub enum MarkdownTag {
     /// A paragraph of text and other inline elements.
     Paragraph,
 
@@ -139,10 +150,10 @@ pub enum CodeBlockKind {
     Fenced(SharedString),
 }
 
-impl From<pulldown_cmark::Tag<'_>> for Tag {
+impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
     fn from(tag: pulldown_cmark::Tag) -> Self {
         match tag {
-            pulldown_cmark::Tag::Paragraph => Tag::Paragraph,
+            pulldown_cmark::Tag::Paragraph => MarkdownTag::Paragraph,
             pulldown_cmark::Tag::Heading {
                 level,
                 id,
@@ -163,38 +174,40 @@ impl From<pulldown_cmark::Tag<'_>> for Tag {
                         )
                     })
                     .collect();
-                Tag::Heading {
+                MarkdownTag::Heading {
                     level,
                     id,
                     classes,
                     attrs,
                 }
             }
-            pulldown_cmark::Tag::BlockQuote => Tag::BlockQuote,
+            pulldown_cmark::Tag::BlockQuote => MarkdownTag::BlockQuote,
             pulldown_cmark::Tag::CodeBlock(kind) => match kind {
-                pulldown_cmark::CodeBlockKind::Indented => Tag::CodeBlock(CodeBlockKind::Indented),
-                pulldown_cmark::CodeBlockKind::Fenced(info) => Tag::CodeBlock(
+                pulldown_cmark::CodeBlockKind::Indented => {
+                    MarkdownTag::CodeBlock(CodeBlockKind::Indented)
+                }
+                pulldown_cmark::CodeBlockKind::Fenced(info) => MarkdownTag::CodeBlock(
                     CodeBlockKind::Fenced(SharedString::from(info.into_string())),
                 ),
             },
-            pulldown_cmark::Tag::List(start_number) => Tag::List(start_number),
-            pulldown_cmark::Tag::Item => Tag::Item,
+            pulldown_cmark::Tag::List(start_number) => MarkdownTag::List(start_number),
+            pulldown_cmark::Tag::Item => MarkdownTag::Item,
             pulldown_cmark::Tag::FootnoteDefinition(label) => {
-                Tag::FootnoteDefinition(SharedString::from(label.to_string()))
+                MarkdownTag::FootnoteDefinition(SharedString::from(label.to_string()))
             }
-            pulldown_cmark::Tag::Table(alignments) => Tag::Table(alignments),
-            pulldown_cmark::Tag::TableHead => Tag::TableHead,
-            pulldown_cmark::Tag::TableRow => Tag::TableRow,
-            pulldown_cmark::Tag::TableCell => Tag::TableCell,
-            pulldown_cmark::Tag::Emphasis => Tag::Emphasis,
-            pulldown_cmark::Tag::Strong => Tag::Strong,
-            pulldown_cmark::Tag::Strikethrough => Tag::Strikethrough,
+            pulldown_cmark::Tag::Table(alignments) => MarkdownTag::Table(alignments),
+            pulldown_cmark::Tag::TableHead => MarkdownTag::TableHead,
+            pulldown_cmark::Tag::TableRow => MarkdownTag::TableRow,
+            pulldown_cmark::Tag::TableCell => MarkdownTag::TableCell,
+            pulldown_cmark::Tag::Emphasis => MarkdownTag::Emphasis,
+            pulldown_cmark::Tag::Strong => MarkdownTag::Strong,
+            pulldown_cmark::Tag::Strikethrough => MarkdownTag::Strikethrough,
             pulldown_cmark::Tag::Link {
                 link_type,
                 dest_url,
                 title,
                 id,
-            } => Tag::Link {
+            } => MarkdownTag::Link {
                 link_type,
                 dest_url: SharedString::from(dest_url.into_string()),
                 title: SharedString::from(title.into_string()),
@@ -205,14 +218,14 @@ impl From<pulldown_cmark::Tag<'_>> for Tag {
                 dest_url,
                 title,
                 id,
-            } => Tag::Image {
+            } => MarkdownTag::Image {
                 link_type,
                 dest_url: SharedString::from(dest_url.into_string()),
                 title: SharedString::from(title.into_string()),
                 id: SharedString::from(id.into_string()),
             },
-            pulldown_cmark::Tag::HtmlBlock => Tag::HtmlBlock,
-            pulldown_cmark::Tag::MetadataBlock(kind) => Tag::MetadataBlock(kind),
+            pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
+            pulldown_cmark::Tag::MetadataBlock(kind) => MarkdownTag::MetadataBlock(kind),
         }
     }
 }
