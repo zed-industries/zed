@@ -1,6 +1,6 @@
 # Contributing to Zed
 
-Thank you for your interest in contributing to the Zed! Before making contributions, we recommend reading our [CONTRIBUTRING.md](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md) guidelines. This document provides a detailed guide to contributing to Zed.
+Thank you for your interest in contributing to the Zed! Before making contributions, we recommend reading our [CONTRIBUTING.md](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md) guidelines. This document provides a detailed guide to contributing to Zed.
 
 ### Issues
 
