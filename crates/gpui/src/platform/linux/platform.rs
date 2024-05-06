@@ -613,11 +613,9 @@ impl Keystroke {
             }
         };
 
-        // Ignore control characters (and DEL) for the purposes of ime_key,
-        // but if key_utf32 is 0 then assume it isn't one
-        let ime_key = ((key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127))
-            && !key_utf8.is_empty())
-        .then_some(key_utf8);
+        // Ignore control characters (and DEL) for the purposes of ime_key
+        let ime_key =
+            (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
         if handle_consumed_modifiers {
             let mod_shift_index = state.get_keymap().mod_get_index(xkb::MOD_NAME_SHIFT);

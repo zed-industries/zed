@@ -59,7 +59,7 @@ use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
 use crate::platform::linux::wayland::window::WaylandWindow;
 use crate::platform::linux::LinuxClient;
 use crate::platform::PlatformWindow;
-use crate::{point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent};
+use crate::{point, px, FileDropEvent, ForegroundExecutor, MouseExitEvent, SCROLL_LINES};
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
@@ -204,7 +204,7 @@ impl WaylandClientStatePtr {
         }
         if let Some(window) = state.keyboard_focused_window.take() {
             if !window.ptr_eq(&closed_window) {
-                state.mouse_focused_window = Some(window);
+                state.keyboard_focused_window = Some(window);
             }
         }
         if state.windows.is_empty() {
@@ -1098,7 +1098,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 value,
                 ..
             } => {
-                let axis_source = state.axis_source;
+                if state.axis_source == AxisSource::Wheel {
+                    return;
+                }
                 let axis_modifier = match axis {
                     wl_pointer::Axis::VerticalScroll => state.vertical_modifier,
                     wl_pointer::Axis::HorizontalScroll => state.horizontal_modifier,
@@ -1133,16 +1135,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => 1.0,
                 };
 
-                // TODO: Make nice feeling kinetic scrolling that integrates with the platform's scroll settings
-                let modifier = 3.0;
-
                 let scroll_delta = state.discrete_scroll_delta.get_or_insert(point(0.0, 0.0));
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
-                        scroll_delta.y += discrete as f32 * axis_modifier * modifier;
+                        scroll_delta.y += discrete as f32 * axis_modifier * SCROLL_LINES as f32;
                     }
                     wl_pointer::Axis::HorizontalScroll => {
-                        scroll_delta.x += discrete as f32 * axis_modifier * modifier;
+                        scroll_delta.x += discrete as f32 * axis_modifier * SCROLL_LINES as f32;
                     }
                     _ => unreachable!(),
                 }
@@ -1180,10 +1179,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let wheel_percent = value120 as f32 / 120.0;
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
-                        scroll_delta.y += wheel_percent * axis_modifier;
+                        scroll_delta.y += wheel_percent * axis_modifier * SCROLL_LINES as f32;
                     }
                     wl_pointer::Axis::HorizontalScroll => {
-                        scroll_delta.x += wheel_percent * axis_modifier;
+                        scroll_delta.x += wheel_percent * axis_modifier * SCROLL_LINES as f32;
                     }
                     _ => unreachable!(),
                 }

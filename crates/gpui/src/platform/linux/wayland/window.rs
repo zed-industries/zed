@@ -299,7 +299,7 @@ impl WaylandWindowStatePtr {
                     self.set_decoration_state(WaylandDecorationState::Server)
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
-                    self.set_decoration_state(WaylandDecorationState::Server)
+                    self.set_decoration_state(WaylandDecorationState::Client)
                 }
                 WEnum::Value(_) => {
                     log::warn!("Unknown decoration mode");
@@ -610,11 +610,11 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn set_title(&mut self, title: &str) {
-        self.borrow_mut().toplevel.set_title(title.to_string());
+        self.borrow().toplevel.set_title(title.to_string());
     }
 
     fn set_app_id(&mut self, app_id: &str) {
-        self.borrow_mut().toplevel.set_app_id(app_id.to_owned());
+        self.borrow().toplevel.set_app_id(app_id.to_owned());
     }
 
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
@@ -666,15 +666,20 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn minimize(&self) {
-        self.borrow_mut().toplevel.set_minimized();
+        self.borrow().toplevel.set_minimized();
     }
 
     fn zoom(&self) {
-        // todo(linux)
+        let state = self.borrow();
+        if !state.maximized {
+            state.toplevel.set_maximized();
+        } else {
+            state.toplevel.unset_maximized();
+        }
     }
 
     fn toggle_fullscreen(&self) {
-        let state = self.borrow_mut();
+        let state = self.borrow();
         if !state.fullscreen {
             state.toplevel.set_fullscreen(None);
         } else {
