@@ -11,6 +11,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering::SeqCst},
 };
 
+use crate::AssistantContext;
+
 pub struct ToolRegistry {
     tools: HashMap<String, Tool>,
 }
@@ -27,7 +29,10 @@ pub struct ToolFunctionCall {
 pub enum ToolFunctionCallResult {
     NoSuchTool,
     ParsingFailed,
-    Finished { for_model: String, view: AnyView },
+    Finished {
+        view: AnyView,
+        generate_fn: fn(AnyView, &mut AssistantContext, &mut WindowContext) -> String,
+    },
 }
 
 #[derive(Clone)]
@@ -41,7 +46,7 @@ struct Tool {
     enabled: AtomicBool,
     type_id: TypeId,
     call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
-    render_running: Box<dyn Fn(&mut WindowContext) -> gpui::AnyElement>,
+    render_running: fn(&mut WindowContext) -> gpui::AnyElement,
     definition: ToolFunctionDefinition,
 }
 
@@ -53,7 +58,7 @@ pub trait LanguageModelTool {
     /// The output returned by executing the tool.
     type Output: 'static;
 
-    type View: Render;
+    type View: Render + ToolOutput;
 
     /// Returns the name of the tool.
     ///
@@ -81,10 +86,7 @@ pub trait LanguageModelTool {
     /// Executes the tool with the given input.
     fn execute(&self, input: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>>;
 
-    fn format(input: &Self::Input, output: &Result<Self::Output>) -> String;
-
     fn output_view(
-        tool_call_id: String,
         input: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,
@@ -93,6 +95,10 @@ pub trait LanguageModelTool {
     fn render_running(_cx: &mut WindowContext) -> impl IntoElement {
         div()
     }
+}
+
+pub trait ToolOutput: Sized {
+    fn generate(&self, output: &mut AssistantContext, cx: &mut WindowContext) -> String;
 }
 
 impl ToolRegistry {
@@ -175,8 +181,7 @@ impl ToolRegistry {
 
                     cx.spawn(move |mut cx| async move {
                         let result: Result<T::Output> = result.await;
-                        let for_model = T::format(&input, &result);
-                        let view = cx.update(|cx| T::output_view(id.clone(), input, result, cx))?;
+                        let view = cx.update(|cx| T::output_view(input, result, cx))?;
 
                         Ok(ToolFunctionCall {
                             id,
@@ -184,13 +189,13 @@ impl ToolRegistry {
                             arguments,
                             result: Some(ToolFunctionCallResult::Finished {
                                 view: view.into(),
-                                for_model,
+                                generate_fn: generate::<T>,
                             }),
                         })
                     })
                 },
             ),
-            render_running: Box::new(|cx| T::render_running(cx).into_any_element()),
+            render_running: render_running::<T>,
         };
 
         let previous = self.tools.insert(name.clone(), registered_tool);
@@ -198,7 +203,21 @@ impl ToolRegistry {
             return Err(anyhow!("already registered a tool with name {}", name));
         }
 
-        Ok(())
+        return Ok(());
+
+        fn render_running<T: LanguageModelTool>(cx: &mut WindowContext) -> AnyElement {
+            T::render_running(cx).into_any_element()
+        }
+
+        fn generate<T: LanguageModelTool>(
+            view: AnyView,
+            output: &mut AssistantContext,
+            cx: &mut WindowContext,
+        ) -> String {
+            view.downcast::<T::View>()
+                .unwrap()
+                .update(cx, |view, cx| T::View::generate(view, output, cx))
+        }
     }
 
     /// Task yields an error if the window for the given WindowContext is closed before the task completes.
@@ -229,13 +248,20 @@ impl ToolRegistry {
 }
 
 impl ToolFunctionCallResult {
-    pub fn format(&self, name: &String) -> String {
+    pub fn generate(
+        &self,
+        name: &String,
+        output: &mut AssistantContext,
+        cx: &mut WindowContext,
+    ) -> String {
         match self {
             ToolFunctionCallResult::NoSuchTool => format!("No tool for {name}"),
             ToolFunctionCallResult::ParsingFailed => {
                 format!("Unable to parse arguments for {name}")
             }
-            ToolFunctionCallResult::Finished { for_model, .. } => for_model.clone(),
+            ToolFunctionCallResult::Finished { generate_fn, view } => {
+                (generate_fn)(view.clone(), output, cx)
+            }
         }
     }
 
@@ -299,6 +325,12 @@ mod test {
         }
     }
 
+    impl ToolOutput for WeatherView {
+        fn generate(&self, _output: &mut AssistantContext, _cx: &mut WindowContext) -> String {
+            serde_json::to_string(&self.result).unwrap()
+        }
+    }
+
     impl LanguageModelTool for WeatherTool {
         type Input = WeatherQuery;
         type Output = WeatherResult;
@@ -326,7 +358,6 @@ mod test {
         }
 
         fn output_view(
-            _tool_call_id: String,
             _input: Self::Input,
             result: Result<Self::Output>,
             cx: &mut WindowContext,
@@ -335,10 +366,6 @@ mod test {
                 let result = result.unwrap();
                 WeatherView { result }
             })
-        }
-
-        fn format(_: &Self::Input, output: &Result<Self::Output>) -> String {
-            serde_json::to_string(&output.as_ref().unwrap()).unwrap()
         }
     }
 

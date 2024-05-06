@@ -163,6 +163,10 @@ impl ProjectIndex {
         self.project.clone()
     }
 
+    pub fn fs(&self) -> Arc<dyn Fs> {
+        self.fs.clone()
+    }
+
     fn handle_project_event(
         &mut self,
         _: Model<Project>,

@@ -412,9 +412,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
+ "project",
  "schemars",
  "serde",
  "serde_json",
+ "settings",
+ "sum_tree",
+ "unindent",
 ]
 
 [[package]]

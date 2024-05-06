@@ -6,7 +6,7 @@ pub mod ui;
 
 use ::ui::{div, prelude::*, Color, ViewContext};
 use anyhow::{Context, Result};
-use assistant_tooling::{ToolFunctionCall, ToolRegistry};
+use assistant_tooling::{AssistantContext, ToolFunctionCall, ToolRegistry};
 use attachments::{ActiveEditorAttachmentTool, UserAttachment, UserAttachmentStore};
 use client::{proto, Client, UserStore};
 use collections::HashMap;
@@ -85,10 +85,9 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
             });
             workspace.register_action(|workspace, _: &DebugProjectIndex, cx| {
                 if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                    if let Some(index) = panel.read(cx).chat.read(cx).project_index.clone() {
-                        let view = cx.new_view(|cx| ProjectIndexDebugView::new(index, cx));
-                        workspace.add_item_to_center(Box::new(view), cx);
-                    }
+                    let index = panel.read(cx).chat.read(cx).project_index.clone();
+                    let view = cx.new_view(|cx| ProjectIndexDebugView::new(index, cx));
+                    workspace.add_item_to_center(Box::new(view), cx);
                 }
             });
         },
@@ -122,10 +121,7 @@ impl AssistantPanel {
 
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry
-                    .register(
-                        ProjectIndexTool::new(project_index.clone(), project.read(cx).fs().clone()),
-                        cx,
-                    )
+                    .register(ProjectIndexTool::new(project_index.clone()), cx)
                     .context("failed to register ProjectIndexTool")
                     .log_err();
                 tool_registry
@@ -144,7 +140,7 @@ impl AssistantPanel {
                     Arc::new(tool_registry),
                     Arc::new(attachment_store),
                     app_state.user_store.clone(),
-                    Some(project_index),
+                    project_index,
                     workspace,
                     cx,
                 )
@@ -157,7 +153,7 @@ impl AssistantPanel {
         tool_registry: Arc<ToolRegistry>,
         attachment_store: Arc<UserAttachmentStore>,
         user_store: Model<UserStore>,
-        project_index: Option<Model<ProjectIndex>>,
+        project_index: Model<ProjectIndex>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -242,7 +238,7 @@ pub struct AssistantChat {
     list_state: ListState,
     language_registry: Arc<LanguageRegistry>,
     composer_editor: View<Editor>,
-    project_index_button: Option<View<ProjectIndexButton>>,
+    project_index_button: View<ProjectIndexButton>,
     active_file_button: Option<View<ActiveFileButton>>,
     user_store: Model<UserStore>,
     next_message_id: MessageId,
@@ -251,7 +247,7 @@ pub struct AssistantChat {
     pending_completion: Option<Task<()>>,
     attachment_store: Arc<UserAttachmentStore>,
     tool_registry: Arc<ToolRegistry>,
-    project_index: Option<Model<ProjectIndex>>,
+    project_index: Model<ProjectIndex>,
 }
 
 struct EditingMessage {
@@ -266,7 +262,7 @@ impl AssistantChat {
         tool_registry: Arc<ToolRegistry>,
         attachment_store: Arc<UserAttachmentStore>,
         user_store: Model<UserStore>,
-        project_index: Option<Model<ProjectIndex>>,
+        project_index: Model<ProjectIndex>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -282,8 +278,8 @@ impl AssistantChat {
             },
         );
 
-        let project_index_button = project_index.clone().map(|project_index| {
-            cx.new_view(|cx| ProjectIndexButton::new(project_index, tool_registry.clone(), cx))
+        let project_index_button = cx.new_view(|cx| {
+            ProjectIndexButton::new(project_index.clone(), tool_registry.clone(), cx)
         });
 
         let active_file_button = match workspace.upgrade() {
@@ -444,7 +440,7 @@ impl AssistantChat {
         let mut call_count = 0;
         loop {
             let complete = async {
-                let completion = this.update(cx, |this, cx| {
+                let (tool_definitions, model_name, messages) = this.update(cx, |this, cx| {
                     this.push_new_assistant_message(cx);
 
                     let definitions = if call_count < limit
@@ -456,14 +452,22 @@ impl AssistantChat {
                     };
                     call_count += 1;
 
-                    let messages = this.completion_messages(cx);
-
-                    CompletionProvider::get(cx).complete(
+                    (
+                        definitions,
                         this.model.clone(),
+                        this.completion_messages(cx),
+                    )
+                })?;
+
+                let messages = messages.await?;
+
+                let completion = cx.update(|cx| {
+                    CompletionProvider::get(cx).complete(
+                        model_name,
                         messages,
                         Vec::new(),
                         1.0,
-                        definitions,
+                        tool_definitions,
                     )
                 });
 
@@ -754,7 +758,12 @@ impl AssistantChat {
         }
     }
 
-    fn completion_messages(&self, cx: &mut WindowContext) -> Vec<CompletionMessage> {
+    fn completion_messages(&self, cx: &mut WindowContext) -> Task<Result<Vec<CompletionMessage>>> {
+        let project_index = self.project_index.read(cx);
+        let project = project_index.project();
+        let fs = project_index.fs();
+
+        let mut assistant_context = AssistantContext::new(project, fs);
         let mut completion_messages = Vec::new();
 
         for message in &self.messages {
@@ -762,12 +771,11 @@ impl AssistantChat {
                 ChatMessage::User(UserMessage {
                     body, attachments, ..
                 }) => {
-                    completion_messages.extend(
-                        attachments
-                            .into_iter()
-                            .filter_map(|attachment| attachment.message.clone())
-                            .map(|content| CompletionMessage::System { content }),
-                    );
+                    for attachment in attachments {
+                        if let Some(content) = attachment.generate(&mut assistant_context, cx) {
+                            completion_messages.push(CompletionMessage::System { content });
+                        }
+                    }
 
                     // Show user's message last so that the assistant is grounded in the user's request
                     completion_messages.push(CompletionMessage::User {
@@ -804,7 +812,9 @@ impl AssistantChat {
                     for tool_call in tool_calls {
                         // Every tool call _must_ have a result by ID, otherwise OpenAI will error.
                         let content = match &tool_call.result {
-                            Some(result) => result.format(&tool_call.name),
+                            Some(result) => {
+                                result.generate(&tool_call.name, &mut assistant_context, cx)
+                            }
                             None => "".to_string(),
                         };
 
@@ -817,7 +827,13 @@ impl AssistantChat {
             }
         }
 
-        completion_messages
+        let system_message = assistant_context.generate_system_message(cx);
+
+        cx.background_executor().spawn(async move {
+            let content = system_message.await?;
+            completion_messages.insert(0, CompletionMessage::System { content });
+            Ok(completion_messages)
+        })
     }
 }
 
