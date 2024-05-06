@@ -1,5 +1,5 @@
-pub mod registry;
-pub mod tool;
+mod tool_registry;
 
-pub use crate::registry::ToolRegistry;
-pub use crate::tool::{LanguageModelTool, ToolFunctionCall, ToolFunctionDefinition};
+pub use tool_registry::{
+    LanguageModelTool, ToolFunctionCall, ToolFunctionDefinition, ToolRegistry,
+};
