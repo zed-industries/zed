@@ -70,3 +70,99 @@ impl GitHostingProvider for Bitbucket {
         permalink
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::permalink::parse_git_remote_url;
+
+    use super::*;
+
+    #[test]
+    fn test_parse_git_remote_url_bitbucket_https_with_username() {
+        let url = "https://thorstenballzed@bitbucket.org/thorstenzed/testingrepo.git";
+        let (provider, parsed) = parse_git_remote_url(url).unwrap();
+        assert_eq!(provider.name(), "Bitbucket");
+        assert_eq!(parsed.owner, "thorstenzed");
+        assert_eq!(parsed.repo, "testingrepo");
+    }
+
+    #[test]
+    fn test_parse_git_remote_url_bitbucket_https_without_username() {
+        let url = "https://bitbucket.org/thorstenzed/testingrepo.git";
+        let (provider, parsed) = parse_git_remote_url(url).unwrap();
+        assert_eq!(provider.name(), "Bitbucket");
+        assert_eq!(parsed.owner, "thorstenzed");
+        assert_eq!(parsed.repo, "testingrepo");
+    }
+
+    #[test]
+    fn test_parse_git_remote_url_bitbucket_git() {
+        let url = "git@bitbucket.org:thorstenzed/testingrepo.git";
+        let (provider, parsed) = parse_git_remote_url(url).unwrap();
+        assert_eq!(provider.name(), "Bitbucket");
+        assert_eq!(parsed.owner, "thorstenzed");
+        assert_eq!(parsed.repo, "testingrepo");
+    }
+
+    #[test]
+    fn test_build_bitbucket_permalink_from_ssh_url() {
+        let remote = ParsedGitRemote {
+            owner: "thorstenzed",
+            repo: "testingrepo",
+        };
+        let permalink = Bitbucket.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "git@bitbucket.org:thorstenzed/testingrepo.git",
+                sha: "f00b4r",
+                path: "main.rs",
+                selection: None,
+            },
+        );
+
+        let expected_url = "https://bitbucket.org/thorstenzed/testingrepo/src/f00b4r/main.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_bitbucket_permalink_from_ssh_url_single_line_selection() {
+        let remote = ParsedGitRemote {
+            owner: "thorstenzed",
+            repo: "testingrepo",
+        };
+        let permalink = Bitbucket.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "git@bitbucket.org:thorstenzed/testingrepo.git",
+                sha: "f00b4r",
+                path: "main.rs",
+                selection: Some(6..6),
+            },
+        );
+
+        let expected_url =
+            "https://bitbucket.org/thorstenzed/testingrepo/src/f00b4r/main.rs#lines-7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_bitbucket_permalink_from_ssh_url_multi_line_selection() {
+        let remote = ParsedGitRemote {
+            owner: "thorstenzed",
+            repo: "testingrepo",
+        };
+        let permalink = Bitbucket.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "git@bitbucket.org:thorstenzed/testingrepo.git",
+                sha: "f00b4r",
+                path: "main.rs",
+                selection: Some(23..47),
+            },
+        );
+
+        let expected_url =
+            "https://bitbucket.org/thorstenzed/testingrepo/src/f00b4r/main.rs#lines-24:48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+}

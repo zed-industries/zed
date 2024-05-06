@@ -127,6 +127,126 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_build_github_permalink_from_ssh_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries",
+            repo: "zed",
+        };
+        let permalink = Github.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "git@github.com:zed-industries/zed.git",
+                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                path: "crates/editor/src/git/permalink.rs",
+                selection: None,
+            },
+        );
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_from_ssh_url_single_line_selection() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries",
+            repo: "zed",
+        };
+        let permalink = Github.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "git@github.com:zed-industries/zed.git",
+                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                path: "crates/editor/src/git/permalink.rs",
+                selection: Some(6..6),
+            },
+        );
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_from_ssh_url_multi_line_selection() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries",
+            repo: "zed",
+        };
+        let permalink = Github.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "git@github.com:zed-industries/zed.git",
+                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                path: "crates/editor/src/git/permalink.rs",
+                selection: Some(23..47),
+            },
+        );
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L24-L48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_from_https_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries",
+            repo: "zed",
+        };
+        let permalink = Github.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "https://github.com/zed-industries/zed.git",
+                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
+                path: "crates/zed/src/main.rs",
+                selection: None,
+            },
+        );
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_from_https_url_single_line_selection() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries",
+            repo: "zed",
+        };
+        let permalink = Github.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "https://github.com/zed-industries/zed.git",
+                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
+                path: "crates/zed/src/main.rs",
+                selection: Some(6..6),
+            },
+        );
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_from_https_url_multi_line_selection() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries",
+            repo: "zed",
+        };
+        let permalink = Github.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "https://github.com/zed-industries/zed.git",
+                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
+                path: "crates/zed/src/main.rs",
+                selection: Some(23..47),
+            },
+        );
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L24-L48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
     fn test_github_pull_requests() {
         let remote = ParsedGitRemote {
             owner: "zed-industries",

@@ -95,3 +95,128 @@ impl GitHostingProvider for Codeberg {
         Ok(avatar_url)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_codeberg_permalink_from_ssh_url() {
+        let remote = ParsedGitRemote {
+            owner: "rajveermalviya",
+            repo: "zed",
+        };
+        let permalink = Codeberg.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "git@codeberg.org:rajveermalviya/zed.git",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+                path: "crates/editor/src/git/permalink.rs",
+                selection: None,
+            },
+        );
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_ssh_url_single_line_selection() {
+        let remote = ParsedGitRemote {
+            owner: "rajveermalviya",
+            repo: "zed",
+        };
+        let permalink = Codeberg.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "git@codeberg.org:rajveermalviya/zed.git",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+                path: "crates/editor/src/git/permalink.rs",
+                selection: Some(6..6),
+            },
+        );
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_ssh_url_multi_line_selection() {
+        let remote = ParsedGitRemote {
+            owner: "rajveermalviya",
+            repo: "zed",
+        };
+        let permalink = Codeberg.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "git@codeberg.org:rajveermalviya/zed.git",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+                path: "crates/editor/src/git/permalink.rs",
+                selection: Some(23..47),
+            },
+        );
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L24-L48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_https_url() {
+        let remote = ParsedGitRemote {
+            owner: "rajveermalviya",
+            repo: "zed",
+        };
+        let permalink = Codeberg.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "https://codeberg.org/rajveermalviya/zed.git",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+                path: "crates/zed/src/main.rs",
+                selection: None,
+            },
+        );
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_https_url_single_line_selection() {
+        let remote = ParsedGitRemote {
+            owner: "rajveermalviya",
+            repo: "zed",
+        };
+        let permalink = Codeberg.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "https://codeberg.org/rajveermalviya/zed.git",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+                path: "crates/zed/src/main.rs",
+                selection: Some(6..6),
+            },
+        );
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs#L7";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink_from_https_url_multi_line_selection() {
+        let remote = ParsedGitRemote {
+            owner: "rajveermalviya",
+            repo: "zed",
+        };
+        let permalink = Codeberg.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                remote_url: "https://codeberg.org/rajveermalviya/zed.git",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
+                path: "crates/zed/src/main.rs",
+                selection: Some(23..47),
+            },
+        );
+
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs#L24-L48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+}
