@@ -73,38 +73,8 @@ impl Render for ProjectIndexView {
         div()
             .v_flex()
             .gap_2()
-            .child(
-                div()
-                    .p_2()
-                    .rounded_md()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(
-                        h_flex()
-                            .child(Label::new("Query: ").color(Color::Modified))
-                            .child(Label::new(query).color(Color::Muted)),
-                    ),
-            )
             .children(output.excerpts.iter().map(|excerpt| {
-                let element_id = excerpt.element_id.clone();
-                let expanded = excerpt.expanded;
-
-                CollapsibleContainer::new(element_id.clone(), expanded)
-                    .start_slot(
-                        h_flex()
-                            .gap_1()
-                            .child(Icon::new(IconName::File).color(Color::Muted))
-                            .child(Label::new(excerpt.path.clone()).color(Color::Muted)),
-                    )
-                    .on_click(cx.listener(move |this, _, cx| {
-                        this.toggle_expanded(element_id.clone(), cx);
-                    }))
-                    .child(
-                        div()
-                            .p_2()
-                            .rounded_md()
-                            .bg(cx.theme().colors().editor_background)
-                            .child(excerpt.text.clone()),
-                    )
+                div().child(Label::new(format!("- {}", excerpt.path.as_ref())).color(Color::Muted))
             }))
     }
 }
@@ -138,7 +108,7 @@ impl LanguageModelTool for ProjectIndexTool {
     }
 
     fn description(&self) -> String {
-        "Semantic search against the user's current codebase, returning excerpts related to the query by computing a dot product against embeddings of chunks and an embedding of the query".to_string()
+        "Semantic search against the user's current codebase, returning excerpts related to the query by computing a dot product against embeddings of code chunks in the code base and an embedding of the query.".to_string()
     }
 
     fn execute(&self, query: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>> {
