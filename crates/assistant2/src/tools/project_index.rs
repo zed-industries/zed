@@ -71,29 +71,51 @@ impl Render for ProjectIndexView {
             Ok(output) => output,
         };
 
+        let num_files_searched = output.files_searched.len();
+        let num_excerpts = output.excerpts.len();
+
+        let files_searched = if num_files_searched == 1 {
+            "file"
+        } else {
+            "files"
+        };
+        let excerpts = if num_excerpts == 1 {
+            "excerpt"
+        } else {
+            "excerpts"
+        };
+
         v_flex()
             .gap_3()
             .child(
-                Label::new(format!("Reviewed {} files", output.files_searched.len()))
-                    .color(Color::Accent),
+                Label::new(format!(
+                    "Found {} {} in {} {}",
+                    num_excerpts, excerpts, num_files_searched, files_searched
+                ))
+                .color(Color::Accent),
             )
             .child(
                 CollapsibleContainer::new(self.element_id.clone(), self.expanded_header)
                     .start_slot(Label::new("Query Details".to_string()).color(Color::Muted))
-                    .child(Label::new(format!("Searched for `{}`", query)).color(Color::Muted))
                     .on_click(cx.listener(move |this, _, cx| {
                         this.toggle_header(cx);
-                    })),
-            )
-            .child(
-                v_flex()
-                    .gap_2()
-                    .children(output.files_searched.iter().map(|path| {
-                        h_flex()
-                            .gap_2()
-                            .child(Icon::new(IconName::File).color(Color::Muted))
-                            .child(Label::new(path.clone()).color(Color::Muted))
-                    })),
+                    }))
+                    .child(
+                        v_flex()
+                            .gap_3()
+                            .p_3()
+                            .child(
+                                Label::new(format!("Searched for `{}`", query)).color(Color::Muted),
+                            )
+                            .child(v_flex().gap_2().children(output.files_searched.iter().map(
+                                |path| {
+                                    h_flex()
+                                        .gap_2()
+                                        .child(Icon::new(IconName::File).color(Color::Muted))
+                                        .child(Label::new(path.clone()).color(Color::Muted))
+                                },
+                            ))),
+                    ),
             )
     }
 }
