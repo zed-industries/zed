@@ -733,7 +733,7 @@ pub enum CursorStyle {
     ResizeRight,
 
     /// A resize cursor to the left and right
-    /// corresponds to the CSS cursor value `col-resize`
+    /// corresponds to the CSS cursor value `ew-resize`
     ResizeLeftRight,
 
     /// A resize up cursor
@@ -745,8 +745,16 @@ pub enum CursorStyle {
     ResizeDown,
 
     /// A resize cursor directing up and down
-    /// corresponds to the CSS cursor value `row-resize`
+    /// corresponds to the CSS cursor value `ns-resize`
     ResizeUpDown,
+
+    /// A cursor indicating that the item/column can be resized horizontally.
+    /// corresponds to the CSS curosr value `col-resize`
+    ResizeColumn,
+
+    /// A cursor indicating that the item/row can be resized vertically.
+    /// corresponds to the CSS curosr value `row-resize`
+    ResizeRow,
 
     /// A cursor indicating that something will disappear if moved here
     /// Does not correspond to a CSS cursor value

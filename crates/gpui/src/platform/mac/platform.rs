@@ -781,9 +781,11 @@ impl Platform for MacPlatform {
                 CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
                 CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
                 CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+                CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
                 CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
                 CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
                 CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
+                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
                 CursorStyle::DisappearingItem => {
                     msg_send![class!(NSCursor), disappearingItemCursor]
                 }

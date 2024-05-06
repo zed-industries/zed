@@ -507,6 +507,8 @@ impl CursorStyle {
             CursorStyle::ResizeUp => Shape::NResize,
             CursorStyle::ResizeDown => Shape::SResize,
             CursorStyle::ResizeUpDown => Shape::NsResize,
+            CursorStyle::ResizeColumn => Shape::ColResize,
+            CursorStyle::ResizeRow => Shape::RowResize,
             CursorStyle::DisappearingItem => Shape::Grabbing, // todo(linux) - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => Shape::VerticalText,
             CursorStyle::OperationNotAllowed => Shape::NotAllowed,
@@ -533,6 +535,8 @@ impl CursorStyle {
             CursorStyle::ResizeUp => "n-resize",
             CursorStyle::ResizeDown => "s-resize",
             CursorStyle::ResizeUpDown => "ns-resize",
+            CursorStyle::ResizeColumn => "col-resize",
+            CursorStyle::ResizeRow => "row-resize",
             CursorStyle::DisappearingItem => "grabbing", // todo(linux) - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
             CursorStyle::OperationNotAllowed => "not-allowed",
