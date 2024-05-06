@@ -2,13 +2,12 @@ mod parser;
 
 use futures::FutureExt;
 use gpui::{
-    AnyElement, Bounds, ClipboardItem, DispatchPhase, FontStyle, FontWeight, GlobalElementId,
-    HighlightStyle, Hsla, MouseDownEvent, Render, StrikethroughStyle, Style, StyledText, Task,
-    TextRun, TextStyle, TextStyleRefinement, UnderlineStyle, WrappedLine,
+    AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, Render, StrikethroughStyle, Style,
+    StyledText, Task, TextRun, TextStyle, TextStyleRefinement, UnderlineStyle, WrappedLine,
 };
 use language::{Language, LanguageRegistry};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
-use std::{cell::Cell, iter, mem, ops::Range, rc::Rc, sync::Arc};
+use std::{cell::Cell, iter, mem, rc::Rc, sync::Arc};
 use ui::prelude::*;
 use util::TryFutureExt;
 
@@ -233,6 +232,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Heading(_) => builder.pop_div(),
                     MarkdownTagEnd::BlockQuote => builder.pop_div(),
                     MarkdownTagEnd::CodeBlock => {
+                        builder.trim_trailing_newline();
                         builder.pop_div();
                         builder.pop_code_block();
                     }
@@ -261,6 +261,7 @@ impl Element for MarkdownElement {
                 MarkdownEvent::InlineHtml(range) => {
                     builder.push_text(&self.markdown.text[range.clone()]);
                 }
+
                 MarkdownEvent::Rule => {
                     builder.push_div(div().border_b_1().my_2().border_color(gpui::red()));
                     builder.pop_div()
@@ -397,6 +398,13 @@ impl MarkdownElementBuilder {
         let run = self.text_style().to_run(text.len());
         self.pending_text.push_str(text);
         self.pending_runs.push(run);
+    }
+
+    fn trim_trailing_newline(&mut self) {
+        if self.pending_text.ends_with('\n') {
+            self.pending_text.truncate(self.pending_text.len() - 1);
+            self.pending_runs.last_mut().unwrap().len -= 1;
+        }
     }
 
     fn flush_text(&mut self) {
