@@ -47,7 +47,7 @@ struct EditDevServer {
 #[derive(Clone, PartialEq)]
 enum EditDevServerState {
     Default,
-    Renaming,
+    RenamingDevServer,
     RegeneratingToken,
     RegeneratedToken(RegenerateDevServerTokenResponse),
 }
@@ -258,7 +258,7 @@ impl DevServerProjects {
 
         self.mode = Mode::EditDevServer(EditDevServer {
             dev_server_id: id,
-            state: EditDevServerState::Renaming,
+            state: EditDevServerState::RenamingDevServer,
         });
 
         cx.spawn(|this, mut cx| async move {
@@ -279,7 +279,7 @@ impl DevServerProjects {
             gpui::PromptLevel::Warning,
             "Are you sure?",
             Some("This will invalidate the existing dev server token."),
-            &["Regenerate", "Cancel"],
+            &["Generate", "Cancel"],
         );
         cx.spawn(|this, mut cx| async move {
             let answer = answer.await?;
@@ -803,7 +803,7 @@ impl DevServerProjects {
 
         let disabled = matches!(
             edit_dev_server.state,
-            EditDevServerState::Renaming | EditDevServerState::RegeneratingToken
+            EditDevServerState::RenamingDevServer | EditDevServerState::RegeneratingToken
         );
         self.rename_dev_server_input.update(cx, |input, cx| {
             input.set_disabled(disabled, cx);
@@ -835,7 +835,7 @@ impl DevServerProjects {
                         .pl_1()
                         .pb(px(3.))
                         .when(
-                            edit_dev_server.state != EditDevServerState::Renaming,
+                            edit_dev_server.state != EditDevServerState::RenamingDevServer,
                             |div| {
                                 div.child(
                                     Button::new("rename-dev-server", "Rename")
@@ -851,7 +851,7 @@ impl DevServerProjects {
                             },
                         )
                         .when(
-                            edit_dev_server.state == EditDevServerState::Renaming,
+                            edit_dev_server.state == EditDevServerState::RenamingDevServer,
                             |div| {
                                 div.child(
                                     Button::new("rename-dev-server", "Renaming...").disabled(true),
