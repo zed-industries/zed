@@ -2356,6 +2356,7 @@ async fn regenerate_dev_server_token(
         session
             .peer
             .send(connection_id, proto::ShutdownDevServer {})?;
+        let _ = remove_dev_server_connection(dev_server_id, &session).await;
     }
 
     let status = session
@@ -2422,6 +2423,7 @@ async fn delete_dev_server(
         session
             .peer
             .send(connection_id, proto::ShutdownDevServer {})?;
+        let _ = remove_dev_server_connection(dev_server_id, &session).await;
     }
 
     let status = session
@@ -2594,7 +2596,8 @@ async fn shutdown_dev_server(
     session: DevServerSession,
 ) -> Result<()> {
     response.send(proto::Ack {})?;
-    shutdown_dev_server_internal(session.dev_server_id(), session.connection_id, &session).await
+    shutdown_dev_server_internal(session.dev_server_id(), session.connection_id, &session).await?;
+    remove_dev_server_connection(session.dev_server_id(), &session).await
 }
 
 async fn shutdown_dev_server_internal(
@@ -2631,6 +2634,21 @@ async fn shutdown_dev_server_internal(
         .await?;
     send_dev_server_projects_update(dev_server.user_id, status, &session).await;
 
+    Ok(())
+}
+
+async fn remove_dev_server_connection(dev_server_id: DevServerId, session: &Session) -> Result<()> {
+    let dev_server_connection = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
+
+    if let Some(dev_server_connection) = dev_server_connection {
+        session
+            .connection_pool()
+            .await
+            .remove_connection(dev_server_connection)?;
+    }
     Ok(())
 }
 

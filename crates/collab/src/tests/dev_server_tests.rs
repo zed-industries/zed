@@ -1,7 +1,6 @@
 use std::{path::Path, sync::Arc};
 
 use call::ActiveCall;
-use client::DevServerToken;
 use editor::Editor;
 use fs::Fs;
 use gpui::{TestAppContext, VisualTestContext, WindowHandle};
@@ -374,10 +373,11 @@ async fn test_dev_server_refresh_access_token(
     cx1: &mut gpui::TestAppContext,
     cx2: &mut gpui::TestAppContext,
     cx3: &mut gpui::TestAppContext,
+    cx4: &mut gpui::TestAppContext,
 ) {
     let (server, client1, client2, channel_id) = TestServer::start2(cx1, cx2).await;
 
-    let (dev_server, remote_workspace) =
+    let (_dev_server, remote_workspace) =
         create_dev_server_project(&server, client1.app_state.clone(), cx1, cx3).await;
 
     cx1.update(|cx| {
@@ -430,7 +430,9 @@ async fn test_dev_server_refresh_access_token(
     });
 
     // Reconnect the dev server with the new token
-    dev_server.set_dev_server_token(DevServerToken(new_token_response.access_token));
+    let _dev_server = server
+        .create_dev_server(new_token_response.access_token, cx4)
+        .await;
 
     cx1.executor().run_until_parked();
 
