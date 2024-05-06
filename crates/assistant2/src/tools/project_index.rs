@@ -216,7 +216,7 @@ impl LanguageModelTool for ProjectIndexTool {
         cx.new_view(|_cx| ProjectIndexView::new(input, output))
     }
 
-    fn render_running(cx: &mut WindowContext) -> impl IntoElement {
+    fn render_running(_: &mut WindowContext) -> impl IntoElement {
         CollapsibleContainer::new(ElementId::Name(nanoid::nanoid!().into()), false)
             .start_slot("Searching code base")
     }
