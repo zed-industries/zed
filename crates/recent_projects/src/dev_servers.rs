@@ -328,7 +328,7 @@ impl DevServerProjects {
 
     fn delete_dev_server(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
         let answer = cx.prompt(
-            gpui::PromptLevel::Destructive,
+            gpui::PromptLevel::Warning,
             "Are you sure?",
             Some("This will delete the dev server and all of its remote projects."),
             &["Delete", "Cancel"],
@@ -375,7 +375,7 @@ impl DevServerProjects {
         cx: &mut ViewContext<Self>,
     ) {
         let answer = cx.prompt(
-            gpui::PromptLevel::Destructive,
+            gpui::PromptLevel::Warning,
             format!("Delete \"{}\"?", path).as_str(),
             Some("This will delete the remote project. You can always re-add it later."),
             &["Delete", "Cancel"],
