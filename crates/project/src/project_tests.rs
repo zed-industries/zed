@@ -193,6 +193,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             all_tasks,
             vec![
                 (
+                    global_task_source_kind.clone(),
+                    "cargo check".to_string(),
+                    vec!["check".to_string(), "--all".to_string()],
+                    HashMap::default(),
+                ),
+                (
                     TaskSourceKind::Worktree {
                         id: workree_id,
                         abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
@@ -200,12 +206,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                     },
                     "cargo check".to_string(),
                     vec!["check".to_string()],
-                    HashMap::default(),
-                ),
-                (
-                    global_task_source_kind.clone(),
-                    "cargo check".to_string(),
-                    vec!["check".to_string(), "--all".to_string()],
                     HashMap::default(),
                 ),
             ]
@@ -281,16 +281,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 (
                     TaskSourceKind::Worktree {
                         id: workree_id,
-                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
-                        id_base: "local_tasks_for_worktree",
-                    },
-                    "cargo check".to_string(),
-                    vec!["check".to_string()],
-                    HashMap::default(),
-                ),
-                (
-                    TaskSourceKind::Worktree {
-                        id: workree_id,
                         abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
                         id_base: "local_tasks_for_worktree",
                     },
@@ -304,6 +294,16 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                         "RUSTFLAGS".to_string(),
                         "-Zunstable-options".to_string()
                     ))),
+                ),
+                (
+                    TaskSourceKind::Worktree {
+                        id: workree_id,
+                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                        id_base: "local_tasks_for_worktree",
+                    },
+                    "cargo check".to_string(),
+                    vec!["check".to_string()],
+                    HashMap::default(),
                 ),
             ]
         );

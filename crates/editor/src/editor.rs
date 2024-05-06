@@ -401,7 +401,7 @@ impl Default for ScrollbarMarkerState {
 
 #[derive(Clone, Debug)]
 struct RunnableTasks {
-    templates: SmallVec<[(TaskSourceKind, TaskTemplate); 1]>,
+    templates: Vec<(TaskSourceKind, TaskTemplate)>,
     // We need the column at which the task context evaluation should take place.
     column: u32,
 }
@@ -7725,10 +7725,7 @@ impl Editor {
         &self,
         runnable: &mut Runnable,
         cx: &WindowContext<'_>,
-    ) -> (
-        SmallVec<[(TaskSourceKind, TaskTemplate); 1]>,
-        Option<WorktreeId>,
-    ) {
+    ) -> (Vec<(TaskSourceKind, TaskTemplate)>, Option<WorktreeId>) {
         let Some(project) = self.project.as_ref() else {
             return Default::default();
         };
@@ -7743,22 +7740,32 @@ impl Editor {
 
         let inventory = inventory.read(cx);
         let tags = mem::take(&mut runnable.tags);
-        (
-            SmallVec::from_iter(
-                tags.into_iter()
-                    .flat_map(|tag| {
-                        let tag = tag.0.clone();
-                        inventory
-                            .list_tasks(Some(runnable.language.clone()), worktree_id)
-                            .into_iter()
-                            .filter(move |(_, template)| {
-                                template.tags.iter().any(|source_tag| source_tag == &tag)
-                            })
+        let mut tags: Vec<_> = tags
+            .into_iter()
+            .flat_map(|tag| {
+                let tag = tag.0.clone();
+                inventory
+                    .list_tasks(Some(runnable.language.clone()), worktree_id)
+                    .into_iter()
+                    .filter(move |(_, template)| {
+                        template.tags.iter().any(|source_tag| source_tag == &tag)
                     })
-                    .sorted_by_key(|(kind, _)| kind.to_owned()),
-            ),
-            worktree_id,
-        )
+            })
+            .sorted_by_key(|(kind, _)| kind.to_owned())
+            .collect();
+        if let Some((leading_tag_source, _)) = tags.first() {
+            // Strongest source wins; if we have worktree tag binding, prefer that to
+            // global and language bindings;
+            // if we have a global binding, prefer that to language binding.
+            let first_mismatch = tags
+                .iter()
+                .position(|(tag_source, _)| tag_source != leading_tag_source);
+            if let Some(index) = first_mismatch {
+                tags.truncate(index);
+            }
+        }
+
+        (tags, worktree_id)
     }
 
     pub fn move_to_enclosing_bracket(
