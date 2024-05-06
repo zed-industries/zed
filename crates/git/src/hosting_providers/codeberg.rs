@@ -1,10 +1,18 @@
+use std::sync::Arc;
+
+use anyhow::Result;
+use async_trait::async_trait;
 use url::Url;
+use util::codeberg;
+use util::http::HttpClient;
 
 use crate::hosting_provider::GitHostingProvider;
 use crate::permalink::{BuildCommitPermalinkParams, ParsedGitRemote};
+use crate::Oid;
 
 pub struct Codeberg;
 
+#[async_trait]
 impl GitHostingProvider for Codeberg {
     fn name(&self) -> String {
         "Codeberg".to_string()
@@ -48,5 +56,21 @@ impl GitHostingProvider for Codeberg {
         self.base_url()
             .join(&format!("{owner}/{repo}/commit/{sha}"))
             .unwrap()
+    }
+
+    async fn commit_author_avatar_url(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: Oid,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Option<Url>> {
+        let commit = commit.to_string();
+        let avatar_url =
+            codeberg::fetch_codeberg_commit_author(repo_owner, repo, &commit, &http_client)
+                .await?
+                .map(|author| Url::parse(&author.avatar_url))
+                .transpose()?;
+        Ok(avatar_url)
     }
 }

@@ -1,10 +1,15 @@
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
+use anyhow::Result;
+use async_trait::async_trait;
 use regex::Regex;
 use url::Url;
+use util::github;
+use util::http::HttpClient;
 
 use crate::hosting_provider::{GitHostingProvider, PullRequest};
 use crate::permalink::{BuildCommitPermalinkParams, ParsedGitRemote};
+use crate::Oid;
 
 fn pull_request_number_regex() -> &'static Regex {
     static PULL_REQUEST_NUMBER_REGEX: OnceLock<Regex> = OnceLock::new();
@@ -14,6 +19,7 @@ fn pull_request_number_regex() -> &'static Regex {
 
 pub struct Github;
 
+#[async_trait]
 impl GitHostingProvider for Github {
     fn name(&self) -> String {
         "GitHub".to_string()
@@ -69,6 +75,26 @@ impl GitHostingProvider for Github {
         url.set_path(&path);
 
         Some(PullRequest { number, url })
+    }
+
+    async fn commit_author_avatar_url(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: Oid,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Option<Url>> {
+        let commit = commit.to_string();
+        let avatar_url =
+            github::fetch_github_commit_author(repo_owner, repo, &commit, &http_client)
+                .await?
+                .map(|author| -> Result<Url, url::ParseError> {
+                    let mut url = Url::parse(&author.avatar_url)?;
+                    url.set_query(Some("size=128"));
+                    Ok(url)
+                })
+                .transpose()?;
+        Ok(avatar_url)
     }
 }
 

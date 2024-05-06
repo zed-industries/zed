@@ -2,6 +2,7 @@ use core::fmt;
 use std::{ops::Range, sync::Arc};
 
 use anyhow::Result;
+use async_trait::async_trait;
 use url::Url;
 use util::{codeberg, github, http::HttpClient};
 
@@ -16,6 +17,7 @@ pub struct PullRequest {
 }
 
 /// A Git hosting provider.
+#[async_trait]
 pub trait GitHostingProvider {
     /// Returns the name of the provider.
     fn name(&self) -> String;
@@ -56,6 +58,16 @@ pub trait GitHostingProvider {
         _message: &str,
     ) -> Option<PullRequest> {
         None
+    }
+
+    async fn commit_author_avatar_url(
+        &self,
+        _repo_owner: &str,
+        _repo: &str,
+        _commit: Oid,
+        _http_client: Arc<dyn HttpClient>,
+    ) -> Result<Option<Url>> {
+        Ok(None)
     }
 }
 

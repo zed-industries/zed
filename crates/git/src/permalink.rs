@@ -45,8 +45,13 @@ pub struct BuildCommitPermalinkParams<'a> {
     pub sha: &'a str,
 }
 
-pub fn parse_git_remote_url(url: &str) -> Option<(Arc<dyn GitHostingProvider>, ParsedGitRemote)> {
-    let providers: Vec<Arc<dyn GitHostingProvider>> = vec![
+pub fn parse_git_remote_url(
+    url: &str,
+) -> Option<(
+    Arc<dyn GitHostingProvider + Send + Sync + 'static>,
+    ParsedGitRemote,
+)> {
+    let providers: Vec<Arc<dyn GitHostingProvider + Send + Sync + 'static>> = vec![
         Arc::new(Github),
         Arc::new(Gitlab),
         Arc::new(Bitbucket),
