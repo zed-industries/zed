@@ -7,7 +7,7 @@ use url::Url;
 use util::github;
 use util::http::HttpClient;
 
-use crate::{
+use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, Oid, ParsedGitRemote,
     PullRequest,
 };

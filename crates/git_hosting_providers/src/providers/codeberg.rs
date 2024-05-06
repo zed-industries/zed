@@ -1,22 +1,29 @@
-use url::Url;
+use std::sync::Arc;
 
-use crate::{
-    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+use anyhow::Result;
+use async_trait::async_trait;
+use url::Url;
+use util::codeberg;
+use util::http::HttpClient;
+
+use git::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, Oid, ParsedGitRemote,
 };
 
-pub struct Gitee;
+pub struct Codeberg;
 
-impl GitHostingProvider for Gitee {
+#[async_trait]
+impl GitHostingProvider for Codeberg {
     fn name(&self) -> String {
-        "Gitee".to_string()
+        "Codeberg".to_string()
     }
 
     fn base_url(&self) -> Url {
-        Url::parse("https://gitee.com").unwrap()
+        Url::parse("https://codeberg.org").unwrap()
     }
 
     fn supports_avatars(&self) -> bool {
-        false
+        true
     }
 
     fn format_line_number(&self, line: u32) -> String {
@@ -24,14 +31,14 @@ impl GitHostingProvider for Gitee {
     }
 
     fn format_line_numbers(&self, start_line: u32, end_line: u32) -> String {
-        format!("L{start_line}-{end_line}")
+        format!("L{start_line}-L{end_line}")
     }
 
     fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
-        if url.starts_with("git@gitee.com:") || url.starts_with("https://gitee.com/") {
+        if url.starts_with("git@codeberg.org:") || url.starts_with("https://codeberg.org/") {
             let repo_with_owner = url
-                .trim_start_matches("git@gitee.com:")
-                .trim_start_matches("https://gitee.com/")
+                .trim_start_matches("git@codeberg.org:")
+                .trim_start_matches("https://codeberg.org/")
                 .trim_end_matches(".git");
 
             let (owner, repo) = repo_with_owner.split_once('/')?;
@@ -65,7 +72,7 @@ impl GitHostingProvider for Gitee {
 
         let mut permalink = self
             .base_url()
-            .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
+            .join(&format!("{owner}/{repo}/src/commit/{sha}/{path}"))
             .unwrap();
         permalink.set_fragment(
             selection
@@ -74,6 +81,22 @@ impl GitHostingProvider for Gitee {
         );
         permalink
     }
+
+    async fn commit_author_avatar_url(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: Oid,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Option<Url>> {
+        let commit = commit.to_string();
+        let avatar_url =
+            codeberg::fetch_codeberg_commit_author(repo_owner, repo, &commit, &http_client)
+                .await?
+                .map(|author| Url::parse(&author.avatar_url))
+                .transpose()?;
+        Ok(avatar_url)
+    }
 }
 
 #[cfg(test)]
@@ -81,116 +104,116 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_gitee_permalink_from_ssh_url() {
+    fn test_build_codeberg_permalink_from_ssh_url() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
+            owner: "rajveermalviya",
             repo: "zed",
         };
-        let permalink = Gitee.build_permalink(
+        let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: None,
             },
         );
 
-        let expected_url = "https://gitee.com/libkitten/zed/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/crates/editor/src/git/permalink.rs";
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_gitee_permalink_from_ssh_url_single_line_selection() {
+    fn test_build_codeberg_permalink_from_ssh_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
+            owner: "rajveermalviya",
             repo: "zed",
         };
-        let permalink = Gitee.build_permalink(
+        let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: Some(6..6),
             },
         );
 
-        let expected_url = "https://gitee.com/libkitten/zed/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/crates/editor/src/git/permalink.rs#L7";
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_gitee_permalink_from_ssh_url_multi_line_selection() {
+    fn test_build_codeberg_permalink_from_ssh_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
+            owner: "rajveermalviya",
             repo: "zed",
         };
-        let permalink = Gitee.build_permalink(
+        let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
                 selection: Some(23..47),
             },
         );
 
-        let expected_url = "https://gitee.com/libkitten/zed/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/crates/editor/src/git/permalink.rs#L24-48";
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L24-L48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_gitee_permalink_from_https_url() {
+    fn test_build_codeberg_permalink_from_https_url() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
+            owner: "rajveermalviya",
             repo: "zed",
         };
-        let permalink = Gitee.build_permalink(
+        let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/zed/src/main.rs",
                 selection: None,
             },
         );
 
-        let expected_url = "https://gitee.com/libkitten/zed/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/crates/zed/src/main.rs";
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_gitee_permalink_from_https_url_single_line_selection() {
+    fn test_build_codeberg_permalink_from_https_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
+            owner: "rajveermalviya",
             repo: "zed",
         };
-        let permalink = Gitee.build_permalink(
+        let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/zed/src/main.rs",
                 selection: Some(6..6),
             },
         );
 
-        let expected_url = "https://gitee.com/libkitten/zed/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/crates/zed/src/main.rs#L7";
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs#L7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_gitee_permalink_from_https_url_multi_line_selection() {
+    fn test_build_codeberg_permalink_from_https_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
+            owner: "rajveermalviya",
             repo: "zed",
         };
-        let permalink = Gitee.build_permalink(
+        let permalink = Codeberg.build_permalink(
             remote,
             BuildPermalinkParams {
-                sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
+                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/zed/src/main.rs",
                 selection: Some(23..47),
             },
         );
 
-        let expected_url = "https://gitee.com/libkitten/zed/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/crates/zed/src/main.rs#L24-48";
+        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs#L24-L48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }

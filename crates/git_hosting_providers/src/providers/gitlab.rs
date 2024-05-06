@@ -1,6 +1,6 @@
 use url::Url;
 
-use crate::{
+use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
 };
 

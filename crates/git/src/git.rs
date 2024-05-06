@@ -1,5 +1,4 @@
 mod hosting_provider;
-mod hosting_providers;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -11,7 +10,6 @@ pub use git2 as libgit;
 pub use lazy_static::lazy_static;
 
 pub use crate::hosting_provider::*;
-pub use crate::hosting_providers::*;
 
 pub mod blame;
 pub mod commit;

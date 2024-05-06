@@ -2,10 +2,13 @@ use std::{ops::Range, sync::Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
+use collections::BTreeMap;
+use derive_more::{Deref, DerefMut};
+use gpui::{AppContext, Global};
+use parking_lot::RwLock;
 use url::Url;
 use util::http::HttpClient;
 
-use crate::hosting_providers::{Bitbucket, Codeberg, Gitee, Github, Gitlab, Sourcehut};
 use crate::Oid;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -87,6 +90,69 @@ pub trait GitHostingProvider {
     }
 }
 
+#[derive(Default, Deref, DerefMut)]
+struct GlobalGitHostingProviderRegistry(Arc<GitHostingProviderRegistry>);
+
+impl Global for GlobalGitHostingProviderRegistry {}
+
+#[derive(Default)]
+struct GitHostingProviderRegistryState {
+    providers: BTreeMap<String, Arc<dyn GitHostingProvider + Send + Sync + 'static>>,
+}
+
+#[derive(Default)]
+pub struct GitHostingProviderRegistry {
+    state: RwLock<GitHostingProviderRegistryState>,
+}
+
+impl GitHostingProviderRegistry {
+    /// Returns the global [`GitHostingProviderRegistry`].
+    pub fn global(cx: &AppContext) -> Arc<Self> {
+        cx.global::<GlobalGitHostingProviderRegistry>().0.clone()
+    }
+
+    /// Returns the global [`GitHostingProviderRegistry`].
+    ///
+    /// Inserts a default [`GitHostingProviderRegistry`] if one does not yet exist.
+    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+        cx.default_global::<GlobalGitHostingProviderRegistry>()
+            .0
+            .clone()
+    }
+
+    /// Sets the global [`GitHostingProviderRegistry`].
+    pub fn set_global(registry: Arc<GitHostingProviderRegistry>, cx: &mut AppContext) {
+        cx.set_global(GlobalGitHostingProviderRegistry(registry));
+    }
+
+    /// Returns a new [`GitHostingProviderRegistry`].
+    pub fn new() -> Self {
+        Self {
+            state: RwLock::new(GitHostingProviderRegistryState {
+                providers: BTreeMap::default(),
+            }),
+        }
+    }
+
+    /// Returns the list of all [`GitHostingProvider`]s in the registry.
+    pub fn list_hosting_providers(
+        &self,
+    ) -> Vec<Arc<dyn GitHostingProvider + Send + Sync + 'static>> {
+        self.state.read().providers.values().cloned().collect()
+    }
+
+    /// Adds the provided [`GitHostingProvider`] to the registry.
+    pub fn register_hosting_provider(
+        &self,
+        provider: Arc<dyn GitHostingProvider + Send + Sync + 'static>,
+    ) {
+        self.state
+            .write()
+            .providers
+            .insert(provider.name(), provider);
+    }
+}
+
 #[derive(Debug)]
 pub struct ParsedGitRemote<'a> {
     pub owner: &'a str,
@@ -94,23 +160,18 @@ pub struct ParsedGitRemote<'a> {
 }
 
 pub fn parse_git_remote_url(
+    provider_registry: Arc<GitHostingProviderRegistry>,
     url: &str,
 ) -> Option<(
     Arc<dyn GitHostingProvider + Send + Sync + 'static>,
     ParsedGitRemote,
 )> {
-    let providers: Vec<Arc<dyn GitHostingProvider + Send + Sync + 'static>> = vec![
-        Arc::new(Github),
-        Arc::new(Gitlab),
-        Arc::new(Bitbucket),
-        Arc::new(Codeberg),
-        Arc::new(Gitee),
-        Arc::new(Sourcehut),
-    ];
-
-    providers.into_iter().find_map(|provider| {
-        provider
-            .parse_remote_url(&url)
-            .map(|parsed_remote| (provider, parsed_remote))
-    })
+    provider_registry
+        .list_hosting_providers()
+        .into_iter()
+        .find_map(|provider| {
+            provider
+                .parse_remote_url(&url)
+                .map(|parsed_remote| (provider, parsed_remote))
+        })
 }
