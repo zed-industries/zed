@@ -41,7 +41,7 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
-use ::git::permalink::{build_permalink, BuildPermalinkParams};
+use ::git::{parse_git_remote_url, BuildPermalinkParams};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -9548,17 +9548,22 @@ impl Editor {
         let selections = self.selections.all::<Point>(cx);
         let selection = selections.iter().peekable().next();
 
-        build_permalink(BuildPermalinkParams {
-            remote_url: &origin_url,
-            sha: &sha,
-            path: &path,
-            selection: selection.map(|selection| {
-                let range = selection.range();
-                let start = range.start.row;
-                let end = range.end.row;
-                start..end
-            }),
-        })
+        let (provider, remote) = parse_git_remote_url(&origin_url)
+            .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
+
+        Ok(provider.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                sha: &sha,
+                path: &path,
+                selection: selection.map(|selection| {
+                    let range = selection.range();
+                    let start = range.start.row;
+                    let end = range.end.row;
+                    start..end
+                }),
+            },
+        ))
     }
 
     pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
