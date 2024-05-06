@@ -1,16 +1,87 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
+use futures::AsyncReadExt;
+use isahc::config::Configurable;
+use isahc::{AsyncBody, Request};
+use serde::Deserialize;
 use url::Url;
-use util::codeberg;
 use util::http::HttpClient;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, Oid, ParsedGitRemote,
 };
 
+#[derive(Debug, Deserialize)]
+struct CommitDetails {
+    commit: Commit,
+    author: Option<User>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Commit {
+    author: Author,
+}
+
+#[derive(Debug, Deserialize)]
+struct Author {
+    name: String,
+    email: String,
+    date: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct User {
+    pub login: String,
+    pub id: u64,
+    pub avatar_url: String,
+}
+
 pub struct Codeberg;
+
+impl Codeberg {
+    async fn fetch_codeberg_commit_author(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: &str,
+        client: &Arc<dyn HttpClient>,
+    ) -> Result<Option<User>> {
+        let url =
+            format!("https://codeberg.org/api/v1/repos/{repo_owner}/{repo}/git/commits/{commit}");
+
+        let mut request = Request::get(&url)
+            .redirect_policy(isahc::config::RedirectPolicy::Follow)
+            .header("Content-Type", "application/json");
+
+        if let Ok(codeberg_token) = std::env::var("CODEBERG_TOKEN") {
+            request = request.header("Authorization", format!("Bearer {}", codeberg_token));
+        }
+
+        let mut response = client
+            .send(request.body(AsyncBody::default())?)
+            .await
+            .with_context(|| format!("error fetching Codeberg commit details at {:?}", url))?;
+
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+
+        if response.status().is_client_error() {
+            let text = String::from_utf8_lossy(body.as_slice());
+            bail!(
+                "status error {}, response: {text:?}",
+                response.status().as_u16()
+            );
+        }
+
+        let body_str = std::str::from_utf8(&body)?;
+
+        serde_json::from_str::<CommitDetails>(body_str)
+            .map(|commit| commit.author)
+            .context("failed to deserialize Codeberg commit details")
+    }
+}
 
 #[async_trait]
 impl GitHostingProvider for Codeberg {
@@ -90,11 +161,11 @@ impl GitHostingProvider for Codeberg {
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         let commit = commit.to_string();
-        let avatar_url =
-            codeberg::fetch_codeberg_commit_author(repo_owner, repo, &commit, &http_client)
-                .await?
-                .map(|author| Url::parse(&author.avatar_url))
-                .transpose()?;
+        let avatar_url = self
+            .fetch_codeberg_commit_author(repo_owner, repo, &commit, &http_client)
+            .await?
+            .map(|author| Url::parse(&author.avatar_url))
+            .transpose()?;
         Ok(avatar_url)
     }
 }

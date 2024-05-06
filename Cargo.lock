@@ -4427,8 +4427,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures 0.3.28",
  "git",
  "gpui",
+ "isahc",
  "pretty_assertions",
  "regex",
  "serde",

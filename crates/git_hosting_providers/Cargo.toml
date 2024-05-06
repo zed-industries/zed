@@ -14,10 +14,13 @@ path = "src/git_hosting_providers.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+futures.workspace = true
 git.workspace = true
 gpui.workspace = true
+isahc.workspace = true
 regex.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 url.workspace = true
 util.workspace = true
 
