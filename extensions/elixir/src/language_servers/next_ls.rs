@@ -22,7 +22,7 @@ impl NextLs {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<String> {
-        if let Some(path) = worktree.which("next-ls") {
+        if let Some(path) = worktree.which("nextls") {
             return Ok(path);
         }
 

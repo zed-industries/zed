@@ -41,7 +41,6 @@ use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use std::{
-    any::Any,
     fmt::{self, Debug},
     ops::Range,
     path::{Path, PathBuf},
@@ -107,7 +106,6 @@ pub(crate) trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn open_window(
         &self,
@@ -129,11 +127,8 @@ pub(crate) trait Platform: 'static {
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>>;
     fn reveal_path(&self, path: &Path);
 
-    fn on_become_active(&self, callback: Box<dyn FnMut()>);
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>);
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn add_recent_document(&self, _path: &Path) {}
@@ -196,7 +191,6 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn display(&self) -> Rc<dyn PlatformDisplay>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn modifiers(&self) -> Modifiers;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
     fn prompt(
@@ -221,12 +215,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
-    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
-    fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool;
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
@@ -274,13 +266,6 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
-    fn wrap_line(
-        &self,
-        text: &str,
-        font_id: FontId,
-        font_size: Pixels,
-        width: Pixels,
-    ) -> Vec<usize>;
 }
 
 /// Basic metadata about the current application and operating system.
@@ -566,7 +551,6 @@ pub struct WindowOptions {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub(crate) struct WindowParams {
-    ///
     pub bounds: Bounds<DevicePixels>,
 
     /// The titlebar configuration of the window

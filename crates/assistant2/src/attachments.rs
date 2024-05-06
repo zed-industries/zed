@@ -117,7 +117,6 @@ impl UserAttachmentStore {
     }
 }
 
-///
 pub trait AttachmentTool {
     type Output: 'static;
     type View: Render;

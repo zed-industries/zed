@@ -316,6 +316,139 @@ async fn test_dev_server_delete(
 }
 
 #[gpui::test]
+async fn test_dev_server_rename(
+    cx1: &mut gpui::TestAppContext,
+    cx2: &mut gpui::TestAppContext,
+    cx3: &mut gpui::TestAppContext,
+) {
+    let (server, client1, client2, channel_id) = TestServer::start2(cx1, cx2).await;
+
+    let (_dev_server, remote_workspace) =
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx3).await;
+
+    cx1.update(|cx| {
+        workspace::join_channel(
+            channel_id,
+            client1.app_state.clone(),
+            Some(remote_workspace),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    cx1.executor().run_until_parked();
+
+    remote_workspace
+        .update(cx1, |ws, cx| {
+            assert!(ws.project().read(cx).is_shared());
+        })
+        .unwrap();
+
+    join_channel(channel_id, &client2, cx2).await.unwrap();
+    cx2.executor().run_until_parked();
+
+    cx1.update(|cx| {
+        dev_server_projects::Store::global(cx).update(cx, |store, cx| {
+            store.rename_dev_server(
+                store.dev_servers().first().unwrap().id,
+                "name-edited".to_string(),
+                cx,
+            )
+        })
+    })
+    .await
+    .unwrap();
+
+    cx1.executor().run_until_parked();
+
+    cx1.update(|cx| {
+        dev_server_projects::Store::global(cx).update(cx, |store, _| {
+            assert_eq!(store.dev_servers().first().unwrap().name, "name-edited");
+        })
+    })
+}
+
+#[gpui::test]
+async fn test_dev_server_refresh_access_token(
+    cx1: &mut gpui::TestAppContext,
+    cx2: &mut gpui::TestAppContext,
+    cx3: &mut gpui::TestAppContext,
+    cx4: &mut gpui::TestAppContext,
+) {
+    let (server, client1, client2, channel_id) = TestServer::start2(cx1, cx2).await;
+
+    let (_dev_server, remote_workspace) =
+        create_dev_server_project(&server, client1.app_state.clone(), cx1, cx3).await;
+
+    cx1.update(|cx| {
+        workspace::join_channel(
+            channel_id,
+            client1.app_state.clone(),
+            Some(remote_workspace),
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    cx1.executor().run_until_parked();
+
+    remote_workspace
+        .update(cx1, |ws, cx| {
+            assert!(ws.project().read(cx).is_shared());
+        })
+        .unwrap();
+
+    join_channel(channel_id, &client2, cx2).await.unwrap();
+    cx2.executor().run_until_parked();
+
+    // Regenerate the access token
+    let new_token_response = cx1
+        .update(|cx| {
+            dev_server_projects::Store::global(cx).update(cx, |store, cx| {
+                store.regenerate_dev_server_token(store.dev_servers().first().unwrap().id, cx)
+            })
+        })
+        .await
+        .unwrap();
+
+    cx1.executor().run_until_parked();
+
+    // Assert that the other client was disconnected
+    let (workspace, cx2) = client2.active_workspace(cx2);
+    cx2.update(|cx| assert!(workspace.read(cx).project().read(cx).is_disconnected()));
+
+    // Assert that the owner of the dev server does not see the dev server as online anymore
+    let (workspace, cx1) = client1.active_workspace(cx1);
+    cx1.update(|cx| {
+        assert!(workspace.read(cx).project().read(cx).is_disconnected());
+        dev_server_projects::Store::global(cx).update(cx, |store, _| {
+            assert_eq!(
+                store.dev_servers().first().unwrap().status,
+                DevServerStatus::Offline
+            );
+        })
+    });
+
+    // Reconnect the dev server with the new token
+    let _dev_server = server
+        .create_dev_server(new_token_response.access_token, cx4)
+        .await;
+
+    cx1.executor().run_until_parked();
+
+    // Assert that the dev server is online again
+    cx1.update(|cx| {
+        dev_server_projects::Store::global(cx).update(cx, |store, _| {
+            assert_eq!(store.dev_servers().len(), 1);
+            assert_eq!(
+                store.dev_servers().first().unwrap().status,
+                DevServerStatus::Online
+            );
+        })
+    });
+}
+
+#[gpui::test]
 async fn test_dev_server_reconnect(
     cx1: &mut gpui::TestAppContext,
     cx2: &mut gpui::TestAppContext,

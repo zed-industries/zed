@@ -841,6 +841,124 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_copilot_does_not_prevent_completion_triggers(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let (copilot, copilot_lsp) = Copilot::fake(cx);
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    ..lsp::CompletionOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
+        cx.update_editor(|editor, cx| {
+            editor.set_inline_completion_provider(Some(copilot_provider), cx)
+        });
+
+        cx.set_state(indoc! {"
+                one
+                twˇ
+                three
+            "});
+
+        let _ = handle_completion_request(
+            &mut cx,
+            indoc! {"
+                one
+                tw|<>
+                three
+            "},
+            vec!["completion_a", "completion_b"],
+        );
+        handle_copilot_completion_request(
+            &copilot_lsp,
+            vec![crate::request::Completion {
+                text: "two.foo()".into(),
+                range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 2)),
+                ..Default::default()
+            }],
+            vec![],
+        );
+        cx.update_editor(|editor, cx| editor.next_inline_completion(&Default::default(), cx));
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.update_editor(|editor, cx| {
+            assert!(!editor.context_menu_visible(), "Even there are some completions available, those are not triggered when active copilot suggestion is present");
+            assert!(editor.has_active_inline_completion(cx));
+            assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
+            assert_eq!(editor.text(cx), "one\ntw\nthree\n");
+        });
+
+        cx.simulate_keystroke("o");
+        let _ = handle_completion_request(
+            &mut cx,
+            indoc! {"
+                one
+                two|<>
+                three
+            "},
+            vec!["completion_a_2", "completion_b_2"],
+        );
+        handle_copilot_completion_request(
+            &copilot_lsp,
+            vec![crate::request::Completion {
+                text: "two.foo()".into(),
+                range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 3)),
+                ..Default::default()
+            }],
+            vec![],
+        );
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.update_editor(|editor, cx| {
+            assert!(!editor.context_menu_visible());
+            assert!(editor.has_active_inline_completion(cx));
+            assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
+            assert_eq!(editor.text(cx), "one\ntwo\nthree\n");
+        });
+
+        cx.simulate_keystroke(".");
+        let _ = handle_completion_request(
+            &mut cx,
+            indoc! {"
+                one
+                two.|<>
+                three
+            "},
+            vec!["something_else()"],
+        );
+        handle_copilot_completion_request(
+            &copilot_lsp,
+            vec![crate::request::Completion {
+                text: "two.foo()".into(),
+                range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 4)),
+                ..Default::default()
+            }],
+            vec![],
+        );
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.update_editor(|editor, cx| {
+            assert!(
+                editor.context_menu_visible(),
+                "On completion trigger input, the completions should be fetched and visible"
+            );
+            assert!(
+                !editor.has_active_inline_completion(cx),
+                "On completion trigger input, copilot suggestion should be dismissed"
+            );
+            assert_eq!(editor.display_text(cx), "one\ntwo.\nthree\n");
+            assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
+        });
+    }
+
+    #[gpui::test]
     async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         init_test(cx, |settings| {
             settings

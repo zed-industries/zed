@@ -12,10 +12,11 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, GutterDimensions, HalfPageDown,
-    HalfPageUp, HoveredCursor, HunkToExpand, LineDown, LineUp, OpenExcerpts, PageDown, PageUp,
-    Point, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    CodeActionsMenu, CursorShape, DisplayPoint, DocumentHighlightRead, DocumentHighlightWrite,
+    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts,
+    GutterDimensions, HalfPageDown, HalfPageUp, HoveredCursor, HunkToExpand, LineDown, LineUp,
+    OpenExcerpts, PageDown, PageUp, Point, RunnableTasks, SelectPhase, Selection, SoftWrap,
+    ToPoint, CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
 };
 use anyhow::Result;
 use client::ParticipantIndex;
@@ -1374,6 +1375,60 @@ impl EditorElement {
         Some(shaped_lines)
     }
 
+    fn layout_run_indicators(
+        &self,
+        task_lines: Vec<(u32, RunnableTasks)>,
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        cx: &mut WindowContext,
+    ) -> Vec<AnyElement> {
+        self.editor.update(cx, |editor, cx| {
+            editor.clear_tasks();
+
+            let active_task_indicator_row =
+                if let Some(crate::ContextMenu::CodeActions(CodeActionsMenu {
+                    deployed_from_indicator,
+                    actions,
+                    ..
+                })) = editor.context_menu.read().as_ref()
+                {
+                    actions
+                        .tasks
+                        .as_ref()
+                        .map(|tasks| tasks.position.row)
+                        .or_else(|| *deployed_from_indicator)
+                } else {
+                    None
+                };
+            task_lines
+                .into_iter()
+                .map(|(row, tasks)| {
+                    editor.insert_tasks(row, tasks);
+
+                    let button = editor.render_run_indicator(
+                        &self.style,
+                        Some(row) == active_task_indicator_row,
+                        row,
+                        cx,
+                    );
+
+                    let button = prepaint_gutter_button(
+                        button,
+                        row,
+                        line_height,
+                        gutter_dimensions,
+                        scroll_pixel_position,
+                        gutter_hitbox,
+                        cx,
+                    );
+                    button
+                })
+                .collect_vec()
+        })
+    }
+
     fn layout_code_actions_indicator(
         &self,
         line_height: Pixels,
@@ -1385,35 +1440,28 @@ impl EditorElement {
     ) -> Option<AnyElement> {
         let mut active = false;
         let mut button = None;
+        let row = newest_selection_head.row();
         self.editor.update(cx, |editor, cx| {
-            active = matches!(
-                editor.context_menu.read().as_ref(),
-                Some(crate::ContextMenu::CodeActions(_))
-            );
-            button = editor.render_code_actions_indicator(&self.style, active, cx);
+            if let Some(crate::ContextMenu::CodeActions(CodeActionsMenu {
+                deployed_from_indicator,
+                ..
+            })) = editor.context_menu.read().as_ref()
+            {
+                active = deployed_from_indicator.map_or(true, |indicator_row| indicator_row == row);
+            };
+            button = editor.render_code_actions_indicator(&self.style, row, active, cx);
         });
 
-        let mut button = button?.into_any_element();
-        let available_space = size(
-            AvailableSpace::MinContent,
-            AvailableSpace::Definite(line_height),
+        let button = prepaint_gutter_button(
+            button?,
+            row,
+            line_height,
+            gutter_dimensions,
+            scroll_pixel_position,
+            gutter_hitbox,
+            cx,
         );
-        let indicator_size = button.layout_as_root(available_space, cx);
 
-        let blame_width = gutter_dimensions
-            .git_blame_entries_width
-            .unwrap_or(Pixels::ZERO);
-
-        let mut x = blame_width;
-        let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
-            - indicator_size.width
-            - blame_width;
-        x += available_width / 2.;
-
-        let mut y = newest_selection_head.row() as f32 * line_height - scroll_pixel_position.y;
-        y += (line_height - indicator_size.height) / 2.;
-
-        button.prepaint_as_root(gutter_hitbox.origin + point(x, y), available_space, cx);
         Some(button)
     }
 
@@ -2351,6 +2399,10 @@ impl EditorElement {
                 }
             });
 
+            for test_indicators in layout.test_indicators.iter_mut() {
+                test_indicators.paint(cx);
+            }
+
             if let Some(indicator) = layout.code_actions_indicator.as_mut() {
                 indicator.paint(cx);
             }
@@ -3224,6 +3276,39 @@ impl EditorElement {
     }
 }
 
+fn prepaint_gutter_button(
+    button: IconButton,
+    row: u32,
+    line_height: Pixels,
+    gutter_dimensions: &GutterDimensions,
+    scroll_pixel_position: gpui::Point<Pixels>,
+    gutter_hitbox: &Hitbox,
+    cx: &mut WindowContext<'_>,
+) -> AnyElement {
+    let mut button = button.into_any_element();
+    let available_space = size(
+        AvailableSpace::MinContent,
+        AvailableSpace::Definite(line_height),
+    );
+    let indicator_size = button.layout_as_root(available_space, cx);
+
+    let blame_width = gutter_dimensions
+        .git_blame_entries_width
+        .unwrap_or(Pixels::ZERO);
+
+    let mut x = blame_width;
+    let available_width = gutter_dimensions.margin + gutter_dimensions.left_padding
+        - indicator_size.width
+        - blame_width;
+    x += available_width / 2.;
+
+    let mut y = row as f32 * line_height - scroll_pixel_position.y;
+    y += (line_height - indicator_size.height) / 2.;
+
+    button.prepaint_as_root(gutter_hitbox.origin + point(x, y), available_space, cx);
+    button
+}
+
 fn render_inline_blame_entry(
     blame: &gpui::Model<GitBlame>,
     blame_entry: BlameEntry,
@@ -3750,6 +3835,12 @@ impl Element for EditorElement {
                     cx,
                 );
 
+                let test_lines = self.editor.read(cx).runnable_display_rows(
+                    start_anchor..end_anchor,
+                    &snapshot.display_snapshot,
+                    cx,
+                );
+
                 let (selections, active_rows, newest_selection_head) = self.layout_selections(
                     start_anchor,
                     end_anchor,
@@ -3939,17 +4030,31 @@ impl Element for EditorElement {
                             cx,
                         );
                         if gutter_settings.code_actions {
-                            code_actions_indicator = self.layout_code_actions_indicator(
-                                line_height,
-                                newest_selection_head,
-                                scroll_pixel_position,
-                                &gutter_dimensions,
-                                &gutter_hitbox,
-                                cx,
-                            );
+                            let has_test_indicator = test_lines
+                                .iter()
+                                .any(|(line, _)| *line == newest_selection_head.row());
+                            if !has_test_indicator {
+                                code_actions_indicator = self.layout_code_actions_indicator(
+                                    line_height,
+                                    newest_selection_head,
+                                    scroll_pixel_position,
+                                    &gutter_dimensions,
+                                    &gutter_hitbox,
+                                    cx,
+                                );
+                            }
                         }
                     }
                 }
+
+                let test_indicators = self.layout_run_indicators(
+                    test_lines,
+                    line_height,
+                    scroll_pixel_position,
+                    &gutter_dimensions,
+                    &gutter_hitbox,
+                    cx,
+                );
 
                 if !context_menu_visible && !cx.has_active_drag() {
                     self.layout_hover_popovers(
@@ -4051,6 +4156,7 @@ impl Element for EditorElement {
                     visible_cursors,
                     selections,
                     mouse_context_menu,
+                    test_indicators,
                     code_actions_indicator,
                     fold_indicators,
                     tab_invisible,
@@ -4170,6 +4276,7 @@ pub struct EditorLayout {
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     max_row: u32,
     code_actions_indicator: Option<AnyElement>,
+    test_indicators: Vec<AnyElement>,
     fold_indicators: Vec<Option<AnyElement>>,
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,

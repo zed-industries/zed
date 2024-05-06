@@ -1,18 +1,13 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use ::settings::Settings;
-use anyhow::Context;
-use editor::Editor;
+use editor::{tasks::task_context, Editor};
 use gpui::{AppContext, ViewContext, WindowContext};
-use language::{BasicContextProvider, ContextProvider, Language};
+use language::Language;
 use modal::TasksModal;
-use project::{Location, TaskSourceKind, WorktreeId};
-use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables};
-use util::ResultExt;
-use workspace::Workspace;
+use project::WorktreeId;
+use workspace::tasks::schedule_task;
+use workspace::{tasks::schedule_resolved_task, Workspace};
 
 mod modal;
 mod settings;
@@ -97,9 +92,9 @@ fn spawn_task_with_name(name: String, cx: &mut ViewContext<Workspace>) {
             .update(&mut cx, |workspace, cx| {
                 let (worktree, language) = active_item_selection_properties(workspace, cx);
                 let tasks = workspace.project().update(cx, |project, cx| {
-                    project.task_inventory().update(cx, |inventory, cx| {
-                        inventory.list_tasks(language, worktree, cx)
-                    })
+                    project
+                        .task_inventory()
+                        .update(cx, |inventory, _| inventory.list_tasks(language, worktree))
                 });
                 let (task_source_kind, target_task) =
                     tasks.into_iter().find(|(_, task)| task.label == name)?;
@@ -150,168 +145,6 @@ fn active_item_selection_properties(
             })
         });
     (worktree_id, language)
-}
-
-fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> TaskContext {
-    fn task_context_impl(workspace: &Workspace, cx: &mut WindowContext<'_>) -> Option<TaskContext> {
-        let cwd = task_cwd(workspace, cx).log_err().flatten();
-        let editor = workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<Editor>(cx))?;
-
-        let (selection, buffer, editor_snapshot) = editor.update(cx, |editor, cx| {
-            let selection = editor.selections.newest::<usize>(cx);
-            let (buffer, _, _) = editor
-                .buffer()
-                .read(cx)
-                .point_to_buffer_offset(selection.start, cx)?;
-            let snapshot = editor.snapshot(cx);
-            Some((selection, buffer, snapshot))
-        })?;
-        let language_context_provider = buffer
-            .read(cx)
-            .language()
-            .and_then(|language| language.context_provider())
-            .unwrap_or_else(|| Arc::new(BasicContextProvider));
-        let selection_range = selection.range();
-        let start = editor_snapshot
-            .display_snapshot
-            .buffer_snapshot
-            .anchor_after(selection_range.start)
-            .text_anchor;
-        let end = editor_snapshot
-            .display_snapshot
-            .buffer_snapshot
-            .anchor_after(selection_range.end)
-            .text_anchor;
-        let worktree_abs_path = buffer
-            .read(cx)
-            .file()
-            .map(|file| WorktreeId::from_usize(file.worktree_id()))
-            .and_then(|worktree_id| {
-                workspace
-                    .project()
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                    .map(|worktree| worktree.read(cx).abs_path())
-            });
-        let location = Location {
-            buffer,
-            range: start..end,
-        };
-        let task_variables = combine_task_variables(
-            worktree_abs_path.as_deref(),
-            location,
-            language_context_provider.as_ref(),
-            cx,
-        )
-        .log_err()?;
-        Some(TaskContext {
-            cwd,
-            task_variables,
-        })
-    }
-
-    task_context_impl(workspace, cx).unwrap_or_default()
-}
-
-fn combine_task_variables(
-    worktree_abs_path: Option<&Path>,
-    location: Location,
-    context_provider: &dyn ContextProvider,
-    cx: &mut WindowContext<'_>,
-) -> anyhow::Result<TaskVariables> {
-    if context_provider.is_basic() {
-        context_provider
-            .build_context(worktree_abs_path, &location, cx)
-            .context("building basic provider context")
-    } else {
-        let mut basic_context = BasicContextProvider
-            .build_context(worktree_abs_path, &location, cx)
-            .context("building basic default context")?;
-        basic_context.extend(
-            context_provider
-                .build_context(worktree_abs_path, &location, cx)
-                .context("building provider context ")?,
-        );
-        Ok(basic_context)
-    }
-}
-
-fn schedule_task(
-    workspace: &Workspace,
-    task_source_kind: TaskSourceKind,
-    task_to_resolve: &TaskTemplate,
-    task_cx: &TaskContext,
-    omit_history: bool,
-    cx: &mut ViewContext<'_, Workspace>,
-) {
-    if let Some(spawn_in_terminal) =
-        task_to_resolve.resolve_task(&task_source_kind.to_id_base(), task_cx)
-    {
-        schedule_resolved_task(
-            workspace,
-            task_source_kind,
-            spawn_in_terminal,
-            omit_history,
-            cx,
-        );
-    }
-}
-
-fn schedule_resolved_task(
-    workspace: &Workspace,
-    task_source_kind: TaskSourceKind,
-    mut resolved_task: ResolvedTask,
-    omit_history: bool,
-    cx: &mut ViewContext<'_, Workspace>,
-) {
-    if let Some(spawn_in_terminal) = resolved_task.resolved.take() {
-        if !omit_history {
-            resolved_task.resolved = Some(spawn_in_terminal.clone());
-            workspace.project().update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, _| {
-                    inventory.task_scheduled(task_source_kind, resolved_task);
-                })
-            });
-        }
-        cx.emit(workspace::Event::SpawnTask(spawn_in_terminal));
-    }
-}
-
-fn task_cwd(workspace: &Workspace, cx: &mut WindowContext) -> anyhow::Result<Option<PathBuf>> {
-    let project = workspace.project().read(cx);
-    let available_worktrees = project
-        .worktrees()
-        .filter(|worktree| {
-            let worktree = worktree.read(cx);
-            worktree.is_visible()
-                && worktree.is_local()
-                && worktree.root_entry().map_or(false, |e| e.is_dir())
-        })
-        .collect::<Vec<_>>();
-    let cwd = match available_worktrees.len() {
-        0 => None,
-        1 => Some(available_worktrees[0].read(cx).abs_path()),
-        _ => {
-            let cwd_for_active_entry = project.active_entry().and_then(|entry_id| {
-                available_worktrees.into_iter().find_map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    if worktree.contains_entry(entry_id) {
-                        Some(worktree.abs_path())
-                    } else {
-                        None
-                    }
-                })
-            });
-            anyhow::ensure!(
-                cwd_for_active_entry.is_some(),
-                "Cannot determine task cwd for multiple worktrees"
-            );
-            cwd_for_active_entry
-        }
-    };
-    Ok(cwd.map(|path| path.to_path_buf()))
 }
 
 #[cfg(test)]

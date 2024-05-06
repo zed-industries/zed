@@ -2386,7 +2386,6 @@ impl Project {
 
             if let Some(language) = language {
                 for adapter in self.languages.lsp_adapters(&language) {
-                    let language_id = adapter.language_ids.get(language.name().as_ref()).cloned();
                     let server = self
                         .language_server_ids
                         .get(&(worktree_id, adapter.name.clone()))
@@ -2408,7 +2407,7 @@ impl Project {
                             lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
                                     uri.clone(),
-                                    language_id.unwrap_or_default(),
+                                    adapter.language_id(&language),
                                     0,
                                     initial_snapshot.text(),
                                 ),
@@ -3741,11 +3740,7 @@ impl Project {
                     lsp::DidOpenTextDocumentParams {
                         text_document: lsp::TextDocumentItem::new(
                             uri,
-                            adapter
-                                .language_ids
-                                .get(language.name().as_ref())
-                                .cloned()
-                                .unwrap_or_default(),
+                            adapter.language_id(&language),
                             version,
                             initial_snapshot.text(),
                         ),
@@ -7655,17 +7650,15 @@ impl Project {
                     } else {
                         let fs = self.fs.clone();
                         let task_abs_path = abs_path.clone();
+                        let tasks_file_rx =
+                            watch_config_file(&cx.background_executor(), fs, task_abs_path);
                         task_inventory.add_source(
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
                                 id_base: "local_tasks_for_worktree",
                             },
-                            |cx| {
-                                let tasks_file_rx =
-                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(TrackedFile::new(tasks_file_rx, cx), cx)
-                            },
+                            StaticSource::new(TrackedFile::new(tasks_file_rx, cx)),
                             cx,
                         );
                     }
@@ -7677,23 +7670,20 @@ impl Project {
                     } else {
                         let fs = self.fs.clone();
                         let task_abs_path = abs_path.clone();
+                        let tasks_file_rx =
+                            watch_config_file(&cx.background_executor(), fs, task_abs_path);
                         task_inventory.add_source(
                             TaskSourceKind::Worktree {
                                 id: remote_worktree_id,
                                 abs_path,
                                 id_base: "local_vscode_tasks_for_worktree",
                             },
-                            |cx| {
-                                let tasks_file_rx =
-                                    watch_config_file(&cx.background_executor(), fs, task_abs_path);
-                                StaticSource::new(
-                                    TrackedFile::new_convertible::<task::VsCodeTaskFile>(
-                                        tasks_file_rx,
-                                        cx,
-                                    ),
+                            StaticSource::new(
+                                TrackedFile::new_convertible::<task::VsCodeTaskFile>(
+                                    tasks_file_rx,
                                     cx,
-                                )
-                            },
+                                ),
+                            ),
                             cx,
                         );
                     }
