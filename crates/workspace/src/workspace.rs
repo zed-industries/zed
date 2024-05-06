@@ -4123,8 +4123,8 @@ impl Render for Workspace {
                     .flex()
                     .flex_col()
                     .overflow_hidden()
-                    .border_t()
-                    .border_b()
+                    .border_t_1()
+                    .border_b_1()
                     .border_color(colors.border)
                     .child({
                         let this = cx.view().clone();
@@ -4230,10 +4230,10 @@ impl Render for Workspace {
                             .shadow_lg();
 
                         Some(match self.zoomed_position {
-                            Some(DockPosition::Left) => div.right_2().border_r(),
-                            Some(DockPosition::Right) => div.left_2().border_l(),
-                            Some(DockPosition::Bottom) => div.top_2().border_t(),
-                            None => div.top_2().bottom_2().left_2().right_2().border(),
+                            Some(DockPosition::Left) => div.right_2().border_r_1(),
+                            Some(DockPosition::Right) => div.left_2().border_l_1(),
+                            Some(DockPosition::Bottom) => div.top_2().border_t_1(),
+                            None => div.top_2().bottom_2().left_2().right_2().border_1(),
                         })
                     }))
                     .child(self.modal_layer.clone())

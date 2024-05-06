@@ -852,7 +852,7 @@ impl Render for ExtensionsPage {
                 v_flex()
                     .gap_4()
                     .p_4()
-                    .border_b()
+                    .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().editor_background)
                     .child(

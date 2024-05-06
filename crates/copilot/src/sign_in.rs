@@ -60,7 +60,7 @@ impl CopilotCodeVerification {
         h_flex()
             .w_full()
             .p_1()
-            .border()
+            .border_1()
             .border_muted(cx)
             .rounded_md()
             .cursor_pointer()

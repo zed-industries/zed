@@ -622,7 +622,7 @@ impl AssistantChat {
                 .px_2()
                 .neg_mx_1()
                 .rounded_md()
-                .border()
+                .border_1()
                 .border_color(theme.status().error_border)
                 // .bg(theme.status().error_background)
                 .text_color(theme.status().error)

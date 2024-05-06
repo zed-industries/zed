@@ -108,8 +108,8 @@ impl RenderOnce for TabBar {
                         .flex_none()
                         .gap(Spacing::Small.rems(cx))
                         .px(Spacing::Medium.rems(cx))
-                        .border_b()
-                        .border_r()
+                        .border_b_1()
+                        .border_r_1()
                         .border_color(cx.theme().colors().border)
                         .children(self.start_children),
                 )
@@ -126,7 +126,7 @@ impl RenderOnce for TabBar {
                             .top_0()
                             .left_0()
                             .size_full()
-                            .border_b()
+                            .border_b_1()
                             .border_color(cx.theme().colors().border),
                     )
                     .child(
@@ -146,8 +146,8 @@ impl RenderOnce for TabBar {
                         .flex_none()
                         .gap(Spacing::Small.rems(cx))
                         .px(Spacing::Medium.rems(cx))
-                        .border_b()
-                        .border_l()
+                        .border_b_1()
+                        .border_l_1()
                         .border_color(cx.theme().colors().border)
                         .children(self.end_children),
                 )
