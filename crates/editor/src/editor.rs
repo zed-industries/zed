@@ -399,7 +399,7 @@ impl Default for ScrollbarMarkerState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct RunnableTasks {
     templates: SmallVec<[(TaskSourceKind, TaskTemplate); 1]>,
     // We need the column at which the task context evaluation should take place.
@@ -1346,7 +1346,6 @@ impl CodeActionsMenu {
     ) -> (ContextMenuOrigin, AnyElement) {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
-
         let element = uniform_list(
             cx.view().clone(),
             "code_actions_menu",
@@ -3850,34 +3849,30 @@ impl Editor {
 
             let spawned_test_task = this.update(&mut cx, |this, cx| {
                 if this.focus_handle.is_focused(cx) {
-                    let row = action
-                        .deployed_from_indicator
-                        .unwrap_or_else(|| this.selections.newest::<Point>(cx).head().row);
-                    let tasks = this.tasks.get(&row).map(|t| Arc::new(t.to_owned()));
-                    let (buffer, code_actions) = this
-                        .available_code_actions
-                        .clone()
-                        .map(|(buffer, code_actions)| {
-                            let snapshot = buffer.read(cx).snapshot();
-                            let code_actions: Arc<[CodeAction]> = code_actions
-                                .into_iter()
-                                .filter(|action| {
-                                    text::ToPoint::to_point(&action.range.start, &snapshot).row
-                                        == row
-                                })
-                                .cloned()
-                                .collect();
-                            (buffer, code_actions)
-                        })
-                        .unzip();
+                    let snapshot = this.snapshot(cx);
+                    let display_row = action.deployed_from_indicator.unwrap_or_else(|| {
+                        this.selections
+                            .newest::<Point>(cx)
+                            .head()
+                            .to_display_point(&snapshot.display_snapshot)
+                            .row()
+                    });
 
+                    let buffer_point =
+                        DisplayPoint::new(display_row, 0).to_point(&snapshot.display_snapshot);
+                    let buffer_row = snapshot
+                        .buffer_snapshot
+                        .buffer_line_for_row(buffer_point.row)
+                        .map(|(_, Range { start, .. })| start);
+                    let tasks = this.tasks.get(&display_row).map(|t| Arc::new(t.to_owned()));
+                    let (buffer, code_actions) = this.available_code_actions.clone().unzip();
                     if tasks.is_none() && code_actions.is_none() {
                         return None;
                     }
                     let buffer = buffer.or_else(|| {
                         let snapshot = this.snapshot(cx);
                         let (buffer_snapshot, _) =
-                            snapshot.buffer_snapshot.buffer_line_for_row(row)?;
+                            snapshot.buffer_snapshot.buffer_line_for_row(display_row)?;
                         let buffer_id = buffer_snapshot.remote_id();
                         this.buffer().read(cx).buffer(buffer_id)
                     });
@@ -3888,18 +3883,22 @@ impl Editor {
                     this.discard_inline_completion(cx);
                     let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
                         |(tasks, (workspace, _))| {
-                            let position = Point::new(row, tasks.column);
-                            let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
-                            let location = Location {
-                                buffer: buffer.clone(),
-                                range: range_start..range_start,
-                            };
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    tasks::task_context_for_location(workspace, location, cx)
-                                })
-                                .ok()
-                                .flatten()
+                            if let Some(buffer_point) = buffer_row {
+                                let position = Point::new(buffer_point.row, tasks.column);
+                                let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
+                                let location = Location {
+                                    buffer: buffer.clone(),
+                                    range: range_start..range_start,
+                                };
+                                workspace
+                                    .update(cx, |workspace, cx| {
+                                        tasks::task_context_for_location(workspace, location, cx)
+                                    })
+                                    .ok()
+                                    .flatten()
+                            } else {
+                                None
+                            }
                         },
                     );
                     let tasks = tasks
@@ -3915,7 +3914,7 @@ impl Editor {
                                             .map(|task| (kind.clone(), task))
                                     })
                                     .collect(),
-                                position: Point::new(row, tasks.column),
+                                position: Point::new(display_row, tasks.column),
                             })
                         });
                     let spawn_straight_away = tasks
@@ -3924,7 +3923,6 @@ impl Editor {
                         && code_actions
                             .as_ref()
                             .map_or(true, |actions| actions.is_empty());
-
                     *this.context_menu.write() = Some(ContextMenu::CodeActions(CodeActionsMenu {
                         buffer,
                         actions: CodeActionContents {
@@ -3945,7 +3943,7 @@ impl Editor {
                     }
                     cx.notify();
                 }
-                None
+                Some(Task::ready(Ok(())))
             })?;
             if let Some(task) = spawned_test_task {
                 task.await?;
