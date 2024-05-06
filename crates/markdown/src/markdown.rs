@@ -2,8 +2,8 @@ mod parser;
 
 use futures::FutureExt;
 use gpui::{
-    AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, Render, StrikethroughStyle, Style,
-    StyledText, Task, TextRun, TextStyle, TextStyleRefinement, UnderlineStyle, WrappedLine,
+    AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, Hsla, Render, StrikethroughStyle,
+    Style, StyledText, Task, TextRun, TextStyle, TextStyleRefinement, WrappedLine,
 };
 use language::{Language, LanguageRegistry};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -13,8 +13,18 @@ use util::TryFutureExt;
 
 use crate::parser::CodeBlockKind;
 
+#[derive(Clone)]
+pub struct MarkdownStyle {
+    pub code: TextStyleRefinement,
+    pub block_quote: TextStyleRefinement,
+    pub link: TextStyleRefinement,
+    pub rule_color: Hsla,
+    pub block_quote_border_color: Hsla,
+}
+
 pub struct Markdown {
     text: String,
+    style: MarkdownStyle,
     parsed_markdown: ParsedMarkdown,
     should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
@@ -24,11 +34,13 @@ pub struct Markdown {
 impl Markdown {
     pub fn new(
         text: String,
+        style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut this = Self {
             text: text.into(),
+            style,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
@@ -82,7 +94,11 @@ impl Markdown {
 
 impl Render for Markdown {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        MarkdownElement::new(self.parsed_markdown.clone(), self.language_registry.clone())
+        MarkdownElement::new(
+            self.parsed_markdown.clone(),
+            self.style.clone(),
+            self.language_registry.clone(),
+        )
     }
 }
 
@@ -103,15 +119,21 @@ impl Default for ParsedMarkdown {
 
 pub struct MarkdownElement {
     markdown: ParsedMarkdown,
+    style: MarkdownStyle,
     language_registry: Arc<LanguageRegistry>,
     div_stack: Vec<Div>,
     pending_text: String,
 }
 
 impl MarkdownElement {
-    pub fn new(markdown: ParsedMarkdown, language_registry: Arc<LanguageRegistry>) -> Self {
+    pub fn new(
+        markdown: ParsedMarkdown,
+        style: MarkdownStyle,
+        language_registry: Arc<LanguageRegistry>,
+    ) -> Self {
         Self {
             markdown,
+            style,
             language_registry,
             div_stack: Vec::new(),
             pending_text: String::new(),
@@ -152,12 +174,12 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTag::BlockQuote => {
                         // todo!("use the right color")
+                        builder.push_text_style(self.style.block_quote.clone());
                         builder.push_div(
                             div()
                                 .pl_4()
                                 .border_l_4()
-                                .border_color(gpui::green())
-                                .text_color(gpui::red()),
+                                .border_color(self.style.block_quote_border_color),
                         );
                     }
                     MarkdownTag::CodeBlock(kind) => {
@@ -172,8 +194,8 @@ impl Element for MarkdownElement {
                         };
 
                         builder.push_code_block(language);
-                        // todo!("use the right color")
-                        builder.push_div(div().p_4().w_full().bg(gpui::green()));
+                        builder.push_text_style(self.style.code.clone());
+                        builder.push_div(div().p_4().w_full());
                     }
                     MarkdownTag::HtmlBlock => builder.push_div(div()),
                     MarkdownTag::List(number) => {
@@ -208,15 +230,7 @@ impl Element for MarkdownElement {
                         dest_url,
                         title,
                         id,
-                    } => builder.push_text_style(TextStyleRefinement {
-                        color: Some(gpui::blue()),
-                        underline: Some(UnderlineStyle {
-                            thickness: px(1.),
-                            color: Some(gpui::blue()),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    }),
+                    } => builder.push_text_style(self.style.link.clone()),
                     MarkdownTag::Image {
                         link_type,
                         dest_url,
@@ -230,10 +244,14 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                     }
                     MarkdownTagEnd::Heading(_) => builder.pop_div(),
-                    MarkdownTagEnd::BlockQuote => builder.pop_div(),
+                    MarkdownTagEnd::BlockQuote => {
+                        builder.pop_text_style();
+                        builder.pop_div()
+                    }
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
                         builder.pop_div();
+                        builder.pop_text_style();
                         builder.pop_code_block();
                     }
                     MarkdownTagEnd::HtmlBlock => builder.pop_div(),
@@ -263,7 +281,12 @@ impl Element for MarkdownElement {
                 }
 
                 MarkdownEvent::Rule => {
-                    builder.push_div(div().border_b_1().my_2().border_color(gpui::red()));
+                    builder.push_div(
+                        div()
+                            .border_b_1()
+                            .my_2()
+                            .border_color(self.style.rule_color),
+                    );
                     builder.pop_div()
                 }
                 MarkdownEvent::FootnoteReference(_) => todo!(),

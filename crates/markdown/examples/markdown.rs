@@ -1,9 +1,10 @@
 use gpui::{prelude::*, App, ScrollHandle, Task, View, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
-use markdown::Markdown;
+use markdown::{Markdown, MarkdownStyle};
 use node_runtime::FakeNodeRuntime;
 use settings::SettingsStore;
 use std::sync::Arc;
+use theme::LoadThemes;
 use ui::prelude::*;
 use ui::{div, WindowContext};
 
@@ -97,11 +98,37 @@ pub fn main() {
             cx.background_executor().clone(),
         ));
         languages::init(language_registry.clone(), node_runtime, cx);
+        theme::init(LoadThemes::JustBase, cx);
 
         cx.activate(true);
         cx.open_window(WindowOptions::default(), |cx| {
             cx.new_view(|cx| {
-                MarkdownExample::new(MARKDOWN_EXAMPLE.to_string(), language_registry, cx)
+                MarkdownExample::new(
+                    MARKDOWN_EXAMPLE.to_string(),
+                    MarkdownStyle {
+                        code: gpui::TextStyleRefinement {
+                            font_family: Some("Zed Mono".into()),
+                            ..Default::default()
+                        },
+                        rule_color: Color::Muted.color(cx),
+                        block_quote_border_color: Color::Muted.color(cx),
+                        block_quote: gpui::TextStyleRefinement {
+                            color: Some(Color::Muted.color(cx)),
+                            ..Default::default()
+                        },
+                        link: gpui::TextStyleRefinement {
+                            color: Some(Color::Accent.color(cx)),
+                            underline: Some(gpui::UnderlineStyle {
+                                thickness: px(1.),
+                                color: Some(Color::Accent.color(cx)),
+                                wavy: false,
+                            }),
+                            ..Default::default()
+                        },
+                    },
+                    language_registry,
+                    cx,
+                )
             })
         });
     });
@@ -114,10 +141,11 @@ struct MarkdownExample {
 impl MarkdownExample {
     pub fn new(
         text: String,
+        style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut WindowContext,
     ) -> Self {
-        let markdown = cx.new_view(|cx| Markdown::new(text, language_registry, cx));
+        let markdown = cx.new_view(|cx| Markdown::new(text, style, language_registry, cx));
         Self { markdown }
     }
 }
