@@ -396,8 +396,8 @@ impl RenderOnce for IconWithIndicator {
                         .border_1()
                         .border_color(indicator_border_color)
                         .rounded_full()
-                        .neg_bottom_0p5()
-                        .neg_right_1()
+                        .bottom_neg_0p5()
+                        .right_neg_1()
                         .child(indicator),
                 )
             })
