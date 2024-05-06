@@ -6167,7 +6167,7 @@ impl Project {
                                 Edit::Plain(edit) => edit,
                                 Edit::Annotated(edit) => edit.text_edit,
                                 Edit::Snippet(edit) => lsp::TextEdit {
-                                    new_text: Snippet::parse(&edit.snippet).unwrap().text,
+                                    new_text: Snippet::parse(&edit.snippet.value).unwrap().text,
                                     range: edit.range,
                                 },
                             });

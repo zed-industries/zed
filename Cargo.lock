@@ -5779,7 +5779,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?branch=apply-snippet-edit#46fb6f6a963be3bfb61be744fc0c9921b716dc90"
+source = "git+https://github.com/zed-industries/lsp-types?branch=apply-snippet-edit#853c7881d200777e20799026651ca36727144646"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
