@@ -72,51 +72,46 @@ impl Render for ProjectIndexView {
         };
 
         let num_files_searched = output.files_searched.len();
-        let num_excerpts = output.excerpts.len();
 
-        let files_searched = if num_files_searched == 1 {
-            "file"
-        } else {
-            "files"
-        };
-        let excerpts = if num_excerpts == 1 {
-            "excerpt"
-        } else {
-            "excerpts"
-        };
+        let header = h_flex()
+            .gap_2()
+            .child(Icon::new(IconName::File))
+            .child(format!(
+                "Read {} {}",
+                num_files_searched,
+                if num_files_searched == 1 {
+                    "file"
+                } else {
+                    "files"
+                }
+            ));
 
-        v_flex()
-            .gap_3()
-            .child(
-                Label::new(format!(
-                    "Found {} {} in {} {}",
-                    num_excerpts, excerpts, num_files_searched, files_searched
-                ))
-                .color(Color::Accent),
-            )
-            .child(
-                CollapsibleContainer::new(self.element_id.clone(), self.expanded_header)
-                    .start_slot(Label::new("Query Details".to_string()).color(Color::Muted))
-                    .on_click(cx.listener(move |this, _, cx| {
-                        this.toggle_header(cx);
-                    }))
-                    .child(
-                        v_flex()
-                            .gap_3()
-                            .p_3()
-                            .child(
-                                Label::new(format!("Searched for `{}`", query)).color(Color::Muted),
-                            )
-                            .child(v_flex().gap_2().children(output.files_searched.iter().map(
-                                |path| {
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Icon::new(IconName::File).color(Color::Muted))
-                                        .child(Label::new(path.clone()).color(Color::Muted))
-                                },
-                            ))),
-                    ),
-            )
+        v_flex().gap_3().child(
+            CollapsibleContainer::new(self.element_id.clone(), self.expanded_header)
+                .start_slot(header)
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.toggle_header(cx);
+                }))
+                .child(
+                    v_flex()
+                        .gap_3()
+                        .p_3()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(Icon::new(IconName::MagnifyingGlass))
+                                .child(Label::new(format!("`{}`", query)).color(Color::Muted)),
+                        )
+                        .child(v_flex().gap_2().children(output.files_searched.iter().map(
+                            |path| {
+                                h_flex()
+                                    .gap_2()
+                                    .child(Icon::new(IconName::File))
+                                    .child(Label::new(path.clone()).color(Color::Muted))
+                            },
+                        ))),
+                ),
+        )
     }
 }
 
@@ -219,6 +214,11 @@ impl LanguageModelTool for ProjectIndexTool {
         cx: &mut WindowContext,
     ) -> gpui::View<Self::View> {
         cx.new_view(|_cx| ProjectIndexView::new(input, output))
+    }
+
+    fn render_running(cx: &mut WindowContext) -> impl IntoElement {
+        CollapsibleContainer::new(ElementId::Name(nanoid::nanoid!().into()), false)
+            .start_slot("Searching code base")
     }
 
     fn format(_input: &Self::Input, output: &Result<Self::Output>) -> String {

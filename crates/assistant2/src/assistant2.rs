@@ -724,21 +724,7 @@ impl AssistantChat {
 
                 let tools = tool_calls
                     .iter()
-                    .map(|tool_call| {
-                        let result = &tool_call.result;
-                        let name = tool_call.name.clone();
-                        match result {
-                            Some(result) => div()
-                                .p_2()
-                                .child(result.into_any_element(&name))
-                                .into_any_element(),
-                            None => div()
-                                .p_2()
-                                .child(Label::new(name).color(Color::Modified))
-                                .child("Running...")
-                                .into_any_element(),
-                        }
-                    })
+                    .map(|tool_call| self.tool_registry.render_tool_call(tool_call, cx))
                     .collect::<Vec<AnyElement>>();
 
                 let tools_body = if tools.is_empty() {
