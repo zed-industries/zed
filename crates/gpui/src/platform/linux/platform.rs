@@ -61,6 +61,7 @@ pub trait LinuxClient {
         options: WindowParams,
     ) -> Box<dyn PlatformWindow>;
     fn set_cursor_style(&self, style: CursorStyle);
+    fn open_uri(&self, uri: &str);
     fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
@@ -198,10 +199,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        self.display(id)
-    }
-
     // todo(linux)
     fn active_window(&self) -> Option<AnyWindowHandle> {
         None
@@ -216,7 +213,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn open_url(&self, url: &str) {
-        open::that(url);
+        self.open_uri(url);
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -305,18 +302,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         open::that(dir);
     }
 
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| {
-            common.callbacks.become_active = Some(callback);
-        });
-    }
-
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| {
-            common.callbacks.resign_active = Some(callback);
-        });
-    }
-
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| {
             common.callbacks.quit = Some(callback);
@@ -326,12 +311,6 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| {
             common.callbacks.reopen = Some(callback);
-        });
-    }
-
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.with_common(|common| {
-            common.callbacks.event = Some(callback);
         });
     }
 
@@ -482,6 +461,20 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.read_from_clipboard()
     }
+}
+
+pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
+    let mut last_err = None;
+    for mut command in open::commands(uri) {
+        if let Some(token) = activation_token {
+            command.env("XDG_ACTIVATION_TOKEN", token);
+        }
+        match command.status() {
+            Ok(_) => return,
+            Err(err) => last_err = Some(err),
+        }
+    }
+    log::error!("failed to open uri: {uri:?}, last error: {last_err:?}");
 }
 
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {

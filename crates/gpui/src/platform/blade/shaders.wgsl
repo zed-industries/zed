@@ -1,6 +1,7 @@
 struct GlobalParams {
     viewport_size: vec2<f32>,
-    pad: vec2<u32>,
+    premultiplied_alpha: u32,
+    pad: u32,
 }
 
 var<uniform> globals: GlobalParams;
@@ -176,6 +177,13 @@ fn quad_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners) -> f32 {
         corner_radius;
 }
 
+// Abstract away the final color transformation based on the
+// target alpha compositing mode.
+fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
+    let alpha = color.a * alpha_factor;
+    return select(vec4<f32>(color.rgb, alpha), vec4<f32>(color.rgb, 1.0) * alpha, globals.premultiplied_alpha != 0u);
+}
+
 // --- quads --- //
 
 struct Quad {
@@ -266,7 +274,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                     saturate(0.5 - inset_distance));
     }
 
-    return color * vec4<f32>(1.0, 1.0, 1.0, saturate(0.5 - distance));
+    return blend_color(color, saturate(0.5 - distance));
 }
 
 // --- shadows --- //
@@ -339,7 +347,7 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
         y += step;
     }
 
-    return input.color * vec4<f32>(1.0, 1.0, 1.0, alpha);
+    return blend_color(input.color, alpha);
 }
 
 // --- path rasterization --- //
@@ -415,7 +423,7 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
     let mask = 1.0 - abs(1.0 - sample % 2.0);
-    return input.color * mask;
+    return blend_color(input.color, mask);
 }
 
 // --- underlines --- //
@@ -476,7 +484,7 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     let distance_from_top_border = distance_in_pixels - half_thickness;
     let distance_from_bottom_border = distance_in_pixels + half_thickness;
     let alpha = saturate(0.5 - max(-distance_from_bottom_border, distance_from_top_border));
-    return input.color * vec4<f32>(1.0, 1.0, 1.0, alpha);
+    return blend_color(input.color, alpha);
 }
 
 // --- monochrome sprites --- //
@@ -520,7 +528,7 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
-    return input.color * vec4<f32>(1.0, 1.0, 1.0, sample);
+    return blend_color(input.color, sample);
 }
 
 // --- polychrome sprites --- //
@@ -571,8 +579,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
-    color.a *= saturate(0.5 - distance);
-    return color;
+    return blend_color(color, saturate(0.5 - distance));
 }
 
 // --- surfaces --- //

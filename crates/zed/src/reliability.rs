@@ -524,7 +524,7 @@ async fn upload_previous_crashes(
             }
 
             if uploaded < filename {
-                uploaded = filename.clone();
+                uploaded.clone_from(&filename);
                 KEY_VALUE_STORE
                     .write_kvp(LAST_CRASH_UPLOADED.to_string(), filename)
                     .await?;

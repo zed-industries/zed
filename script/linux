@@ -2,6 +2,9 @@
 
 set -e
 
+# Install our submodule dependencies
+git submodule update --init --recursive
+
 # install the wasm toolchain
 rustup target add wasm32-wasi
 

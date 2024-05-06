@@ -61,7 +61,7 @@ struct CommitAvatarAsset {
 impl Hash for CommitAvatarAsset {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.sha.hash(state);
-        self.remote.host.hash(state);
+        self.remote.host.name().hash(state);
     }
 }
 

@@ -16,11 +16,11 @@ impl ActiveModelBehavior for ActiveModel {}
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
 pub enum Relation {
-    #[sea_orm(has_many = "super::remote_project::Entity")]
+    #[sea_orm(has_many = "super::dev_server_project::Entity")]
     RemoteProject,
 }
 
-impl Related<super::remote_project::Entity> for Entity {
+impl Related<super::dev_server_project::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::RemoteProject.def()
     }

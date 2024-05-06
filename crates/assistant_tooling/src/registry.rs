@@ -1,48 +1,107 @@
 use anyhow::{anyhow, Result};
-use gpui::{AnyView, Task, WindowContext};
-use std::collections::HashMap;
+use gpui::{div, AnyElement, IntoElement as _, ParentElement, Styled, Task, WindowContext};
+use std::{
+    any::TypeId,
+    collections::HashMap,
+    sync::atomic::{AtomicBool, Ordering::SeqCst},
+};
 
 use crate::tool::{
     LanguageModelTool, ToolFunctionCall, ToolFunctionCallResult, ToolFunctionDefinition,
 };
 
+// Internal Tool representation for the registry
+pub struct Tool {
+    enabled: AtomicBool,
+    type_id: TypeId,
+    call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+    render_running: Box<dyn Fn(&mut WindowContext) -> gpui::AnyElement>,
+    definition: ToolFunctionDefinition,
+}
+
+impl Tool {
+    fn new(
+        type_id: TypeId,
+        call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+        render_running: Box<dyn Fn(&mut WindowContext) -> gpui::AnyElement>,
+        definition: ToolFunctionDefinition,
+    ) -> Self {
+        Self {
+            enabled: AtomicBool::new(true),
+            type_id,
+            call,
+            render_running,
+            definition,
+        }
+    }
+}
+
 pub struct ToolRegistry {
-    tools: HashMap<
-        String,
-        Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
-    >,
-    definitions: Vec<ToolFunctionDefinition>,
-    status_views: Vec<AnyView>,
+    tools: HashMap<String, Tool>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
-            definitions: Vec::new(),
-            status_views: Vec::new(),
         }
     }
 
-    pub fn definitions(&self) -> &[ToolFunctionDefinition] {
-        &self.definitions
+    pub fn set_tool_enabled<T: 'static + LanguageModelTool>(&self, is_enabled: bool) {
+        for tool in self.tools.values() {
+            if tool.type_id == TypeId::of::<T>() {
+                tool.enabled.store(is_enabled, SeqCst);
+                return;
+            }
+        }
+    }
+
+    pub fn is_tool_enabled<T: 'static + LanguageModelTool>(&self) -> bool {
+        for tool in self.tools.values() {
+            if tool.type_id == TypeId::of::<T>() {
+                return tool.enabled.load(SeqCst);
+            }
+        }
+        false
+    }
+
+    pub fn definitions(&self) -> Vec<ToolFunctionDefinition> {
+        self.tools
+            .values()
+            .filter(|tool| tool.enabled.load(SeqCst))
+            .map(|tool| tool.definition.clone())
+            .collect()
+    }
+
+    pub fn render_tool_call(
+        &self,
+        tool_call: &ToolFunctionCall,
+        cx: &mut WindowContext,
+    ) -> AnyElement {
+        match &tool_call.result {
+            Some(result) => div()
+                .p_2()
+                .child(result.into_any_element(&tool_call.name))
+                .into_any_element(),
+            None => self
+                .tools
+                .get(&tool_call.name)
+                .map(|tool| (tool.render_running)(cx))
+                .unwrap_or_else(|| div().into_any_element()),
+        }
     }
 
     pub fn register<T: 'static + LanguageModelTool>(
         &mut self,
         tool: T,
-        cx: &mut WindowContext,
+        _cx: &mut WindowContext,
     ) -> Result<()> {
-        self.definitions.push(tool.definition());
-
-        if let Some(tool_view) = tool.status_view(cx) {
-            self.status_views.push(tool_view);
-        }
+        let definition = tool.definition();
 
         let name = tool.name();
-        let previous = self.tools.insert(
-            name.clone(),
-            // registry.call(tool_call, cx)
+
+        let registered_tool = Tool::new(
+            TypeId::of::<T>(),
             Box::new(
                 move |tool_call: &ToolFunctionCall, cx: &mut WindowContext| {
                     let name = tool_call.name.clone();
@@ -77,7 +136,11 @@ impl ToolRegistry {
                     })
                 },
             ),
+            Box::new(|cx| T::render_running(cx).into_any_element()),
+            definition,
         );
+
+        let previous = self.tools.insert(name.clone(), registered_tool);
 
         if previous.is_some() {
             return Err(anyhow!("already registered a tool with name {}", name));
@@ -109,11 +172,7 @@ impl ToolRegistry {
             }
         };
 
-        tool(tool_call, cx)
-    }
-
-    pub fn status_views(&self) -> &[AnyView] {
-        &self.status_views
+        (tool.call)(tool_call, cx)
     }
 }
 

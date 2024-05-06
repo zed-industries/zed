@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{AnyElement, AnyView, IntoElement as _, Render, Task, View, WindowContext};
+use gpui::{div, AnyElement, AnyView, IntoElement, Render, Task, View, WindowContext};
 use schemars::{schema::RootSchema, schema_for, JsonSchema};
 use serde::Deserialize;
 use std::fmt::Display;
@@ -105,7 +105,7 @@ pub trait LanguageModelTool {
         cx: &mut WindowContext,
     ) -> View<Self::View>;
 
-    fn status_view(&self, _cx: &mut WindowContext) -> Option<AnyView> {
-        None
+    fn render_running(_cx: &mut WindowContext) -> impl IntoElement {
+        div()
     }
 }
