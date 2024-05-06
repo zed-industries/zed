@@ -34,7 +34,6 @@ use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
-    any::Any,
     cell::Cell,
     ffi::{c_void, CStr},
     mem,
@@ -504,16 +503,6 @@ impl MacWindowState {
             px((frame.size.height - content_layout_rect.size.height) as f32)
         }
     }
-
-    fn to_screen_ns_point(&self, point: Point<Pixels>) -> NSPoint {
-        unsafe {
-            let point = NSPoint::new(
-                point.x.into(),
-                (self.content_size().height - point.y).into(),
-            );
-            msg_send![self.native_window, convertPointToScreen: point]
-        }
-    }
 }
 
 unsafe impl Send for MacWindowState {}
@@ -637,6 +626,7 @@ impl MacWindow {
                     native_window as *mut _,
                     native_view as *mut _,
                     window_size,
+                    window_background != WindowBackgroundAppearance::Opaque,
                 ),
                 request_frame_callback: None,
                 event_callback: None,
@@ -863,10 +853,6 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
@@ -994,7 +980,10 @@ impl PlatformWindow for MacWindow {
     fn set_app_id(&mut self, _app_id: &str) {}
 
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
-        let this = self.0.as_ref().lock();
+        let mut this = self.0.as_ref().lock();
+        this.renderer
+            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+
         let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
             80
         } else {
@@ -1102,10 +1091,6 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().resize_callback = Some(callback);
     }
 
-    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.as_ref().lock().fullscreen_callback = Some(callback);
-    }
-
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().lock().moved_callback = Some(callback);
     }
@@ -1120,31 +1105,6 @@ impl PlatformWindow for MacWindow {
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().appearance_changed_callback = Some(callback);
-    }
-
-    fn is_topmost_for_position(&self, position: Point<Pixels>) -> bool {
-        let self_borrow = self.0.lock();
-        let self_handle = self_borrow.handle;
-
-        unsafe {
-            let app = NSApplication::sharedApplication(nil);
-
-            // Convert back to screen coordinates
-            let screen_point = self_borrow.to_screen_ns_point(position);
-
-            let window_number: NSInteger = msg_send![class!(NSWindow), windowNumberAtPoint:screen_point belowWindowWithWindowNumber:0];
-            let top_most_window: id = msg_send![app, windowWithWindowNumber: window_number];
-
-            let is_panel: BOOL = msg_send![top_most_window, isKindOfClass: PANEL_CLASS];
-            let is_window: BOOL = msg_send![top_most_window, isKindOfClass: WINDOW_CLASS];
-            if is_panel == YES || is_window == YES {
-                let topmost_window = get_window_state(&*top_most_window).lock().handle;
-                topmost_window == self_handle
-            } else {
-                // Someone else's window is on top
-                false
-            }
-        }
     }
 
     fn draw(&self, scene: &crate::Scene) {

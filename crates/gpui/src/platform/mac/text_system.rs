@@ -7,8 +7,7 @@ use anyhow::anyhow;
 use cocoa::appkit::{CGFloat, CGPoint};
 use collections::{BTreeSet, HashMap};
 use core_foundation::{
-    array::CFIndex,
-    attributed_string::{CFAttributedStringRef, CFMutableAttributedString},
+    attributed_string::CFMutableAttributedString,
     base::{CFRange, TCFType},
     number::CFNumber,
     string::CFString,
@@ -42,7 +41,7 @@ use pathfinder_geometry::{
     vector::{Vector2F, Vector2I},
 };
 use smallvec::SmallVec;
-use std::{borrow::Cow, char, cmp, convert::TryFrom, ffi::c_void, sync::Arc};
+use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
 
 use super::open_type;
 
@@ -185,16 +184,6 @@ impl PlatformTextSystem for MacTextSystem {
 
     fn layout_line(&self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         self.0.write().layout_line(text, font_size, font_runs)
-    }
-
-    fn wrap_line(
-        &self,
-        text: &str,
-        font_id: FontId,
-        font_size: Pixels,
-        width: Pixels,
-    ) -> Vec<usize> {
-        self.0.read().wrap_line(text, font_id, font_size, width)
     }
 }
 
@@ -527,43 +516,6 @@ impl MacTextSystemState {
             len: text.len(),
         }
     }
-
-    fn wrap_line(
-        &self,
-        text: &str,
-        font_id: FontId,
-        font_size: Pixels,
-        width: Pixels,
-    ) -> Vec<usize> {
-        let mut string = CFMutableAttributedString::new();
-        string.replace_str(&CFString::new(text), CFRange::init(0, 0));
-        let cf_range = CFRange::init(0, text.encode_utf16().count() as isize);
-        let font = &self.fonts[font_id.0];
-        unsafe {
-            string.set_attribute(
-                cf_range,
-                kCTFontAttributeName,
-                &font.native_font().clone_with_font_size(font_size.into()),
-            );
-
-            let typesetter = CTTypesetterCreateWithAttributedString(string.as_concrete_TypeRef());
-            let mut ix_converter = StringIndexConverter::new(text);
-            let mut break_indices = Vec::new();
-            while ix_converter.utf8_ix < text.len() {
-                let utf16_len = CTTypesetterSuggestLineBreak(
-                    typesetter,
-                    ix_converter.utf16_ix as isize,
-                    width.into(),
-                ) as usize;
-                ix_converter.advance_to_utf16_ix(ix_converter.utf16_ix + utf16_len);
-                if ix_converter.utf8_ix >= text.len() {
-                    break;
-                }
-                break_indices.push(ix_converter.utf8_ix);
-            }
-            break_indices
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -603,22 +555,6 @@ impl<'a> StringIndexConverter<'a> {
         }
         self.utf8_ix = self.text.len();
     }
-}
-
-#[repr(C)]
-pub(crate) struct __CFTypesetter(c_void);
-
-type CTTypesetterRef = *const __CFTypesetter;
-
-#[link(name = "CoreText", kind = "framework")]
-extern "C" {
-    fn CTTypesetterCreateWithAttributedString(string: CFAttributedStringRef) -> CTTypesetterRef;
-
-    fn CTTypesetterSuggestLineBreak(
-        typesetter: CTTypesetterRef,
-        start_index: CFIndex,
-        width: f64,
-    ) -> CFIndex;
 }
 
 impl From<Metrics> for FontMetrics {
@@ -740,23 +676,6 @@ mod lenient_font_attributes {
 #[cfg(test)]
 mod tests {
     use crate::{font, px, FontRun, GlyphId, MacTextSystem, PlatformTextSystem};
-
-    #[test]
-    fn test_wrap_line() {
-        let fonts = MacTextSystem::new();
-        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
-
-        let line = "one two three four five\n";
-        let wrap_boundaries = fonts.wrap_line(line, font_id, px(16.), px(64.0));
-        assert_eq!(wrap_boundaries, &["one two ".len(), "one two three ".len()]);
-
-        let line = "aaa ααα ✋✋✋ 🎉🎉🎉\n";
-        let wrap_boundaries = fonts.wrap_line(line, font_id, px(16.), px(64.0));
-        assert_eq!(
-            wrap_boundaries,
-            &["aaa ααα ".len(), "aaa ααα ✋✋✋ ".len(),]
-        );
-    }
 
     #[test]
     fn test_layout_line_bom_char() {

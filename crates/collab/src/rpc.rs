@@ -34,6 +34,7 @@ pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
 use sha2::Digest;
+use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
     channel::oneshot,
@@ -148,7 +149,8 @@ struct Session {
     peer: Arc<Peer>,
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
-    http_client: IsahcHttpClient,
+    supermaven_client: Option<Arc<SupermavenAdminApi>>,
+    http_client: Arc<IsahcHttpClient>,
     rate_limiter: Arc<RateLimiter>,
     _executor: Executor,
 }
@@ -186,6 +188,14 @@ impl Session {
             Principal::User(user) => Some(user.id),
             Principal::Impersonated { user, .. } => Some(user.id),
             Principal::DevServer(_) => None,
+        }
+    }
+
+    fn is_staff(&self) -> bool {
+        match &self.principal {
+            Principal::User(user) => user.admin,
+            Principal::Impersonated { .. } => true,
+            Principal::DevServer(_) => false,
         }
     }
 
@@ -232,6 +242,14 @@ impl UserSession {
     }
     pub fn user_id(&self) -> UserId {
         self.0.user_id().unwrap()
+    }
+
+    pub fn email(&self) -> Option<String> {
+        match &self.0.principal {
+            Principal::User(user) => user.email_address.clone(),
+            Principal::Impersonated { user, .. } => user.email_address.clone(),
+            Principal::DevServer(..) => None,
+        }
     }
 }
 
@@ -415,6 +433,8 @@ impl Server {
             .add_request_handler(user_handler(create_dev_server_project))
             .add_request_handler(user_handler(delete_dev_server_project))
             .add_request_handler(user_handler(create_dev_server))
+            .add_request_handler(user_handler(regenerate_dev_server_token))
+            .add_request_handler(user_handler(rename_dev_server))
             .add_request_handler(user_handler(delete_dev_server))
             .add_request_handler(dev_server_handler(share_dev_server_project))
             .add_request_handler(dev_server_handler(shutdown_dev_server))
@@ -561,6 +581,7 @@ impl Server {
             .add_request_handler(user_handler(get_private_user_info))
             .add_message_handler(user_message_handler(acknowledge_channel_message))
             .add_message_handler(user_message_handler(acknowledge_buffer_version))
+            .add_request_handler(user_handler(get_supermaven_api_key))
             .add_streaming_request_handler({
                 let app_state = app_state.clone();
                 move |request, response, session| {
@@ -938,11 +959,20 @@ impl Server {
             tracing::info!("connection opened");
 
             let http_client = match IsahcHttpClient::new() {
-                Ok(http_client) => http_client,
+                Ok(http_client) => Arc::new(http_client),
                 Err(error) => {
                     tracing::error!(?error, "failed to create HTTP client");
                     return;
                 }
+            };
+
+            let supermaven_client = if let Some(supermaven_admin_api_key) = this.app_state.config.supermaven_admin_api_key.clone() {
+                Some(Arc::new(SupermavenAdminApi::new(
+                    supermaven_admin_api_key.to_string(),
+                    http_client.clone(),
+                )))
+            } else {
+                None
             };
 
             let session = Session {
@@ -955,6 +985,7 @@ impl Server {
                 http_client,
                 rate_limiter: this.app_state.rate_limiter.clone(),
                 _executor: executor.clone(),
+                supermaven_client,
             };
 
             if let Err(error) = this.send_initial_client_update(connection_id, &principal, zed_version, send_connection_id, &session).await {
@@ -2314,6 +2345,12 @@ async fn create_dev_server(
     let access_token = auth::random_token();
     let hashed_access_token = auth::hash_access_token(&access_token);
 
+    if request.name.is_empty() {
+        return Err(proto::ErrorCode::Forbidden
+            .message("Dev server name cannot be empty".to_string())
+            .anyhow())?;
+    }
+
     let (dev_server, status) = session
         .db()
         .await
@@ -2327,6 +2364,71 @@ async fn create_dev_server(
         access_token: auth::generate_dev_server_token(dev_server.id.0 as usize, access_token),
         name: request.name.clone(),
     })?;
+    Ok(())
+}
+
+async fn regenerate_dev_server_token(
+    request: proto::RegenerateDevServerToken,
+    response: Response<proto::RegenerateDevServerToken>,
+    session: UserSession,
+) -> Result<()> {
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let access_token = auth::random_token();
+    let hashed_access_token = auth::hash_access_token(&access_token);
+
+    let connection_id = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
+    if let Some(connection_id) = connection_id {
+        shutdown_dev_server_internal(dev_server_id, connection_id, &session).await?;
+        session
+            .peer
+            .send(connection_id, proto::ShutdownDevServer {})?;
+        let _ = remove_dev_server_connection(dev_server_id, &session).await;
+    }
+
+    let status = session
+        .db()
+        .await
+        .update_dev_server_token(dev_server_id, &hashed_access_token, session.user_id())
+        .await?;
+
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::RegenerateDevServerTokenResponse {
+        dev_server_id: dev_server_id.to_proto(),
+        access_token: auth::generate_dev_server_token(dev_server_id.0 as usize, access_token),
+    })?;
+    Ok(())
+}
+
+async fn rename_dev_server(
+    request: proto::RenameDevServer,
+    response: Response<proto::RenameDevServer>,
+    session: UserSession,
+) -> Result<()> {
+    if request.name.trim().is_empty() {
+        return Err(proto::ErrorCode::Forbidden
+            .message("Dev server name cannot be empty".to_string())
+            .anyhow())?;
+    }
+
+    let dev_server_id = DevServerId(request.dev_server_id as i32);
+    let dev_server = session.db().await.get_dev_server(dev_server_id).await?;
+    if dev_server.user_id != session.user_id() {
+        return Err(anyhow!(ErrorCode::Forbidden))?;
+    }
+
+    let status = session
+        .db()
+        .await
+        .rename_dev_server(dev_server_id, &request.name, session.user_id())
+        .await?;
+
+    send_dev_server_projects_update(session.user_id(), status, &session).await;
+
+    response.send(proto::Ack {})?;
     Ok(())
 }
 
@@ -2350,6 +2452,7 @@ async fn delete_dev_server(
         session
             .peer
             .send(connection_id, proto::ShutdownDevServer {})?;
+        let _ = remove_dev_server_connection(dev_server_id, &session).await;
     }
 
     let status = session
@@ -2522,7 +2625,8 @@ async fn shutdown_dev_server(
     session: DevServerSession,
 ) -> Result<()> {
     response.send(proto::Ack {})?;
-    shutdown_dev_server_internal(session.dev_server_id(), session.connection_id, &session).await
+    shutdown_dev_server_internal(session.dev_server_id(), session.connection_id, &session).await?;
+    remove_dev_server_connection(session.dev_server_id(), &session).await
 }
 
 async fn shutdown_dev_server_internal(
@@ -2559,6 +2663,21 @@ async fn shutdown_dev_server_internal(
         .await?;
     send_dev_server_projects_update(dev_server.user_id, status, &session).await;
 
+    Ok(())
+}
+
+async fn remove_dev_server_connection(dev_server_id: DevServerId, session: &Session) -> Result<()> {
+    let dev_server_connection = session
+        .connection_pool()
+        .await
+        .dev_server_connection_id(dev_server_id);
+
+    if let Some(dev_server_connection) = dev_server_connection {
+        session
+            .connection_pool()
+            .await
+            .remove_connection(dev_server_connection)?;
+    }
     Ok(())
 }
 
@@ -4210,7 +4329,7 @@ async fn complete_with_open_ai(
     api_key: Arc<str>,
 ) -> Result<()> {
     let mut completion_stream = open_ai::stream_completion(
-        &session.http_client,
+        session.http_client.as_ref(),
         OPEN_AI_API_URL,
         &api_key,
         crate::ai::language_model_request_to_open_ai(request)?,
@@ -4274,7 +4393,7 @@ async fn complete_with_google_ai(
     api_key: Arc<str>,
 ) -> Result<()> {
     let mut stream = google_ai::stream_generate_content(
-        &session.http_client,
+        session.http_client.clone(),
         google_ai::API_URL,
         api_key.as_ref(),
         crate::ai::language_model_request_to_google_ai(request)?,
@@ -4358,7 +4477,7 @@ async fn complete_with_anthropic(
         .collect();
 
     let mut stream = anthropic::stream_completion(
-        &session.http_client,
+        session.http_client.clone(),
         "https://api.anthropic.com",
         &api_key,
         anthropic::Request {
@@ -4482,7 +4601,7 @@ async fn count_tokens_with_language_model(
     let api_key = google_ai_api_key
         .ok_or_else(|| anyhow!("no Google AI API key configured on the server"))?;
     let tokens_response = google_ai::count_tokens(
-        &session.http_client,
+        session.http_client.as_ref(),
         google_ai::API_URL,
         &api_key,
         crate::ai::count_tokens_request_to_google_ai(request)?,
@@ -4530,7 +4649,7 @@ async fn compute_embeddings(
     let embeddings = match request.model.as_str() {
         "openai/text-embedding-3-small" => {
             open_ai::embed(
-                &session.http_client,
+                session.http_client.as_ref(),
                 OPEN_AI_API_URL,
                 &api_key,
                 OpenAiEmbeddingModel::TextEmbedding3Small,
@@ -4600,6 +4719,37 @@ async fn authorize_access_to_language_models(session: &UserSession) -> Result<()
     } else {
         Err(anyhow!("permission denied"))?
     }
+}
+
+/// Get a Supermaven API key for the user
+async fn get_supermaven_api_key(
+    _request: proto::GetSupermavenApiKey,
+    response: Response<proto::GetSupermavenApiKey>,
+    session: UserSession,
+) -> Result<()> {
+    let user_id: String = session.user_id().to_string();
+    if !session.is_staff() {
+        return Err(anyhow!("supermaven not enabled for this account"))?;
+    }
+
+    let email = session
+        .email()
+        .ok_or_else(|| anyhow!("user must have an email"))?;
+
+    let supermaven_admin_api = session
+        .supermaven_client
+        .as_ref()
+        .ok_or_else(|| anyhow!("supermaven not configured"))?;
+
+    let result = supermaven_admin_api
+        .try_get_or_create_user(CreateExternalUserRequest { id: user_id, email })
+        .await?;
+
+    response.send(proto::GetSupermavenApiKeyResponse {
+        api_key: result.api_key,
+    })?;
+
+    Ok(())
 }
 
 /// Start receiving chat updates for a channel

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use gpui::{Task, WindowContext};
+use gpui::{div, AnyElement, IntoElement as _, ParentElement, Styled, Task, WindowContext};
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -15,6 +15,7 @@ pub struct Tool {
     enabled: AtomicBool,
     type_id: TypeId,
     call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+    render_running: Box<dyn Fn(&mut WindowContext) -> gpui::AnyElement>,
     definition: ToolFunctionDefinition,
 }
 
@@ -22,12 +23,14 @@ impl Tool {
     fn new(
         type_id: TypeId,
         call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+        render_running: Box<dyn Fn(&mut WindowContext) -> gpui::AnyElement>,
         definition: ToolFunctionDefinition,
     ) -> Self {
         Self {
             enabled: AtomicBool::new(true),
             type_id,
             call,
+            render_running,
             definition,
         }
     }
@@ -68,6 +71,24 @@ impl ToolRegistry {
             .filter(|tool| tool.enabled.load(SeqCst))
             .map(|tool| tool.definition.clone())
             .collect()
+    }
+
+    pub fn render_tool_call(
+        &self,
+        tool_call: &ToolFunctionCall,
+        cx: &mut WindowContext,
+    ) -> AnyElement {
+        match &tool_call.result {
+            Some(result) => div()
+                .p_2()
+                .child(result.into_any_element(&tool_call.name))
+                .into_any_element(),
+            None => self
+                .tools
+                .get(&tool_call.name)
+                .map(|tool| (tool.render_running)(cx))
+                .unwrap_or_else(|| div().into_any_element()),
+        }
     }
 
     pub fn register<T: 'static + LanguageModelTool>(
@@ -115,6 +136,7 @@ impl ToolRegistry {
                     })
                 },
             ),
+            Box::new(|cx| T::render_running(cx).into_any_element()),
             definition,
         );
 

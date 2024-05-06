@@ -255,15 +255,21 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
                     .get(&new_entry.sha)
                     .and_then(|slot| entries.get(*slot))
                 {
-                    new_entry.author = existing_entry.author.clone();
-                    new_entry.author_mail = existing_entry.author_mail.clone();
+                    new_entry.author.clone_from(&existing_entry.author);
+                    new_entry
+                        .author_mail
+                        .clone_from(&existing_entry.author_mail);
                     new_entry.author_time = existing_entry.author_time;
-                    new_entry.author_tz = existing_entry.author_tz.clone();
-                    new_entry.committer = existing_entry.committer.clone();
-                    new_entry.committer_mail = existing_entry.committer_mail.clone();
+                    new_entry.author_tz.clone_from(&existing_entry.author_tz);
+                    new_entry.committer.clone_from(&existing_entry.committer);
+                    new_entry
+                        .committer_mail
+                        .clone_from(&existing_entry.committer_mail);
                     new_entry.committer_time = existing_entry.committer_time;
-                    new_entry.committer_tz = existing_entry.committer_tz.clone();
-                    new_entry.summary = existing_entry.summary.clone();
+                    new_entry
+                        .committer_tz
+                        .clone_from(&existing_entry.committer_tz);
+                    new_entry.summary.clone_from(&existing_entry.summary);
                 }
 
                 current_entry.replace(new_entry);

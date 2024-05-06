@@ -17,7 +17,7 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
-copilot_ui.workspace = true
+inline_completion_button.workspace = true
 db.workspace = true
 extensions_ui.workspace = true
 fuzzy.workspace = true
