@@ -634,8 +634,6 @@ impl AssistantChat {
     }
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
-        let is_last = ix == self.messages.len() - 1;
-
         match &self.messages[ix] {
             ChatMessage::User(UserMessage {
                 id,
@@ -643,7 +641,7 @@ impl AssistantChat {
                 attachments,
             }) => div()
                 .id(SharedString::from(format!("message-{}-container", id.0)))
-                .when(!is_last, |element| element.mb_2())
+                // .when(!is_last, |element| element.mb_2())
                 .map(|element| {
                     if self.editing_message_id() == Some(*id) {
                         element.child(Composer::new(
@@ -715,8 +713,10 @@ impl AssistantChat {
                     None
                 } else {
                     Some(
+                        // TODO: Ideally we don't do this layout in two places
+                        // I'll come back and figure out how to merge this portion wth chat_message
                         div()
-                            .p_2()
+                            .p(Spacing::Large.rems(cx))
                             .child(body.element(ElementId::from(id.0), cx))
                             .into_any_element(),
                     )
@@ -729,11 +729,11 @@ impl AssistantChat {
                         let name = tool_call.name.clone();
                         match result {
                             Some(result) => div()
-                                .p_2()
+                                .p(Spacing::Large.rems(cx))
                                 .child(result.into_any_element(&name))
                                 .into_any_element(),
                             None => div()
-                                .p_2()
+                                .p(Spacing::Large.rems(cx))
                                 .child(Label::new(name).color(Color::Modified))
                                 .child("Running...")
                                 .into_any_element(),
@@ -748,7 +748,6 @@ impl AssistantChat {
                 };
 
                 div()
-                    .when(!is_last, |element| element.mb_2())
                     .child(crate::ui::ChatMessage::new(
                         *id,
                         UserOrAssistant::Assistant,
@@ -845,7 +844,7 @@ impl Render for AssistantChat {
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
             .text_color(Color::Default.color(cx))
-            .child(list(self.list_state.clone()).flex_1())
+            .child(list(self.list_state.clone()).flex_1().my_1())
             .child(Composer::new(
                 self.composer_editor.clone(),
                 self.project_index_button.clone(),

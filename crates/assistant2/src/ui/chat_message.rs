@@ -16,7 +16,6 @@ pub struct ChatMessage {
     id: MessageId,
     player: UserOrAssistant,
     message: Option<AnyElement>,
-    placeholder_message: Option<SharedString>,
     tools_used: Option<AnyElement>,
     collapsed: bool,
     on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
@@ -35,7 +34,6 @@ impl ChatMessage {
             id,
             player,
             message,
-            placeholder_message: None,
             tools_used,
             collapsed,
             on_collapse_handle_click,
@@ -45,7 +43,7 @@ impl ChatMessage {
 
 impl RenderOnce for ChatMessage {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        // let collapse_handle_id = SharedString::from(format!("{}_collapse_handle", self.id.0));
+        let collapse_handle_id = SharedString::from(format!("{}_collapse_handle", self.id.0));
         // let collapse_handle = h_flex()
         //     .id(collapse_handle_id.clone())
         //     .group(collapse_handle_id.clone())
@@ -67,7 +65,7 @@ impl RenderOnce for ChatMessage {
         //             }),
         //     );
 
-        let content_padding = Spacing::Medium.rems(cx);
+        let content_padding = Spacing::Large.rems(cx);
         // Clamp the message height to exactly 1.5 lines when collapsed.
         let collapsed_height = content_padding.to_pixels(cx.rem_size()) + cx.line_height() * 1.5;
 
@@ -83,10 +81,10 @@ impl RenderOnce for ChatMessage {
         };
 
         let footer_height = rems_from_px(20.);
-        let neg_bottom_pos = footer_height - rems_from_px(12.);
 
         v_flex()
             .gap_1()
+            .my(rems(0.25))
             .child(
                 h_flex()
                     .justify_between()
@@ -104,9 +102,20 @@ impl RenderOnce for ChatMessage {
                             .child(Label::new(username).color(Color::Default)),
                     )
                     .child(
-                        div(), // .when(!self.contexts.is_empty(), |this| {
-                               //     this.child(Label::new(self.contexts.len().to_string()).color(Color::Muted))
-                               // })
+                        h_flex().child(
+                            IconButton::new(
+                                collapse_handle_id.clone(),
+                                if self.collapsed.clone() {
+                                    IconName::ArrowUp
+                                } else {
+                                    IconName::ArrowDown
+                                },
+                            )
+                            .icon_size(IconSize::XSmall)
+                            .on_click(self.on_collapse_handle_click),
+                        ), // .when(!self.contexts.is_empty(), |this| {
+                           //     this.child(Label::new(self.contexts.len().to_string()).color(Color::Muted))
+                           // })
                     ),
             )
             .when(self.message.is_some() || self.tools_used.is_some(), |el| {
@@ -117,7 +126,7 @@ impl RenderOnce for ChatMessage {
                         .child(
                             div()
                                 .relative()
-                                // .overflow_hidden()
+                                .overflow_hidden()
                                 .w_full()
                                 .p(content_padding)
                                 .gap_3()
@@ -125,18 +134,7 @@ impl RenderOnce for ChatMessage {
                                 .when(self.collapsed, |this| this.h(collapsed_height))
                                 .bg(cx.theme().colors().surface_background)
                                 .children(self.message)
-                                .child(
-                                    h_flex()
-                                        .justify_between()
-                                        .absolute()
-                                        .neg_bottom_3()
-                                        // .neg_bottom(neg_bottom_pos)
-                                        .h(footer_height)
-                                        .w_full()
-                                        .debug_bg_red()
-                                        .child(div())
-                                        .children(self.tools_used),
-                                ),
+                                .children(self.tools_used),
                         ),
                 )
             })
