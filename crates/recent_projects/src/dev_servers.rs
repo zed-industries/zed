@@ -742,7 +742,7 @@ impl DevServerProjects {
             })
     }
 
-    fn render_loading_spinner(label: impl Into<SharedString>) -> impl IntoElement {
+    fn render_loading_spinner(label: impl Into<SharedString>) -> Div {
         h_flex()
             .gap_2()
             .child(
@@ -793,79 +793,76 @@ impl DevServerProjects {
             .read(cx)
             .text(cx);
 
-        let content = v_flex()
-            .justify_end()
-            .child(
-                h_flex()
-                    .pb_2()
-                    .items_end()
-                    .w_full()
-                    .px_2()
-                    .child(
-                        div()
-                            .pl_2()
-                            .max_w(rems(16.))
-                            .child(self.rename_dev_server_input.clone()),
-                    )
-                    .child(
-                        div()
-                            .pl_1()
-                            .pb(px(3.))
-                            .when(
-                                edit_dev_server.state != EditDevServerState::Renaming,
-                                |div| {
-                                    div.child(
-                                        Button::new("rename-dev-server", "Rename")
-                                            .disabled(
-                                                rename_dev_server_input_text.trim().is_empty()
-                                                    || rename_dev_server_input_text
-                                                        == dev_server_name,
-                                            )
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                this.rename_dev_server(
-                                                    dev_server_id,
-                                                    rename_dev_server_input_text.clone(),
-                                                    cx,
-                                                );
-                                                cx.notify();
-                                            })),
-                                    )
-                                },
-                            )
-                            .when(
-                                edit_dev_server.state == EditDevServerState::Renaming,
-                                |div| {
-                                    div.child(
-                                        Button::new("rename-dev-server", "Renaming...")
-                                            .disabled(true),
-                                    )
-                                },
-                            ),
-                    ),
-            )
-            .child(
+        let content = v_flex().w_full().gap_2().child(
+            h_flex()
+                .pb_2()
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .items_end()
+                .w_full()
+                .px_2()
+                .child(
+                    div()
+                        .pl_2()
+                        .max_w(rems(16.))
+                        .child(self.rename_dev_server_input.clone()),
+                )
+                .child(
+                    div()
+                        .pl_1()
+                        .pb(px(3.))
+                        .when(
+                            edit_dev_server.state != EditDevServerState::Renaming,
+                            |div| {
+                                div.child(
+                                    Button::new("rename-dev-server", "Rename")
+                                        .disabled(
+                                            rename_dev_server_input_text.trim().is_empty()
+                                                || rename_dev_server_input_text == dev_server_name,
+                                        )
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            this.rename_dev_server(
+                                                dev_server_id,
+                                                rename_dev_server_input_text.clone(),
+                                                cx,
+                                            );
+                                            cx.notify();
+                                        })),
+                                )
+                            },
+                        )
+                        .when(
+                            edit_dev_server.state == EditDevServerState::Renaming,
+                            |div| {
+                                div.child(
+                                    Button::new("rename-dev-server", "Renaming...").disabled(true),
+                                )
+                            },
+                        ),
+                ),
+        );
+
+        let content = content.child(match edit_dev_server.state {
+            EditDevServerState::RegeneratingToken => {
+                Self::render_loading_spinner("Generating token...")
+            }
+            EditDevServerState::RegeneratedToken(response) => {
+                Self::render_dev_server_token_instructions(
+                    &response.access_token,
+                    &dev_server_name,
+                    dev_server_status,
+                    cx,
+                )
+            }
+            _ => h_flex().items_end().w_full().child(
                 Button::new("regenerate-dev-server-token", "Generate new access token")
                     .icon(IconName::Update)
                     .on_click(cx.listener(move |this, _, cx| {
                         this.refresh_dev_server_token(dev_server_id, cx);
                         cx.notify();
                     })),
-            );
-
-        let content = match edit_dev_server.state {
-            EditDevServerState::RegeneratingToken => {
-                content.child(Self::render_loading_spinner("Generating token..."))
-            }
-            EditDevServerState::RegeneratedToken(response) => {
-                content.child(Self::render_dev_server_token_instructions(
-                    &response.access_token,
-                    &dev_server_name,
-                    dev_server_status,
-                    cx,
-                ))
-            }
-            _ => content,
-        };
+            ),
+        });
 
         v_flex()
             .id("scroll-container")
