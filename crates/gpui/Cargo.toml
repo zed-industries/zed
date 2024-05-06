@@ -111,6 +111,7 @@ wayland-protocols = { version = "0.31.2", features = [
     "staging",
     "unstable",
 ] }
+wayland-protocols-plasma = { version = "0.2.0", features = ["client"] }
 oo7 = "0.3.0"
 open = "5.1.2"
 filedescriptor = "0.8.2"

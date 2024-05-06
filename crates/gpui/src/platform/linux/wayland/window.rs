@@ -11,6 +11,7 @@ use collections::{HashMap, HashSet};
 use futures::channel::oneshot::Receiver;
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
+use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::WEnum;
 use wayland_client::{protocol::wl_surface, Proxy};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
@@ -18,8 +19,9 @@ use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, WmCapabilities};
+use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blur_manager};
 
-use crate::platform::blade::BladeRenderer;
+use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
 use crate::platform::linux::wayland::display::WaylandDisplay;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
@@ -67,6 +69,7 @@ pub struct WaylandWindowState {
     acknowledged_first_configure: bool,
     pub surface: wl_surface::WlSurface,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
+    blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     toplevel: xdg_toplevel::XdgToplevel,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashSet<ObjectId>,
@@ -124,10 +127,13 @@ impl WaylandWindowState {
             }
             .unwrap(),
         );
-        let extent = gpu::Extent {
-            width: bounds.size.width,
-            height: bounds.size.height,
-            depth: 1,
+        let config = BladeSurfaceConfig {
+            size: gpu::Extent {
+                width: bounds.size.width,
+                height: bounds.size.height,
+                depth: 1,
+            },
+            transparent: options.window_background != WindowBackgroundAppearance::Opaque,
         };
 
         Self {
@@ -135,13 +141,12 @@ impl WaylandWindowState {
             acknowledged_first_configure: false,
             surface,
             decoration,
+            blur: None,
             toplevel,
             viewport,
             globals,
-
             outputs: HashSet::default(),
-
-            renderer: BladeRenderer::new(gpu, extent),
+            renderer: BladeRenderer::new(gpu, config),
             bounds,
             scale: 1.0,
             input_handler: None,
@@ -165,6 +170,9 @@ impl Drop for WaylandWindow {
         state.renderer.destroy();
         if let Some(decoration) = &state.decoration {
             decoration.destroy();
+        }
+        if let Some(blur) = &state.blur {
+            blur.release();
         }
         state.toplevel.destroy();
         if let Some(viewport) = &state.viewport {
@@ -615,8 +623,44 @@ impl PlatformWindow for WaylandWindow {
         self.borrow_mut().toplevel.set_app_id(app_id.to_owned());
     }
 
-    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
-        // todo(linux)
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+        let opaque = background_appearance == WindowBackgroundAppearance::Opaque;
+        let mut state = self.borrow_mut();
+        state.renderer.update_transparency(!opaque);
+
+        let region = state
+            .globals
+            .compositor
+            .create_region(&state.globals.qh, ());
+        region.add(0, 0, i32::MAX, i32::MAX);
+
+        if opaque {
+            // Promise the compositor that this region of the window surface
+            // contains no transparent pixels. This allows the compositor to
+            // do skip whatever is behind the surface for better performance.
+            state.surface.set_opaque_region(Some(&region));
+        } else {
+            state.surface.set_opaque_region(None);
+        }
+
+        if let Some(ref blur_manager) = state.globals.blur_manager {
+            if (background_appearance == WindowBackgroundAppearance::Blurred) {
+                if (state.blur.is_none()) {
+                    let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
+                    blur.set_region(Some(&region));
+                    state.blur = Some(blur);
+                }
+                state.blur.as_ref().unwrap().commit();
+            } else {
+                // It probably doesn't hurt to clear the blur for opaque windows
+                blur_manager.unset(&state.surface);
+                if let Some(b) = state.blur.take() {
+                    b.release()
+                }
+            }
+        }
+
+        region.destroy();
     }
 
     fn set_edited(&mut self, edited: bool) {

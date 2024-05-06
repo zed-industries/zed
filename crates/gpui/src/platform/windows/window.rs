@@ -35,7 +35,7 @@ use windows::{
     },
 };
 
-use crate::platform::blade::BladeRenderer;
+use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
 use crate::*;
 
 pub(crate) struct WindowsWindowInner {
@@ -62,6 +62,7 @@ impl WindowsWindowInner {
         handle: AnyWindowHandle,
         hide_title_bar: bool,
         display: Rc<WindowsDisplay>,
+        transparent: bool,
     ) -> Self {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = Cell::new(Point {
@@ -95,7 +96,7 @@ impl WindowsWindowInner {
             }
         }
 
-        let raw = RawWindow { hwnd: hwnd.0 as _ };
+        let raw = RawWindow { hwnd: hwnd.0 };
         let gpu = Arc::new(
             unsafe {
                 gpu::Context::init_windowed(
@@ -109,12 +110,11 @@ impl WindowsWindowInner {
             }
             .unwrap(),
         );
-        let extent = gpu::Extent {
-            width: 1,
-            height: 1,
-            depth: 1,
+        let config = BladeSurfaceConfig {
+            size: gpu::Extent::default(),
+            transparent,
         };
-        let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
+        let renderer = RefCell::new(BladeRenderer::new(gpu, config));
         let callbacks = RefCell::new(Callbacks::default());
         let display = RefCell::new(display);
         let click_state = RefCell::new(ClickState::new());
@@ -1241,6 +1241,7 @@ struct WindowCreateContext {
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: Rc<WindowsDisplay>,
+    transparent: bool,
 }
 
 impl WindowsWindow {
@@ -1279,6 +1280,7 @@ impl WindowsWindow {
             // todo(windows) move window to target monitor
             // options.display_id
             display: Rc::new(WindowsDisplay::primary_monitor().unwrap()),
+            transparent: options.window_background != WindowBackgroundAppearance::Opaque,
         };
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
@@ -1511,8 +1513,11 @@ impl PlatformWindow for WindowsWindow {
 
     fn set_app_id(&mut self, _app_id: &str) {}
 
-    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
-        // todo(windows)
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+        self.inner
+            .renderer
+            .borrow_mut()
+            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
     }
 
     // todo(windows)
@@ -1783,6 +1788,7 @@ unsafe extern "system" fn wnd_proc(
             ctx.handle,
             ctx.hide_title_bar,
             ctx.display.clone(),
+            ctx.transparent,
         ));
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
