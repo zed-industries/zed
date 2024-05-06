@@ -676,7 +676,12 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn zoom(&self) {
-        // todo(linux)
+        let state = self.borrow();
+        if !state.maximized {
+            state.toplevel.set_maximized();
+        } else {
+            state.toplevel.unset_maximized();
+        }
     }
 
     fn toggle_fullscreen(&self) {
