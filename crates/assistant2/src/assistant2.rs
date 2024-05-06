@@ -620,7 +620,7 @@ impl AssistantChat {
             div()
                 .py_1()
                 .px_2()
-                .neg_mx_1()
+                .mx_neg_1()
                 .rounded_md()
                 .border_1()
                 .border_color(theme.status().error_border)

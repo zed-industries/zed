@@ -114,16 +114,16 @@ fn generate_predefined_setter(
     negate: bool,
     doc_string: &str,
 ) -> TokenStream2 {
-    let (negation_prefix, negation_token) = if negate {
-        ("neg_", quote! { - })
+    let (negation_qualifier, negation_token) = if negate {
+        ("_neg", quote! { - })
     } else {
         ("", quote! {})
     };
 
     let method_name = if length.is_empty() {
-        format_ident!("{}{}", negation_prefix, name)
+        format_ident!("{name}{negation_qualifier}")
     } else {
-        format_ident!("{}{}_{}", negation_prefix, name, length)
+        format_ident!("{name}{negation_qualifier}_{length}")
     };
 
     let field_assignments = fields
