@@ -84,6 +84,7 @@ if [[ -n $pacman ]]; then
     libxkbcommon-x11
     openssl
     zstd
+    pkgconf
   )
   $maysudo "$pacman" -S --needed --noconfirm "${deps[@]}"
   exit 0
