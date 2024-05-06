@@ -2,8 +2,8 @@
 
 Zed currently maintains two public releases for macOS:
 
-- [Stable](https://zed.dev/download). This is the primary version that people download and use.
-- [Preview](https://zed.dev/releases/preview), which receives updates a week ahead of stable for early adopters.
+- [Stable](https://zed.dev/download): This is the primary version that people download and use.
+- [Preview](https://zed.dev/releases/preview): which receives updates a week ahead of Stable for early adopters.
 
 Typically we cut a new minor release every Wednesday. The current Preview becomes Stable, and the new Preview contains everything on main up until that point.
 
@@ -24,7 +24,7 @@ You will need write access to the Zed repository to do this:
   - Copy the release notes from the previous Preview release(s) to the current Stable release.
   - Download the artifacts for each release and test that you can run them locally.
   - Publish the releases on GitHub.
-  - Tweet the tweets (Credentials are in 1password).
+  - Tweet the tweets (Credentials are in 1Password).
 
 ## Patch release process
 
