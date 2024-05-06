@@ -551,7 +551,7 @@ impl DevServerProjects {
                 v_flex()
                     .w_full()
                     .bg(cx.theme().colors().title_bar_background) // todo: this should be distinct
-                    .border()
+                    .border_1()
                     .border_color(cx.theme().colors().border_variant)
                     .rounded_md()
                     .my_1()
@@ -754,7 +754,7 @@ impl DevServerProjects {
                 v_flex()
                     .w_full()
                     .bg(cx.theme().colors().title_bar_background) // todo: this should be distinct
-                    .border()
+                    .border_1()
                     .border_color(cx.theme().colors().border_variant)
                     .rounded_md()
                     .my_1()

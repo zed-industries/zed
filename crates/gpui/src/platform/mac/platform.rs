@@ -2,8 +2,8 @@ use super::{events::key_to_native, BoolExt};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     Keymap, MacDispatcher, MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions,
-    Platform, PlatformDisplay, PlatformInput, PlatformTextSystem, PlatformWindow, Result,
-    SemanticVersion, Task, WindowAppearance, WindowParams,
+    Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
+    WindowAppearance, WindowParams,
 };
 use anyhow::{anyhow, bail};
 use block::ConcreteBlock;
@@ -65,10 +65,6 @@ unsafe fn build_classes() {
     APP_CLASS = {
         let mut decl = ClassDecl::new("GPUIApplication", class!(NSApplication)).unwrap();
         decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
-        decl.add_method(
-            sel!(sendEvent:),
-            send_event as extern "C" fn(&mut Object, Sel, id),
-        );
         decl.register()
     };
 
@@ -82,14 +78,6 @@ unsafe fn build_classes() {
         decl.add_method(
             sel!(applicationShouldHandleReopen:hasVisibleWindows:),
             should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
-        );
-        decl.add_method(
-            sel!(applicationDidBecomeActive:),
-            did_become_active as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(applicationDidResignActive:),
-            did_resign_active as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
             sel!(applicationWillTerminate:),
@@ -151,11 +139,8 @@ pub(crate) struct MacPlatformState {
     pasteboard: id,
     text_hash_pasteboard_type: id,
     metadata_pasteboard_type: id,
-    become_active: Option<Box<dyn FnMut()>>,
-    resign_active: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
-    event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     will_open_menu: Option<Box<dyn FnMut()>>,
@@ -181,11 +166,8 @@ impl MacPlatform {
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
             metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
-            become_active: None,
-            resign_active: None,
             reopen: None,
             quit: None,
-            event: None,
             menu_command: None,
             validate_menu_command: None,
             will_open_menu: None,
@@ -1040,24 +1022,6 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
     &*(platform_ptr as *const MacPlatform)
 }
 
-extern "C" fn send_event(this: &mut Object, _sel: Sel, native_event: id) {
-    unsafe {
-        if let Some(event) = PlatformInput::from_native(native_event, None) {
-            let platform = get_mac_platform(this);
-            let mut lock = platform.0.lock();
-            if let Some(mut callback) = lock.event.take() {
-                drop(lock);
-                let result = callback(event);
-                platform.0.lock().event.get_or_insert(callback);
-                if !result {
-                    return;
-                }
-            }
-        }
-        msg_send![super(this, class!(NSApplication)), sendEvent: native_event]
-    }
-}
-
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
@@ -1079,26 +1043,6 @@ extern "C" fn should_handle_reopen(this: &mut Object, _: Sel, _: id, has_open_wi
             callback();
             platform.0.lock().reopen.get_or_insert(callback);
         }
-    }
-}
-
-extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_mac_platform(this) };
-    let mut lock = platform.0.lock();
-    if let Some(mut callback) = lock.become_active.take() {
-        drop(lock);
-        callback();
-        platform.0.lock().become_active.get_or_insert(callback);
-    }
-}
-
-extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
-    let platform = unsafe { get_mac_platform(this) };
-    let mut lock = platform.0.lock();
-    if let Some(mut callback) = lock.resign_active.take() {
-        drop(lock);
-        callback();
-        platform.0.lock().resign_active.get_or_insert(callback);
     }
 }
 

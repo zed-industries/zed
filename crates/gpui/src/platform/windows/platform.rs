@@ -90,11 +90,8 @@ impl WindowsPlatformInner {
 #[derive(Default)]
 struct Callbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    become_active: Option<Box<dyn FnMut()>>,
-    resign_active: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     reopen: Option<Box<dyn FnMut()>>,
-    event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     will_open_app_menu: Option<Box<dyn FnMut()>>,
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,

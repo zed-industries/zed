@@ -260,14 +260,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_did_change_occlusion_state as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
-        sel!(windowWillEnterFullScreen:),
-        window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowWillExitFullScreen:),
-        window_will_exit_fullscreen as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
         sel!(windowDidMove:),
         window_did_move as extern "C" fn(&Object, Sel, id),
     );
@@ -340,7 +332,6 @@ struct MacWindowState {
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
     resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    fullscreen_callback: Option<Box<dyn FnMut(bool)>>,
     moved_callback: Option<Box<dyn FnMut()>>,
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
@@ -626,12 +617,12 @@ impl MacWindow {
                     native_window as *mut _,
                     native_view as *mut _,
                     window_size,
+                    window_background != WindowBackgroundAppearance::Opaque,
                 ),
                 request_frame_callback: None,
                 event_callback: None,
                 activate_callback: None,
                 resize_callback: None,
-                fullscreen_callback: None,
                 moved_callback: None,
                 should_close_callback: None,
                 close_callback: None,
@@ -979,7 +970,10 @@ impl PlatformWindow for MacWindow {
     fn set_app_id(&mut self, _app_id: &str) {}
 
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
-        let this = self.0.as_ref().lock();
+        let mut this = self.0.as_ref().lock();
+        this.renderer
+            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+
         let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
             80
         } else {
@@ -1470,24 +1464,6 @@ extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     window_state.as_ref().lock().move_traffic_light();
-}
-
-extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
-    window_fullscreen_changed(this, true);
-}
-
-extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
-    window_fullscreen_changed(this, false);
-}
-
-fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-    if let Some(mut callback) = lock.fullscreen_callback.take() {
-        drop(lock);
-        callback(is_fullscreen);
-        window_state.lock().fullscreen_callback = Some(callback);
-    }
 }
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {

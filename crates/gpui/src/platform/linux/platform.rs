@@ -35,9 +35,9 @@ use crate::platform::linux::wayland::WaylandClient;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, Modifiers,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task,
-    WindowAppearance, WindowOptions, WindowParams,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
+    PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task, WindowAppearance,
+    WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -72,11 +72,8 @@ pub trait LinuxClient {
 #[derive(Default)]
 pub(crate) struct PlatformHandlers {
     pub(crate) open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    pub(crate) become_active: Option<Box<dyn FnMut()>>,
-    pub(crate) resign_active: Option<Box<dyn FnMut()>>,
     pub(crate) quit: Option<Box<dyn FnMut()>>,
     pub(crate) reopen: Option<Box<dyn FnMut()>>,
-    pub(crate) event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -616,11 +613,9 @@ impl Keystroke {
             }
         };
 
-        // Ignore control characters (and DEL) for the purposes of ime_key,
-        // but if key_utf32 is 0 then assume it isn't one
-        let ime_key = ((key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127))
-            && !key_utf8.is_empty())
-        .then_some(key_utf8);
+        // Ignore control characters (and DEL) for the purposes of ime_key
+        let ime_key =
+            (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
         if handle_consumed_modifiers {
             let mod_shift_index = state.get_keymap().mod_get_index(xkb::MOD_NAME_SHIFT);

@@ -1817,7 +1817,7 @@ impl EditorElement {
                                     .pr(gpui::px(8.))
                                     .rounded_md()
                                     .shadow_md()
-                                    .border()
+                                    .border_1()
                                     .border_color(cx.theme().colors().border)
                                     .bg(cx.theme().colors().editor_subheader_background)
                                     .justify_between()

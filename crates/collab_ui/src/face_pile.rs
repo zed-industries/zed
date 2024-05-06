@@ -31,7 +31,7 @@ impl RenderOnce for FacePile {
                     .into_iter()
                     .enumerate()
                     .rev()
-                    .map(|(ix, player)| div().when(ix > 0, |div| div.neg_ml_1()).child(player)),
+                    .map(|(ix, player)| div().when(ix > 0, |div| div.ml_neg_1()).child(player)),
             )
     }
 }

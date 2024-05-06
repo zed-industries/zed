@@ -623,9 +623,9 @@ impl Render for Dock {
                     Axis::Vertical => this.h(size).w_full().flex_col(),
                 })
                 .map(|this| match self.position() {
-                    DockPosition::Left => this.border_r(),
-                    DockPosition::Right => this.border_l(),
-                    DockPosition::Bottom => this.border_t(),
+                    DockPosition::Left => this.border_r_1(),
+                    DockPosition::Right => this.border_l_1(),
+                    DockPosition::Bottom => this.border_t_1(),
                 })
                 .child(
                     div()

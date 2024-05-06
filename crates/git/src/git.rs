@@ -1,3 +1,6 @@
+mod hosting_provider;
+mod hosting_providers;
+
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
@@ -7,12 +10,12 @@ use std::str::FromStr;
 pub use git2 as libgit;
 pub use lazy_static::lazy_static;
 
+pub use crate::hosting_provider::*;
+pub use crate::hosting_providers::*;
+
 pub mod blame;
 pub mod commit;
 pub mod diff;
-pub mod hosting_provider;
-pub mod permalink;
-pub mod pull_request;
 pub mod repository;
 
 lazy_static! {

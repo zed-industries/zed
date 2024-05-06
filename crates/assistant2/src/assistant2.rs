@@ -619,9 +619,9 @@ impl AssistantChat {
             div()
                 .py_1()
                 .px_2()
-                .neg_mx_1()
+                .mx_neg_1()
                 .rounded_md()
-                .border()
+                .border_1()
                 .border_color(theme.status().error_border)
                 // .bg(theme.status().error_background)
                 .text_color(theme.status().error)
@@ -729,19 +729,7 @@ impl AssistantChat {
 
                 let tools = tool_calls
                     .iter()
-                    .map(|tool_call| {
-                        let result = &tool_call.result;
-                        let name = tool_call.name.clone();
-                        match result {
-                            Some(result) => div()
-                                .child(result.into_any_element(&name))
-                                .into_any_element(),
-                            None => div()
-                                .child(Label::new(name).color(Color::Modified))
-                                .child("Running...")
-                                .into_any_element(),
-                        }
-                    })
+                    .map(|tool_call| self.tool_registry.render_tool_call(tool_call, cx))
                     .collect::<Vec<AnyElement>>();
 
                 let tools_body = if tools.is_empty() {
