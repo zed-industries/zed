@@ -189,7 +189,17 @@ impl<P> PathLikeWithPosition<P> {
             })
         };
 
-        match s.trim().split_once(FILE_ROW_COLUMN_DELIMITER) {
+        let trimmed = s.trim();
+
+        #[cfg(target_os = "windows")]
+        {
+            let is_absolute = trimmed.starts_with(r"\\?\");
+            if is_absolute {
+                return Self::parse_absolute_path(trimmed, parse_path_like_str);
+            }
+        }
+
+        match trimmed.split_once(FILE_ROW_COLUMN_DELIMITER) {
             Some((path_like_str, maybe_row_and_col_str)) => {
                 let path_like_str = path_like_str.trim();
                 let maybe_row_and_col_str = maybe_row_and_col_str.trim();
@@ -241,6 +251,58 @@ impl<P> PathLikeWithPosition<P> {
             }
             None => fallback(s),
         }
+    }
+
+    /// This helper function is used for parsing absolute paths on Windows. It exists because absolute paths on Windows are quite different from other platforms. See [this page](https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats#dos-device-paths) for more information.
+    #[cfg(target_os = "windows")]
+    fn parse_absolute_path<E>(
+        s: &str,
+        parse_path_like_str: impl Fn(&str) -> Result<P, E>,
+    ) -> Result<Self, E> {
+        let fallback = |fallback_str| {
+            Ok(Self {
+                path_like: parse_path_like_str(fallback_str)?,
+                row: None,
+                column: None,
+            })
+        };
+
+        let mut iterator = s.split(FILE_ROW_COLUMN_DELIMITER);
+
+        let drive_prefix = iterator.next().unwrap_or_default();
+        let file_path = iterator.next().unwrap_or_default();
+
+        // TODO: How to handle drives without a letter? UNC paths?
+        let complete_path = drive_prefix.replace("\\\\?\\", "") + ":" + &file_path;
+
+        if let Some(row_str) = iterator.next() {
+            if let Some(column_str) = iterator.next() {
+                match row_str.parse::<u32>() {
+                    Ok(row) => match column_str.parse::<u32>() {
+                        Ok(col) => {
+                            return Ok(Self {
+                                path_like: parse_path_like_str(&complete_path)?,
+                                row: Some(row),
+                                column: Some(col),
+                            });
+                        }
+
+                        Err(_) => {
+                            return Ok(Self {
+                                path_like: parse_path_like_str(&complete_path)?,
+                                row: Some(row),
+                                column: None,
+                            });
+                        }
+                    },
+
+                    Err(_) => {
+                        return fallback(&complete_path);
+                    }
+                }
+            }
+        }
+        return fallback(&complete_path);
     }
 
     pub fn map_path_like<P2, E>(
@@ -392,6 +454,7 @@ mod tests {
     // Trim off trailing `:`s for otherwise valid input.
     #[test]
     fn path_with_position_parsing_special() {
+        #[cfg(not(target_os = "windows"))]
         let input_and_expected = [
             (
                 "test_file.rs:",
@@ -415,6 +478,50 @@ mod tests {
                     path_like: "crates/file_finder/src/file_finder.rs".to_string(),
                     row: Some(1902),
                     column: Some(13),
+                },
+            ),
+        ];
+
+        #[cfg(target_os = "windows")]
+        let input_and_expected = [
+            (
+                "test_file.rs:",
+                PathLikeWithPosition {
+                    path_like: "test_file.rs".to_string(),
+                    row: None,
+                    column: None,
+                },
+            ),
+            (
+                "test_file.rs:1:",
+                PathLikeWithPosition {
+                    path_like: "test_file.rs".to_string(),
+                    row: Some(1),
+                    column: None,
+                },
+            ),
+            (
+                "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:",
+                PathLikeWithPosition {
+                    path_like: "C:\\Users\\someone\\test_file.rs".to_string(),
+                    row: Some(1902),
+                    column: Some(13),
+                },
+            ),
+            (
+                "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:",
+                PathLikeWithPosition {
+                    path_like: "C:\\Users\\someone\\test_file.rs".to_string(),
+                    row: Some(1902),
+                    column: Some(13),
+                },
+            ),
+            (
+                "\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:",
+                PathLikeWithPosition {
+                    path_like: "C:\\Users\\someone\\test_file.rs".to_string(),
+                    row: Some(1902),
+                    column: None,
                 },
             ),
         ];
