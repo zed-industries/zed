@@ -234,8 +234,21 @@ impl DevServerProjects {
         cx.notify()
     }
 
-    fn rename_dev_server(&mut self, id: DevServerId, name: String, cx: &mut ViewContext<Self>) {
-        if name.is_empty() {
+    fn rename_dev_server(&mut self, id: DevServerId, cx: &mut ViewContext<Self>) {
+        let name = self
+            .rename_dev_server_input
+            .read(cx)
+            .editor()
+            .read(cx)
+            .text(cx)
+            .trim()
+            .to_string();
+
+        let Some(dev_server) = self.dev_server_store.read(cx).dev_server(id) else {
+            return;
+        };
+
+        if name.is_empty() || dev_server.name == name {
             return;
         }
 
@@ -390,7 +403,17 @@ impl DevServerProjects {
             Mode::CreateDevServer(_) => {
                 self.create_dev_server(cx);
             }
-            Mode::EditDevServer(_) => {}
+            Mode::EditDevServer(edit_dev_server) => {
+                if self
+                    .rename_dev_server_input
+                    .read(cx)
+                    .editor()
+                    .read(cx)
+                    .is_focused(cx)
+                {
+                    self.rename_dev_server(edit_dev_server.dev_server_id, cx);
+                }
+            }
         }
     }
 
@@ -821,11 +844,7 @@ impl DevServerProjects {
                                                 || rename_dev_server_input_text == dev_server_name,
                                         )
                                         .on_click(cx.listener(move |this, _, cx| {
-                                            this.rename_dev_server(
-                                                dev_server_id,
-                                                rename_dev_server_input_text.clone(),
-                                                cx,
-                                            );
+                                            this.rename_dev_server(dev_server_id, cx);
                                             cx.notify();
                                         })),
                                 )
