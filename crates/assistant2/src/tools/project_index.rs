@@ -96,14 +96,16 @@ impl Render for ProjectIndexView {
                                 .child(Icon::new(IconName::MagnifyingGlass))
                                 .child(Label::new(format!("`{}`", query)).color(Color::Muted)),
                         )
-                        .child(v_flex().gap_2().children(output.excerpts.iter().map(
-                            |(path, _)| {
-                                h_flex().gap_2().child(Icon::new(IconName::File)).child(
-                                    Label::new(path.path.to_string_lossy().to_string())
-                                        .color(Color::Muted),
-                                )
-                            },
-                        ))),
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .children(output.excerpts.keys().map(|path| {
+                                    h_flex().gap_2().child(Icon::new(IconName::File)).child(
+                                        Label::new(path.path.to_string_lossy().to_string())
+                                            .color(Color::Muted),
+                                    )
+                                })),
+                        ),
                 ),
         )
     }

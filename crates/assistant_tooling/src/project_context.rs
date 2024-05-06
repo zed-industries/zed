@@ -149,8 +149,8 @@ impl ProjectContext {
                             while !text.is_char_boundary(end) {
                                 end -= 1;
                             }
-                            result.push_str(&text[start..end].to_string());
-                            if !result.ends_with("\n") {
+                            result.push_str(&text[start..end]);
+                            if !result.ends_with('\n') {
                                 result.push('\n');
                             }
                         }
