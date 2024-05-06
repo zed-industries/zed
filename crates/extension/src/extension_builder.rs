@@ -205,6 +205,22 @@ impl ExtensionBuilder {
         let parser_path = src_path.join("parser.c");
         let scanner_path = src_path.join("scanner.c");
 
+        if !parser_path.exists() {
+            log::info!("generating {grammar_name} parser");
+            let generate_output = Command::new("tree-sitter")
+                .args(["generate", "--no-bindings"])
+                .current_dir(&base_grammar_path)
+                .output()
+                .context("failed to run `tree-sitter generate`")?;
+
+            if !generate_output.status.success() {
+                bail!(
+                    "No parser checked in and tree-sitter generate failed for {grammar_name} parser: {}",
+                    String::from_utf8_lossy(&generate_output.stderr),
+                );
+            }
+        }
+
         log::info!("compiling {grammar_name} parser");
         let clang_output = Command::new(&clang_path)
             .args(["-fPIC", "-shared", "-Os"])
