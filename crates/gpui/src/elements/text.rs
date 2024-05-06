@@ -167,6 +167,12 @@ impl StyledText {
         self.runs = Some(runs);
         self
     }
+
+    /// Set the text runs for this piece of text.
+    pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
+        self.runs = Some(runs);
+        self
+    }
 }
 
 impl Element for StyledText {

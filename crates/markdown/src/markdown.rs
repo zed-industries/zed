@@ -1,10 +1,13 @@
 mod parser;
 
 use futures::FutureExt;
-use gpui::{AnyElement, Bounds, FontWeight, GlobalElementId, Render, Task, WrappedLine};
+use gpui::{
+    AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, HighlightStyle, Hsla, Render,
+    StrikethroughStyle, StyledText, Task, TextRun, TextStyle, TextStyleRefinement, WrappedLine,
+};
 use language::{Language, LanguageRegistry};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
-use std::{cell::Cell, iter, mem, rc::Rc, sync::Arc};
+use std::{cell::Cell, iter, mem, ops::Range, rc::Rc, sync::Arc};
 use ui::prelude::*;
 use util::TryFutureExt;
 
@@ -135,7 +138,7 @@ impl Element for MarkdownElement {
         id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let mut builder = MarkdownElementBuilder::new();
+        let mut builder = MarkdownElementBuilder::new(cx.text_style());
         for event in self.markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => match tag {
@@ -155,10 +158,11 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTag::BlockQuote => {
                         // todo!("use the right color")
-                        builder.push_div(div().pl_2().text_color(gpui::red()));
+                        builder.push_div(div().pl_4().text_color(gpui::red()));
                     }
                     MarkdownTag::CodeBlock(kind) => {
                         let language = if let CodeBlockKind::Fenced(language) = kind {
+                            // todo!("notify when language is finally loaded")
                             self.language_registry
                                 .language_for_name(language.as_ref())
                                 .now_or_never()
@@ -184,9 +188,21 @@ impl Element for MarkdownElement {
                             builder.push_text("- ");
                         };
                     }
-                    MarkdownTag::Emphasis => builder.push_emphasis(),
-                    MarkdownTag::Strong => builder.push_strong(),
-                    MarkdownTag::Strikethrough => builder.push_strikethrough(),
+                    MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }),
+                    MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
+                        font_weight: Some(FontWeight::BOLD),
+                        ..Default::default()
+                    }),
+                    MarkdownTag::Strikethrough => builder.push_text_style(TextStyleRefinement {
+                        strikethrough: Some(StrikethroughStyle {
+                            thickness: px(1.),
+                            color: None,
+                        }),
+                        ..Default::default()
+                    }),
                     MarkdownTag::Link {
                         link_type,
                         dest_url,
@@ -215,9 +231,9 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                     }
                     MarkdownTagEnd::Item => builder.pop_div(),
-                    MarkdownTagEnd::Emphasis => builder.pop_emphasis(),
-                    MarkdownTagEnd::Strong => builder.pop_strong(),
-                    MarkdownTagEnd::Strikethrough => builder.pop_strikethrough(),
+                    MarkdownTagEnd::Emphasis => builder.pop_text_style(),
+                    MarkdownTagEnd::Strong => builder.pop_text_style(),
+                    MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
                     MarkdownTagEnd::Link => todo!(),
                     MarkdownTagEnd::Image => todo!(),
                     _ => log::info!("unsupported markdown tag end: {:?}", tag),
@@ -281,9 +297,9 @@ struct TextBlock {
 struct MarkdownElementBuilder {
     div_stack: Vec<Div>,
     pending_text: String,
-    bold_depth: usize,
-    italic_depth: usize,
-    strikethrough_depth: usize,
+    pending_runs: Vec<TextRun>,
+    base_text_style: TextStyle,
+    text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
     list_stack: Vec<ListStackEntry>,
 }
@@ -293,16 +309,32 @@ struct ListStackEntry {
 }
 
 impl MarkdownElementBuilder {
-    fn new() -> Self {
+    fn new(base_text_style: TextStyle) -> Self {
         Self {
             div_stack: vec![div()],
             pending_text: String::new(),
-            bold_depth: 0,
-            italic_depth: 0,
-            strikethrough_depth: 0,
+            pending_runs: Vec::new(),
+            base_text_style,
+            text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
             list_stack: Vec::new(),
         }
+    }
+
+    fn push_text_style(&mut self, style: TextStyleRefinement) {
+        self.text_style_stack.push(style);
+    }
+
+    fn text_style(&self) -> TextStyle {
+        let mut style = self.base_text_style.clone();
+        for refinement in &self.text_style_stack {
+            style.refine(refinement);
+        }
+        style
+    }
+
+    fn pop_text_style(&mut self) {
+        self.text_style_stack.pop();
     }
 
     fn push_div(&mut self, div: Div) {
@@ -340,44 +372,24 @@ impl MarkdownElementBuilder {
         self.code_block_stack.pop();
     }
 
-    fn push_emphasis(&mut self) {
-        self.italic_depth += 1;
-    }
-
-    fn pop_emphasis(&mut self) {
-        self.italic_depth -= 1;
-    }
-
-    fn push_strong(&mut self) {
-        self.bold_depth += 1;
-    }
-
-    fn pop_strong(&mut self) {
-        self.bold_depth -= 1;
-    }
-
-    fn push_strikethrough(&mut self) {
-        self.strikethrough_depth += 1;
-    }
-
-    fn pop_strikethrough(&mut self) {
-        self.strikethrough_depth -= 1;
-    }
-
     fn push_text(&mut self, text: &str) {
+        let run = self.text_style().to_run(text.len());
         self.pending_text.push_str(text);
+        self.pending_runs.push(run);
     }
 
     fn flush_text(&mut self) {
-        let pending_text = mem::take(&mut self.pending_text);
-        if pending_text.is_empty() {
+        let text = mem::take(&mut self.pending_text);
+        let runs = mem::take(&mut self.pending_runs);
+        if text.is_empty() {
             return;
         }
 
+        let text = StyledText::new(text).with_runs(runs);
         self.div_stack
             .last_mut()
             .unwrap()
-            .extend(iter::once(SharedString::from(pending_text).into_any()));
+            .extend(iter::once(text.into_any()));
     }
 
     fn finish(mut self) -> Div {
