@@ -44,26 +44,6 @@ impl ChatMessage {
 impl RenderOnce for ChatMessage {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let collapse_handle_id = SharedString::from(format!("{}_collapse_handle", self.id.0));
-        // let collapse_handle = h_flex()
-        //     .id(collapse_handle_id.clone())
-        //     .group(collapse_handle_id.clone())
-        //     .flex_none()
-        //     .justify_center()
-        //     .w_1()
-        //     .mx_2()
-        //     .h_full()
-        //     .on_click(self.on_collapse_handle_click)
-        //     .child(
-        //         div()
-        //             .w_px()
-        //             .h_full()
-        //             .rounded_lg()
-        //             .overflow_hidden()
-        //             .bg(cx.theme().colors().element_background)
-        //             .group_hover(collapse_handle_id, |this| {
-        //                 this.bg(cx.theme().colors().element_hover)
-        //             }),
-        //     );
 
         let content_padding = Spacing::Large.rems(cx);
         // Clamp the message height to exactly 1.5 lines when collapsed.
@@ -80,14 +60,18 @@ impl RenderOnce for ChatMessage {
             UserOrAssistant::User(None) => ("You".into(), None),
         };
 
-        let footer_height = rems_from_px(20.);
-
         v_flex()
-            .gap_1()
-            .my(rems(0.25))
+            .w_full()
+            .flex_none()
+            // .debug_bg_cyan()
+            .gap(Spacing::Small.rems(cx))
+            .py(Spacing::Small.rems(cx))
             .child(
                 h_flex()
+                    // .debug_bg_red()
                     .justify_between()
+                    .w_full()
+                    .flex_none()
                     .child(
                         h_flex()
                             .gap_2()
@@ -120,22 +104,18 @@ impl RenderOnce for ChatMessage {
             )
             .when(self.message.is_some() || self.tools_used.is_some(), |el| {
                 el.child(
-                    h_flex()
-                        .pb(footer_height)
-                        // .gap_3().child(collapse_handle)
-                        .child(
-                            div()
-                                .relative()
-                                .overflow_hidden()
-                                .w_full()
-                                .p(content_padding)
-                                .gap_3()
-                                .rounded_lg()
-                                .when(self.collapsed, |this| this.h(collapsed_height))
-                                .bg(cx.theme().colors().surface_background)
-                                .children(self.message)
-                                .children(self.tools_used),
-                        ),
+                    h_flex().child(
+                        div()
+                            .relative()
+                            .overflow_y_hidden()
+                            .w_full()
+                            .p(content_padding)
+                            .gap_3()
+                            .rounded_lg()
+                            .when(self.collapsed, |this| this.h(collapsed_height))
+                            .children(self.message)
+                            .when_some(self.tools_used, |this, tools_used| this.child(tools_used)),
+                    ),
                 )
             })
     }

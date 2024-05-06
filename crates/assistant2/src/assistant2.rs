@@ -716,7 +716,6 @@ impl AssistantChat {
                         // TODO: Ideally we don't do this layout in two places
                         // I'll come back and figure out how to merge this portion wth chat_message
                         div()
-                            .p(Spacing::Large.rems(cx))
                             .child(body.element(ElementId::from(id.0), cx))
                             .into_any_element(),
                     )
@@ -729,7 +728,6 @@ impl AssistantChat {
                         let name = tool_call.name.clone();
                         match result {
                             Some(result) => div()
-                                .p(Spacing::Large.rems(cx))
                                 .child(result.into_any_element(&name))
                                 .into_any_element(),
                             None => div()
