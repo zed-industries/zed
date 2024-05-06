@@ -6,9 +6,9 @@ use url::Url;
 use util::codeberg;
 use util::http::HttpClient;
 
-use crate::hosting_provider::GitHostingProvider;
-use crate::permalink::{BuildCommitPermalinkParams, BuildPermalinkParams, ParsedGitRemote};
-use crate::Oid;
+use crate::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, Oid, ParsedGitRemote,
+};
 
 pub struct Codeberg;
 

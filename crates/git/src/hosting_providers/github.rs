@@ -7,9 +7,10 @@ use url::Url;
 use util::github;
 use util::http::HttpClient;
 
-use crate::hosting_provider::{GitHostingProvider, PullRequest};
-use crate::permalink::{BuildCommitPermalinkParams, BuildPermalinkParams, ParsedGitRemote};
-use crate::Oid;
+use crate::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, Oid, ParsedGitRemote,
+    PullRequest,
+};
 
 fn pull_request_number_regex() -> &'static Regex {
     static PULL_REQUEST_NUMBER_REGEX: OnceLock<Regex> = OnceLock::new();

@@ -1,7 +1,8 @@
 use url::Url;
 
-use crate::hosting_provider::GitHostingProvider;
-use crate::permalink::{BuildCommitPermalinkParams, BuildPermalinkParams, ParsedGitRemote};
+use crate::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+};
 
 pub struct Bitbucket;
 
@@ -73,7 +74,7 @@ impl GitHostingProvider for Bitbucket {
 
 #[cfg(test)]
 mod tests {
-    use crate::permalink::parse_git_remote_url;
+    use crate::parse_git_remote_url;
 
     use super::*;
 

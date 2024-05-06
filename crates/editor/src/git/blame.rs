@@ -2,12 +2,9 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use collections::HashMap;
-use git::hosting_provider::GitHostingProvider;
 use git::{
     blame::{Blame, BlameEntry},
-    hosting_provider::PullRequest,
-    permalink::parse_git_remote_url,
-    Oid,
+    parse_git_remote_url, GitHostingProvider, Oid, PullRequest,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
@@ -452,7 +449,7 @@ async fn parse_commit_messages(
 
         let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
             Some(
-                provider.build_commit_permalink(git::permalink::BuildCommitPermalinkParams {
+                provider.build_commit_permalink(git::BuildCommitPermalinkParams {
                     remote: git_remote,
                     sha: oid.to_string().as_str(),
                 }),

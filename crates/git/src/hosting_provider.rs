@@ -5,13 +5,25 @@ use async_trait::async_trait;
 use url::Url;
 use util::http::HttpClient;
 
-use crate::permalink::{BuildCommitPermalinkParams, BuildPermalinkParams, ParsedGitRemote};
+use crate::hosting_providers::{Bitbucket, Codeberg, Gitee, Github, Gitlab, Sourcehut};
 use crate::Oid;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PullRequest {
     pub number: u32,
     pub url: Url,
+}
+
+pub struct BuildCommitPermalinkParams<'a> {
+    pub remote: &'a ParsedGitRemote<'a>,
+    pub sha: &'a str,
+}
+
+pub struct BuildPermalinkParams<'a> {
+    pub remote_url: &'a str,
+    pub sha: &'a str,
+    pub path: &'a str,
+    pub selection: Option<Range<u32>>,
 }
 
 /// A Git hosting provider.
@@ -71,4 +83,32 @@ pub trait GitHostingProvider {
     ) -> Result<Option<Url>> {
         Ok(None)
     }
+}
+
+#[derive(Debug)]
+pub struct ParsedGitRemote<'a> {
+    pub owner: &'a str,
+    pub repo: &'a str,
+}
+
+pub fn parse_git_remote_url(
+    url: &str,
+) -> Option<(
+    Arc<dyn GitHostingProvider + Send + Sync + 'static>,
+    ParsedGitRemote,
+)> {
+    let providers: Vec<Arc<dyn GitHostingProvider + Send + Sync + 'static>> = vec![
+        Arc::new(Github),
+        Arc::new(Gitlab),
+        Arc::new(Bitbucket),
+        Arc::new(Codeberg),
+        Arc::new(Gitee),
+        Arc::new(Sourcehut),
+    ];
+
+    providers.into_iter().find_map(|provider| {
+        provider
+            .parse_remote_url(&url)
+            .map(|parsed_remote| (provider, parsed_remote))
+    })
 }

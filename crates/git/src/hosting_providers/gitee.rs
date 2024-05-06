@@ -1,7 +1,8 @@
 use url::Url;
 
-use crate::hosting_provider::GitHostingProvider;
-use crate::permalink::{BuildCommitPermalinkParams, BuildPermalinkParams, ParsedGitRemote};
+use crate::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+};
 
 pub struct Gitee;
 

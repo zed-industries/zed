@@ -1,6 +1,5 @@
 use crate::commit::get_messages;
-use crate::permalink::{parse_git_remote_url, BuildCommitPermalinkParams};
-use crate::Oid;
+use crate::{parse_git_remote_url, BuildCommitPermalinkParams, Oid};
 use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
