@@ -107,7 +107,7 @@ impl RenderOnce for ChatMessage {
                             // temp icons
                             IconButton::new(
                                 collapse_handle_id.clone(),
-                                if self.collapsed.clone() {
+                                if self.collapsed {
                                     IconName::ArrowUp
                                 } else {
                                     IconName::ArrowDown
