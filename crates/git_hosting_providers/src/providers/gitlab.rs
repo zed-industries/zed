@@ -1,8 +1,6 @@
 use url::Url;
 
-use git::{
-    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
-};
+use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote};
 
 pub struct Gitlab;
 

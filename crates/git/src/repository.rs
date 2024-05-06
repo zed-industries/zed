@@ -253,7 +253,7 @@ impl GitRepository for RealGitRepository {
             path,
             &content,
             remote_url,
-            self.hosting_provider_registry.clone()
+            self.hosting_provider_registry.clone(),
         )
     }
 }
