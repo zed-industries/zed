@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p target/deploy
-          mdbook build ./docs --dest-dir=../target/deploy/docs2/
+          mdbook build ./docs --dest-dir=../target/deploy/docs/
 
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
