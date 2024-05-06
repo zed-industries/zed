@@ -4,10 +4,16 @@ mod completion_provider;
 mod tools;
 pub mod ui;
 
+use crate::{
+    attachments::ActiveEditorAttachmentTool,
+    tools::{CreateBufferTool, ProjectIndexTool},
+    ui::UserOrAssistant,
+};
 use ::ui::{div, prelude::*, Color, ViewContext};
 use anyhow::{Context, Result};
-use assistant_tooling::{AssistantContext, ToolFunctionCall, ToolRegistry};
-use attachments::{ActiveEditorAttachmentTool, UserAttachment, UserAttachmentStore};
+use assistant_tooling::{
+    AssistantContext, AttachmentRegistry, ToolFunctionCall, ToolRegistry, UserAttachment,
+};
 use client::{proto, Client, UserStore};
 use collections::HashMap;
 use completion_provider::*;
@@ -33,9 +39,6 @@ use workspace::{
 };
 
 pub use assistant_settings::AssistantSettings;
-
-use crate::tools::{CreateBufferTool, ProjectIndexTool};
-use crate::ui::UserOrAssistant;
 
 const MAX_COMPLETION_CALLS_PER_SUBMISSION: usize = 5;
 
@@ -132,7 +135,7 @@ impl AssistantPanel {
                     .context("failed to register CreateBufferTool")
                     .log_err();
 
-                let mut attachment_store = UserAttachmentStore::new();
+                let mut attachment_store = AttachmentRegistry::new();
                 attachment_store.register(ActiveEditorAttachmentTool::new(workspace.clone(), cx));
 
                 Self::new(
@@ -151,7 +154,7 @@ impl AssistantPanel {
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
-        attachment_store: Arc<UserAttachmentStore>,
+        attachment_store: Arc<AttachmentRegistry>,
         user_store: Model<UserStore>,
         project_index: Model<ProjectIndex>,
         workspace: WeakView<Workspace>,
@@ -245,8 +248,8 @@ pub struct AssistantChat {
     collapsed_messages: HashMap<MessageId, bool>,
     editing_message: Option<EditingMessage>,
     pending_completion: Option<Task<()>>,
-    attachment_store: Arc<UserAttachmentStore>,
     tool_registry: Arc<ToolRegistry>,
+    attachment_registry: Arc<AttachmentRegistry>,
     project_index: Model<ProjectIndex>,
 }
 
@@ -260,7 +263,7 @@ impl AssistantChat {
     fn new(
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
-        attachment_store: Arc<UserAttachmentStore>,
+        attachment_registry: Arc<AttachmentRegistry>,
         user_store: Model<UserStore>,
         project_index: Model<ProjectIndex>,
         workspace: WeakView<Workspace>,
@@ -285,7 +288,7 @@ impl AssistantChat {
         let active_file_button = match workspace.upgrade() {
             Some(workspace) => {
                 Some(cx.new_view(
-                    |cx| ActiveFileButton::new(attachment_store.clone(), workspace, cx), //
+                    |cx| ActiveFileButton::new(attachment_registry.clone(), workspace, cx), //
                 ))
             }
             _ => None,
@@ -310,7 +313,7 @@ impl AssistantChat {
             editing_message: None,
             collapsed_messages: HashMap::default(),
             pending_completion: None,
-            attachment_store,
+            attachment_registry,
             tool_registry,
         }
     }
@@ -392,7 +395,7 @@ impl AssistantChat {
         let mode = *mode;
         self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
             let attachments_task = this.update(&mut cx, |this, cx| {
-                let attachment_store = this.attachment_store.clone();
+                let attachment_store = this.attachment_registry.clone();
                 attachment_store.call_all_attachment_tools(cx)
             });
 

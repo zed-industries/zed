@@ -13,12 +13,15 @@ path = "src/assistant_tooling.rs"
 
 [dependencies]
 anyhow.workspace = true
+collections.workspace = true
+futures.workspace = true
 gpui.workspace = true
+project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sum_tree.workspace = true
-project.workspace = true
+util.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

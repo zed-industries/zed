@@ -14,7 +14,7 @@ use std::{
 use crate::AssistantContext;
 
 pub struct ToolRegistry {
-    tools: HashMap<String, Tool>,
+    registered_tools: HashMap<String, RegisteredTool>,
 }
 
 #[derive(Default, Deserialize)]
@@ -40,14 +40,6 @@ pub struct ToolFunctionDefinition {
     pub name: String,
     pub description: String,
     pub parameters: RootSchema,
-}
-
-struct Tool {
-    enabled: AtomicBool,
-    type_id: TypeId,
-    call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
-    render_running: fn(&mut WindowContext) -> gpui::AnyElement,
-    definition: ToolFunctionDefinition,
 }
 
 pub trait LanguageModelTool {
@@ -101,15 +93,23 @@ pub trait ToolOutput: Sized {
     fn generate(&self, output: &mut AssistantContext, cx: &mut WindowContext) -> String;
 }
 
+struct RegisteredTool {
+    enabled: AtomicBool,
+    type_id: TypeId,
+    call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+    render_running: fn(&mut WindowContext) -> gpui::AnyElement,
+    definition: ToolFunctionDefinition,
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
-            tools: HashMap::new(),
+            registered_tools: HashMap::new(),
         }
     }
 
     pub fn set_tool_enabled<T: 'static + LanguageModelTool>(&self, is_enabled: bool) {
-        for tool in self.tools.values() {
+        for tool in self.registered_tools.values() {
             if tool.type_id == TypeId::of::<T>() {
                 tool.enabled.store(is_enabled, SeqCst);
                 return;
@@ -118,7 +118,7 @@ impl ToolRegistry {
     }
 
     pub fn is_tool_enabled<T: 'static + LanguageModelTool>(&self) -> bool {
-        for tool in self.tools.values() {
+        for tool in self.registered_tools.values() {
             if tool.type_id == TypeId::of::<T>() {
                 return tool.enabled.load(SeqCst);
             }
@@ -127,7 +127,7 @@ impl ToolRegistry {
     }
 
     pub fn definitions(&self) -> Vec<ToolFunctionDefinition> {
-        self.tools
+        self.registered_tools
             .values()
             .filter(|tool| tool.enabled.load(SeqCst))
             .map(|tool| tool.definition.clone())
@@ -145,7 +145,7 @@ impl ToolRegistry {
                 .child(result.into_any_element(&tool_call.name))
                 .into_any_element(),
             None => self
-                .tools
+                .registered_tools
                 .get(&tool_call.name)
                 .map(|tool| (tool.render_running)(cx))
                 .unwrap_or_else(|| div().into_any_element()),
@@ -158,7 +158,7 @@ impl ToolRegistry {
         _cx: &mut WindowContext,
     ) -> Result<()> {
         let name = tool.name();
-        let registered_tool = Tool {
+        let registered_tool = RegisteredTool {
             type_id: TypeId::of::<T>(),
             definition: tool.definition(),
             enabled: AtomicBool::new(true),
@@ -198,7 +198,7 @@ impl ToolRegistry {
             render_running: render_running::<T>,
         };
 
-        let previous = self.tools.insert(name.clone(), registered_tool);
+        let previous = self.registered_tools.insert(name.clone(), registered_tool);
         if previous.is_some() {
             return Err(anyhow!("already registered a tool with name {}", name));
         }
@@ -230,7 +230,7 @@ impl ToolRegistry {
         let arguments = tool_call.arguments.clone();
         let id = tool_call.id.clone();
 
-        let tool = match self.tools.get(&name) {
+        let tool = match self.registered_tools.get(&name) {
             Some(tool) => tool,
             None => {
                 let name = name.clone();

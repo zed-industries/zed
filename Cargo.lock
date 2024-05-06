@@ -411,6 +411,8 @@ name = "assistant_tooling"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
+ "futures 0.3.28",
  "gpui",
  "project",
  "schemars",
@@ -419,6 +421,7 @@ dependencies = [
  "settings",
  "sum_tree",
  "unindent",
+ "util",
 ]
 
 [[package]]
