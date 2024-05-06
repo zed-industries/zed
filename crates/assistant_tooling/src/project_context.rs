@@ -197,7 +197,7 @@ mod tests {
             json!({
                 "root1": {
                     "lib": {
-                        "file1.rs": "mod example",
+                        "file1.rs": "mod example;",
                         "file2.rs": "",
                     },
                     "test": {
@@ -244,7 +244,7 @@ mod tests {
             # root1
             ## lib/file1.rs
             ~~~
-            mod example
+            mod example;
             ~~~
             "#
             .unindent(),
@@ -271,19 +271,15 @@ mod tests {
             project structure:
             # root1
             ## lib/file1.rs
-
             ~~~
-            mod example
+            mod example;
             ~~~
-
             ## test/file3.rs
-
             ~~~
             ...
             fn test2() {}
             ...
             ~~~
-
             "#
             .unindent(),
             message
