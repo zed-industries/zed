@@ -629,7 +629,7 @@ impl EditorElement {
             editor.update_hovered_link(point_for_position, &position_map.snapshot, modifiers, cx);
 
             if let Some(point) = point_for_position.as_valid() {
-                hover_at(editor, Some(point), cx);
+                hover_at(editor, Some((point, &position_map.snapshot)), cx);
                 Self::update_visible_cursor(editor, point, position_map, cx);
             } else {
                 hover_at(editor, None, cx);
