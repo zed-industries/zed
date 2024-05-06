@@ -69,7 +69,7 @@ Task modal will persist list of those command for current Zed session, `task: re
 ### Ephemeral tasks
 
 You can use cmd modifier when spawning a task via a modal; tasks spawned this way will not have their usage count increased (thus, they will not be respawned with `task: rerun` and they won't be have a high rank in task modal).
-The intented use of ephemeral tasks is to stay in the flow with continuous `task: rerun` usage.
+The intended use of ephemeral tasks is to stay in the flow with continuous `task: rerun` usage.
 
 ## Custom keybindings for tasks
 
