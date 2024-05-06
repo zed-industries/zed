@@ -182,8 +182,7 @@ impl Render for AssistantPanel {
         div()
             .size_full()
             .v_flex()
-            .p_2()
-            .bg(cx.theme().colors().background)
+            .bg(cx.theme().colors().panel_background)
             .child(self.chat.clone())
     }
 }
@@ -634,7 +633,12 @@ impl AssistantChat {
     }
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+        let is_first = ix == 0;
         let is_last = ix == self.messages.len() - 1;
+
+        let padding = Spacing::Large.rems(cx);
+
+        // Whenever there's a run of assistant messages, group as one Assistant UI element
 
         match &self.messages[ix] {
             ChatMessage::User(UserMessage {
@@ -643,7 +647,7 @@ impl AssistantChat {
                 attachments,
             }) => div()
                 .id(SharedString::from(format!("message-{}-container", id.0)))
-                .when(!is_last, |element| element.mb_2())
+                .when(is_first, |this| this.pt(padding))
                 .map(|element| {
                     if self.editing_message_id() == Some(*id) {
                         element.child(Composer::new(
@@ -672,35 +676,39 @@ impl AssistantChat {
                                     }
                                 }
                             }))
-                            .child(crate::ui::ChatMessage::new(
-                                *id,
-                                UserOrAssistant::User(self.user_store.read(cx).current_user()),
-                                Some(
-                                    RichText::new(
-                                        body.read(cx).text(cx),
-                                        &[],
-                                        &self.language_registry,
-                                    )
-                                    .element(ElementId::from(id.0), cx),
-                                ),
-                                Some(
-                                    h_flex()
-                                        .gap_2()
-                                        .children(
-                                            attachments
-                                                .iter()
-                                                .map(|attachment| attachment.view.clone()),
+                            .child(
+                                crate::ui::ChatMessage::new(
+                                    *id,
+                                    UserOrAssistant::User(self.user_store.read(cx).current_user()),
+                                    Some(
+                                        RichText::new(
+                                            body.read(cx).text(cx),
+                                            &[],
+                                            &self.language_registry,
                                         )
-                                        .into_any_element(),
-                                ),
-                                self.is_message_collapsed(id),
-                                Box::new(cx.listener({
-                                    let id = *id;
-                                    move |assistant_chat, _event, _cx| {
-                                        assistant_chat.toggle_message_collapsed(id)
-                                    }
-                                })),
-                            ))
+                                        .element(ElementId::from(id.0), cx),
+                                    ),
+                                    Some(
+                                        h_flex()
+                                            .gap_2()
+                                            .children(
+                                                attachments
+                                                    .iter()
+                                                    .map(|attachment| attachment.view.clone()),
+                                            )
+                                            .into_any_element(),
+                                    ),
+                                    self.is_message_collapsed(id),
+                                    Box::new(cx.listener({
+                                        let id = *id;
+                                        move |assistant_chat, _event, _cx| {
+                                            assistant_chat.toggle_message_collapsed(id)
+                                        }
+                                    })),
+                                )
+                                // TODO: Wire up selections.
+                                .selected(is_last),
+                            )
                     }
                 })
                 .into_any(),
@@ -716,7 +724,6 @@ impl AssistantChat {
                 } else {
                     Some(
                         div()
-                            .p_2()
                             .child(body.element(ElementId::from(id.0), cx))
                             .into_any_element(),
                     )
@@ -734,20 +741,24 @@ impl AssistantChat {
                 };
 
                 div()
-                    .when(!is_last, |element| element.mb_2())
-                    .child(crate::ui::ChatMessage::new(
-                        *id,
-                        UserOrAssistant::Assistant,
-                        assistant_body,
-                        tools_body,
-                        self.is_message_collapsed(id),
-                        Box::new(cx.listener({
-                            let id = *id;
-                            move |assistant_chat, _event, _cx| {
-                                assistant_chat.toggle_message_collapsed(id)
-                            }
-                        })),
-                    ))
+                    .when(is_first, |this| this.pt(padding))
+                    .child(
+                        crate::ui::ChatMessage::new(
+                            *id,
+                            UserOrAssistant::Assistant,
+                            assistant_body,
+                            tools_body,
+                            self.is_message_collapsed(id),
+                            Box::new(cx.listener({
+                                let id = *id;
+                                move |assistant_chat, _event, _cx| {
+                                    assistant_chat.toggle_message_collapsed(id)
+                                }
+                            })),
+                        )
+                        // TODO: Wire up selections.
+                        .selected(is_last),
+                    )
                     .child(self.render_error(error.clone(), ix, cx))
                     .into_any()
             }
