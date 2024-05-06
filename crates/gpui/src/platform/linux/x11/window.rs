@@ -16,11 +16,11 @@ use x11rb::{
     connection::{Connection as _, RequestConnection as _},
     protocol::{
         render::{self, ConnectionExt as _},
-        xinput,
-        xproto::{self, ConnectionExt as _},
+        xinput::{self, ConnectionExt as _},
+        xproto::{self, ConnectionExt as _, CreateWindowAux},
     },
     resource_manager::Database,
-    wrapper::ConnectionExt,
+    wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
 
@@ -262,14 +262,7 @@ impl X11WindowState {
                     | xproto::EventMask::LEAVE_WINDOW
                     | xproto::EventMask::FOCUS_CHANGE
                     | xproto::EventMask::KEY_PRESS
-                    | xproto::EventMask::KEY_RELEASE
-                    | xproto::EventMask::BUTTON_PRESS
-                    | xproto::EventMask::BUTTON_RELEASE
-                    | xproto::EventMask::POINTER_MOTION
-                    | xproto::EventMask::BUTTON1_MOTION
-                    | xproto::EventMask::BUTTON2_MOTION
-                    | xproto::EventMask::BUTTON3_MOTION
-                    | xproto::EventMask::BUTTON_MOTION,
+                    | xproto::EventMask::KEY_RELEASE,
             );
 
         xcb_connection
@@ -289,18 +282,6 @@ impl X11WindowState {
             .unwrap()
             .check()
             .unwrap();
-
-        xinput::ConnectionExt::xinput_xi_select_events(
-            &xcb_connection,
-            x_window,
-            &[xinput::EventMask {
-                deviceid: 1,
-                mask: vec![xinput::XIEventMask::MOTION],
-            }],
-        )
-        .unwrap()
-        .check()
-        .unwrap();
 
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
@@ -323,6 +304,21 @@ impl X11WindowState {
                 atoms.WM_PROTOCOLS,
                 xproto::AtomEnum::ATOM,
                 &[atoms.WM_DELETE_WINDOW],
+            )
+            .unwrap();
+
+        xcb_connection
+            .xinput_xi_select_events(
+                x_window,
+                &[xinput::EventMask {
+                    deviceid: 1,
+                    mask: vec![
+                        xinput::XIEventMask::MOTION
+                            | xinput::XIEventMask::BUTTON_PRESS
+                            | xinput::XIEventMask::BUTTON_RELEASE
+                            | xinput::XIEventMask::LEAVE,
+                    ],
+                }],
             )
             .unwrap();
 

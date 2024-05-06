@@ -35,7 +35,7 @@ use super::{
     super::{open_uri_internal, SCROLL_LINES},
     X11Display, X11WindowStatePtr, XcbAtoms,
 };
-use super::{button_of_key, modifiers_from_state};
+use super::{button_from_mask, button_of_key, modifiers_from_state};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
 
@@ -390,16 +390,16 @@ impl X11Client {
                 drop(state);
                 window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent { keystroke }));
             }
-            Event::ButtonPress(event) => {
+            Event::XinputButtonPress(event) => {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
 
-                let modifiers = modifiers_from_state(event.state);
+                let modifiers = modifiers_from_xinput_info(event.mods);
                 let position = point(
-                    px(event.event_x as f32 / state.scale_factor),
-                    px(event.event_y as f32 / state.scale_factor),
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
-                if let Some(button) = button_of_key(event.detail) {
+                if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
                     let click_elapsed = state.last_click.elapsed();
 
                     if click_elapsed < DOUBLE_CLICK_INTERVAL
@@ -426,15 +426,15 @@ impl X11Client {
                     log::warn!("Unknown button press: {event:?}");
                 }
             }
-            Event::ButtonRelease(event) => {
+            Event::XinputButtonRelease(event) => {
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
-                let modifiers = modifiers_from_state(event.state);
+                let modifiers = modifiers_from_xinput_info(event.mods);
                 let position = point(
-                    px(event.event_x as f32 / state.scale_factor),
-                    px(event.event_y as f32 / state.scale_factor),
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
-                if let Some(button) = button_of_key(event.detail) {
+                if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
                     let click_count = state.current_count;
                     drop(state);
                     window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
@@ -448,6 +448,7 @@ impl X11Client {
             Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
+                let pressed_button = button_from_mask(event.button_mask[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
@@ -464,7 +465,7 @@ impl X11Client {
                 if event.valuator_mask[0] & 3 != 0 {
                     window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
                         position,
-                        pressed_button: None,
+                        pressed_button,
                         modifiers,
                     }));
                 }
@@ -524,32 +525,20 @@ impl X11Client {
                     valuator_idx += 1;
                 }
             }
-            Event::MotionNotify(event) => {
+            Event::XinputLeave(event) => {
+                self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
+                self.0.borrow_mut().scroll_y = None;
+
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
-                let pressed_button = super::button_from_state(event.state);
+                let pressed_button = button_from_mask(event.buttons[0]);
                 let position = point(
-                    px(event.event_x as f32 / state.scale_factor),
-                    px(event.event_y as f32 / state.scale_factor),
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
-                let modifiers = modifiers_from_state(event.state);
+                let modifiers = modifiers_from_xinput_info(event.mods);
                 drop(state);
-                window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
-                    pressed_button,
-                    position,
-                    modifiers,
-                }));
-            }
-            Event::LeaveNotify(event) => {
-                let window = self.get_window(event.event)?;
-                let state = self.0.borrow();
-                let pressed_button = super::button_from_state(event.state);
-                let position = point(
-                    px(event.event_x as f32 / state.scale_factor),
-                    px(event.event_y as f32 / state.scale_factor),
-                );
-                let modifiers = modifiers_from_state(event.state);
-                drop(state);
+
                 window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
                     pressed_button,
                     position,
