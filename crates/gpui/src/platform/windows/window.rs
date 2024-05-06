@@ -790,8 +790,7 @@ impl WindowsWindowInner {
             let Some(mut input_handler) = self.input_handler.take() else {
                 return Some(1);
             };
-            // we are composing, this should never fail
-            let caret_range = input_handler.selected_text_range().unwrap();
+            let caret_range = input_handler.selected_text_range().unwrap_or_default();
             let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
             self.input_handler.set(Some(input_handler));
             let scale_factor = self.scale_factor.get();
