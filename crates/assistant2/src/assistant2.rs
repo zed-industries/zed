@@ -1,4 +1,5 @@
 mod assistant_settings;
+mod attachments;
 mod completion_provider;
 mod tools;
 pub mod ui;
@@ -6,6 +7,7 @@ pub mod ui;
 use ::ui::{div, prelude::*, Color, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{ToolFunctionCall, ToolRegistry};
+use attachments::{ActiveEditorAttachmentTool, UserAttachment, UserAttachmentStore};
 use client::{proto, Client, UserStore};
 use collections::HashMap;
 use completion_provider::*;
@@ -19,12 +21,12 @@ use gpui::{
 use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use rich_text::RichText;
-use semantic_index::{CloudEmbeddingProvider, ProjectIndex, SemanticIndex};
+use semantic_index::{CloudEmbeddingProvider, ProjectIndex, ProjectIndexDebugView, SemanticIndex};
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use ui::{Composer, ProjectIndexButton};
-use util::{paths::EMBEDDINGS_DIR, ResultExt};
+use ui::{ActiveFileButton, Composer, ProjectIndexButton};
+use util::{maybe, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
@@ -81,6 +83,14 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 workspace.toggle_panel_focus::<AssistantPanel>(cx);
             });
+            workspace.register_action(|workspace, _: &DebugProjectIndex, cx| {
+                if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                    if let Some(index) = panel.read(cx).chat.read(cx).project_index.clone() {
+                        let view = cx.new_view(|cx| ProjectIndexDebugView::new(index, cx));
+                        workspace.add_item_to_center(Box::new(view), cx);
+                    }
+                }
+            });
         },
     )
     .detach();
@@ -105,10 +115,7 @@ impl AssistantPanel {
                 (workspace.app_state().clone(), workspace.project().clone())
             })?;
 
-            let user_store = app_state.user_store.clone();
-
             cx.new_view(|cx| {
-                // todo!("this will panic if the semantic index failed to load or has not loaded yet")
                 let project_index = cx.update_global(|semantic_index: &mut SemanticIndex, cx| {
                     semantic_index.project_index(project.clone(), cx)
                 });
@@ -116,7 +123,7 @@ impl AssistantPanel {
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry
                     .register(
-                        ProjectIndexTool::new(project_index.clone(), app_state.fs.clone()),
+                        ProjectIndexTool::new(project_index.clone(), project.read(cx).fs().clone()),
                         cx,
                     )
                     .context("failed to register ProjectIndexTool")
@@ -129,13 +136,16 @@ impl AssistantPanel {
                     .context("failed to register CreateBufferTool")
                     .log_err();
 
-                let tool_registry = Arc::new(tool_registry);
+                let mut attachment_store = UserAttachmentStore::new();
+                attachment_store.register(ActiveEditorAttachmentTool::new(workspace.clone(), cx));
 
                 Self::new(
                     app_state.languages.clone(),
-                    tool_registry,
-                    user_store,
+                    Arc::new(tool_registry),
+                    Arc::new(attachment_store),
+                    app_state.user_store.clone(),
                     Some(project_index),
+                    workspace,
                     cx,
                 )
             })
@@ -145,16 +155,20 @@ impl AssistantPanel {
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
+        attachment_store: Arc<UserAttachmentStore>,
         user_store: Model<UserStore>,
         project_index: Option<Model<ProjectIndex>>,
+        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let chat = cx.new_view(|cx| {
             AssistantChat::new(
-                language_registry.clone(),
+                language_registry,
                 tool_registry.clone(),
+                attachment_store,
                 user_store,
                 project_index,
+                workspace,
                 cx,
             )
         });
@@ -229,11 +243,13 @@ pub struct AssistantChat {
     language_registry: Arc<LanguageRegistry>,
     composer_editor: View<Editor>,
     project_index_button: Option<View<ProjectIndexButton>>,
+    active_file_button: Option<View<ActiveFileButton>>,
     user_store: Model<UserStore>,
     next_message_id: MessageId,
     collapsed_messages: HashMap<MessageId, bool>,
     editing_message: Option<EditingMessage>,
     pending_completion: Option<Task<()>>,
+    attachment_store: Arc<UserAttachmentStore>,
     tool_registry: Arc<ToolRegistry>,
     project_index: Option<Model<ProjectIndex>>,
 }
@@ -248,8 +264,10 @@ impl AssistantChat {
     fn new(
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
+        attachment_store: Arc<UserAttachmentStore>,
         user_store: Model<UserStore>,
         project_index: Option<Model<ProjectIndex>>,
+        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let model = CompletionProvider::get(cx).default_model();
@@ -268,6 +286,15 @@ impl AssistantChat {
             cx.new_view(|cx| ProjectIndexButton::new(project_index, tool_registry.clone(), cx))
         });
 
+        let active_file_button = match workspace.upgrade() {
+            Some(workspace) => {
+                Some(cx.new_view(
+                    |cx| ActiveFileButton::new(attachment_store.clone(), workspace, cx), //
+                ))
+            }
+            _ => None,
+        };
+
         Self {
             model,
             messages: Vec::new(),
@@ -281,11 +308,13 @@ impl AssistantChat {
             user_store,
             language_registry,
             project_index_button,
+            active_file_button,
             project_index,
             next_message_id: MessageId(0),
             editing_message: None,
             collapsed_messages: HashMap::default(),
             pending_completion: None,
+            attachment_store,
             tool_registry,
         }
     }
@@ -351,7 +380,12 @@ impl AssistantChat {
                     editor
                 });
                 composer_editor.clear(cx);
-                ChatMessage::User(UserMessage { id, body })
+
+                ChatMessage::User(UserMessage {
+                    id,
+                    body,
+                    attachments: Vec::new(),
+                })
             });
             self.push_message(message, cx);
         } else {
@@ -361,6 +395,29 @@ impl AssistantChat {
 
         let mode = *mode;
         self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
+            let attachments_task = this.update(&mut cx, |this, cx| {
+                let attachment_store = this.attachment_store.clone();
+                attachment_store.call_all_attachment_tools(cx)
+            });
+
+            let attachments = maybe!(async {
+                let attachments_task = attachments_task?;
+                let attachments = attachments_task.await?;
+
+                anyhow::Ok(attachments)
+            })
+            .await
+            .log_err()
+            .unwrap_or_default();
+
+            // Set the attachments to the _last_ user message
+            this.update(&mut cx, |this, _cx| {
+                if let Some(ChatMessage::User(message)) = this.messages.last_mut() {
+                    message.attachments = attachments;
+                }
+            })
+            .log_err();
+
             Self::request_completion(
                 this.clone(),
                 mode,
@@ -376,14 +433,6 @@ impl AssistantChat {
             .context("Failed to push new user message")
             .log_err();
         }));
-    }
-
-    fn debug_project_index(&mut self, _: &DebugProjectIndex, cx: &mut ViewContext<Self>) {
-        if let Some(index) = &self.project_index {
-            index.update(cx, |project_index, cx| {
-                project_index.debug(cx).detach_and_log_err(cx)
-            });
-        }
     }
 
     async fn request_completion(
@@ -588,7 +637,11 @@ impl AssistantChat {
         let is_last = ix == self.messages.len() - 1;
 
         match &self.messages[ix] {
-            ChatMessage::User(UserMessage { id, body }) => div()
+            ChatMessage::User(UserMessage {
+                id,
+                body,
+                attachments,
+            }) => div()
                 .id(SharedString::from(format!("message-{}-container", id.0)))
                 .when(!is_last, |element| element.mb_2())
                 .map(|element| {
@@ -596,6 +649,7 @@ impl AssistantChat {
                         element.child(Composer::new(
                             body.clone(),
                             self.project_index_button.clone(),
+                            self.active_file_button.clone(),
                             crate::ui::ModelSelector::new(
                                 cx.view().downgrade(),
                                 self.model.clone(),
@@ -629,6 +683,16 @@ impl AssistantChat {
                                     )
                                     .element(ElementId::from(id.0), cx),
                                 ),
+                                Some(
+                                    h_flex()
+                                        .gap_2()
+                                        .children(
+                                            attachments
+                                                .iter()
+                                                .map(|attachment| attachment.view.clone()),
+                                        )
+                                        .into_any_element(),
+                                ),
                                 self.is_message_collapsed(id),
                                 Box::new(cx.listener({
                                     let id = *id;
@@ -658,12 +722,38 @@ impl AssistantChat {
                     )
                 };
 
+                let tools = tool_calls
+                    .iter()
+                    .map(|tool_call| {
+                        let result = &tool_call.result;
+                        let name = tool_call.name.clone();
+                        match result {
+                            Some(result) => div()
+                                .p_2()
+                                .child(result.into_any_element(&name))
+                                .into_any_element(),
+                            None => div()
+                                .p_2()
+                                .child(Label::new(name).color(Color::Modified))
+                                .child("Running...")
+                                .into_any_element(),
+                        }
+                    })
+                    .collect::<Vec<AnyElement>>();
+
+                let tools_body = if tools.is_empty() {
+                    None
+                } else {
+                    Some(div().children(tools).into_any_element())
+                };
+
                 div()
                     .when(!is_last, |element| element.mb_2())
                     .child(crate::ui::ChatMessage::new(
                         *id,
                         UserOrAssistant::Assistant,
                         assistant_body,
+                        tools_body,
                         self.is_message_collapsed(id),
                         Box::new(cx.listener({
                             let id = *id;
@@ -672,22 +762,7 @@ impl AssistantChat {
                             }
                         })),
                     ))
-                    // TODO: Should the errors and tool calls get passed into `ChatMessage`?
                     .child(self.render_error(error.clone(), ix, cx))
-                    .children(tool_calls.iter().map(|tool_call| {
-                        let result = &tool_call.result;
-                        let name = tool_call.name.clone();
-                        match result {
-                            Some(result) => {
-                                div().p_2().child(result.into_any_element(&name)).into_any()
-                            }
-                            None => div()
-                                .p_2()
-                                .child(Label::new(name).color(Color::Modified))
-                                .child("Running...")
-                                .into_any(),
-                        }
-                    }))
                     .into_any()
             }
         }
@@ -698,11 +773,15 @@ impl AssistantChat {
 
         for message in &self.messages {
             match message {
-                ChatMessage::User(UserMessage { body, .. }) => {
-                    // When we re-introduce contexts like active file, we'll inject them here instead of relying on the model to request them
-                    // contexts.iter().for_each(|context| {
-                    //     completion_messages.extend(context.completion_messages(cx))
-                    // });
+                ChatMessage::User(UserMessage {
+                    body, attachments, ..
+                }) => {
+                    completion_messages.extend(
+                        attachments
+                            .into_iter()
+                            .filter_map(|attachment| attachment.message.clone())
+                            .map(|content| CompletionMessage::System { content }),
+                    );
 
                     // Show user's message last so that the assistant is grounded in the user's request
                     completion_messages.push(CompletionMessage::User {
@@ -737,9 +816,7 @@ impl AssistantChat {
                     });
 
                     for tool_call in tool_calls {
-                        // todo!(): we should not be sending when the tool is still running / has no result
-                        // For now I'm going to have to assume we send an empty string because otherwise
-                        // the Chat API will break -- there is a required message for every tool call by ID
+                        // Every tool call _must_ have a result by ID, otherwise OpenAI will error.
                         let content = match &tool_call.result {
                             Some(result) => result.format(&tool_call.name),
                             None => "".to_string(),
@@ -767,12 +844,12 @@ impl Render for AssistantChat {
             .key_context("AssistantChat")
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(Self::debug_project_index))
             .text_color(Color::Default.color(cx))
             .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(
                 self.composer_editor.clone(),
                 self.project_index_button.clone(),
+                self.active_file_button.clone(),
                 crate::ui::ModelSelector::new(cx.view().downgrade(), self.model.clone())
                     .into_any_element(),
             ))
@@ -807,6 +884,7 @@ impl ChatMessage {
 struct UserMessage {
     id: MessageId,
     body: View<Editor>,
+    attachments: Vec<UserAttachment>,
 }
 
 struct AssistantMessage {

@@ -22,7 +22,6 @@ client.workspace = true
 collections.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
-fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true

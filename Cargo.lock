@@ -382,7 +382,6 @@ dependencies = [
  "editor",
  "env_logger",
  "feature_flags",
- "fs",
  "futures 0.3.28",
  "gpui",
  "language",
@@ -2316,6 +2315,7 @@ dependencies = [
  "sha2 0.10.7",
  "sqlx",
  "subtle",
+ "supermaven_api",
  "telemetry_events",
  "text",
  "theme",
@@ -2512,30 +2512,10 @@ dependencies = [
  "async-compression",
  "async-std",
  "async-tar",
+ "client",
  "clock",
  "collections",
  "command_palette_hooks",
- "fs",
- "futures 0.3.28",
- "gpui",
- "language",
- "lsp",
- "node_runtime",
- "parking_lot",
- "rpc",
- "serde",
- "settings",
- "smol",
- "util",
-]
-
-[[package]]
-name = "copilot_ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "copilot",
  "editor",
  "fs",
  "futures 0.3.28",
@@ -2544,14 +2524,18 @@ dependencies = [
  "language",
  "lsp",
  "menu",
+ "node_runtime",
+ "parking_lot",
  "project",
+ "rpc",
+ "serde",
  "serde_json",
  "settings",
+ "smol",
  "theme",
  "ui",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -3410,6 +3394,7 @@ dependencies = [
  "smol",
  "snippet",
  "sum_tree",
+ "task",
  "text",
  "theme",
  "time",
@@ -5144,6 +5129,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "inline_completion_button"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "copilot",
+ "editor",
+ "fs",
+ "futures 0.3.28",
+ "gpui",
+ "indoc",
+ "language",
+ "lsp",
+ "project",
+ "serde_json",
+ "settings",
+ "supermaven",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "inotify"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5548,6 +5557,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "copilot",
  "editor",
  "env_logger",
  "futures 0.3.28",
@@ -7422,7 +7432,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "copilot",
  "env_logger",
  "fs",
  "futures 0.3.28",
@@ -8705,9 +8714,12 @@ dependencies = [
  "sha2 0.10.7",
  "smol",
  "tempfile",
+ "theme",
  "tree-sitter",
+ "ui",
  "unindent",
  "util",
+ "workspace",
  "worktree",
 ]
 
@@ -9595,6 +9607,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "supermaven"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "editor",
+ "env_logger",
+ "futures 0.3.28",
+ "gpui",
+ "language",
+ "log",
+ "postage",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "supermaven_api",
+ "theme",
+ "ui",
+ "util",
+]
+
+[[package]]
+name = "supermaven_api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.28",
+ "serde",
+ "serde_json",
+ "smol",
+ "util",
+]
+
+[[package]]
 name = "sval"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9827,6 +9876,7 @@ dependencies = [
  "futures 0.3.28",
  "gpui",
  "hex",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json_lenient",
@@ -9839,7 +9889,6 @@ dependencies = [
 name = "tasks_ui"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "editor",
  "file_icons",
  "fuzzy",
@@ -11798,12 +11847,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "copilot_ui",
  "db",
  "editor",
  "extensions_ui",
  "fuzzy",
  "gpui",
+ "inline_completion_button",
  "install_cli",
  "picker",
  "project",
@@ -12683,7 +12732,6 @@ dependencies = [
  "collections",
  "command_palette",
  "copilot",
- "copilot_ui",
  "db",
  "dev_server_projects",
  "diagnostics",
@@ -12700,6 +12748,7 @@ dependencies = [
  "gpui",
  "headless",
  "image_viewer",
+ "inline_completion_button",
  "install_cli",
  "isahc",
  "journal",
@@ -12730,6 +12779,7 @@ dependencies = [
  "settings",
  "simplelog",
  "smol",
+ "supermaven",
  "tab_switcher",
  "task",
  "tasks_ui",
@@ -12793,7 +12843,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -12927,7 +12977,7 @@ dependencies = [
 
 [[package]]
 name = "zed_toml"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

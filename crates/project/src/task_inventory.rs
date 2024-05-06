@@ -1,17 +1,18 @@
 //! Project-wide storage of the tasks available, capable of updating itself from the sources set.
 
 use std::{
-    any::TypeId,
     cmp::{self, Reverse},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use collections::{hash_map, HashMap, VecDeque};
-use gpui::{AppContext, Context, Model, ModelContext, Subscription};
+use gpui::{AppContext, Context, Model, ModelContext};
 use itertools::{Either, Itertools};
 use language::Language;
-use task::{ResolvedTask, TaskContext, TaskId, TaskSource, TaskTemplate, VariableName};
+use task::{
+    static_source::StaticSource, ResolvedTask, TaskContext, TaskId, TaskTemplate, VariableName,
+};
 use util::{post_inc, NumericPrefixWithSuffix};
 use worktree::WorktreeId;
 
@@ -22,14 +23,12 @@ pub struct Inventory {
 }
 
 struct SourceInInventory {
-    source: Model<Box<dyn TaskSource>>,
-    _subscription: Subscription,
-    type_id: TypeId,
+    source: StaticSource,
     kind: TaskSourceKind,
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TaskSourceKind {
     /// bash-like commands spawned by users, not associated with any path
     UserInput,
@@ -95,7 +94,7 @@ impl Inventory {
     pub fn add_source(
         &mut self,
         kind: TaskSourceKind,
-        create_source: impl FnOnce(&mut ModelContext<Self>) -> Model<Box<dyn TaskSource>>,
+        source: StaticSource,
         cx: &mut ModelContext<Self>,
     ) {
         let abs_path = kind.abs_path();
@@ -106,16 +105,7 @@ impl Inventory {
             }
         }
 
-        let source = create_source(cx);
-        let type_id = source.read(cx).type_id();
-        let source = SourceInInventory {
-            _subscription: cx.observe(&source, |_, _, cx| {
-                cx.notify();
-            }),
-            source,
-            type_id,
-            kind,
-        };
+        let source = SourceInInventory { source, kind };
         self.sources.push(source);
         cx.notify();
     }
@@ -136,31 +126,12 @@ impl Inventory {
         self.sources.retain(|s| s.kind.worktree() != Some(worktree));
     }
 
-    pub fn source<T: TaskSource>(&self) -> Option<(Model<Box<dyn TaskSource>>, TaskSourceKind)> {
-        let target_type_id = std::any::TypeId::of::<T>();
-        self.sources.iter().find_map(
-            |SourceInInventory {
-                 type_id,
-                 source,
-                 kind,
-                 ..
-             }| {
-                if &target_type_id == type_id {
-                    Some((source.clone(), kind.clone()))
-                } else {
-                    None
-                }
-            },
-        )
-    }
-
     /// Pulls its task sources relevant to the worktree and the language given,
     /// returns all task templates with their source kinds, in no specific order.
     pub fn list_tasks(
         &self,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
-        cx: &mut AppContext,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name(),
@@ -180,7 +151,7 @@ impl Inventory {
             .flat_map(|source| {
                 source
                     .source
-                    .update(cx, |source, cx| source.tasks_to_schedule(cx))
+                    .tasks_to_schedule()
                     .0
                     .into_iter()
                     .map(|task| (&source.kind, task))
@@ -199,7 +170,6 @@ impl Inventory {
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
         task_context: &TaskContext,
-        cx: &mut AppContext,
     ) -> (
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
@@ -246,7 +216,7 @@ impl Inventory {
             .flat_map(|source| {
                 source
                     .source
-                    .update(cx, |source, cx| source.tasks_to_schedule(cx))
+                    .tasks_to_schedule()
                     .0
                     .into_iter()
                     .map(|task| (&source.kind, task))
@@ -387,9 +357,12 @@ fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
 
 #[cfg(test)]
 mod test_inventory {
-    use gpui::{AppContext, Context as _, Model, ModelContext, TestAppContext};
+    use gpui::{AppContext, Model, TestAppContext};
     use itertools::Itertools;
-    use task::{TaskContext, TaskId, TaskSource, TaskTemplate, TaskTemplates};
+    use task::{
+        static_source::{StaticSource, TrackedFile},
+        TaskContext, TaskTemplate, TaskTemplates,
+    };
     use worktree::WorktreeId;
 
     use crate::Inventory;
@@ -398,55 +371,28 @@ mod test_inventory {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct TestTask {
-        id: task::TaskId,
         name: String,
     }
 
-    pub struct StaticTestSource {
-        pub tasks: Vec<TestTask>,
-    }
-
-    impl StaticTestSource {
-        pub(super) fn new(
-            task_names: impl IntoIterator<Item = String>,
-            cx: &mut AppContext,
-        ) -> Model<Box<dyn TaskSource>> {
-            cx.new_model(|_| {
-                Box::new(Self {
-                    tasks: task_names
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, name)| TestTask {
-                            id: TaskId(format!("task_{i}_{name}")),
-                            name,
-                        })
-                        .collect(),
-                }) as Box<dyn TaskSource>
-            })
-        }
-    }
-
-    impl TaskSource for StaticTestSource {
-        fn tasks_to_schedule(
-            &mut self,
-            _cx: &mut ModelContext<Box<dyn TaskSource>>,
-        ) -> TaskTemplates {
-            TaskTemplates(
-                self.tasks
-                    .clone()
-                    .into_iter()
-                    .map(|task| TaskTemplate {
-                        label: task.name,
-                        command: "test command".to_string(),
-                        ..TaskTemplate::default()
-                    })
-                    .collect(),
-            )
-        }
-
-        fn as_any(&mut self) -> &mut dyn std::any::Any {
-            self
-        }
+    pub(super) fn static_test_source(
+        task_names: impl IntoIterator<Item = String>,
+        cx: &mut AppContext,
+    ) -> StaticSource {
+        let tasks = TaskTemplates(
+            task_names
+                .into_iter()
+                .map(|name| TaskTemplate {
+                    label: name,
+                    command: "test command".to_owned(),
+                    ..TaskTemplate::default()
+                })
+                .collect(),
+        );
+        let (tx, rx) = futures::channel::mpsc::unbounded();
+        let file = TrackedFile::new(rx, cx);
+        tx.unbounded_send(serde_json::to_string(&tasks).unwrap())
+            .unwrap();
+        StaticSource::new(file)
     }
 
     pub(super) fn task_template_names(
@@ -454,9 +400,9 @@ mod test_inventory {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
-        inventory.update(cx, |inventory, cx| {
+        inventory.update(cx, |inventory, _| {
             inventory
-                .list_tasks(None, worktree, cx)
+                .list_tasks(None, worktree)
                 .into_iter()
                 .map(|(_, task)| task.label)
                 .sorted()
@@ -469,13 +415,9 @@ mod test_inventory {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
-        inventory.update(cx, |inventory, cx| {
-            let (used, current) = inventory.used_and_current_resolved_tasks(
-                None,
-                worktree,
-                &TaskContext::default(),
-                cx,
-            );
+        inventory.update(cx, |inventory, _| {
+            let (used, current) =
+                inventory.used_and_current_resolved_tasks(None, worktree, &TaskContext::default());
             used.into_iter()
                 .chain(current)
                 .map(|(_, task)| task.original_task().label.clone())
@@ -488,9 +430,9 @@ mod test_inventory {
         task_name: &str,
         cx: &mut TestAppContext,
     ) {
-        inventory.update(cx, |inventory, cx| {
+        inventory.update(cx, |inventory, _| {
             let (task_source_kind, task) = inventory
-                .list_tasks(None, None, cx)
+                .list_tasks(None, None)
                 .into_iter()
                 .find(|(_, task)| task.label == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
@@ -508,13 +450,9 @@ mod test_inventory {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
-        inventory.update(cx, |inventory, cx| {
-            let (used, current) = inventory.used_and_current_resolved_tasks(
-                None,
-                worktree,
-                &TaskContext::default(),
-                cx,
-            );
+        inventory.update(cx, |inventory, _| {
+            let (used, current) =
+                inventory.used_and_current_resolved_tasks(None, worktree, &TaskContext::default());
             let mut all = used;
             all.extend(current);
             all.into_iter()
@@ -549,27 +487,25 @@ mod tests {
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                |cx| StaticTestSource::new(vec!["3_task".to_string()], cx),
+                static_test_source(vec!["3_task".to_string()], cx),
                 cx,
             );
         });
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                |cx| {
-                    StaticTestSource::new(
-                        vec![
-                            "1_task".to_string(),
-                            "2_task".to_string(),
-                            "1_a_task".to_string(),
-                        ],
-                        cx,
-                    )
-                },
+                static_test_source(
+                    vec![
+                        "1_task".to_string(),
+                        "2_task".to_string(),
+                        "1_a_task".to_string(),
+                    ],
+                    cx,
+                ),
                 cx,
             );
         });
-
+        cx.run_until_parked();
         let expected_initial_state = [
             "1_a_task".to_string(),
             "1_task".to_string(),
@@ -622,12 +558,11 @@ mod tests {
         inventory.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                |cx| {
-                    StaticTestSource::new(vec!["10_hello".to_string(), "11_hello".to_string()], cx)
-                },
+                static_test_source(vec!["10_hello".to_string(), "11_hello".to_string()], cx),
                 cx,
             );
         });
+        cx.run_until_parked();
         let expected_updated_state = [
             "10_hello".to_string(),
             "11_hello".to_string(),
@@ -680,15 +615,11 @@ mod tests {
         let worktree_path_1 = Path::new("worktree_path_1");
         let worktree_2 = WorktreeId::from_usize(2);
         let worktree_path_2 = Path::new("worktree_path_2");
+
         inventory_with_statics.update(cx, |inventory, cx| {
             inventory.add_source(
                 TaskSourceKind::UserInput,
-                |cx| {
-                    StaticTestSource::new(
-                        vec!["user_input".to_string(), common_name.to_string()],
-                        cx,
-                    )
-                },
+                static_test_source(vec!["user_input".to_string(), common_name.to_string()], cx),
                 cx,
             );
             inventory.add_source(
@@ -696,12 +627,10 @@ mod tests {
                     id_base: "test source",
                     abs_path: path_1.to_path_buf(),
                 },
-                |cx| {
-                    StaticTestSource::new(
-                        vec!["static_source_1".to_string(), common_name.to_string()],
-                        cx,
-                    )
-                },
+                static_test_source(
+                    vec!["static_source_1".to_string(), common_name.to_string()],
+                    cx,
+                ),
                 cx,
             );
             inventory.add_source(
@@ -709,12 +638,10 @@ mod tests {
                     id_base: "test source",
                     abs_path: path_2.to_path_buf(),
                 },
-                |cx| {
-                    StaticTestSource::new(
-                        vec!["static_source_2".to_string(), common_name.to_string()],
-                        cx,
-                    )
-                },
+                static_test_source(
+                    vec!["static_source_2".to_string(), common_name.to_string()],
+                    cx,
+                ),
                 cx,
             );
             inventory.add_source(
@@ -723,12 +650,7 @@ mod tests {
                     abs_path: worktree_path_1.to_path_buf(),
                     id_base: "test_source",
                 },
-                |cx| {
-                    StaticTestSource::new(
-                        vec!["worktree_1".to_string(), common_name.to_string()],
-                        cx,
-                    )
-                },
+                static_test_source(vec!["worktree_1".to_string(), common_name.to_string()], cx),
                 cx,
             );
             inventory.add_source(
@@ -737,16 +659,11 @@ mod tests {
                     abs_path: worktree_path_2.to_path_buf(),
                     id_base: "test_source",
                 },
-                |cx| {
-                    StaticTestSource::new(
-                        vec!["worktree_2".to_string(), common_name.to_string()],
-                        cx,
-                    )
-                },
+                static_test_source(vec!["worktree_2".to_string(), common_name.to_string()], cx),
                 cx,
             );
         });
-
+        cx.run_until_parked();
         let worktree_independent_tasks = vec![
             (
                 TaskSourceKind::AbsPath {

@@ -6,7 +6,6 @@ use gpui::{ElementId, HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferSnapshot, ToOffset};
 use std::{
-    any::TypeId,
     cmp::{self, Ordering},
     iter,
     ops::{Add, AddAssign, Deref, DerefMut, Range, Sub},
@@ -1063,28 +1062,6 @@ impl<'a> Iterator for FoldChunks<'a> {
         }
 
         None
-    }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-struct HighlightEndpoint {
-    offset: InlayOffset,
-    is_start: bool,
-    tag: Option<TypeId>,
-    style: HighlightStyle,
-}
-
-impl PartialOrd for HighlightEndpoint {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for HighlightEndpoint {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.offset
-            .cmp(&other.offset)
-            .then_with(|| other.is_start.cmp(&self.is_start))
     }
 }
 
