@@ -192,8 +192,9 @@ impl DevServerProjects {
         cx.spawn(|this, mut cx| async move {
             let result = dev_server.await;
 
-            this.update(&mut cx, |this, _| match &result {
+            this.update(&mut cx, |this, cx| match &result {
                 Ok(dev_server) => {
+                    this.focus_handle.focus(cx);
                     this.mode = Mode::CreateDevServer(CreateDevServer {
                         creating: false,
                         dev_server: Some(dev_server.clone()),
@@ -299,8 +300,10 @@ impl DevServerProjects {
             Mode::Default(Some(create_project)) => {
                 self.create_dev_server_project(create_project.dev_server_id, cx);
             }
-            Mode::CreateDevServer(_) => {
-                self.create_dev_server(cx);
+            Mode::CreateDevServer(state) => {
+                if !state.creating && state.dev_server.is_none() {
+                    self.create_dev_server(cx);
+                }
             }
         }
     }
