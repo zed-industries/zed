@@ -6,7 +6,7 @@ use settings::SettingsStore;
 use std::sync::Arc;
 
 const MARKDOWN_EXAMPLE: &'static str =
-    "# Hey\nLorem ipsum dolor, `sit` amet consecteur:\n\n```rust\nfn foo() {}\n```\n\nHey, wassup?\n1. A\n2. B\n3. C";
+    "# Hey\nLorem ipsum dolor, `sit` amet **consecteur**:\n\n```rust\nfn foo() {}\n```\n_Hey_, wassup?\n1. A\n    1. A1\n    2. A2\n2. B\n3. C";
 
 pub fn main() {
     App::new().run(|cx| {
