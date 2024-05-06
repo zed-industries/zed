@@ -37,7 +37,6 @@ pub(crate) struct Callbacks {
     input: Option<Box<dyn FnMut(crate::PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    fullscreen: Option<Box<dyn FnMut(bool)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
@@ -480,11 +479,6 @@ impl WaylandWindowStatePtr {
     pub fn set_fullscreen(&self, fullscreen: bool) {
         let mut state = self.state.borrow_mut();
         state.fullscreen = fullscreen;
-
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(ref mut fun) = callbacks.fullscreen {
-            fun(fullscreen)
-        }
     }
 
     /// Notifies the window of the state of the decorations.

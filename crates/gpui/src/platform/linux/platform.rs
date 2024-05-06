@@ -35,9 +35,9 @@ use crate::platform::linux::wayland::WaylandClient;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, Modifiers,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task,
-    WindowAppearance, WindowOptions, WindowParams,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
+    PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task, WindowAppearance,
+    WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -72,11 +72,8 @@ pub trait LinuxClient {
 #[derive(Default)]
 pub(crate) struct PlatformHandlers {
     pub(crate) open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    pub(crate) become_active: Option<Box<dyn FnMut()>>,
-    pub(crate) resign_active: Option<Box<dyn FnMut()>>,
     pub(crate) quit: Option<Box<dyn FnMut()>>,
     pub(crate) reopen: Option<Box<dyn FnMut()>>,
-    pub(crate) event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
