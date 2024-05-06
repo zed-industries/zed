@@ -638,6 +638,8 @@ impl AssistantChat {
 
         let padding = Spacing::Large.rems(cx);
 
+        // Whenever there's a run of assistant messages, group as one Assistant UI element
+
         match &self.messages[ix] {
             ChatMessage::User(UserMessage {
                 id,
