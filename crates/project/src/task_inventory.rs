@@ -32,16 +32,16 @@ struct SourceInInventory {
 pub enum TaskSourceKind {
     /// bash-like commands spawned by users, not associated with any path
     UserInput,
-    /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
-    AbsPath {
-        id_base: &'static str,
-        abs_path: PathBuf,
-    },
     /// Tasks from the worktree's .zed/task.json
     Worktree {
         id: WorktreeId,
         abs_path: PathBuf,
         id_base: &'static str,
+    },
+    /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
+    AbsPath {
+        id_base: &'static str,
+        abs_path: PathBuf,
     },
     /// Languages-specific tasks coming from extensions.
     Language { name: Arc<str> },
