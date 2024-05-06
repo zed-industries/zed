@@ -124,21 +124,21 @@ impl RenderOnce for Tab {
             .map(|this| match self.position {
                 TabPosition::First => {
                     if self.selected {
-                        this.pl_px().border_r().pb_px()
+                        this.pl_px().border_r_1().pb_px()
                     } else {
-                        this.pl_px().pr_px().border_b()
+                        this.pl_px().pr_px().border_b_1()
                     }
                 }
                 TabPosition::Last => {
                     if self.selected {
-                        this.border_l().border_r().pb_px()
+                        this.border_l_1().border_r_1().pb_px()
                     } else {
-                        this.pr_px().pl_px().border_b().border_r()
+                        this.pr_px().pl_px().border_b_1().border_r_1()
                     }
                 }
-                TabPosition::Middle(Ordering::Equal) => this.border_l().border_r().pb_px(),
-                TabPosition::Middle(Ordering::Less) => this.border_l().pr_px().border_b(),
-                TabPosition::Middle(Ordering::Greater) => this.border_r().pl_px().border_b(),
+                TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
+                TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
+                TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
             })
             .cursor_pointer()
             .child(

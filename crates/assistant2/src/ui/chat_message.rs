@@ -16,6 +16,7 @@ pub struct ChatMessage {
     id: MessageId,
     player: UserOrAssistant,
     message: Option<AnyElement>,
+    tools_used: Option<AnyElement>,
     collapsed: bool,
     on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
 }
@@ -25,6 +26,7 @@ impl ChatMessage {
         id: MessageId,
         player: UserOrAssistant,
         message: Option<AnyElement>,
+        tools_used: Option<AnyElement>,
         collapsed: bool,
         on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
     ) -> Self {
@@ -32,6 +34,7 @@ impl ChatMessage {
             id,
             player,
             message,
+            tools_used,
             collapsed,
             on_collapse_handle_click,
         }
@@ -66,21 +69,25 @@ impl RenderOnce for ChatMessage {
         // Clamp the message height to exactly 1.5 lines when collapsed.
         let collapsed_height = content_padding.to_pixels(cx.rem_size()) + cx.line_height() * 1.5;
 
-        let content = self.message.map(|message| {
-            div()
-                .overflow_hidden()
-                .w_full()
-                .p(content_padding)
-                .rounded_lg()
-                .when(self.collapsed, |this| this.h(collapsed_height))
-                .bg(cx.theme().colors().surface_background)
-                .child(message)
-        });
-
         v_flex()
             .gap_1()
             .child(ChatMessageHeader::new(self.player))
-            .child(h_flex().gap_3().child(collapse_handle).children(content))
+            .when(self.message.is_some() || self.tools_used.is_some(), |el| {
+                el.child(
+                    h_flex().gap_3().child(collapse_handle).child(
+                        div()
+                            .overflow_hidden()
+                            .w_full()
+                            .p(content_padding)
+                            .gap_3()
+                            .rounded_lg()
+                            .when(self.collapsed, |this| this.h(collapsed_height))
+                            .bg(cx.theme().colors().surface_background)
+                            .children(self.message)
+                            .children(self.tools_used),
+                    ),
+                )
+            })
     }
 }
 

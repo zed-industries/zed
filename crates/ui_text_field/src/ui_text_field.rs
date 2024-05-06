@@ -170,7 +170,7 @@ impl Render for TextField {
                                 .bg(style.background_color)
                                 .text_color(style.text_color)
                                 .rounded_lg()
-                                .border()
+                                .border_1()
                                 .border_color(style.border_color)
                                 .min_w_48()
                                 .w_full()

@@ -13,7 +13,7 @@ use crate::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatches,
         SyntaxSnapshot, ToTreeSitterPoint,
     },
-    LanguageScope, Outline,
+    LanguageScope, Outline, RunnableTag,
 };
 use anyhow::{anyhow, Context, Result};
 pub use clock::ReplicaId;
@@ -78,7 +78,7 @@ pub enum Capability {
 /// syntax trees, git status, and diagnostics.
 pub struct Buffer {
     text: TextBuffer,
-    diff_base: Option<String>,
+    diff_base: Option<Rope>,
     git_diff: git::diff::BufferDiff,
     file: Option<Arc<dyn File>>,
     /// The mtime of the file when this buffer was last loaded from
@@ -501,11 +501,37 @@ pub enum CharKind {
     Word,
 }
 
+/// A runnable is a set of data about a region that could be resolved into a task
+pub struct Runnable {
+    pub tags: SmallVec<[RunnableTag; 1]>,
+    pub language: Arc<Language>,
+    pub buffer: BufferId,
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &mut ModelContext<Self>) -> Self {
         Self::build(
             TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
+            None,
+            None,
+            Capability::ReadWrite,
+        )
+    }
+
+    /// Create a new buffer with the given base text that has proper line endings and other normalization applied.
+    pub fn local_normalized(
+        base_text_normalized: Rope,
+        line_ending: LineEnding,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        Self::build(
+            TextBuffer::new_normalized(
+                0,
+                cx.entity_id().as_non_zero_u64().into(),
+                line_ending,
+                base_text_normalized,
+            ),
             None,
             None,
             Capability::ReadWrite,
@@ -540,7 +566,7 @@ impl Buffer {
         let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
         let mut this = Self::build(
             buffer,
-            message.diff_base.map(|text| text.into_boxed_str().into()),
+            message.diff_base.map(|text| text.into()),
             file,
             capability,
         );
@@ -632,7 +658,7 @@ impl Buffer {
     /// Builds a [Buffer] with the given underlying [TextBuffer], diff base, [File] and [Capability].
     pub fn build(
         buffer: TextBuffer,
-        diff_base: Option<String>,
+        diff_base: Option<Rope>,
         file: Option<Arc<dyn File>>,
         capability: Capability,
     ) -> Self {
@@ -868,13 +894,13 @@ impl Buffer {
     }
 
     /// Returns the current diff base, see [Buffer::set_diff_base].
-    pub fn diff_base(&self) -> Option<&str> {
-        self.diff_base.as_deref()
+    pub fn diff_base(&self) -> Option<&Rope> {
+        self.diff_base.as_ref()
     }
 
     /// Sets the text that will be used to compute a Git diff
     /// against the buffer text.
-    pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
+    pub fn set_diff_base(&mut self, diff_base: Option<Rope>, cx: &mut ModelContext<Self>) {
         self.diff_base = diff_base;
         self.diff_base_version += 1;
         if let Some(recalc_task) = self.git_diff_recalc(cx) {
@@ -2053,7 +2079,7 @@ impl Buffer {
 
     /// Override current completion triggers with the user-provided completion triggers.
     pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
-        self.completion_triggers = triggers.clone();
+        self.completion_triggers.clone_from(&triggers);
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
         self.send_operation(
             Operation::UpdateCompletionTriggers {
@@ -2956,6 +2982,53 @@ impl BufferSnapshot {
                 .map(|mat| mat.node.byte_range());
             syntax_matches.advance();
             redacted_range
+        })
+    }
+
+    pub fn runnable_ranges(
+        &self,
+        range: Range<Anchor>,
+    ) -> impl Iterator<Item = (Range<usize>, Runnable)> + '_ {
+        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
+
+        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
+            grammar.runnable_config.as_ref().map(|config| &config.query)
+        });
+
+        let test_configs = syntax_matches
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.runnable_config.as_ref())
+            .collect::<Vec<_>>();
+
+        iter::from_fn(move || {
+            let test_range = syntax_matches
+                .peek()
+                .and_then(|mat| {
+                    test_configs[mat.grammar_index].and_then(|test_configs| {
+                        let tags = SmallVec::from_iter(mat.captures.iter().filter_map(|capture| {
+                            test_configs.runnable_tags.get(&capture.index).cloned()
+                        }));
+
+                        if tags.is_empty() {
+                            return None;
+                        }
+
+                        Some((
+                            mat.captures
+                                .iter()
+                                .find(|capture| capture.index == test_configs.run_capture_ix)?,
+                            Runnable {
+                                tags,
+                                language: mat.language,
+                                buffer: self.remote_id(),
+                            },
+                        ))
+                    })
+                })
+                .map(|(mat, test_tags)| (mat.node.byte_range(), test_tags));
+            syntax_matches.advance();
+            test_range
         })
     }
 

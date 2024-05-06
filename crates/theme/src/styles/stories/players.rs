@@ -75,7 +75,7 @@ impl Render for PlayerStory {
                             .child(
                                 div()
                                     .relative()
-                                    .neg_mx_1()
+                                    .mx_neg_1()
                                     .rounded_full()
                                     .border_2()
                                     .border_color(player.background)
@@ -90,7 +90,7 @@ impl Render for PlayerStory {
                             .child(
                                 div()
                                     .relative()
-                                    .neg_mx_1()
+                                    .mx_neg_1()
                                     .rounded_full()
                                     .border_2()
                                     .border_color(player.background)
@@ -105,7 +105,7 @@ impl Render for PlayerStory {
                             .child(
                                 div()
                                     .relative()
-                                    .neg_mx_1()
+                                    .mx_neg_1()
                                     .rounded_full()
                                     .border_2()
                                     .border_color(player.background)

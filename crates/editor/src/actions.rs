@@ -53,7 +53,13 @@ pub struct SelectToEndOfLine {
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct ToggleCodeActions {
     #[serde(default)]
-    pub deployed_from_indicator: bool,
+    pub deployed_from_indicator: Option<u32>,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ToggleTestRunner {
+    #[serde(default)]
+    pub deployed_from_row: Option<u32>,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]

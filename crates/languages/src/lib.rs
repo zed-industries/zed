@@ -215,7 +215,7 @@ pub fn init(
         );
     }
 
-    let eslint_languages = ["TSX", "TypeScript", "JavaScript", "Vue.js"];
+    let eslint_languages = ["TSX", "TypeScript", "JavaScript", "Vue.js", "Svelte"];
     for language in eslint_languages {
         languages.register_secondary_lsp_adapter(
             language.into(),

@@ -155,6 +155,10 @@ pub enum IconName {
     Space,
     Split,
     Spinner,
+    Supermaven,
+    SupermavenDisabled,
+    SupermavenError,
+    SupermavenInit,
     Tab,
     Terminal,
     Trash,
@@ -261,6 +265,10 @@ impl IconName {
             IconName::Space => "icons/space.svg",
             IconName::Split => "icons/split.svg",
             IconName::Spinner => "icons/spinner.svg",
+            IconName::Supermaven => "icons/supermaven.svg",
+            IconName::SupermavenDisabled => "icons/supermaven_disabled.svg",
+            IconName::SupermavenError => "icons/supermaven_error.svg",
+            IconName::SupermavenInit => "icons/supermaven_init.svg",
             IconName::Tab => "icons/tab.svg",
             IconName::Terminal => "icons/terminal.svg",
             IconName::Trash => "icons/trash.svg",
@@ -385,11 +393,11 @@ impl RenderOnce for IconWithIndicator {
                         .absolute()
                         .w_2()
                         .h_2()
-                        .border()
+                        .border_1()
                         .border_color(indicator_border_color)
                         .rounded_full()
-                        .neg_bottom_0p5()
-                        .neg_right_1()
+                        .bottom_neg_0p5()
+                        .right_neg_1()
                         .child(indicator),
                 )
             })

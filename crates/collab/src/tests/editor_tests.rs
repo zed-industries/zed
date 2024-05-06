@@ -667,7 +667,7 @@ async fn test_collaborating_with_code_actions(
     editor_b.update(cx_b, |editor, cx| {
         editor.toggle_code_actions(
             &ToggleCodeActions {
-                deployed_from_indicator: false,
+                deployed_from_indicator: None,
             },
             cx,
         );
@@ -2073,7 +2073,7 @@ struct Row10;"#};
             .as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| {
-                buffer.set_diff_base(Some(base_text.to_string()), cx);
+                buffer.set_diff_base(Some(base_text.into()), cx);
             });
     });
     editor_cx_b.update_editor(|editor, cx| {
@@ -2083,7 +2083,7 @@ struct Row10;"#};
             .as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| {
-                buffer.set_diff_base(Some(base_text.to_string()), cx);
+                buffer.set_diff_base(Some(base_text.into()), cx);
             });
     });
     cx_a.executor().run_until_parked();

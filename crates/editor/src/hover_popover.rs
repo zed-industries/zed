@@ -31,15 +31,20 @@ pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, cx: &mut ViewContext<Editor>) {
     let head = editor.selections.newest_display(cx).head();
-    show_hover(editor, head, true, cx);
+    let snapshot = editor.snapshot(cx);
+    show_hover(editor, head, &snapshot, true, cx);
 }
 
 /// The internal hover action dispatches between `show_hover` or `hide_hover`
 /// depending on whether a point to hover over is provided.
-pub fn hover_at(editor: &mut Editor, point: Option<DisplayPoint>, cx: &mut ViewContext<Editor>) {
+pub fn hover_at(
+    editor: &mut Editor,
+    point: Option<(DisplayPoint, &EditorSnapshot)>,
+    cx: &mut ViewContext<Editor>,
+) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
-        if let Some(point) = point {
-            show_hover(editor, point, false, cx);
+        if let Some((point, snapshot)) = point {
+            show_hover(editor, point, snapshot, false, cx);
         } else {
             hide_hover(editor, cx);
         }
@@ -160,6 +165,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut ViewContext<Editor>) -> bool {
 fn show_hover(
     editor: &mut Editor,
     point: DisplayPoint,
+    snapshot: &EditorSnapshot,
     ignore_timeout: bool,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -167,7 +173,6 @@ fn show_hover(
         return;
     }
 
-    let snapshot = editor.snapshot(cx);
     let multibuffer_offset = point.to_offset(&snapshot.display_snapshot, Bias::Left);
 
     let (buffer, buffer_position) = if let Some(output) = editor
@@ -234,6 +239,7 @@ fn show_hover(
             return;
         }
     }
+    let snapshot = snapshot.clone();
 
     let task = cx.spawn(|this, mut cx| {
         async move {
@@ -659,7 +665,10 @@ mod tests {
             fn test() { printˇln!(); }
         "});
 
-        cx.update_editor(|editor, cx| hover_at(editor, Some(hover_point), cx));
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            hover_at(editor, Some((hover_point, &snapshot)), cx)
+        });
         assert!(!cx.editor(|editor, _| editor.hover_state.visible()));
 
         // After delay, hover should be visible.
@@ -705,7 +714,10 @@ mod tests {
         let mut request = cx
             .lsp
             .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
-        cx.update_editor(|editor, cx| hover_at(editor, Some(hover_point), cx));
+        cx.update_editor(|editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            hover_at(editor, Some((hover_point, &snapshot)), cx)
+        });
         cx.background_executor
             .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
         request.next().await;

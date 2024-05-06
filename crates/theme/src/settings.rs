@@ -441,7 +441,7 @@ impl settings::Settings for ThemeSettings {
                 }
             }
 
-            this.theme_overrides = value.theme_overrides.clone();
+            this.theme_overrides.clone_from(&value.theme_overrides);
             this.apply_theme_overrides();
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));

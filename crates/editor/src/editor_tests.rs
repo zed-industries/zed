@@ -9026,7 +9026,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
                     .collect::<String>(),
                 cx,
             );
-            buffer.set_diff_base(Some(sample_text), cx);
+            buffer.set_diff_base(Some(sample_text.into()), cx);
         });
         cx.executor().run_until_parked();
     }
@@ -10041,17 +10041,17 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n@@@@\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}";
     let buffer_1 = cx.new_model(|cx| {
         let mut buffer = Buffer::local(modified_sample_text_1.to_string(), cx);
-        buffer.set_diff_base(Some(sample_text_1.clone()), cx);
+        buffer.set_diff_base(Some(sample_text_1.clone().into()), cx);
         buffer
     });
     let buffer_2 = cx.new_model(|cx| {
         let mut buffer = Buffer::local(modified_sample_text_2.to_string(), cx);
-        buffer.set_diff_base(Some(sample_text_2.clone()), cx);
+        buffer.set_diff_base(Some(sample_text_2.clone().into()), cx);
         buffer
     });
     let buffer_3 = cx.new_model(|cx| {
         let mut buffer = Buffer::local(modified_sample_text_3.to_string(), cx);
-        buffer.set_diff_base(Some(sample_text_3.clone()), cx);
+        buffer.set_diff_base(Some(sample_text_3.clone().into()), cx);
         buffer
     });
 
@@ -11351,7 +11351,7 @@ fn assert_hunk_revert(
             .as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| {
-                buffer.set_diff_base(Some(base_text.to_string()), cx);
+                buffer.set_diff_base(Some(base_text.into()), cx);
             });
     });
     cx.executor().run_until_parked();

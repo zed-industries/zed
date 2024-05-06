@@ -1430,8 +1430,12 @@ impl<'a> WindowContext<'a> {
         let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
         for deferred_draw_ix in deferred_draw_indices {
             let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-            self.window.element_id_stack = deferred_draw.element_id_stack.clone();
-            self.window.text_style_stack = deferred_draw.text_style_stack.clone();
+            self.window
+                .element_id_stack
+                .clone_from(&deferred_draw.element_id_stack);
+            self.window
+                .text_style_stack
+                .clone_from(&deferred_draw.text_style_stack);
             self.window
                 .next_frame
                 .dispatch_tree
@@ -1464,7 +1468,9 @@ impl<'a> WindowContext<'a> {
         let mut deferred_draws = mem::take(&mut self.window.next_frame.deferred_draws);
         for deferred_draw_ix in deferred_draw_indices {
             let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-            self.window.element_id_stack = deferred_draw.element_id_stack.clone();
+            self.window
+                .element_id_stack
+                .clone_from(&deferred_draw.element_id_stack);
             self.window
                 .next_frame
                 .dispatch_tree

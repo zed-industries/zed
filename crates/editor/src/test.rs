@@ -99,12 +99,13 @@ pub fn editor_hunks(
                 .read(cx)
                 .excerpt_containing(Point::new(hunk.associated_range.start, 0), cx)
                 .expect("no excerpt for expanded buffer's hunk start");
-            let diff_base = &buffer
+            let diff_base = buffer
                 .read(cx)
                 .diff_base()
                 .expect("should have a diff base for expanded hunk")
-                [hunk.diff_base_byte_range.clone()];
-            (diff_base.to_owned(), hunk.status(), display_range)
+                .slice(hunk.diff_base_byte_range.clone())
+                .to_string();
+            (diff_base, hunk.status(), display_range)
         })
         .collect()
 }
@@ -134,16 +135,13 @@ pub fn expanded_hunks(
                 .read(cx)
                 .excerpt_containing(expanded_hunk.hunk_range.start, cx)
                 .expect("no excerpt for expanded buffer's hunk start");
-            let diff_base = &buffer
+            let diff_base = buffer
                 .read(cx)
                 .diff_base()
                 .expect("should have a diff base for expanded hunk")
-                [expanded_hunk.diff_base_byte_range.clone()];
-            (
-                diff_base.to_owned(),
-                expanded_hunk.status,
-                hunk_display_range,
-            )
+                .slice(expanded_hunk.diff_base_byte_range.clone())
+                .to_string();
+            (diff_base, expanded_hunk.status, hunk_display_range)
         })
         .collect()
 }

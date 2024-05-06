@@ -13,7 +13,7 @@ use language::{
     language_settings::{language_settings, LanguageSettings},
     AutoindentMode, Buffer, BufferChunks, BufferSnapshot, Capability, CharKind, Chunk, CursorShape,
     DiagnosticEntry, File, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16,
-    Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, ToOffset as _,
+    Outline, OutlineItem, Point, PointUtf16, Runnable, Selection, TextDimension, ToOffset as _,
     ToOffsetUtf16 as _, ToPoint as _, ToPointUtf16 as _, TransactionId, Unclipped,
 };
 use smallvec::SmallVec;
@@ -1522,7 +1522,13 @@ impl MultiBuffer {
             .map(|state| state.buffer.clone())
     }
 
-    pub fn is_completion_trigger(&self, position: Anchor, text: &str, cx: &AppContext) -> bool {
+    pub fn is_completion_trigger(
+        &self,
+        position: Anchor,
+        text: &str,
+        trigger_in_words: bool,
+        cx: &AppContext,
+    ) -> bool {
         let mut chars = text.chars();
         let char = if let Some(char) = chars.next() {
             char
@@ -1536,7 +1542,7 @@ impl MultiBuffer {
         let snapshot = self.snapshot(cx);
         let position = position.to_offset(&snapshot);
         let scope = snapshot.language_scope_at(position);
-        if char_kind(&scope, char) == CharKind::Word {
+        if trigger_in_words && char_kind(&scope, char) == CharKind::Word {
             return true;
         }
 
@@ -3157,6 +3163,31 @@ impl MultiBufferSnapshot {
                 })
             })
             .flatten()
+    }
+
+    pub fn runnable_ranges(
+        &self,
+        range: Range<Anchor>,
+    ) -> impl Iterator<Item = (Range<usize>, Runnable)> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        self.excerpts_for_range(range.clone())
+            .flat_map(move |(excerpt, excerpt_offset)| {
+                let excerpt_buffer_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
+
+                excerpt
+                    .buffer
+                    .runnable_ranges(excerpt.range.context.clone())
+                    .map(move |(mut match_range, runnable)| {
+                        // Re-base onto the excerpts coordinates in the multibuffer
+                        match_range.start =
+                            excerpt_offset + (match_range.start - excerpt_buffer_start);
+                        match_range.end = excerpt_offset + (match_range.end - excerpt_buffer_start);
+
+                        (match_range, runnable)
+                    })
+                    .skip_while(move |(match_range, _)| match_range.end < range.start)
+                    .take_while(move |(match_range, _)| match_range.start < range.end)
+            })
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
