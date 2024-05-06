@@ -56,16 +56,6 @@ pub enum MarkdownEvent {
     TaskListMarker(bool),
 }
 
-impl MarkdownEvent {
-    pub fn as_tag_end(&self) -> Option<MarkdownTagEnd> {
-        if let Self::End(tag) = self {
-            Some(*tag)
-        } else {
-            None
-        }
-    }
-}
-
 /// Tags for elements that can contain other elements.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MarkdownTag {

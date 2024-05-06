@@ -81,10 +81,10 @@ impl Markdown {
 
 impl Render for Markdown {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        MarkdownElement {
+        div().size_full().bg(gpui::white()).child(MarkdownElement {
             markdown: self.parsed_markdown.clone(),
             language_registry: self.language_registry.clone(),
-        }
+        })
     }
 }
 
