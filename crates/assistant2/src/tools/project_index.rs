@@ -1,14 +1,12 @@
 use anyhow::Result;
-use assistant_tooling::{
-    // assistant_tool_button::{AssistantToolButton, ToolStatus},
-    LanguageModelTool,
-};
+use assistant_tooling::LanguageModelTool;
 use gpui::{prelude::*, Model, Task};
 use project::Fs;
 use schemars::JsonSchema;
 use semantic_index::{ProjectIndex, Status};
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
+
 use ui::{
     div, prelude::*, CollapsibleContainer, Color, Icon, IconName, Label, SharedString,
     WindowContext,
@@ -22,8 +20,6 @@ pub struct CodebaseExcerpt {
     path: SharedString,
     text: SharedString,
     score: f32,
-    element_id: ElementId,
-    expanded: bool,
 }
 
 // Note: Comments on a `LanguageModelTool::Input` become descriptions on the generated JSON schema as shown to the language model.
@@ -40,20 +36,25 @@ pub struct CodebaseQuery {
 pub struct ProjectIndexView {
     input: CodebaseQuery,
     output: Result<ProjectIndexOutput>,
+    element_id: ElementId,
+    expanded_header: bool,
 }
 
 impl ProjectIndexView {
-    fn toggle_expanded(&mut self, element_id: ElementId, cx: &mut ViewContext<Self>) {
-        if let Ok(output) = &mut self.output {
-            if let Some(excerpt) = output
-                .excerpts
-                .iter_mut()
-                .find(|excerpt| excerpt.element_id == element_id)
-            {
-                excerpt.expanded = !excerpt.expanded;
-                cx.notify();
-            }
+    fn new(input: CodebaseQuery, output: Result<ProjectIndexOutput>) -> Self {
+        let element_id = ElementId::Name(nanoid::nanoid!().into());
+
+        Self {
+            input,
+            output,
+            element_id,
+            expanded_header: false,
         }
+    }
+
+    fn toggle_header(&mut self, cx: &mut ViewContext<Self>) {
+        self.expanded_header = !self.expanded_header;
+        cx.notify();
     }
 }
 
@@ -70,12 +71,30 @@ impl Render for ProjectIndexView {
             Ok(output) => output,
         };
 
-        div()
-            .v_flex()
-            .gap_2()
-            .children(output.excerpts.iter().map(|excerpt| {
-                div().child(Label::new(format!("- {}", excerpt.path.as_ref())).color(Color::Muted))
-            }))
+        v_flex()
+            .gap_3()
+            .child(
+                Label::new(format!("Reviewed {} files", output.files_searched.len()))
+                    .color(Color::Accent),
+            )
+            .child(
+                CollapsibleContainer::new(self.element_id.clone(), self.expanded_header)
+                    .start_slot(Label::new("Query Details".to_string()).color(Color::Muted))
+                    .child(Label::new(format!("Searched for `{}`", query)).color(Color::Muted))
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.toggle_header(cx);
+                    })),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .children(output.files_searched.iter().map(|path| {
+                        h_flex()
+                            .gap_2()
+                            .child(Icon::new(IconName::File).color(Color::Muted))
+                            .child(Label::new(path.clone()).color(Color::Muted))
+                    })),
+            )
     }
 }
 
@@ -87,6 +106,7 @@ pub struct ProjectIndexTool {
 pub struct ProjectIndexOutput {
     excerpts: Vec<CodebaseExcerpt>,
     status: Status,
+    files_searched: HashSet<SharedString>,
 }
 
 impl ProjectIndexTool {
@@ -145,8 +165,6 @@ impl LanguageModelTool for ProjectIndexTool {
                     }
 
                     anyhow::Ok(CodebaseExcerpt {
-                        element_id: ElementId::Name(nanoid::nanoid!().into()),
-                        expanded: false,
                         path: path.to_string_lossy().to_string().into(),
                         text: SharedString::from(text[start..end].to_string()),
                         score: result.score,
@@ -154,12 +172,21 @@ impl LanguageModelTool for ProjectIndexTool {
                 }
             });
 
+            let mut files_searched = HashSet::new();
             let excerpts = futures::future::join_all(excerpts)
                 .await
                 .into_iter()
                 .filter_map(|result| result.log_err())
-                .collect();
-            anyhow::Ok(ProjectIndexOutput { excerpts, status })
+                .inspect(|excerpt| {
+                    files_searched.insert(excerpt.path.clone());
+                })
+                .collect::<Vec<_>>();
+
+            anyhow::Ok(ProjectIndexOutput {
+                excerpts,
+                status,
+                files_searched,
+            })
         })
     }
 
@@ -169,7 +196,7 @@ impl LanguageModelTool for ProjectIndexTool {
         output: Result<Self::Output>,
         cx: &mut WindowContext,
     ) -> gpui::View<Self::View> {
-        cx.new_view(|_cx| ProjectIndexView { input, output })
+        cx.new_view(|_cx| ProjectIndexView::new(input, output))
     }
 
     fn format(_input: &Self::Input, output: &Result<Self::Output>) -> String {
