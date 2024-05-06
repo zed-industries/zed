@@ -966,6 +966,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
 
                 if let Some(window) = state.mouse_focused_window.clone() {
+                    if state
+                        .keyboard_focused_window
+                        .as_ref()
+                        .map_or(false, |keyboard_window| window.ptr_eq(&keyboard_window))
+                    {
+                        state.enter_token = None;
+                    }
                     let input = PlatformInput::MouseMove(MouseMoveEvent {
                         position: state.mouse_location.unwrap(),
                         pressed_button: state.button_pressed,
