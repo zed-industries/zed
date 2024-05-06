@@ -204,7 +204,7 @@ impl WaylandClientStatePtr {
         }
         if let Some(window) = state.keyboard_focused_window.take() {
             if !window.ptr_eq(&closed_window) {
-                state.mouse_focused_window = Some(window);
+                state.keyboard_focused_window = Some(window);
             }
         }
         if state.windows.is_empty() {
