@@ -252,7 +252,7 @@ impl<P> PathLikeWithPosition<P> {
         }
     }
 
-    /// This helper function is used for parsing absolute paths on Windows. It exists because absolute paths on Windows are quite different from other platforms. The way they are currently
+    /// This helper function is used for parsing absolute paths on Windows. It exists because absolute paths on Windows are quite different from other platforms. See [this page](https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats#dos-device-paths) for more information.
     #[cfg(target_os = "windows")]
     fn parse_absolute_path<E>(
         s: &str,
