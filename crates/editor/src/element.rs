@@ -3360,8 +3360,7 @@ fn render_blame_entry(
 
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry, cx);
 
-    let pretty_commit_id = format!("{}", blame_entry.sha);
-    let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+    let short_commit_id = blame_entry.sha.display_short();
 
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
     let name = util::truncate_and_trailoff(author_name, 20);
