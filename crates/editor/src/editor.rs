@@ -458,7 +458,7 @@ pub struct Editor {
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
-    available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
+    available_code_actions: Option<(Location, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
@@ -3867,11 +3867,25 @@ impl Editor {
                         .buffer_line_for_row(buffer_point.row)
                         .map(|(_, Range { start, .. })| start);
                     let tasks = this.tasks.get(&display_row).map(|t| Arc::new(t.to_owned()));
-                    let (buffer, code_actions) = this.available_code_actions.clone().unzip();
+                    let (location, code_actions) = this
+                        .available_code_actions
+                        .clone()
+                        .and_then(|(location, code_actions)| {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let point_range = location.range.to_point(&snapshot);
+                            let point_range = point_range.start.row..=point_range.end.row;
+                            if buffer_row.map_or(false, |row| point_range.contains(&row.row)) {
+                                Some((location, code_actions))
+                            } else {
+                                None
+                            }
+                        })
+                        .unzip();
                     if tasks.is_none() && code_actions.is_none() {
                         return None;
                     }
-                    let buffer = buffer.or_else(|| {
+
+                    let buffer = location.map(|location| location.buffer).or_else(|| {
                         let snapshot = this.snapshot(cx);
                         let (buffer_snapshot, _) =
                             snapshot.buffer_snapshot.buffer_line_for_row(display_row)?;
@@ -4124,7 +4138,13 @@ impl Editor {
                 this.available_code_actions = if actions.is_empty() {
                     None
                 } else {
-                    Some((start_buffer, actions.into()))
+                    Some((
+                        Location {
+                            buffer: start_buffer,
+                            range: start..end,
+                        },
+                        actions.into(),
+                    ))
                 };
                 cx.notify();
             })
