@@ -23,6 +23,7 @@ use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blu
 
 use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
 use crate::platform::linux::wayland::display::WaylandDisplay;
+use crate::platform::linux::wayland::serial::SerialKind;
 use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
@@ -755,8 +756,8 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn start_system_move(&self) {
-        let mut state = self.borrow_mut();
-        let serial = state.client.get_latest_serial();
+        let state = self.borrow();
+        let serial = state.client.get_serial(SerialKind::MousePress);
         state.toplevel._move(&state.globals.seat, serial);
     }
 

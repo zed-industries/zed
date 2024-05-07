@@ -197,8 +197,8 @@ impl WaylandClientStatePtr {
             .expect("The pointer should always be valid when dispatching in wayland")
     }
 
-    pub fn get_latest_serial(&self) -> u32 {
-        self.0.upgrade().unwrap().borrow().serial
+    pub fn get_serial(&self, kind: SerialKind) -> u32 {
+        self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
     }
 
     pub fn drop_window(&self, surface_id: &ObjectId) {
