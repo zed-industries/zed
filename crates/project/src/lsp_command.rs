@@ -1862,7 +1862,7 @@ impl LspCommand for OnTypeFormatting {
 
     fn check_capabilities(&self, server_capabilities: &lsp::ServerCapabilities) -> bool {
         let Some(on_type_formatting_options) =
-            &server_capabilities.document_on_type_formatting_provider
+            dbg!(&server_capabilities.document_on_type_formatting_provider)
         else {
             return false;
         };

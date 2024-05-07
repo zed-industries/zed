@@ -9960,19 +9960,66 @@ impl Editor {
                         .map(|(_, server)| (server.server_id(), server.clone())),
                 );
             });
+            let (tx, mut rx) = futures::channel::mpsc::unbounded();
             for server in all_language_servers.values() {
                 server.remove_request_handler::<ApplyWorkspaceEdit>();
+                let tx = tx.clone();
+                dbg!("handling focus");
                 server
-                    .on_request::<ApplyWorkspaceEdit, _, _>(|params, cx| async move {
-                        dbg!(params);
-                        Ok(ApplyWorkspaceEditResponse {
-                            applied: true,
-                            failed_change: None,
-                            failure_reason: None,
-                        })
+                    .on_request::<ApplyWorkspaceEdit, _, _>({
+                        let tx = tx.clone();
+                        move |params, _| {
+                            let tx = tx.clone();
+                            async move {
+                                let tx = tx;
+                                let _ = tx.unbounded_send(params).unwrap();
+                                dbg!("Sent params");
+                                Ok(ApplyWorkspaceEditResponse {
+                                    applied: true,
+                                    failed_change: None,
+                                    failure_reason: None,
+                                })
+                            }
+                        }
                     })
-                    .detach()
+                    .detach();
             }
+            cx.spawn(|this, mut cx| async move {
+                dbg!("Hey?");
+                while let Some(params) = rx.next().await {
+                    dbg!("new params");
+                    this.update(&mut cx, |this, cx| {
+                        if let Some(changes) = params.edit.document_changes {
+                            match changes {
+                                lsp::DocumentChanges::Edits(edits) => {
+                                    for change in edits {
+                                        for edit in change.edits {
+                                            if let lsp::Edit::Snippet(snippet) = edit {
+                                                let range = snippet.range;
+                                                let snippet =
+                                                    Snippet::parse(&snippet.snippet.value)?;
+                                                dbg!(&snippet);
+                                                this.insert_snippet(
+                                                    &[range.start.character as usize
+                                                        ..range.end.character as usize],
+                                                    snippet,
+                                                    cx,
+                                                )?;
+                                            }
+                                        }
+                                    }
+                                }
+                                lsp::DocumentChanges::Operations(_) => {}
+                            };
+                        }
+
+                        Result::<(), anyhow::Error>::Ok(())
+                    })??;
+                }
+                dbg!("bye?");
+                Result::<(), anyhow::Error>::Ok(())
+            })
+            .detach();
             // for (language, language_server) in all_language_servers {
             //     language_server
             //         .on_request::<lsp::ApplyWorkspaceEdit, _, _>(|params, cx| async move {
