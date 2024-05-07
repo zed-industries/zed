@@ -929,6 +929,7 @@ mod element {
                         let workspace = self.workspace.clone();
                         let handle_hitbox = handle.hitbox.clone();
                         move |e: &MouseDownEvent, phase, cx| {
+                            dbg!("2222");
                             if phase.bubble() && handle_hitbox.is_hovered(cx) {
                                 dragged_handle.replace(Some(ix));
                                 if e.click_count >= 2 {
@@ -951,6 +952,7 @@ mod element {
                         let child_bounds = child.bounds;
                         let axis = self.axis;
                         move |e: &MouseMoveEvent, phase, cx| {
+                            dbg!("33333");
                             let dragged_handle = dragged_handle.borrow();
                             if phase.bubble() {
                                 if *dragged_handle == Some(ix) {
@@ -974,6 +976,7 @@ mod element {
             cx.on_mouse_event({
                 let dragged_handle = layout.dragged_handle.clone();
                 move |_: &MouseUpEvent, phase, _cx| {
+                    dbg!("1111");
                     if phase.bubble() {
                         dragged_handle.replace(None);
                     }

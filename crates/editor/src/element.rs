@@ -429,7 +429,9 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
+            dbg!("HHHHHHHHHHHHH Clicking the hovered hunk AND STOPPING THE EVENT PROPAGATION");
             editor.expand_diff_hunk(None, hovered_hunk, cx);
+            cx.stop_propagation();
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(cx) {
@@ -3169,7 +3171,7 @@ impl EditorElement {
             let gutter_hitbox = layout.gutter_hitbox.clone();
 
             move |event: &MouseDownEvent, phase, cx| {
-                if phase == DispatchPhase::Bubble {
+                if dbg!(phase) == DispatchPhase::Bubble {
                     match event.button {
                         MouseButton::Left => editor.update(cx, |editor, cx| {
                             Self::mouse_left_down(
@@ -3757,13 +3759,13 @@ impl Element for EditorElement {
                     .map(|(guide, active)| (self.column_pixels(*guide, cx), *active))
                     .collect::<SmallVec<[_; 2]>>();
 
-                let hitbox = cx.insert_hitbox(bounds, false);
+                let hitbox = cx.insert_hitbox(bounds, true);
                 let gutter_hitbox = cx.insert_hitbox(
                     Bounds {
                         origin: bounds.origin,
                         size: size(gutter_dimensions.width, bounds.size.height),
                     },
-                    false,
+                    true,
                 );
                 let text_hitbox = cx.insert_hitbox(
                     Bounds {
