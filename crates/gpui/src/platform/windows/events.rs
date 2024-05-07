@@ -547,7 +547,7 @@ fn handle_mouse_horizontal_wheel_msg(
         let wheel_scroll_chars = lock.mouse_wheel_settings.wheel_scroll_chars;
         drop(lock);
         let wheel_distance =
-            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
+            (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
