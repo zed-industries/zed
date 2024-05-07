@@ -17,8 +17,8 @@ use crate::parser::CodeBlockKind;
 
 #[derive(Clone)]
 pub struct MarkdownStyle {
-    pub code: TextStyleRefinement,
-    pub code_background_color: Hsla,
+    pub code_block: TextStyleRefinement,
+    pub inline_code: TextStyleRefinement,
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
     pub rule_color: Hsla,
@@ -225,90 +225,91 @@ impl Element for MarkdownElement {
         let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
         for (range, event) in parsed_markdown.events.iter() {
             match event {
-                MarkdownEvent::Start(tag) => match tag {
-                    MarkdownTag::Paragraph => {
-                        builder.push_div(div().line_height(rems(1.3)));
-                    }
-                    MarkdownTag::Heading { level, .. } => {
-                        let mut heading = div().mt_2();
-                        heading = match level {
-                            pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
-                            pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
-                            pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
-                            pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
-                            _ => heading,
-                        };
-                        builder.push_div(heading);
-                    }
-                    MarkdownTag::BlockQuote => {
-                        builder.push_text_style(self.style.block_quote.clone());
-                        builder.push_div(
-                            div()
-                                .pl_4()
-                                .my_2()
-                                .border_l_4()
-                                .border_color(self.style.block_quote_border_color),
-                        );
-                    }
-                    MarkdownTag::CodeBlock(kind) => {
-                        let language = if let CodeBlockKind::Fenced(language) = kind {
-                            self.load_language(language.as_ref(), cx)
-                        } else {
-                            None
-                        };
+                MarkdownEvent::Start(tag) => {
+                    match tag {
+                        MarkdownTag::Paragraph => {
+                            builder.push_div(div().line_height(rems(1.3)));
+                        }
+                        MarkdownTag::Heading { level, .. } => {
+                            let mut heading = div().mt_2();
+                            heading = match level {
+                                pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
+                                pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
+                                pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
+                                pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
+                                _ => heading,
+                            };
+                            builder.push_div(heading);
+                        }
+                        MarkdownTag::BlockQuote => {
+                            builder.push_text_style(self.style.block_quote.clone());
+                            builder.push_div(
+                                div()
+                                    .pl_4()
+                                    .my_2()
+                                    .border_l_4()
+                                    .border_color(self.style.block_quote_border_color),
+                            );
+                        }
+                        MarkdownTag::CodeBlock(kind) => {
+                            let language = if let CodeBlockKind::Fenced(language) = kind {
+                                self.load_language(language.as_ref(), cx)
+                            } else {
+                                None
+                            };
 
-                        builder.push_code_block(language);
-                        builder.push_text_style(self.style.code.clone());
-                        builder.push_div(
-                            div()
-                                .p_4()
-                                .my_2()
-                                .w_full()
-                                .bg(self.style.code_background_color),
-                        );
-                    }
-                    MarkdownTag::HtmlBlock => builder.push_div(div()),
-                    MarkdownTag::List(number) => {
-                        builder.push_list(*number);
-                        builder.push_div(div().pl_4());
-                    }
-                    MarkdownTag::Item => {
-                        builder.push_div(div());
-                        if let Some(item_index) = builder.next_list_item_index() {
-                            builder.push_text(&format!("{}. ", item_index), range.start);
-                        } else {
-                            builder.push_text("• ", range.start);
-                        };
-                    }
-                    MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
-                        font_style: Some(FontStyle::Italic),
-                        ..Default::default()
-                    }),
-                    MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
-                        font_weight: Some(FontWeight::BOLD),
-                        ..Default::default()
-                    }),
-                    MarkdownTag::Strikethrough => builder.push_text_style(TextStyleRefinement {
-                        strikethrough: Some(StrikethroughStyle {
-                            thickness: px(1.),
-                            color: None,
+                            builder.push_code_block(language);
+                            builder.push_text_style(self.style.code_block.clone());
+                            builder.push_div(div().p_4().my_2().w_full().when_some(
+                                self.style.code_block.background_color,
+                                |div, color| div.bg(color),
+                            ));
+                        }
+                        MarkdownTag::HtmlBlock => builder.push_div(div()),
+                        MarkdownTag::List(number) => {
+                            builder.push_list(*number);
+                            builder.push_div(div().pl_4());
+                        }
+                        MarkdownTag::Item => {
+                            builder.push_div(div());
+                            if let Some(item_index) = builder.next_list_item_index() {
+                                builder.push_text(&format!("{}. ", item_index), range.start);
+                            } else {
+                                builder.push_text("• ", range.start);
+                            };
+                        }
+                        MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
+                            font_style: Some(FontStyle::Italic),
+                            ..Default::default()
                         }),
-                        ..Default::default()
-                    }),
-                    MarkdownTag::Link {
-                        link_type,
-                        dest_url,
-                        title,
-                        id,
-                    } => builder.push_text_style(self.style.link.clone()),
-                    MarkdownTag::Image {
-                        link_type,
-                        dest_url,
-                        title,
-                        id,
-                    } => todo!(),
-                    _ => log::info!("unsupported markdown tag {:?}", tag),
-                },
+                        MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
+                            font_weight: Some(FontWeight::BOLD),
+                            ..Default::default()
+                        }),
+                        MarkdownTag::Strikethrough => {
+                            builder.push_text_style(TextStyleRefinement {
+                                strikethrough: Some(StrikethroughStyle {
+                                    thickness: px(1.),
+                                    color: None,
+                                }),
+                                ..Default::default()
+                            })
+                        }
+                        MarkdownTag::Link {
+                            link_type,
+                            dest_url,
+                            title,
+                            id,
+                        } => builder.push_text_style(self.style.link.clone()),
+                        MarkdownTag::Image {
+                            link_type,
+                            dest_url,
+                            title,
+                            id,
+                        } => todo!(),
+                        _ => log::info!("unsupported markdown tag {:?}", tag),
+                    }
+                }
                 MarkdownEvent::End(tag) => match tag {
                     MarkdownTagEnd::Paragraph => {
                         builder.pop_div();
@@ -341,10 +342,7 @@ impl Element for MarkdownElement {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                 }
                 MarkdownEvent::Code => {
-                    builder.push_text_style(TextStyleRefinement {
-                        background_color: Some(self.style.code_background_color),
-                        ..self.style.code.clone()
-                    });
+                    builder.push_text_style(self.style.inline_code.clone());
                     builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                     builder.pop_text_style();
                 }
