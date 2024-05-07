@@ -107,7 +107,7 @@ impl SavedConversationMetadata {
                 .zip(metadata)
             {
                 // This is used to filter out conversations saved by the new assistant.
-                if !re.is_match(&file_name) {
+                if !re.is_match(file_name) {
                     continue;
                 }
 

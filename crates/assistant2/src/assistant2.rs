@@ -282,6 +282,7 @@ struct EditingMessage {
 }
 
 impl AssistantChat {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         fs: Arc<dyn Fs>,
         language_registry: Arc<LanguageRegistry>,
