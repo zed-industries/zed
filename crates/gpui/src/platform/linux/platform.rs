@@ -347,10 +347,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         Ok(SemanticVersion::new(1, 0, 0))
     }
 
-    fn app_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion::new(1, 0, 0))
-    }
-
     fn app_path(&self) -> Result<PathBuf> {
         // get the path of the executable of the current process
         let exe_path = std::env::current_exe()?;

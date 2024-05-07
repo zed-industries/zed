@@ -248,10 +248,6 @@ impl Platform for TestPlatform {
         Err(anyhow!("os_version called on TestPlatform"))
     }
 
-    fn app_version(&self) -> Result<crate::SemanticVersion> {
-        Err(anyhow!("app_version called on TestPlatform"))
-    }
-
     fn app_path(&self) -> Result<std::path::PathBuf> {
         unimplemented!()
     }

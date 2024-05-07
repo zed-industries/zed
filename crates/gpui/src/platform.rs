@@ -138,7 +138,6 @@ pub(crate) trait Platform: 'static {
 
     fn os_name(&self) -> &'static str;
     fn os_version(&self) -> Result<SemanticVersion>;
-    fn app_version(&self) -> Result<SemanticVersion>;
     fn app_path(&self) -> Result<PathBuf>;
     fn local_timezone(&self) -> UtcOffset;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
