@@ -1,9 +1,12 @@
 mod assistant_settings;
 mod attachments;
 mod completion_provider;
+mod saved_conversation;
+mod saved_conversation_picker;
 mod tools;
 pub mod ui;
 
+use crate::saved_conversation_picker::SavedConversationPicker;
 use crate::{
     attachments::ActiveEditorAttachmentTool,
     tools::{CreateBufferTool, ProjectIndexTool},
@@ -57,7 +60,15 @@ pub enum SubmitMode {
     Codebase,
 }
 
-gpui::actions!(assistant2, [Cancel, ToggleFocus, DebugProjectIndex]);
+gpui::actions!(
+    assistant2,
+    [
+        Cancel,
+        ToggleFocus,
+        DebugProjectIndex,
+        ToggleSavedConversations
+    ]
+);
 gpui::impl_actions!(assistant2, [Submit]);
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
@@ -97,6 +108,8 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         },
     )
     .detach();
+    cx.observe_new_views(SavedConversationPicker::register)
+        .detach();
 }
 
 pub fn enabled(cx: &AppContext) -> bool {
@@ -891,6 +904,10 @@ impl Render for AssistantChat {
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
             .text_color(Color::Default.color(cx))
+            .child(
+                Button::new("open-saved-conversations", "Saved Conversations")
+                    .on_click(|_event, cx| cx.dispatch_action(Box::new(ToggleSavedConversations))),
+            )
             .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(
                 self.composer_editor.clone(),
