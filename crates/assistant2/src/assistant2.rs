@@ -6,13 +6,14 @@ mod saved_conversation_picker;
 mod tools;
 pub mod ui;
 
+use crate::saved_conversation::{SavedConversation, SavedMessage, SavedMessageRole};
 use crate::saved_conversation_picker::SavedConversationPicker;
 use crate::{
     attachments::ActiveEditorAttachmentTool,
     tools::{CreateBufferTool, ProjectIndexTool},
     ui::UserOrAssistant,
 };
-use ::ui::{div, prelude::*, Color, ViewContext};
+use ::ui::{div, prelude::*, Color, Tooltip, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{
     AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry, UserAttachment,
@@ -22,6 +23,7 @@ use collections::HashMap;
 use completion_provider::*;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
+use fs::Fs;
 use futures::{future::join_all, StreamExt};
 use gpui::{
     list, AnyElement, AppContext, AsyncWindowContext, ClickEvent, EventEmitter, FocusHandle,
@@ -31,11 +33,12 @@ use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use rich_text::RichText;
 use semantic_index::{CloudEmbeddingProvider, ProjectIndex, ProjectIndexDebugView, SemanticIndex};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::sync::Arc;
 use tools::OpenBufferTool;
 use ui::{ActiveFileButton, Composer, ProjectIndexButton};
+use util::paths::CONVERSATIONS_DIR;
 use util::{maybe, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -155,6 +158,7 @@ impl AssistantPanel {
                     .register(ActiveEditorAttachmentTool::new(workspace.clone(), cx));
 
                 Self::new(
+                    project.read(cx).fs().clone(),
                     app_state.languages.clone(),
                     Arc::new(tool_registry),
                     Arc::new(attachment_registry),
@@ -167,7 +171,9 @@ impl AssistantPanel {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        fs: Arc<dyn Fs>,
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
         attachment_registry: Arc<AttachmentRegistry>,
@@ -178,6 +184,7 @@ impl AssistantPanel {
     ) -> Self {
         let chat = cx.new_view(|cx| {
             AssistantChat::new(
+                fs,
                 language_registry,
                 tool_registry.clone(),
                 attachment_registry,
@@ -254,6 +261,7 @@ pub struct AssistantChat {
     model: String,
     messages: Vec<ChatMessage>,
     list_state: ListState,
+    fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     composer_editor: View<Editor>,
     project_index_button: View<ProjectIndexButton>,
@@ -275,7 +283,9 @@ struct EditingMessage {
 }
 
 impl AssistantChat {
+    #[allow(clippy::too_many_arguments)]
     fn new(
+        fs: Arc<dyn Fs>,
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
         attachment_registry: Arc<AttachmentRegistry>,
@@ -320,6 +330,7 @@ impl AssistantChat {
             }),
             list_state,
             user_store,
+            fs,
             language_registry,
             project_index_button,
             active_file_button,
@@ -657,6 +668,69 @@ impl AssistantChat {
         *entry = !*entry;
     }
 
+    fn new_conversation(&mut self, cx: &mut ViewContext<Self>) {
+        let messages = self
+            .messages
+            .drain(..)
+            .map(|message| {
+                let text = match &message {
+                    ChatMessage::User(message) => message.body.read(cx).text(cx),
+                    ChatMessage::Assistant(message) => message
+                        .messages
+                        .iter()
+                        .map(|message| message.body.text.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n\n"),
+                };
+
+                SavedMessage {
+                    id: message.id(),
+                    role: match message {
+                        ChatMessage::User(_) => SavedMessageRole::User,
+                        ChatMessage::Assistant(_) => SavedMessageRole::Assistant,
+                    },
+                    text,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // Reset the chat for the new conversation.
+        self.list_state.reset(0);
+        self.editing_message.take();
+        self.collapsed_messages.clear();
+
+        let title = messages
+            .first()
+            .map(|message| message.text.clone())
+            .unwrap_or_else(|| "A conversation with the assistant.".to_string());
+
+        let saved_conversation = SavedConversation {
+            version: "0.3.0".to_string(),
+            title,
+            messages,
+        };
+
+        let discriminant = 1;
+
+        let path = CONVERSATIONS_DIR.join(&format!(
+            "{title} - {discriminant}.zed.{version}.json",
+            title = saved_conversation.title,
+            version = saved_conversation.version
+        ));
+
+        cx.spawn({
+            let fs = self.fs.clone();
+            |_this, _cx| async move {
+                fs.create_dir(CONVERSATIONS_DIR.as_ref()).await?;
+                fs.atomic_write(path, serde_json::to_string(&saved_conversation)?)
+                    .await?;
+
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn render_error(
         &self,
         error: Option<SharedString>,
@@ -684,7 +758,7 @@ impl AssistantChat {
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         let is_first = ix == 0;
-        let is_last = ix == self.messages.len() - 1;
+        let is_last = ix == self.messages.len().saturating_sub(1);
 
         let padding = Spacing::Large.rems(cx);
 
@@ -905,8 +979,20 @@ impl Render for AssistantChat {
             .on_action(cx.listener(Self::cancel))
             .text_color(Color::Default.color(cx))
             .child(
-                Button::new("open-saved-conversations", "Saved Conversations")
-                    .on_click(|_event, cx| cx.dispatch_action(Box::new(ToggleSavedConversations))),
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("open-saved-conversations", "Saved Conversations").on_click(
+                            |_event, cx| cx.dispatch_action(Box::new(ToggleSavedConversations)),
+                        ),
+                    )
+                    .child(
+                        IconButton::new("new-conversation", IconName::Plus)
+                            .on_click(cx.listener(move |this, _event, cx| {
+                                this.new_conversation(cx);
+                            }))
+                            .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
+                    ),
             )
             .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(
@@ -919,7 +1005,7 @@ impl Render for AssistantChat {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct MessageId(usize);
 
 impl MessageId {
@@ -936,6 +1022,13 @@ enum ChatMessage {
 }
 
 impl ChatMessage {
+    pub fn id(&self) -> MessageId {
+        match self {
+            ChatMessage::User(message) => message.id,
+            ChatMessage::Assistant(message) => message.id,
+        }
+    }
+
     fn focus_handle(&self, cx: &AppContext) -> Option<FocusHandle> {
         match self {
             ChatMessage::User(UserMessage { body, .. }) => Some(body.focus_handle(cx)),
