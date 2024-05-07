@@ -478,9 +478,10 @@ impl Client {
         http: Arc<HttpClientWithUrl>,
         cx: &mut AppContext,
     ) -> Arc<Self> {
-        let use_zed_development_auth = match ReleaseChannel::global(cx) {
-            ReleaseChannel::Dev => *ZED_DEVELOPMENT_AUTH,
-            ReleaseChannel::Nightly | ReleaseChannel::Preview | ReleaseChannel::Stable => false,
+        let use_zed_development_auth = match ReleaseChannel::try_global(cx) {
+            Some(ReleaseChannel::Dev) => *ZED_DEVELOPMENT_AUTH,
+            Some(ReleaseChannel::Nightly | ReleaseChannel::Preview | ReleaseChannel::Stable)
+            | None => false,
         };
 
         let credentials_provider: Arc<dyn CredentialsProvider + Send + Sync + 'static> =
