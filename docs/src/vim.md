@@ -1,3 +1,5 @@
+# Vim Mode
+
 Zed includes a vim emulation layer known as “vim mode”. This document aims to describe how it works, and how to make the most out of it.
 
 ## Philosophy
