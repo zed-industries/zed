@@ -227,6 +227,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn get_raw_handle(&self) -> windows::HWND;
 
     #[cfg(target_os = "linux")]
+    fn show_window_menu(&self, position: Point<Pixels>);
+
+    #[cfg(target_os = "linux")]
     fn start_system_move(&self);
 
     #[cfg(target_os = "linux")]

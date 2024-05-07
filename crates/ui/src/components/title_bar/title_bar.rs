@@ -119,6 +119,9 @@ impl RenderOnce for TitleBar {
                 |title_bar| {
                     title_bar
                         .child(LinuxWindowControls::new(height))
+                        .on_mouse_down(gpui::MouseButton::Right, move |ev, cx| {
+                            cx.show_window_menu(ev.position)
+                        })
                         .on_mouse_move(move |ev, cx| {
                             if ev.dragging() {
                                 cx.start_system_move();

@@ -755,6 +755,17 @@ impl PlatformWindow for WaylandWindow {
         state.renderer.sprite_atlas().clone()
     }
 
+    fn show_window_menu(&self, position: Point<Pixels>) {
+        let state = self.borrow();
+        let serial = state.client.get_serial(SerialKind::MousePress);
+        state.toplevel.show_window_menu(
+            &state.globals.seat,
+            serial,
+            position.x.0 as i32,
+            position.y.0 as i32,
+        );
+    }
+
     fn start_system_move(&self) {
         let state = self.borrow();
         let serial = state.client.get_serial(SerialKind::MousePress);

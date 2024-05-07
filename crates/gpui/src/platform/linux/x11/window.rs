@@ -722,6 +722,9 @@ impl PlatformWindow for X11Window {
     }
 
     // todo(linux)
+    fn show_window_menu(&self, _position: Point<Pixels>) {}
+
+    // todo(linux)
     fn start_system_move(&self) {}
 
     fn should_render_window_controls(&self) -> bool {

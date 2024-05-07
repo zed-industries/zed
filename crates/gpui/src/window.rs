@@ -1131,6 +1131,12 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.zoom();
     }
 
+    /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland only)
+    pub fn show_window_menu(&self, position: Point<Pixels>) {
+        #[cfg(target_os = "linux")]
+        self.window.platform_window.show_window_menu(position)
+    }
+
     /// Tells the compositor to take control of window movement (Wayland only)
     ///
     /// Events may not be received during a move operation.
