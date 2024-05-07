@@ -2,10 +2,10 @@ use crate::persistence::model::DockData;
 use crate::{status_bar::StatusItemView, Workspace};
 use crate::{DraggedDock, Event};
 use gpui::{
-    deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, ClickEvent, Entity,
-    EntityId, EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton,
-    MouseDownEvent, MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled,
-    Subscription, View, ViewContext, VisualContext, WeakView, WindowContext,
+    deferred, div, px, Action, AnchorCorner, AnyView, AppContext, Axis, Entity, EntityId,
+    EventEmitter, FocusHandle, FocusableView, IntoElement, KeyContext, MouseButton, MouseDownEvent,
+    MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -570,30 +570,24 @@ impl Render for Dock {
                 let handle = div()
                     .id("resize-handle")
                     .on_drag(DraggedDock(position), |dock, cx| {
-                        dbg!("DDDDDDDDDDDDD Dragging the divider and STOPPING THE EVENT PROPAGATION");
                         cx.stop_propagation();
                         cx.new_view(|_| dock.clone())
                     })
-                    .on_mouse_down(MouseButton::Left, cx.listener(|v, e: &MouseDownEvent, cx|  {
-                        cx.stop_propagation();
-                    }))
-                    .on_mouse_up(MouseButton::Left, cx.listener(|v, e: &MouseUpEvent, cx| {
-                        dbg!("GGGGGGGGGGGGGG Clicked the divider", cx.default_prevented());
-                        if e.click_count == 2 {
-                            dbg!("resizing after the double click and STOPPING THE EVENT PROPAGATION");
-                            v.resize_active_panel(None, cx);
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _: &MouseDownEvent, cx| {
                             cx.stop_propagation();
-                        }
-                        cx.stop_propagation();
-                    }))
-                    // .on_click(cx.listener(|v, e: &ClickEvent, cx| {
-                    //     dbg!("GGGGGGGGGGGGGG Clicked the divider", cx.default_prevented());
-                    //     if e.down.button == MouseButton::Left && e.down.click_count == 2 {
-                    //         dbg!("resizing after the double click and STOPPING THE EVENT PROPAGATION");
-                    //         v.resize_active_panel(None, cx);
-                    //         cx.stop_propagation();
-                    //     }
-                    // }))
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|v, e: &MouseUpEvent, cx| {
+                            if e.click_count == 2 {
+                                v.resize_active_panel(None, cx);
+                                cx.stop_propagation();
+                            }
+                        }),
+                    )
                     .occlude();
                 match self.position() {
                     DockPosition::Left => deferred(
