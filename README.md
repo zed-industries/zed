@@ -28,10 +28,10 @@ brew install --cask zed@preview
 
 ## Developing Zed
 
-- [Building Zed for macOS](./docs/src/developing_zed__building_zed_macos.md)
-- [Building Zed for Linux](./docs/src/developing_zed__building_zed_linux.md)
-- [Building Zed for Windows](./docs/src/developing_zed__building_zed_windows.md)
-- [Running Collaboration Locally](./docs/src/developing_zed__local_collaboration.md)
+- [Building Zed for macOS](./docs/src/development/macos.md)
+- [Building Zed for Linux](./docs/src/development/linux.md)
+- [Building Zed for Windows](./docs/src/development/windows.md)
+- [Running Collaboration Locally](./docs/src/development/local-collaboration.md)
 
 ## Contributing
 

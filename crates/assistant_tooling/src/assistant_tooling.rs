@@ -1,5 +1,9 @@
-pub mod registry;
-pub mod tool;
+mod attachment_registry;
+mod project_context;
+mod tool_registry;
 
-pub use crate::registry::ToolRegistry;
-pub use crate::tool::{LanguageModelTool, ToolFunctionCall, ToolFunctionDefinition};
+pub use attachment_registry::{AttachmentRegistry, LanguageModelAttachment, UserAttachment};
+pub use project_context::ProjectContext;
+pub use tool_registry::{
+    LanguageModelTool, ToolFunctionCall, ToolFunctionDefinition, ToolOutput, ToolRegistry,
+};

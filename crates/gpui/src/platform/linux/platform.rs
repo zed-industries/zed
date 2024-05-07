@@ -35,9 +35,9 @@ use crate::platform::linux::wayland::WaylandClient;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CosmicTextSystem, CursorStyle,
     DisplayId, ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, Modifiers,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformTextSystem, PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task,
-    WindowAppearance, WindowOptions, WindowParams,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
+    PlatformWindow, Point, PromptLevel, Result, SemanticVersion, Size, Task, WindowAppearance,
+    WindowOptions, WindowParams,
 };
 
 use super::x11::X11Client;
@@ -61,6 +61,7 @@ pub trait LinuxClient {
         options: WindowParams,
     ) -> Box<dyn PlatformWindow>;
     fn set_cursor_style(&self, style: CursorStyle);
+    fn open_uri(&self, uri: &str);
     fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
@@ -71,11 +72,8 @@ pub trait LinuxClient {
 #[derive(Default)]
 pub(crate) struct PlatformHandlers {
     pub(crate) open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    pub(crate) become_active: Option<Box<dyn FnMut()>>,
-    pub(crate) resign_active: Option<Box<dyn FnMut()>>,
     pub(crate) quit: Option<Box<dyn FnMut()>>,
     pub(crate) reopen: Option<Box<dyn FnMut()>>,
-    pub(crate) event: Option<Box<dyn FnMut(PlatformInput) -> bool>>,
     pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -152,12 +150,22 @@ impl<P: LinuxClient + 'static> Platform for P {
             }
         };
 
-        // script to wait for the current process to exit  and then restart the app
+        log::info!("Restarting process, using app path: {:?}", app_path);
+
+        // Script to wait for the current process to exit and then restart the app.
+        // We also wait for possibly open TCP sockets by the process to be closed,
+        // since on Linux it's not guaranteed that a process' resources have been
+        // cleaned up when `kill -0` returns.
         let script = format!(
             r#"
             while kill -O {pid} 2>/dev/null; do
                 sleep 0.1
             done
+
+            while lsof -nP -iTCP -a -p {pid} 2>/dev/null; do
+                sleep 0.1
+            done
+
             {app_path}
             "#,
             pid = app_pid,
@@ -198,10 +206,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
-    fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
-        self.display(id)
-    }
-
     // todo(linux)
     fn active_window(&self) -> Option<AnyWindowHandle> {
         None
@@ -216,7 +220,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn open_url(&self, url: &str) {
-        open::that(url);
+        self.open_uri(url);
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
@@ -305,18 +309,6 @@ impl<P: LinuxClient + 'static> Platform for P {
         open::that(dir);
     }
 
-    fn on_become_active(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| {
-            common.callbacks.become_active = Some(callback);
-        });
-    }
-
-    fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
-        self.with_common(|common| {
-            common.callbacks.resign_active = Some(callback);
-        });
-    }
-
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| {
             common.callbacks.quit = Some(callback);
@@ -326,12 +318,6 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| {
             common.callbacks.reopen = Some(callback);
-        });
-    }
-
-    fn on_event(&self, callback: Box<dyn FnMut(PlatformInput) -> bool>) {
-        self.with_common(|common| {
-            common.callbacks.event = Some(callback);
         });
     }
 
@@ -362,7 +348,12 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn app_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion::new(1, 0, 0))
+        const VERSION: Option<&str> = option_env!("RELEASE_VERSION");
+        if let Some(version) = VERSION {
+            version.parse()
+        } else {
+            Ok(SemanticVersion::new(1, 0, 0))
+        }
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -484,6 +475,20 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 }
 
+pub(super) fn open_uri_internal(uri: &str, activation_token: Option<&str>) {
+    let mut last_err = None;
+    for mut command in open::commands(uri) {
+        if let Some(token) = activation_token {
+            command.env("XDG_ACTIVATION_TOKEN", token);
+        }
+        match command.status() {
+            Ok(_) => return,
+            Err(err) => last_err = Some(err),
+        }
+    }
+    log::error!("failed to open uri: {uri:?}, last error: {last_err:?}");
+}
+
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
     let diff = a - b;
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
@@ -517,6 +522,8 @@ impl CursorStyle {
             CursorStyle::ResizeUp => Shape::NResize,
             CursorStyle::ResizeDown => Shape::SResize,
             CursorStyle::ResizeUpDown => Shape::NsResize,
+            CursorStyle::ResizeColumn => Shape::ColResize,
+            CursorStyle::ResizeRow => Shape::RowResize,
             CursorStyle::DisappearingItem => Shape::Grabbing, // todo(linux) - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => Shape::VerticalText,
             CursorStyle::OperationNotAllowed => Shape::NotAllowed,
@@ -543,6 +550,8 @@ impl CursorStyle {
             CursorStyle::ResizeUp => "n-resize",
             CursorStyle::ResizeDown => "s-resize",
             CursorStyle::ResizeUpDown => "ns-resize",
+            CursorStyle::ResizeColumn => "col-resize",
+            CursorStyle::ResizeRow => "row-resize",
             CursorStyle::DisappearingItem => "grabbing", // todo(linux) - couldn't find equivalent icon in linux
             CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
             CursorStyle::OperationNotAllowed => "not-allowed",
@@ -623,11 +632,9 @@ impl Keystroke {
             }
         };
 
-        // Ignore control characters (and DEL) for the purposes of ime_key,
-        // but if key_utf32 is 0 then assume it isn't one
-        let ime_key = ((key_utf32 == 0 || (key_utf32 >= 32 && key_utf32 != 127))
-            && !key_utf8.is_empty())
-        .then_some(key_utf8);
+        // Ignore control characters (and DEL) for the purposes of ime_key
+        let ime_key =
+            (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
         if handle_consumed_modifiers {
             let mod_shift_index = state.get_keymap().mod_get_index(xkb::MOD_NAME_SHIFT);

@@ -4,10 +4,7 @@ use anyhow::Result;
 use collections::HashMap;
 use git::{
     blame::{Blame, BlameEntry},
-    hosting_provider::HostingProvider,
-    permalink::{build_commit_permalink, parse_git_remote_url},
-    pull_request::{extract_pull_request, PullRequest},
-    Oid,
+    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
@@ -50,11 +47,21 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct GitRemote {
-    pub host: HostingProvider,
+    pub host: Arc<dyn GitHostingProvider + Send + Sync + 'static>,
     pub owner: String,
     pub repo: String,
+}
+
+impl std::fmt::Debug for GitRemote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitRemote")
+            .field("host", &self.host.name())
+            .field("owner", &self.owner)
+            .field("repo", &self.repo)
+            .finish()
+    }
 }
 
 impl GitRemote {
@@ -323,6 +330,7 @@ impl GitBlame {
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
         let languages = self.project.read(cx).languages().clone();
+        let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx
@@ -338,9 +346,14 @@ impl GitBlame {
                         } = blame.await?;
 
                         let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
-                        let commit_details =
-                            parse_commit_messages(messages, remote_url, &permalinks, &languages)
-                                .await;
+                        let commit_details = parse_commit_messages(
+                            messages,
+                            remote_url,
+                            &permalinks,
+                            provider_registry,
+                            &languages,
+                        )
+                        .await;
 
                         anyhow::Ok((entries, commit_details))
                     }
@@ -431,19 +444,22 @@ async fn parse_commit_messages(
     messages: impl IntoIterator<Item = (Oid, String)>,
     remote_url: Option<String>,
     deprecated_permalinks: &HashMap<Oid, Url>,
+    provider_registry: Arc<GitHostingProviderRegistry>,
     languages: &Arc<LanguageRegistry>,
 ) -> HashMap<Oid, CommitDetails> {
     let mut commit_details = HashMap::default();
 
-    let parsed_remote_url = remote_url.as_deref().and_then(parse_git_remote_url);
+    let parsed_remote_url = remote_url
+        .as_deref()
+        .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
         let parsed_message = parse_markdown(&message, &languages).await;
 
-        let permalink = if let Some(git_remote) = parsed_remote_url.as_ref() {
-            Some(build_commit_permalink(
-                git::permalink::BuildCommitPermalinkParams {
-                    remote: git_remote,
+        let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
+            Some(provider.build_commit_permalink(
+                git_remote,
+                git::BuildCommitPermalinkParams {
                     sha: oid.to_string().as_str(),
                 },
             ))
@@ -455,15 +471,17 @@ async fn parse_commit_messages(
             deprecated_permalinks.get(&oid).cloned()
         };
 
-        let remote = parsed_remote_url.as_ref().map(|remote| GitRemote {
-            host: remote.provider.clone(),
-            owner: remote.owner.to_string(),
-            repo: remote.repo.to_string(),
-        });
+        let remote = parsed_remote_url
+            .as_ref()
+            .map(|(provider, remote)| GitRemote {
+                host: provider.clone(),
+                owner: remote.owner.to_string(),
+                repo: remote.repo.to_string(),
+            });
 
         let pull_request = parsed_remote_url
             .as_ref()
-            .and_then(|remote| extract_pull_request(remote, &message));
+            .and_then(|(provider, remote)| provider.extract_pull_request(remote, &message));
 
         commit_details.insert(
             oid,

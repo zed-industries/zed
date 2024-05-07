@@ -3,8 +3,8 @@ use crate::{
         all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
     },
     task_context::ContextProvider,
-    CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, LspAdapterDelegate, PARSER, PLAIN_TEXT,
+    with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
+    LanguageServerName, LspAdapter, LspAdapterDelegate, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap};
@@ -124,6 +124,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("injections", |q| &mut q.injections),
     ("overrides", |q| &mut q.overrides),
     ("redactions", |q| &mut q.redactions),
+    ("runnables", |q| &mut q.runnables),
 ];
 
 /// Tree-sitter language queries for a given language.
@@ -137,6 +138,7 @@ pub struct LanguageQueries {
     pub injections: Option<Cow<'static, str>>,
     pub overrides: Option<Cow<'static, str>>,
     pub redactions: Option<Cow<'static, str>>,
+    pub runnables: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Default)]
@@ -668,8 +670,7 @@ impl LanguageRegistry {
                                     .file_stem()
                                     .and_then(OsStr::to_str)
                                     .ok_or_else(|| anyhow!("invalid grammar filename"))?;
-                                anyhow::Ok(PARSER.with(|parser| {
-                                    let mut parser = parser.borrow_mut();
+                                anyhow::Ok(with_parser(|parser| {
                                     let mut store = parser.take_wasm_store().unwrap();
                                     let grammar = store.load_language(&grammar_name, &wasm_bytes);
                                     parser.set_wasm_store(store).unwrap();

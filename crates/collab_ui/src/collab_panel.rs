@@ -1408,6 +1408,11 @@ impl CollabPanel {
             });
         }
 
+        if self.context_menu.is_some() {
+            self.context_menu.take();
+            cx.notify();
+        }
+
         self.update_entries(false, cx);
     }
 
@@ -2149,7 +2154,7 @@ impl CollabPanel {
             .child(list(self.list_state.clone()).size_full())
             .child(
                 v_flex()
-                    .child(div().mx_2().border_primary(cx).border_t())
+                    .child(div().mx_2().border_primary(cx).border_t_1())
                     .child(
                         v_flex()
                             .p_2()

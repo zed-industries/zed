@@ -136,45 +136,45 @@ impl RenderOnce for Tab {
                 TabPosition::First => {
                     if self.selected {
                         this.pl_px()
-                            .border_r()
+                            .border_r_1()
                             .when(placement_top, Styled::pb_px)
                             .when(placement_bottom, Styled::pt_px)
                     } else {
                         this.pl_px()
                             .pr_px()
-                            .when(placement_top, Styled::border_b)
-                            .when(placement_bottom, Styled::border_t)
+                            .when(placement_top, Styled::border_b_1)
+                            .when(placement_bottom, Styled::border_t_1)
                     }
                 }
                 TabPosition::Last => {
                     if self.selected {
-                        this.border_l()
-                            .border_r()
+                        this.border_l_1()
+                            .border_r_1()
                             .when(placement_top, Styled::pb_px)
                             .when(placement_bottom, Styled::pt_px)
                     } else {
                         this.pr_px()
                             .pl_px()
-                            .border_r()
-                            .when(placement_top, Styled::border_b)
-                            .when(placement_bottom, Styled::border_t)
+                            .border_r_1()
+                            .when(placement_top, Styled::border_b_1)
+                            .when(placement_bottom, Styled::border_t_1)
                     }
                 }
                 TabPosition::Middle(Ordering::Equal) => this
-                    .border_l()
-                    .border_r()
+                    .border_l_1()
+                    .border_r_1()
                     .when(placement_top, Styled::pb_px)
                     .when(placement_bottom, Styled::pt_px),
                 TabPosition::Middle(Ordering::Less) => this
-                    .border_l()
+                    .border_l_1()
                     .pr_px()
-                    .when(placement_top, Styled::border_b)
-                    .when(placement_bottom, Styled::border_t),
+                    .when(placement_top, Styled::border_b_1)
+                    .when(placement_bottom, Styled::border_t_1),
                 TabPosition::Middle(Ordering::Greater) => this
-                    .border_r()
+                    .border_r_1()
                     .pl_px()
-                    .when(placement_top, Styled::border_b)
-                    .when(placement_bottom, Styled::border_t),
+                    .when(placement_top, Styled::border_b_1)
+                    .when(placement_bottom, Styled::border_t_1),
             })
             .cursor_pointer()
             .child(

@@ -133,7 +133,7 @@ impl<V: 'static> TodoList<V> {
             .text_color(color.text) // Set text color
             // Border properties
             .rounded_md()           // Add 4px of border radius
-            .border()               // Add a 1px border
+            .border_1()             // Add a 1px border
             .border_color(color.border)
             .child(
                 "Hello, world!"

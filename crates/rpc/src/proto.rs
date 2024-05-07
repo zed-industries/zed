@@ -201,6 +201,8 @@ messages!(
     (GetProjectSymbolsResponse, Background),
     (GetReferences, Background),
     (GetReferencesResponse, Background),
+    (GetSupermavenApiKey, Background),
+    (GetSupermavenApiKeyResponse, Background),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
@@ -321,6 +323,9 @@ messages!(
     (ValidateDevServerProjectRequest, Background),
     (DeleteDevServer, Foreground),
     (DeleteDevServerProject, Foreground),
+    (RegenerateDevServerToken, Foreground),
+    (RegenerateDevServerTokenResponse, Foreground),
+    (RenameDevServer, Foreground),
     (OpenNewBuffer, Foreground)
 );
 
@@ -360,6 +365,7 @@ request_messages!(
     (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
+    (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (GetUsers, UsersResponse),
     (IncomingCall, Ack),
@@ -427,6 +433,8 @@ request_messages!(
     (MultiLspQuery, MultiLspQueryResponse),
     (DeleteDevServer, Ack),
     (DeleteDevServerProject, Ack),
+    (RegenerateDevServerToken, RegenerateDevServerTokenResponse),
+    (RenameDevServer, Ack)
 );
 
 entity_messages!(

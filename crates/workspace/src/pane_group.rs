@@ -914,8 +914,8 @@ mod element {
             for (ix, child) in &mut layout.children.iter_mut().enumerate() {
                 if let Some(handle) = child.handle.as_mut() {
                     let cursor_style = match self.axis {
-                        Axis::Vertical => CursorStyle::ResizeUpDown,
-                        Axis::Horizontal => CursorStyle::ResizeLeftRight,
+                        Axis::Vertical => CursorStyle::ResizeRow,
+                        Axis::Horizontal => CursorStyle::ResizeColumn,
                     };
                     cx.set_cursor_style(cursor_style, &handle.hitbox);
                     cx.paint_quad(gpui::fill(
