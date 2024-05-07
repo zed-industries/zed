@@ -160,7 +160,6 @@ impl Supermaven {
     pub fn completion(&self, text_before_cursor: &str) -> Option<String> {
         if let Self::Spawned(agent) = self {
             find_relevant_completion(&agent.states, text_before_cursor)
-            // agent.states.values().filter(|value| {
         } else {
             None
         }
@@ -177,14 +176,10 @@ fn find_relevant_completion(
             continue;
         }
 
-        let state_completion: String = state
-            .completion
-            .iter()
-            .filter_map(|item| match item {
-                ResponseItem::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<String>();
+        let state_completion: String = match concat_items_to_string(&state.completion) {
+            None => continue,
+            Some(s) => s,
+        };
 
         let delta = &text_before_cursor[state.prefix.len()..];
         if !state_completion.starts_with(delta) {
@@ -198,6 +193,22 @@ fn find_relevant_completion(
         }
     }
     best_completion
+}
+
+fn concat_items_to_string(items: &[ResponseItem]) -> Option<String> {
+    let mut out_text = String::new();
+    let mut dedent = String::new();
+    for item in items {
+        match item {
+            ResponseItem::Text { text } => out_text.push_str(text),
+            ResponseItem::Dedent { text } => dedent.push_str(text),
+            _ => (),
+        }
+    }
+    if !out_text.starts_with(&dedent) {
+        return None;
+    }
+    Some(out_text[dedent.len()..].to_string())
 }
 
 pub struct SupermavenAgent {
