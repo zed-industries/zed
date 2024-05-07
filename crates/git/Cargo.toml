@@ -29,7 +29,10 @@ serde.workspace = true
 regex.workspace = true
 rope.workspace = true
 parking_lot.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+
 
 [dev-dependencies]
 unindent.workspace = true
