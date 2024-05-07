@@ -5,9 +5,10 @@ use gpui::{
     AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, Hsla, Render, StrikethroughStyle,
     Style, StyledText, Task, TextRun, TextStyle, TextStyleRefinement, WrappedLine,
 };
-use language::{Language, LanguageRegistry};
+use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
 use std::{cell::Cell, iter, mem, rc::Rc, sync::Arc};
+use theme::{SyntaxTheme, Theme};
 use ui::prelude::*;
 use util::TryFutureExt;
 
@@ -21,6 +22,7 @@ pub struct MarkdownStyle {
     pub link: TextStyleRefinement,
     pub rule_color: Hsla,
     pub block_quote_border_color: Hsla,
+    pub syntax: Arc<SyntaxTheme>,
 }
 
 pub struct Markdown {
@@ -122,12 +124,10 @@ pub struct MarkdownElement {
     markdown: ParsedMarkdown,
     style: MarkdownStyle,
     language_registry: Arc<LanguageRegistry>,
-    div_stack: Vec<Div>,
-    pending_text: String,
 }
 
 impl MarkdownElement {
-    pub fn new(
+    fn new(
         markdown: ParsedMarkdown,
         style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
@@ -136,8 +136,33 @@ impl MarkdownElement {
             markdown,
             style,
             language_registry,
-            div_stack: Vec::new(),
-            pending_text: String::new(),
+        }
+    }
+
+    fn load_language(&self, name: &str, cx: &mut WindowContext) -> Option<Arc<Language>> {
+        let language = self
+            .language_registry
+            .language_for_name(name)
+            .log_err()
+            .shared();
+
+        match language.clone().now_or_never() {
+            Some(language) => language,
+            None => {
+                let view_id = cx.parent_view_id();
+                cx.spawn(|mut cx| async move {
+                    language.await;
+                    cx.update(|cx| {
+                        if let Some(view_id) = view_id {
+                            cx.notify(view_id);
+                        } else {
+                            cx.refresh();
+                        }
+                    })
+                })
+                .detach_and_log_err(cx);
+                None
+            }
         }
     }
 }
@@ -155,7 +180,7 @@ impl Element for MarkdownElement {
         id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let mut builder = MarkdownElementBuilder::new(cx.text_style());
+        let mut builder = MarkdownElementBuilder::new(cx.text_style(), self.style.syntax.clone());
         for event in self.markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => match tag {
@@ -185,11 +210,7 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTag::CodeBlock(kind) => {
                         let language = if let CodeBlockKind::Fenced(language) = kind {
-                            // todo!("notify when language is finally loaded")
-                            self.language_registry
-                                .language_for_name(language.as_ref())
-                                .now_or_never()
-                                .and_then(Result::ok)
+                            self.load_language(language.as_ref(), cx)
                         } else {
                             None
                         };
@@ -359,6 +380,7 @@ struct MarkdownElementBuilder {
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
     list_stack: Vec<ListStackEntry>,
+    syntax_theme: Arc<SyntaxTheme>,
 }
 
 struct ListStackEntry {
@@ -366,7 +388,7 @@ struct ListStackEntry {
 }
 
 impl MarkdownElementBuilder {
-    fn new(base_text_style: TextStyle) -> Self {
+    fn new(base_text_style: TextStyle, syntax_theme: Arc<SyntaxTheme>) -> Self {
         Self {
             div_stack: vec![div().debug_selector(|| "inner".into())],
             pending_text: String::new(),
@@ -375,6 +397,7 @@ impl MarkdownElementBuilder {
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
             list_stack: Vec::new(),
+            syntax_theme,
         }
     }
 
@@ -430,9 +453,31 @@ impl MarkdownElementBuilder {
     }
 
     fn push_text(&mut self, text: &str) {
-        let run = self.text_style().to_run(text.len());
         self.pending_text.push_str(text);
-        self.pending_runs.push(run);
+
+        if let Some(Some(language)) = self.code_block_stack.last() {
+            let mut offset = 0;
+            for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
+                if range.start > offset {
+                    self.pending_runs
+                        .push(self.text_style().to_run(range.start - offset));
+                }
+
+                let mut run_style = self.text_style();
+                if let Some(highlight) = highlight_id.style(&self.syntax_theme) {
+                    run_style = run_style.highlight(highlight);
+                }
+                self.pending_runs.push(run_style.to_run(range.len()));
+                offset = range.end;
+            }
+
+            if offset < text.len() {
+                self.pending_runs
+                    .push(self.text_style().to_run(text.len() - offset));
+            }
+        } else {
+            self.pending_runs.push(self.text_style().to_run(text.len()));
+        }
     }
 
     fn trim_trailing_newline(&mut self) {

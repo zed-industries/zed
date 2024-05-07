@@ -129,6 +129,7 @@ pub fn main() {
                             }),
                             ..Default::default()
                         },
+                        syntax: cx.theme().syntax().clone(),
                     },
                     language_registry,
                     cx,
