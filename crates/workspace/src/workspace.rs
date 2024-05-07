@@ -113,7 +113,6 @@ pub struct RemoveWorktreeFromProject(pub WorktreeId);
 actions!(
     workspace,
     [
-        AlternateFile,
         Open,
         OpenInTerminal,
         NewFile,
@@ -598,7 +597,6 @@ pub struct Workspace {
     centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
     on_prompt_for_new_path: Option<PromptForNewPath>,
-    alternate_file_paths: (Option<ProjectPath>, Option<ProjectPath>),
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -876,7 +874,6 @@ impl Workspace {
             centered_layout: false,
             bounds_save_task_queued: None,
             on_prompt_for_new_path: None,
-            alternate_file_paths: (None, None),
         }
     }
 
@@ -2502,27 +2499,11 @@ impl Workspace {
         self.zoomed_position = None;
         cx.emit(Event::ZoomChanged);
         self.update_active_view_for_followers(cx);
-        self.track_alternate_files(cx);
+        pane.model.update(cx, |pane, _| {
+            pane.track_alternate_file_items();
+        });
 
         cx.notify();
-    }
-
-    fn track_alternate_files(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(item) = self.active_item(cx) {
-            if let Some(project_path) = item.project_path(cx) {
-                let (current, alternative) = &self.alternate_file_paths;
-                match current {
-                    Some(current) => {
-                        if *current != project_path {
-                            self.alternate_file_paths = (Some(project_path), Some(current.clone()));
-                        }
-                    }
-                    None => {
-                        self.alternate_file_paths = (Some(project_path), None);
-                    }
-                }
-            }
-        }
     }
 
     fn handle_pane_event(
@@ -2538,7 +2519,9 @@ impl Workspace {
             }
             pane::Event::Remove => self.remove_pane(pane, cx),
             pane::Event::ActivateItem { local } => {
-                self.track_alternate_files(cx);
+                pane.model.update(cx, |pane, _| {
+                    pane.track_alternate_file_items();
+                });
                 if *local {
                     self.unfollow(&pane, cx);
                 }
@@ -3792,17 +3775,6 @@ impl Workspace {
             .on_action(cx.listener(Self::send_keystrokes))
             .on_action(cx.listener(Self::add_folder_to_project))
             .on_action(cx.listener(Self::follow_next_collaborator))
-            .on_action(cx.listener(|workspace, _: &AlternateFile, cx| {
-                let app_state = AppState::global(cx);
-                if let Some(app_state) = app_state.upgrade() {
-                    let (_, alternative) = &workspace.alternate_file_paths;
-                    if let Some(alternative) = alternative {
-                        let pane = workspace.active_pane().downgrade();
-                        let path = alternative.to_owned();
-                        let task = workspace.open_path(path, Some(pane), true, cx).detach();
-                    }
-                }
-            }))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow(&pane, cx);

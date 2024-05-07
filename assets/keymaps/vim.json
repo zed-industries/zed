@@ -2,7 +2,7 @@
   {
     "context": "ProjectPanel || Editor",
     "bindings": {
-      "ctrl-6": "workspace::AlternateFile"
+      "ctrl-6": "pane::AlternateFile"
     }
   },
   {
