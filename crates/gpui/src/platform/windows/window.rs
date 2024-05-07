@@ -27,7 +27,7 @@ use windows::{
     },
 };
 
-use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
+use crate::platform::blade::BladeRenderer;
 use crate::*;
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
@@ -64,7 +64,6 @@ impl WindowsWindowState {
     fn new(
         hwnd: HWND,
         transparent: bool,
-        main_receiver: flume::Receiver<Runnable>,
         cs: &CREATESTRUCTW,
         mouse_wheel_settings: MouseWheelSettings,
         current_cursor: HCURSOR,
@@ -76,7 +75,7 @@ impl WindowsWindowState {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
         };
-        let renderer = windows_renderer::windows_renderer(hwnd);
+        let renderer = windows_renderer::windows_renderer(hwnd, transparent);
         let callbacks = Callbacks::default();
         let input_handler = None;
         let click_state = ClickState::new();
@@ -161,6 +160,7 @@ impl WindowsWindowStatePtr {
     fn new(context: &WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Rc<Self> {
         let state = RefCell::new(WindowsWindowState::new(
             hwnd,
+            context.transparent,
             cs,
             context.mouse_wheel_settings,
             context.current_cursor,
@@ -468,9 +468,10 @@ impl PlatformWindow for WindowsWindow {
     fn set_app_id(&mut self, _app_id: &str) {}
 
     fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
-        self.inner
-            .renderer
+        self.0
+            .state
             .borrow_mut()
+            .renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
     }
 
@@ -661,7 +662,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                 ReleaseStgMedium(&mut idata);
                 let mut cursor_position = POINT { x: pt.x, y: pt.y };
                 ScreenToClient(self.0.hwnd, &mut cursor_position);
-                let scale_factor = self.0.scale_factor.get();
+                let scale_factor = self.0.state.borrow().scale_factor;
                 let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                     position: logical_point(
                         cursor_position.x as f32,
@@ -688,7 +689,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
         unsafe {
             ScreenToClient(self.0.hwnd, &mut cursor_position);
         }
-        let scale_factor = self.0.scale_factor.get();
+        let scale_factor = self.0.state.borrow().scale_factor;
         let input = PlatformInput::FileDrop(FileDropEvent::Pending {
             position: logical_point(
                 cursor_position.x as f32,
@@ -719,7 +720,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
         unsafe {
             ScreenToClient(self.0.hwnd, &mut cursor_position);
         }
-        let scale_factor = self.0.scale_factor.get();
+        let scale_factor = self.0.state.borrow().scale_factor;
         let input = PlatformInput::FileDrop(FileDropEvent::Submit {
             position: logical_point(
                 cursor_position.x as f32,
@@ -891,9 +892,12 @@ mod windows_renderer {
     use raw_window_handle as rwh;
     use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
 
-    use crate::{get_window_long, platform::blade::BladeRenderer};
+    use crate::{
+        get_window_long,
+        platform::blade::{BladeRenderer, BladeSurfaceConfig},
+    };
 
-    pub(super) fn windows_renderer(hwnd: HWND) -> BladeRenderer {
+    pub(super) fn windows_renderer(hwnd: HWND, transparent: bool) -> BladeRenderer {
         let raw = RawWindow { hwnd: hwnd.0 };
         let gpu: Arc<gpu::Context> = Arc::new(
             unsafe {
@@ -908,13 +912,12 @@ mod windows_renderer {
             }
             .unwrap(),
         );
-        let extent = gpu::Extent {
-            width: 1,
-            height: 1,
-            depth: 1,
+        let config = BladeSurfaceConfig {
+            size: gpu::Extent::default(),
+            transparent,
         };
 
-        BladeRenderer::new(gpu, extent)
+        BladeRenderer::new(gpu, config)
     }
 
     struct RawWindow {
