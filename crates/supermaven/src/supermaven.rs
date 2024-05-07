@@ -130,8 +130,8 @@ impl Supermaven {
                     buffer_id,
                     prefix: content[..offset].to_string(),
                     range: cursor_position.bias_left(buffer)..cursor_position.bias_right(buffer),
-                    completion: Vec::new(),
                     text: String::new(),
+                    dedent: String::new(),
                     updates_tx,
                 },
             );
@@ -157,7 +157,7 @@ impl Supermaven {
         }
     }
 
-    pub fn completion(&self, text_before_cursor: &str) -> Option<String> {
+    pub fn completion(&self, text_before_cursor: &str) -> Option<&str> {
         if let Self::Spawned(agent) = self {
             find_relevant_completion(&agent.states, text_before_cursor)
         } else {
@@ -166,21 +166,18 @@ impl Supermaven {
     }
 }
 
-fn find_relevant_completion(
-    states: &BTreeMap<SupermavenCompletionStateId, SupermavenCompletionState>,
+fn find_relevant_completion<'a>(
+    states: &'a BTreeMap<SupermavenCompletionStateId, SupermavenCompletionState>,
     text_before_cursor: &str,
-) -> Option<String> {
-    let mut best_completion: Option<String> = None;
+) -> Option<&'a str> {
+    let mut best_completion: Option<&str> = None;
     for (_key, state) in states {
         if !text_before_cursor.starts_with(&state.prefix) {
             continue;
         }
-
-        let state_completion: String = match concat_items_to_string(&state.completion) {
-            None => continue,
-            Some(s) => s,
+        let Some(state_completion) = state.text.strip_prefix(&state.dedent) else {
+            continue;
         };
-
         let delta = &text_before_cursor[state.prefix.len()..];
         if !state_completion.starts_with(delta) {
             continue;
@@ -189,26 +186,10 @@ fn find_relevant_completion(
         if best_completion.is_none()
             || trimmed_completion.len() > best_completion.as_ref().unwrap().len()
         {
-            best_completion = Some(trimmed_completion.to_string());
+            best_completion = Some(trimmed_completion);
         }
     }
     best_completion
-}
-
-fn concat_items_to_string(items: &[ResponseItem]) -> Option<String> {
-    let mut out_text = String::new();
-    let mut dedent = String::new();
-    for item in items {
-        match item {
-            ResponseItem::Text { text } => out_text.push_str(text),
-            ResponseItem::Dedent { text } => dedent.push_str(text),
-            _ => (),
-        }
-    }
-    if !out_text.starts_with(&dedent) {
-        return None;
-    }
-    Some(out_text[dedent.len()..].to_string())
 }
 
 pub struct SupermavenAgent {
@@ -354,11 +335,12 @@ impl SupermavenAgent {
                 let state_id = SupermavenCompletionStateId(response.state_id.parse().unwrap());
                 if let Some(state) = self.states.get_mut(&state_id) {
                     for item in &response.items {
-                        if let ResponseItem::Text { text } = item {
-                            state.text.push_str(text);
+                        match item {
+                            ResponseItem::Text { text } => state.text.push_str(text),
+                            ResponseItem::Dedent { text } => state.dedent.push_str(text),
+                            _ => {}
                         }
                     }
-                    state.completion.extend(response.items);
                     *state.updates_tx.borrow_mut() = ();
                 }
             }
@@ -378,8 +360,8 @@ pub struct SupermavenCompletionState {
     buffer_id: EntityId,
     range: Range<Anchor>,
     prefix: String,
-    completion: Vec<ResponseItem>,
     text: String,
+    dedent: String,
     updates_tx: watch::Sender<()>,
 }
 

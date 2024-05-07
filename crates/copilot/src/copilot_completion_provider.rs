@@ -215,12 +215,12 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         }
     }
 
-    fn active_completion_text(
-        &self,
+    fn active_completion_text<'a>(
+        &'a self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
-        cx: &AppContext,
-    ) -> Option<String> {
+        cx: &'a AppContext,
+    ) -> Option<&'a str> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let completion = self.active_completion()?;
@@ -250,7 +250,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             if completion_text.trim().is_empty() {
                 None
             } else {
-                Some(completion_text.to_string())
+                Some(completion_text)
             }
         } else {
             None
