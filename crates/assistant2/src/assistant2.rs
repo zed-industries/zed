@@ -135,13 +135,14 @@ impl AssistantPanel {
                     .context("failed to register CreateBufferTool")
                     .log_err();
 
-                let mut attachment_store = AttachmentRegistry::new();
-                attachment_store.register(ActiveEditorAttachmentTool::new(workspace.clone(), cx));
+                let mut attachment_registry = AttachmentRegistry::new();
+                attachment_registry
+                    .register(ActiveEditorAttachmentTool::new(workspace.clone(), cx));
 
                 Self::new(
                     app_state.languages.clone(),
                     Arc::new(tool_registry),
-                    Arc::new(attachment_store),
+                    Arc::new(attachment_registry),
                     app_state.user_store.clone(),
                     project_index,
                     workspace,
@@ -154,7 +155,7 @@ impl AssistantPanel {
     pub fn new(
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
-        attachment_store: Arc<AttachmentRegistry>,
+        attachment_registry: Arc<AttachmentRegistry>,
         user_store: Model<UserStore>,
         project_index: Model<ProjectIndex>,
         workspace: WeakView<Workspace>,
@@ -164,7 +165,7 @@ impl AssistantPanel {
             AssistantChat::new(
                 language_registry,
                 tool_registry.clone(),
-                attachment_store,
+                attachment_registry,
                 user_store,
                 project_index,
                 workspace,
@@ -394,8 +395,8 @@ impl AssistantChat {
         let mode = *mode;
         self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
             let attachments_task = this.update(&mut cx, |this, cx| {
-                let attachment_store = this.attachment_registry.clone();
-                attachment_store.call_all_attachment_tools(cx)
+                let attachment_registry = this.attachment_registry.clone();
+                attachment_registry.call_all_attachment_tools(cx)
             });
 
             let attachments = maybe!(async {
