@@ -150,12 +150,22 @@ impl<P: LinuxClient + 'static> Platform for P {
             }
         };
 
-        // script to wait for the current process to exit  and then restart the app
+        log::info!("Restarting process, using app path: {:?}", app_path);
+
+        // Script to wait for the current process to exit and then restart the app.
+        // We also wait for possibly open TCP sockets by the process to be closed,
+        // since on Linux it's not guaranteed that a process' resources have been
+        // cleaned up when `kill -0` returns.
         let script = format!(
             r#"
             while kill -O {pid} 2>/dev/null; do
                 sleep 0.1
             done
+
+            while lsof -nP -iTCP -a -p {pid} 2>/dev/null; do
+                sleep 0.1
+            done
+
             {app_path}
             "#,
             pid = app_pid,
