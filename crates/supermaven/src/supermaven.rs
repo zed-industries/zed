@@ -128,6 +128,7 @@ impl Supermaven {
                 state_id,
                 SupermavenCompletionState {
                     buffer_id,
+                    prefix: content[..offset].to_string(),
                     range: cursor_position.bias_left(buffer)..cursor_position.bias_right(buffer),
                     completion: Vec::new(),
                     text: String::new(),
@@ -156,16 +157,47 @@ impl Supermaven {
         }
     }
 
-    pub fn completion(
-        &self,
-        id: SupermavenCompletionStateId,
-    ) -> Option<&SupermavenCompletionState> {
+    pub fn completion(&self, text_before_cursor: &str) -> Option<String> {
         if let Self::Spawned(agent) = self {
-            agent.states.get(&id)
+            find_relevant_completion(&agent.states, text_before_cursor)
+            // agent.states.values().filter(|value| {
         } else {
             None
         }
     }
+}
+
+fn find_relevant_completion(
+    states: &BTreeMap<SupermavenCompletionStateId, SupermavenCompletionState>,
+    text_before_cursor: &str,
+) -> Option<String> {
+    let mut best_completion: Option<String> = None;
+    for (_key, state) in states {
+        if !text_before_cursor.starts_with(&state.prefix) {
+            continue;
+        }
+
+        let state_completion: String = state
+            .completion
+            .iter()
+            .filter_map(|item| match item {
+                ResponseItem::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+
+        let delta = &text_before_cursor[state.prefix.len()..];
+        if !state_completion.starts_with(delta) {
+            continue;
+        }
+        let trimmed_completion = &state_completion[delta.len()..];
+        if best_completion.is_none()
+            || trimmed_completion.len() > best_completion.as_ref().unwrap().len()
+        {
+            best_completion = Some(trimmed_completion.to_string());
+        }
+    }
+    best_completion
 }
 
 pub struct SupermavenAgent {
@@ -334,6 +366,7 @@ pub struct SupermavenCompletionStateId(usize);
 pub struct SupermavenCompletionState {
     buffer_id: EntityId,
     range: Range<Anchor>,
+    prefix: String,
     completion: Vec<ResponseItem>,
     text: String,
     updates_tx: watch::Sender<()>,
