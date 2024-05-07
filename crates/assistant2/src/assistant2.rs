@@ -579,9 +579,23 @@ impl AssistantChat {
     }
 
     fn push_new_assistant_message(&mut self, cx: &mut ViewContext<Self>) {
+        // If the last message is a grouped assistant message, add to the grouped message
+        if let Some(ChatMessage::Assistant(GroupedAssistantMessage { messages, .. })) =
+            self.messages.last_mut()
+        {
+            messages.push(AssistantMessage {
+                body: RichText::default(),
+                tool_calls: Vec::new(),
+            });
+            return;
+        }
+
         let message = ChatMessage::Assistant(GroupedAssistantMessage {
             id: self.next_message_id.post_inc(),
-            messages: Vec::new(),
+            messages: vec![AssistantMessage {
+                body: RichText::default(),
+                tool_calls: Vec::new(),
+            }],
             error: None,
         });
         self.push_message(message, cx);
