@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use futures::Future;
 use gpui::{AppContext, AppMetadata, BackgroundExecutor, Task};
-use once_cell::sync::Lazy;
+use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
@@ -61,15 +61,18 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
-static ZED_CLIENT_CHECKSUM_SEED: Lazy<Option<Vec<u8>>> = Lazy::new(|| {
-    option_env!("ZED_CLIENT_CHECKSUM_SEED")
-        .map(|s| s.as_bytes().into())
-        .or_else(|| {
-            env::var("ZED_CLIENT_CHECKSUM_SEED")
-                .ok()
-                .map(|s| s.as_bytes().into())
-        })
-});
+
+lazy_static! {
+    static ref ZED_CLIENT_CHECKSUM_SEED: Option<Vec<u8>> = {
+        option_env!("ZED_CLIENT_CHECKSUM_SEED")
+            .map(|s| s.as_bytes().into())
+            .or_else(|| {
+                env::var("ZED_CLIENT_CHECKSUM_SEED")
+                    .ok()
+                    .map(|s| s.as_bytes().into())
+            })
+    };
+}
 
 impl Telemetry {
     pub fn new(

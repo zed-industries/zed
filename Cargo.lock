@@ -2163,7 +2163,6 @@ dependencies = [
  "gpui",
  "lazy_static",
  "log",
- "once_cell",
  "parking_lot",
  "postage",
  "rand 0.8.5",
@@ -7986,7 +7985,7 @@ name = "release_channel"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "once_cell",
+ "lazy_static",
 ]
 
 [[package]]

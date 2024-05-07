@@ -33,7 +33,6 @@ async-tungstenite = { version = "0.16", features = ["async-std", "async-native-t
 futures.workspace = true
 lazy_static.workspace = true
 log.workspace = true
-once_cell = "1.19.0"
 parking_lot.workspace = true
 postage.workspace = true
 rand.workspace = true

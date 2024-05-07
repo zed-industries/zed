@@ -5,23 +5,23 @@
 use std::{env, str::FromStr};
 
 use gpui::{AppContext, Global, SemanticVersion};
-use once_cell::sync::Lazy;
+use lazy_static::lazy_static;
 
-static RELEASE_CHANNEL_NAME: Lazy<String> = if cfg!(debug_assertions) {
-    Lazy::new(|| {
+lazy_static! {
+    static ref RELEASE_CHANNEL_NAME: String = if cfg!(debug_assertions) {
         env::var("ZED_RELEASE_CHANNEL")
             .unwrap_or_else(|_| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())
-    })
-} else {
-    Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string())
-};
+    } else {
+        include_str!("../../zed/RELEASE_CHANNEL").trim().to_string()
+    };
 
-#[doc(hidden)]
-pub static RELEASE_CHANNEL: Lazy<ReleaseChannel> =
-    Lazy::new(|| match ReleaseChannel::from_str(&RELEASE_CHANNEL_NAME) {
-        Ok(channel) => channel,
-        _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
-    });
+    #[doc(hidden)]
+    pub static ref RELEASE_CHANNEL: ReleaseChannel =
+        match ReleaseChannel::from_str(&RELEASE_CHANNEL_NAME) {
+            Ok(channel) => channel,
+            _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
+        };
+}
 
 /// The Git commit SHA that Zed was built at.
 #[derive(Clone)]

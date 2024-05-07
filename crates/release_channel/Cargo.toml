@@ -10,4 +10,4 @@ workspace = true
 
 [dependencies]
 gpui.workspace = true
-once_cell = "1.19.0"
+lazy_static.workspace = true
