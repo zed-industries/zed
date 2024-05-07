@@ -1377,31 +1377,54 @@ impl EditorElement {
 
     fn layout_indent_guides(
         &self,
-        buffer_rows: impl Iterator<Item = Option<u32>>,
+        visible_range: Range<u32>,
+        buffer_rows: Vec<Option<u32>>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         text_hitbox: &Hitbox,
         snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
     ) -> Vec<IndentGuideLayout> {
-        let indent_guides = self
-            .editor
-            .read(cx)
-            .indent_guides_in_range(buffer_rows, snapshot, cx);
+        //TODO actually figure out how to get buffer lines instead of display lines (these include wrapping already - range is incorrect)
+        let visible_range = visible_range.start..visible_range.end.min(snapshot.max_buffer_row());
+
+        let indent_guides =
+            self.editor
+                .read(cx)
+                .indent_guides_in_range(visible_range.clone(), snapshot, cx);
 
         indent_guides
             .into_iter()
             .filter_map(|guide| {
                 let start_x = text_hitbox.origin.x + self.column_pixels(guide.size as usize, cx)
                     - scroll_pixel_position.x;
-
                 if start_x >= text_hitbox.origin.x {
-                    let start_y = text_hitbox.origin.y + guide.start as f32 * line_height
-                        - scroll_pixel_position.y;
-                    let absolute_offset = point(start_x, start_y);
+                    // Skip the first row, which is the row that the guide is on.
+                    let mut buffer_rows = buffer_rows.iter();
+                    let mut start_y = px(0.);
+                    while let Some(next) = buffer_rows.next() {
+                        if let Some(next_row) = next {
+                            if next_row >= &guide.start {
+                                break;
+                            }
+                        }
+                        start_y += line_height;
+                    }
+                    let mut length = line_height;
+                    while let Some(next) = buffer_rows.next() {
+                        if let Some(next_row) = next {
+                            if next_row > &guide.end {
+                                break;
+                            }
+                        }
+                        length += line_height;
+                    }
+
+                    let start_y =
+                        text_hitbox.origin.y + start_y - (scroll_pixel_position.y % line_height);
                     Some(IndentGuideLayout {
-                        origin: absolute_offset,
-                        length: line_height * (guide.end as f32 - guide.start as f32 + 1.),
+                        origin: point(start_x, start_y),
+                        length,
                         active: guide.active,
                     })
                 } else {
@@ -3945,6 +3968,16 @@ impl Element for EditorElement {
                     scroll_position.y * line_height,
                 );
 
+                let indent_guides = self.layout_indent_guides(
+                    start_row..end_row,
+                    buffer_rows.clone().collect(),
+                    scroll_pixel_position,
+                    line_height,
+                    &text_hitbox,
+                    &snapshot,
+                    cx,
+                );
+
                 let mut inline_blame = None;
                 if let Some(newest_selection_head) = newest_selection_head {
                     let display_row = newest_selection_head.row();
@@ -3964,21 +3997,12 @@ impl Element for EditorElement {
                 }
 
                 let blamed_display_rows = self.layout_blame_entries(
-                    buffer_rows.clone(),
+                    buffer_rows,
                     em_width,
                     scroll_position,
                     line_height,
                     &gutter_hitbox,
                     gutter_dimensions.git_blame_entries_width,
-                    cx,
-                );
-
-                let indent_guides = self.layout_indent_guides(
-                    buffer_rows,
-                    scroll_pixel_position,
-                    line_height,
-                    &text_hitbox,
-                    &snapshot,
                     cx,
                 );
 

@@ -10018,7 +10018,7 @@ impl Editor {
 
     fn indent_guides_in_range(
         &self,
-        buffer_rows: impl Iterator<Item = Option<u32>>,
+        visible_range: Range<u32>,
         snapshot: &DisplaySnapshot,
         cx: &WindowContext,
     ) -> Vec<IndentGuide> {
@@ -10032,11 +10032,9 @@ impl Editor {
             language::language_settings::language_settings(language.as_ref(), None, cx).tab_size
         }
 
-        let indents: Vec<_> = buffer_rows.filter_map(|row| row).collect();
-
         let mut result_vec = vec![];
         let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
-        let mut visible_rows = indents.into_iter();
+        let mut visible_rows = visible_range.into_iter();
 
         // let excerpt_boundaries = snapshot.buffer_snapshot.excerpt_boundaries_in_range(range);
         // How to flush the stack:
