@@ -26,22 +26,18 @@ use windows::{
 use crate::{PlatformDispatcher, TaskLabel};
 
 macro_rules! generate_handler {
-    ($handler_type: tt, $runnable: ident, true) => {{
-        let runnable = $runnable;
-        let task_wrapper = TaskWrapper(runnable.into_raw().as_ptr() as *mut c_void);
-        $handler_type::new(move |_| {
-            let task = unsafe {
-                let captured = task_wrapper;
-                Runnable::<()>::from_raw(std::ptr::NonNull::new_unchecked(captured.0 as *mut ()))
+    ($handler_type: tt, $runnable: ident, $has_param: ident) => {{
+        macro_rules! generate_func {
+            (true, $function: block) => {
+                $handler_type::new(move |_| $function)
             };
-            task.run();
-            Ok(())
-        })
-    }};
-    ($handler_type: tt, $runnable: ident, false) => {{
+            (false, $function: block) => {
+                $handler_type::new(move || $function)
+            };
+        }
         let runnable = $runnable;
         let task_wrapper = TaskWrapper(runnable.into_raw().as_ptr() as *mut c_void);
-        $handler_type::new(move || {
+        generate_func!($has_param, {
             let task = unsafe {
                 let captured = task_wrapper;
                 Runnable::<()>::from_raw(std::ptr::NonNull::new_unchecked(captured.0 as *mut ()))
