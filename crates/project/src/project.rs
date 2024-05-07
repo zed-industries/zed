@@ -308,6 +308,7 @@ pub enum Event {
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded,
+    WorktreesSorted,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories,
@@ -7049,6 +7050,23 @@ impl Project {
                     .await
             }
         })
+    }
+
+    pub fn sort_local_worktrees(&mut self, cx: &mut ModelContext<Self>) {
+        self.worktrees
+            .sort_unstable_by(|a, b| match (a.upgrade(), b.upgrade()) {
+                (Some(a), Some(b)) => {
+                    let a = a.read(cx).abs_path();
+                    let b = b.read(cx).abs_path();
+                    a.cmp(&b)
+                }
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => Ordering::Equal,
+            });
+
+        cx.emit(Event::WorktreesSorted);
+        self.metadata_changed(cx);
     }
 
     pub fn find_or_create_local_worktree(

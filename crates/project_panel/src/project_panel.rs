@@ -209,7 +209,9 @@ impl ProjectPanel {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
-                project::Event::WorktreeUpdatedEntries(_, _) | project::Event::WorktreeAdded => {
+                project::Event::WorktreeUpdatedEntries(_, _)
+                | project::Event::WorktreeAdded
+                | project::Event::WorktreesSorted => {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
