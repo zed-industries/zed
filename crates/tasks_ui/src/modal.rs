@@ -11,9 +11,10 @@ use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelega
 use project::{Inventory, TaskSourceKind};
 use task::{ResolvedTask, TaskContext, TaskTemplate};
 use ui::{
-    div, v_flex, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon, IconButton,
-    IconButtonShape, IconName, IconSize, ListItem, ListItemSpacing, RenderOnce, Selectable,
-    Tooltip, WindowContext,
+    div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
+    FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
+    KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Selectable, Tooltip,
+    WindowContext,
 };
 use util::ResultExt;
 use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
@@ -87,7 +88,7 @@ impl TasksModalDelegate {
             selected_index: 0,
             prompt: String::default(),
             task_context,
-            placeholder_text: Arc::from("Run a task..."),
+            placeholder_text: Arc::from("Find a task, or run a command"),
         }
     }
 
@@ -428,6 +429,57 @@ impl PickerDelegate for TasksModalDelegate {
         } else {
             Vec::new()
         }
+    }
+    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+        let is_recent_selected = self.divider_index >= Some(self.selected_index);
+        let current_modifiers = cx.modifiers();
+        Some(
+            h_flex()
+                .w_full()
+                .h_8()
+                .p_2()
+                .justify_between()
+                .rounded_b_md()
+                .bg(cx.theme().colors().ghost_element_selected)
+                .children(
+                    KeyBinding::for_action(&picker::UseSelectedQuery, cx).map(|keybind| {
+                        let edit_entry_label = if is_recent_selected {
+                            "Edit task"
+                        } else {
+                            "Edit template"
+                        };
+                        h_flex()
+                            .child(
+                                Button::new("edit-current-task", edit_entry_label)
+                                    .label_size(LabelSize::Small),
+                            )
+                            .child(keybind)
+                    }),
+                )
+                .when(!current_modifiers.secondary(), |this| {
+                    this.children(KeyBinding::for_action(&menu::Confirm, cx).map(|keybind| {
+                        let run_entry_label = if is_recent_selected { "Rerun" } else { "Spawn" };
+                        h_flex()
+                            .child(
+                                Button::new("spawn", run_entry_label).label_size(LabelSize::Small),
+                            )
+                            .child(keybind)
+                    }))
+                })
+                .when(current_modifiers.secondary(), |this| {
+                    this.children(KeyBinding::for_action(&menu::SecondaryConfirm, cx).map(
+                        |keybind| {
+                            h_flex()
+                                .child(
+                                    Button::new("spawn", "Run without history")
+                                        .label_size(LabelSize::Small),
+                                )
+                                .child(keybind)
+                        },
+                    ))
+                })
+                .into_any_element(),
+        )
     }
 }
 
