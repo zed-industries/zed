@@ -16,6 +16,7 @@ use crate::parser::CodeBlockKind;
 #[derive(Clone)]
 pub struct MarkdownStyle {
     pub code: TextStyleRefinement,
+    pub code_background_color: Hsla,
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
     pub rule_color: Hsla,
@@ -162,7 +163,7 @@ impl Element for MarkdownElement {
                         builder.push_div(div().line_height(rems(1.3)));
                     }
                     MarkdownTag::Heading { level, .. } => {
-                        let mut heading = div().font_weight(FontWeight::BOLD).mt_2();
+                        let mut heading = div().mt_2();
                         heading = match level {
                             pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
                             pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
@@ -173,11 +174,11 @@ impl Element for MarkdownElement {
                         builder.push_div(heading);
                     }
                     MarkdownTag::BlockQuote => {
-                        // todo!("use the right color")
                         builder.push_text_style(self.style.block_quote.clone());
                         builder.push_div(
                             div()
                                 .pl_4()
+                                .my_2()
                                 .border_l_4()
                                 .border_color(self.style.block_quote_border_color),
                         );
@@ -195,7 +196,13 @@ impl Element for MarkdownElement {
 
                         builder.push_code_block(language);
                         builder.push_text_style(self.style.code.clone());
-                        builder.push_div(div().p_4().w_full());
+                        builder.push_div(
+                            div()
+                                .p_4()
+                                .my_2()
+                                .w_full()
+                                .bg(self.style.code_background_color),
+                        );
                     }
                     MarkdownTag::HtmlBlock => builder.push_div(div()),
                     MarkdownTag::List(number) => {
@@ -271,7 +278,12 @@ impl Element for MarkdownElement {
                     builder.push_text(&self.markdown.text[range.clone()]);
                 }
                 MarkdownEvent::Code(range) => {
+                    builder.push_text_style(TextStyleRefinement {
+                        background_color: Some(self.style.code_background_color),
+                        ..self.style.code.clone()
+                    });
                     builder.push_text(&self.markdown.text[range.clone()]);
+                    builder.pop_text_style();
                 }
                 MarkdownEvent::Html(range) => {
                     builder.push_text(&self.markdown.text[range.clone()]);

@@ -10,7 +10,7 @@ pub fn parse_markdown(text: &str) -> Vec<MarkdownEvent> {
             pulldown_cmark::Event::Start(tag) => MarkdownEvent::Start(tag.into()),
             pulldown_cmark::Event::End(tag) => MarkdownEvent::End(MarkdownTagEnd::from(tag)),
             pulldown_cmark::Event::Text(_) => MarkdownEvent::Text(range),
-            pulldown_cmark::Event::Code(_) => MarkdownEvent::Code(range),
+            pulldown_cmark::Event::Code(_) => MarkdownEvent::Code(range.start + 1..range.end - 1),
             pulldown_cmark::Event::Html(_) => MarkdownEvent::Html(range),
             pulldown_cmark::Event::InlineHtml(_) => MarkdownEvent::InlineHtml(range),
             pulldown_cmark::Event::FootnoteReference(_) => MarkdownEvent::FootnoteReference(range),

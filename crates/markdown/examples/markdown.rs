@@ -110,8 +110,10 @@ pub fn main() {
                     MarkdownStyle {
                         code: gpui::TextStyleRefinement {
                             font_family: Some("Zed Mono".into()),
+                            color: Some(cx.theme().colors().editor_foreground),
                             ..Default::default()
                         },
+                        code_background_color: cx.theme().colors().editor_background,
                         rule_color: Color::Muted.color(cx),
                         block_quote_border_color: Color::Muted.color(cx),
                         block_quote: gpui::TextStyleRefinement {
