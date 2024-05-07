@@ -745,9 +745,7 @@ fn handle_dpi_changed_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let new_dpi = wparam.loword() as f32;
-    let mut lock = state_ptr.state.borrow_mut();
-    lock.scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
-    drop(lock);
+    state_ptr.state.borrow_mut().scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
 
     let rect = unsafe { &*(lparam.0 as *const RECT) };
     let width = rect.right - rect.left;
@@ -982,8 +980,7 @@ fn handle_nc_mouse_up_msg(
 }
 
 fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    lock.current_cursor = HCURSOR(lparam.0);
+    state_ptr.state.borrow_mut().current_cursor = HCURSOR(lparam.0);
     Some(0)
 }
 
@@ -994,9 +991,7 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     ) {
         return None;
     }
-
-    let lock = state_ptr.state.borrow();
-    unsafe { SetCursor(lock.current_cursor) };
+    unsafe { SetCursor(state_ptr.state.borrow().current_cursor) };
     Some(1)
 }
 
@@ -1005,13 +1000,23 @@ fn handle_mouse_wheel_settings_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
     match lparam.0 {
-        1 => lock.mouse_wheel_settings.wheel_scroll_chars = wparam.0 as u32,
-        2 => lock.mouse_wheel_settings.wheel_scroll_lines = wparam.0 as u32,
+        1 => {
+            state_ptr
+                .state
+                .borrow_mut()
+                .mouse_wheel_settings
+                .wheel_scroll_chars = wparam.0 as u32
+        }
+        2 => {
+            state_ptr
+                .state
+                .borrow_mut()
+                .mouse_wheel_settings
+                .wheel_scroll_lines = wparam.0 as u32
+        }
         _ => unreachable!(),
     }
-    drop(lock);
     Some(0)
 }
 
