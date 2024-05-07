@@ -114,7 +114,7 @@ fn trim_to_end_of_line_unless_leading_newline(text: &str) -> &str {
     if has_leading_newline(&text) {
         text
     } else if let Some(i) = text.find('\n') {
-        &text[i..]
+        &text[..i]
     } else {
         text
     }
