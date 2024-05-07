@@ -11,7 +11,7 @@ use ui::{popover_menu, prelude::*, ButtonLike, ContextMenu, Divider, TextSize, T
 #[derive(IntoElement)]
 pub struct Composer {
     editor: View<Editor>,
-    project_index_button: Option<View<ProjectIndexButton>>,
+    project_index_button: View<ProjectIndexButton>,
     active_file_button: Option<View<ActiveFileButton>>,
     model_selector: AnyElement,
 }
@@ -19,7 +19,7 @@ pub struct Composer {
 impl Composer {
     pub fn new(
         editor: View<Editor>,
-        project_index_button: Option<View<ProjectIndexButton>>,
+        project_index_button: View<ProjectIndexButton>,
         active_file_button: Option<View<ActiveFileButton>>,
         model_selector: AnyElement,
     ) -> Self {
@@ -32,11 +32,7 @@ impl Composer {
     }
 
     fn render_tools(&mut self, _cx: &mut WindowContext) -> impl IntoElement {
-        h_flex().children(
-            self.project_index_button
-                .clone()
-                .map(|view| view.into_any_element()),
-        )
+        h_flex().child(self.project_index_button.clone())
     }
 
     fn render_attachment_tools(&mut self, _cx: &mut WindowContext) -> impl IntoElement {

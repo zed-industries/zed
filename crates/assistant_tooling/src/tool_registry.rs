@@ -1,54 +1,115 @@
 use anyhow::{anyhow, Result};
-use gpui::{div, AnyElement, IntoElement as _, ParentElement, Styled, Task, WindowContext};
+use gpui::{
+    div, AnyElement, AnyView, IntoElement, ParentElement, Render, Styled, Task, View, WindowContext,
+};
+use schemars::{schema::RootSchema, schema_for, JsonSchema};
+use serde::Deserialize;
 use std::{
     any::TypeId,
     collections::HashMap,
+    fmt::Display,
     sync::atomic::{AtomicBool, Ordering::SeqCst},
 };
 
-use crate::tool::{
-    LanguageModelTool, ToolFunctionCall, ToolFunctionCallResult, ToolFunctionDefinition,
-};
+use crate::ProjectContext;
 
-// Internal Tool representation for the registry
-pub struct Tool {
-    enabled: AtomicBool,
-    type_id: TypeId,
-    call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
-    render_running: Box<dyn Fn(&mut WindowContext) -> gpui::AnyElement>,
-    definition: ToolFunctionDefinition,
+pub struct ToolRegistry {
+    registered_tools: HashMap<String, RegisteredTool>,
 }
 
-impl Tool {
-    fn new(
-        type_id: TypeId,
-        call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
-        render_running: Box<dyn Fn(&mut WindowContext) -> gpui::AnyElement>,
-        definition: ToolFunctionDefinition,
-    ) -> Self {
-        Self {
-            enabled: AtomicBool::new(true),
-            type_id,
-            call,
-            render_running,
-            definition,
+#[derive(Default, Deserialize)]
+pub struct ToolFunctionCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+    #[serde(skip)]
+    pub result: Option<ToolFunctionCallResult>,
+}
+
+pub enum ToolFunctionCallResult {
+    NoSuchTool,
+    ParsingFailed,
+    Finished {
+        view: AnyView,
+        generate_fn: fn(AnyView, &mut ProjectContext, &mut WindowContext) -> String,
+    },
+}
+
+#[derive(Clone)]
+pub struct ToolFunctionDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: RootSchema,
+}
+
+pub trait LanguageModelTool {
+    /// The input type that will be passed in to `execute` when the tool is called
+    /// by the language model.
+    type Input: for<'de> Deserialize<'de> + JsonSchema;
+
+    /// The output returned by executing the tool.
+    type Output: 'static;
+
+    type View: Render + ToolOutput;
+
+    /// Returns the name of the tool.
+    ///
+    /// This name is exposed to the language model to allow the model to pick
+    /// which tools to use. As this name is used to identify the tool within a
+    /// tool registry, it should be unique.
+    fn name(&self) -> String;
+
+    /// Returns the description of the tool.
+    ///
+    /// This can be used to _prompt_ the model as to what the tool does.
+    fn description(&self) -> String;
+
+    /// Returns the OpenAI Function definition for the tool, for direct use with OpenAI's API.
+    fn definition(&self) -> ToolFunctionDefinition {
+        let root_schema = schema_for!(Self::Input);
+
+        ToolFunctionDefinition {
+            name: self.name(),
+            description: self.description(),
+            parameters: root_schema,
         }
+    }
+
+    /// Executes the tool with the given input.
+    fn execute(&self, input: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>>;
+
+    fn output_view(
+        input: Self::Input,
+        output: Result<Self::Output>,
+        cx: &mut WindowContext,
+    ) -> View<Self::View>;
+
+    fn render_running(_cx: &mut WindowContext) -> impl IntoElement {
+        div()
     }
 }
 
-pub struct ToolRegistry {
-    tools: HashMap<String, Tool>,
+pub trait ToolOutput: Sized {
+    fn generate(&self, project: &mut ProjectContext, cx: &mut WindowContext) -> String;
+}
+
+struct RegisteredTool {
+    enabled: AtomicBool,
+    type_id: TypeId,
+    call: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
+    render_running: fn(&mut WindowContext) -> gpui::AnyElement,
+    definition: ToolFunctionDefinition,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
-            tools: HashMap::new(),
+            registered_tools: HashMap::new(),
         }
     }
 
     pub fn set_tool_enabled<T: 'static + LanguageModelTool>(&self, is_enabled: bool) {
-        for tool in self.tools.values() {
+        for tool in self.registered_tools.values() {
             if tool.type_id == TypeId::of::<T>() {
                 tool.enabled.store(is_enabled, SeqCst);
                 return;
@@ -57,7 +118,7 @@ impl ToolRegistry {
     }
 
     pub fn is_tool_enabled<T: 'static + LanguageModelTool>(&self) -> bool {
-        for tool in self.tools.values() {
+        for tool in self.registered_tools.values() {
             if tool.type_id == TypeId::of::<T>() {
                 return tool.enabled.load(SeqCst);
             }
@@ -66,7 +127,7 @@ impl ToolRegistry {
     }
 
     pub fn definitions(&self) -> Vec<ToolFunctionDefinition> {
-        self.tools
+        self.registered_tools
             .values()
             .filter(|tool| tool.enabled.load(SeqCst))
             .map(|tool| tool.definition.clone())
@@ -84,7 +145,7 @@ impl ToolRegistry {
                 .child(result.into_any_element(&tool_call.name))
                 .into_any_element(),
             None => self
-                .tools
+                .registered_tools
                 .get(&tool_call.name)
                 .map(|tool| (tool.render_running)(cx))
                 .unwrap_or_else(|| div().into_any_element()),
@@ -96,13 +157,12 @@ impl ToolRegistry {
         tool: T,
         _cx: &mut WindowContext,
     ) -> Result<()> {
-        let definition = tool.definition();
-
         let name = tool.name();
-
-        let registered_tool = Tool::new(
-            TypeId::of::<T>(),
-            Box::new(
+        let registered_tool = RegisteredTool {
+            type_id: TypeId::of::<T>(),
+            definition: tool.definition(),
+            enabled: AtomicBool::new(true),
+            call: Box::new(
                 move |tool_call: &ToolFunctionCall, cx: &mut WindowContext| {
                     let name = tool_call.name.clone();
                     let arguments = tool_call.arguments.clone();
@@ -121,8 +181,7 @@ impl ToolRegistry {
 
                     cx.spawn(move |mut cx| async move {
                         let result: Result<T::Output> = result.await;
-                        let for_model = T::format(&input, &result);
-                        let view = cx.update(|cx| T::output_view(id.clone(), input, result, cx))?;
+                        let view = cx.update(|cx| T::output_view(input, result, cx))?;
 
                         Ok(ToolFunctionCall {
                             id,
@@ -130,23 +189,35 @@ impl ToolRegistry {
                             arguments,
                             result: Some(ToolFunctionCallResult::Finished {
                                 view: view.into(),
-                                for_model,
+                                generate_fn: generate::<T>,
                             }),
                         })
                     })
                 },
             ),
-            Box::new(|cx| T::render_running(cx).into_any_element()),
-            definition,
-        );
+            render_running: render_running::<T>,
+        };
 
-        let previous = self.tools.insert(name.clone(), registered_tool);
-
+        let previous = self.registered_tools.insert(name.clone(), registered_tool);
         if previous.is_some() {
             return Err(anyhow!("already registered a tool with name {}", name));
         }
 
-        Ok(())
+        return Ok(());
+
+        fn render_running<T: LanguageModelTool>(cx: &mut WindowContext) -> AnyElement {
+            T::render_running(cx).into_any_element()
+        }
+
+        fn generate<T: LanguageModelTool>(
+            view: AnyView,
+            project: &mut ProjectContext,
+            cx: &mut WindowContext,
+        ) -> String {
+            view.downcast::<T::View>()
+                .unwrap()
+                .update(cx, |view, cx| T::View::generate(view, project, cx))
+        }
     }
 
     /// Task yields an error if the window for the given WindowContext is closed before the task completes.
@@ -159,7 +230,7 @@ impl ToolRegistry {
         let arguments = tool_call.arguments.clone();
         let id = tool_call.id.clone();
 
-        let tool = match self.tools.get(&name) {
+        let tool = match self.registered_tools.get(&name) {
             Some(tool) => tool,
             None => {
                 let name = name.clone();
@@ -173,6 +244,47 @@ impl ToolRegistry {
         };
 
         (tool.call)(tool_call, cx)
+    }
+}
+
+impl ToolFunctionCallResult {
+    pub fn generate(
+        &self,
+        name: &String,
+        project: &mut ProjectContext,
+        cx: &mut WindowContext,
+    ) -> String {
+        match self {
+            ToolFunctionCallResult::NoSuchTool => format!("No tool for {name}"),
+            ToolFunctionCallResult::ParsingFailed => {
+                format!("Unable to parse arguments for {name}")
+            }
+            ToolFunctionCallResult::Finished { generate_fn, view } => {
+                (generate_fn)(view.clone(), project, cx)
+            }
+        }
+    }
+
+    fn into_any_element(&self, name: &String) -> AnyElement {
+        match self {
+            ToolFunctionCallResult::NoSuchTool => {
+                format!("Language Model attempted to call {name}").into_any_element()
+            }
+            ToolFunctionCallResult::ParsingFailed => {
+                format!("Language Model called {name} with bad arguments").into_any_element()
+            }
+            ToolFunctionCallResult::Finished { view, .. } => view.clone().into_any_element(),
+        }
+    }
+}
+
+impl Display for ToolFunctionDefinition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let schema = serde_json::to_string(&self.parameters).ok();
+        let schema = schema.unwrap_or("None".to_string());
+        write!(f, "Name: {}:\n", self.name)?;
+        write!(f, "Description: {}\n", self.description)?;
+        write!(f, "Parameters: {}", schema)
     }
 }
 
@@ -213,6 +325,12 @@ mod test {
         }
     }
 
+    impl ToolOutput for WeatherView {
+        fn generate(&self, _output: &mut ProjectContext, _cx: &mut WindowContext) -> String {
+            serde_json::to_string(&self.result).unwrap()
+        }
+    }
+
     impl LanguageModelTool for WeatherTool {
         type Input = WeatherQuery;
         type Output = WeatherResult;
@@ -240,7 +358,6 @@ mod test {
         }
 
         fn output_view(
-            _tool_call_id: String,
             _input: Self::Input,
             result: Result<Self::Output>,
             cx: &mut WindowContext,
@@ -249,10 +366,6 @@ mod test {
                 let result = result.unwrap();
                 WeatherView { result }
             })
-        }
-
-        fn format(_: &Self::Input, output: &Result<Self::Output>) -> String {
-            serde_json::to_string(&output.as_ref().unwrap()).unwrap()
         }
     }
 

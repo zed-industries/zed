@@ -1,4 +1,5 @@
-use crate::attachments::{ActiveEditorAttachmentTool, UserAttachmentStore};
+use crate::attachments::ActiveEditorAttachmentTool;
+use assistant_tooling::AttachmentRegistry;
 use editor::Editor;
 use gpui::{prelude::*, Subscription, View};
 use std::sync::Arc;
@@ -13,7 +14,7 @@ enum Status {
 }
 
 pub struct ActiveFileButton {
-    attachment_store: Arc<UserAttachmentStore>,
+    attachment_registry: Arc<AttachmentRegistry>,
     status: Status,
     #[allow(dead_code)]
     workspace_subscription: Subscription,
@@ -21,7 +22,7 @@ pub struct ActiveFileButton {
 
 impl ActiveFileButton {
     pub fn new(
-        attachment_store: Arc<UserAttachmentStore>,
+        attachment_store: Arc<AttachmentRegistry>,
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -30,14 +31,14 @@ impl ActiveFileButton {
         cx.defer(move |this, cx| this.update_active_buffer(workspace.clone(), cx));
 
         Self {
-            attachment_store,
+            attachment_registry: attachment_store,
             status: Status::NoFile,
             workspace_subscription,
         }
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
-        self.attachment_store
+        self.attachment_registry
             .set_attachment_tool_enabled::<ActiveEditorAttachmentTool>(enabled);
     }
 
@@ -79,7 +80,7 @@ impl ActiveFileButton {
 impl Render for ActiveFileButton {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_enabled = self
-            .attachment_store
+            .attachment_registry
             .is_attachment_tool_enabled::<ActiveEditorAttachmentTool>();
 
         let icon = if is_enabled {

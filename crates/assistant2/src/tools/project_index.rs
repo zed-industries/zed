@@ -1,25 +1,18 @@
 use anyhow::Result;
-use assistant_tooling::LanguageModelTool;
+use assistant_tooling::{LanguageModelTool, ToolOutput};
+use collections::BTreeMap;
 use gpui::{prelude::*, Model, Task};
-use project::Fs;
+use project::ProjectPath;
 use schemars::JsonSchema;
 use semantic_index::{ProjectIndex, Status};
 use serde::Deserialize;
-use std::{collections::HashSet, sync::Arc};
-
-use ui::{
-    div, prelude::*, CollapsibleContainer, Color, Icon, IconName, Label, SharedString,
-    WindowContext,
-};
-use util::ResultExt as _;
+use std::{fmt::Write as _, ops::Range};
+use ui::{div, prelude::*, CollapsibleContainer, Color, Icon, IconName, Label, WindowContext};
 
 const DEFAULT_SEARCH_LIMIT: usize = 20;
 
-#[derive(Clone)]
-pub struct CodebaseExcerpt {
-    path: SharedString,
-    text: SharedString,
-    score: f32,
+pub struct ProjectIndexTool {
+    project_index: Model<ProjectIndex>,
 }
 
 // Note: Comments on a `LanguageModelTool::Input` become descriptions on the generated JSON schema as shown to the language model.
@@ -38,6 +31,11 @@ pub struct ProjectIndexView {
     output: Result<ProjectIndexOutput>,
     element_id: ElementId,
     expanded_header: bool,
+}
+
+pub struct ProjectIndexOutput {
+    status: Status,
+    excerpts: BTreeMap<ProjectPath, Vec<Range<usize>>>,
 }
 
 impl ProjectIndexView {
@@ -71,19 +69,15 @@ impl Render for ProjectIndexView {
             Ok(output) => output,
         };
 
-        let num_files_searched = output.files_searched.len();
+        let file_count = output.excerpts.len();
 
         let header = h_flex()
             .gap_2()
             .child(Icon::new(IconName::File))
             .child(format!(
                 "Read {} {}",
-                num_files_searched,
-                if num_files_searched == 1 {
-                    "file"
-                } else {
-                    "files"
-                }
+                file_count,
+                if file_count == 1 { "file" } else { "files" }
             ));
 
         v_flex().gap_3().child(
@@ -102,36 +96,50 @@ impl Render for ProjectIndexView {
                                 .child(Icon::new(IconName::MagnifyingGlass))
                                 .child(Label::new(format!("`{}`", query)).color(Color::Muted)),
                         )
-                        .child(v_flex().gap_2().children(output.files_searched.iter().map(
-                            |path| {
-                                h_flex()
-                                    .gap_2()
-                                    .child(Icon::new(IconName::File))
-                                    .child(Label::new(path.clone()).color(Color::Muted))
-                            },
-                        ))),
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .children(output.excerpts.keys().map(|path| {
+                                    h_flex().gap_2().child(Icon::new(IconName::File)).child(
+                                        Label::new(path.path.to_string_lossy().to_string())
+                                            .color(Color::Muted),
+                                    )
+                                })),
+                        ),
                 ),
         )
     }
 }
 
-pub struct ProjectIndexTool {
-    project_index: Model<ProjectIndex>,
-    fs: Arc<dyn Fs>,
-}
+impl ToolOutput for ProjectIndexView {
+    fn generate(
+        &self,
+        context: &mut assistant_tooling::ProjectContext,
+        _: &mut WindowContext,
+    ) -> String {
+        match &self.output {
+            Ok(output) => {
+                let mut body = "found results in the following paths:\n".to_string();
 
-pub struct ProjectIndexOutput {
-    excerpts: Vec<CodebaseExcerpt>,
-    status: Status,
-    files_searched: HashSet<SharedString>,
+                for (project_path, ranges) in &output.excerpts {
+                    context.add_excerpts(project_path.clone(), ranges);
+                    writeln!(&mut body, "* {}", &project_path.path.display()).unwrap();
+                }
+
+                if output.status != Status::Idle {
+                    body.push_str("Still indexing. Results may be incomplete.\n");
+                }
+
+                body
+            }
+            Err(err) => format!("Error: {}", err),
+        }
+    }
 }
 
 impl ProjectIndexTool {
-    pub fn new(project_index: Model<ProjectIndex>, fs: Arc<dyn Fs>) -> Self {
-        // Listen for project index status and update the ProjectIndexTool directly
-
-        // TODO: setup a better description based on the user's current codebase.
-        Self { project_index, fs }
+    pub fn new(project_index: Model<ProjectIndex>) -> Self {
+        Self { project_index }
     }
 }
 
@@ -151,64 +159,42 @@ impl LanguageModelTool for ProjectIndexTool {
     fn execute(&self, query: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>> {
         let project_index = self.project_index.read(cx);
         let status = project_index.status();
-        let results = project_index.search(
+        let search = project_index.search(
             query.query.clone(),
             query.limit.unwrap_or(DEFAULT_SEARCH_LIMIT),
             cx,
         );
 
-        let fs = self.fs.clone();
+        cx.spawn(|mut cx| async move {
+            let search_results = search.await?;
 
-        cx.spawn(|cx| async move {
-            let results = results.await?;
+            cx.update(|cx| {
+                let mut output = ProjectIndexOutput {
+                    status,
+                    excerpts: Default::default(),
+                };
 
-            let excerpts = results.into_iter().map(|result| {
-                let abs_path = result
-                    .worktree
-                    .read_with(&cx, |worktree, _| worktree.abs_path().join(&result.path));
-                let fs = fs.clone();
+                for search_result in search_results {
+                    let path = ProjectPath {
+                        worktree_id: search_result.worktree.read(cx).id(),
+                        path: search_result.path.clone(),
+                    };
 
-                async move {
-                    let path = result.path.clone();
-                    let text = fs.load(&abs_path?).await?;
-
-                    let mut start = result.range.start;
-                    let mut end = result.range.end.min(text.len());
-                    while !text.is_char_boundary(start) {
-                        start += 1;
-                    }
-                    while !text.is_char_boundary(end) {
-                        end -= 1;
-                    }
-
-                    anyhow::Ok(CodebaseExcerpt {
-                        path: path.to_string_lossy().to_string().into(),
-                        text: SharedString::from(text[start..end].to_string()),
-                        score: result.score,
-                    })
+                    let excerpts_for_path = output.excerpts.entry(path).or_default();
+                    let ix = match excerpts_for_path
+                        .binary_search_by_key(&search_result.range.start, |r| r.start)
+                    {
+                        Ok(ix) | Err(ix) => ix,
+                    };
+                    excerpts_for_path.insert(ix, search_result.range);
                 }
-            });
 
-            let mut files_searched = HashSet::new();
-            let excerpts = futures::future::join_all(excerpts)
-                .await
-                .into_iter()
-                .filter_map(|result| result.log_err())
-                .inspect(|excerpt| {
-                    files_searched.insert(excerpt.path.clone());
-                })
-                .collect::<Vec<_>>();
-
-            anyhow::Ok(ProjectIndexOutput {
-                excerpts,
-                status,
-                files_searched,
+                output
             })
         })
     }
 
     fn output_view(
-        _tool_call_id: String,
         input: Self::Input,
         output: Result<Self::Output>,
         cx: &mut WindowContext,
@@ -219,35 +205,5 @@ impl LanguageModelTool for ProjectIndexTool {
     fn render_running(_: &mut WindowContext) -> impl IntoElement {
         CollapsibleContainer::new(ElementId::Name(nanoid::nanoid!().into()), false)
             .start_slot("Searching code base")
-    }
-
-    fn format(_input: &Self::Input, output: &Result<Self::Output>) -> String {
-        match &output {
-            Ok(output) => {
-                let mut body = "Semantic search results:\n".to_string();
-
-                if output.status != Status::Idle {
-                    body.push_str("Still indexing. Results may be incomplete.\n");
-                }
-
-                if output.excerpts.is_empty() {
-                    body.push_str("No results found");
-                    return body;
-                }
-
-                for excerpt in &output.excerpts {
-                    body.push_str("Excerpt from ");
-                    body.push_str(excerpt.path.as_ref());
-                    body.push_str(", score ");
-                    body.push_str(&excerpt.score.to_string());
-                    body.push_str(":\n");
-                    body.push_str("~~~\n");
-                    body.push_str(excerpt.text.as_ref());
-                    body.push_str("~~~\n");
-                }
-                body
-            }
-            Err(err) => format!("Error: {}", err),
-        }
     }
 }
