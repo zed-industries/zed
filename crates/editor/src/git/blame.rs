@@ -330,7 +330,7 @@ impl GitBlame {
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
         let languages = self.project.read(cx).languages().clone();
-        let provider_registry = GitHostingProviderRegistry::default_global(cx);
+        let provider_registry = GitHostingProviderRegistry::global(cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx

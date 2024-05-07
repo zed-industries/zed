@@ -9549,7 +9549,7 @@ impl Editor {
         let selection = selections.iter().peekable().next();
 
         let (provider, remote) =
-            parse_git_remote_url(GitHostingProviderRegistry::default_global(cx), &origin_url)
+            parse_git_remote_url(GitHostingProviderRegistry::global(cx), &origin_url)
                 .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
         Ok(provider.build_permalink(
