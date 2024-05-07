@@ -1401,8 +1401,8 @@ impl EditorElement {
                 };
             editor
                 .tasks
-                .iter()
-                .map(|(row, _)| {
+                .keys()
+                .map(|row| {
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(*row) == active_task_indicator_row,
@@ -4024,8 +4024,7 @@ impl Element for EditorElement {
                                 .editor
                                 .read(cx)
                                 .tasks
-                                .get(&newest_selection_head.row())
-                                .is_some();
+                                .contains_key(&newest_selection_head.row());
                             if !has_test_indicator {
                                 code_actions_indicator = self.layout_code_actions_indicator(
                                     line_height,
