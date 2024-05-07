@@ -358,7 +358,8 @@ impl TextLayout {
         }
     }
 
-    fn index_for_position(&self, position: Point<Pixels>) -> Option<usize> {
+    /// todo!()
+    pub fn index_for_position(&self, position: Point<Pixels>) -> Option<usize> {
         let element_state = self.lock();
         let element_state = element_state
             .as_ref()
@@ -385,6 +386,11 @@ impl TextLayout {
         }
 
         None
+    }
+
+    /// todo!()
+    pub fn bounds(&self) -> Bounds<Pixels> {
+        self.0.lock().as_ref().unwrap().bounds.unwrap()
     }
 }
 

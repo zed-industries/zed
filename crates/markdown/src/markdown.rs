@@ -2,15 +2,16 @@ mod parser;
 
 use futures::FutureExt;
 use gpui::{
-    AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, Hsla, Render, StrikethroughStyle,
-    Style, StyledText, Task, TextLayout, TextRun, TextStyle, TextStyleRefinement,
+    AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, Hsla, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Point, Render, StrikethroughStyle, Style, StyledText, Task,
+    TextLayout, TextRun, TextStyle, TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
 use std::{iter, mem, ops::Range, sync::Arc};
 use theme::SyntaxTheme;
 use ui::prelude::*;
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 
 use crate::parser::CodeBlockKind;
 
@@ -27,6 +28,8 @@ pub struct MarkdownStyle {
 
 pub struct Markdown {
     text: String,
+    selection: Selection,
+    is_selecting: bool,
     style: MarkdownStyle,
     parsed_markdown: ParsedMarkdown,
     should_reparse: bool,
@@ -43,6 +46,8 @@ impl Markdown {
     ) -> Self {
         let mut this = Self {
             text: text.into(),
+            selection: Selection::default(),
+            is_selecting: false,
             style,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
@@ -96,12 +101,45 @@ impl Markdown {
 }
 
 impl Render for Markdown {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         MarkdownElement::new(
-            self.parsed_markdown.clone(),
+            cx.view().clone(),
             self.style.clone(),
             self.language_registry.clone(),
         )
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+struct Selection {
+    start: usize,
+    end: usize,
+    reversed: bool,
+}
+
+impl Selection {
+    fn set_head(&mut self, head: usize) {
+        if head < self.tail() {
+            if !self.reversed {
+                self.end = self.start;
+                self.reversed = true;
+            }
+            self.start = head;
+        } else {
+            if self.reversed {
+                self.start = self.end;
+                self.reversed = false;
+            }
+            self.end = head;
+        }
+    }
+
+    fn tail(&self) -> usize {
+        if self.reversed {
+            self.end
+        } else {
+            self.start
+        }
     }
 }
 
@@ -121,14 +159,14 @@ impl Default for ParsedMarkdown {
 }
 
 pub struct MarkdownElement {
-    markdown: ParsedMarkdown,
+    markdown: View<Markdown>,
     style: MarkdownStyle,
     language_registry: Arc<LanguageRegistry>,
 }
 
 impl MarkdownElement {
     fn new(
-        markdown: ParsedMarkdown,
+        markdown: View<Markdown>,
         style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
@@ -177,11 +215,12 @@ impl Element for MarkdownElement {
 
     fn request_layout(
         &mut self,
-        id: Option<&GlobalElementId>,
+        _id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let mut builder = MarkdownElementBuilder::new(cx.text_style(), self.style.syntax.clone());
-        for (range, event) in self.markdown.events.iter() {
+        let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
+        for (range, event) in parsed_markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => match tag {
                     MarkdownTag::Paragraph => {
@@ -296,21 +335,21 @@ impl Element for MarkdownElement {
                     _ => log::info!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
-                    builder.push_text(&self.markdown.text[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.text[range.clone()], range.start);
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(TextStyleRefinement {
                         background_color: Some(self.style.code_background_color),
                         ..self.style.code.clone()
                     });
-                    builder.push_text(&self.markdown.text[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.text[range.clone()], range.start);
                     builder.pop_text_style();
                 }
                 MarkdownEvent::Html => {
-                    builder.push_text(&self.markdown.text[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.text[range.clone()], range.start);
                 }
                 MarkdownEvent::InlineHtml => {
-                    builder.push_text(&self.markdown.text[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.text[range.clone()], range.start);
                 }
 
                 MarkdownEvent::Rule => {
@@ -337,7 +376,7 @@ impl Element for MarkdownElement {
 
     fn prepaint(
         &mut self,
-        id: Option<&GlobalElementId>,
+        _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
@@ -353,6 +392,67 @@ impl Element for MarkdownElement {
         _prepaint: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
+        cx.on_mouse_event({
+            let rendered_text = rendered_markdown.text.clone();
+            let markdown = self.markdown.downgrade();
+            move |event: &MouseDownEvent, phase, cx| {
+                if phase.capture() {
+                    return;
+                }
+
+                markdown
+                    .update(cx, |markdown, cx| {
+                        if let Some(index) = rendered_text.index_for_position(event.position) {
+                            markdown.selection = Selection {
+                                start: index,
+                                end: index,
+                                reversed: false,
+                            };
+                            markdown.is_selecting = true;
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+            }
+        });
+        cx.on_mouse_event({
+            let rendered_text = rendered_markdown.text.clone();
+            let markdown = self.markdown.downgrade();
+            move |event: &MouseMoveEvent, phase, cx| {
+                if phase.capture() || event.pressed_button != Some(MouseButton::Left) {
+                    return;
+                }
+
+                markdown
+                    .update(cx, |markdown, cx| {
+                        if markdown.is_selecting {
+                            if let Some(index) = rendered_text.index_for_position(event.position) {
+                                markdown.selection.set_head(index);
+                                cx.notify();
+                            }
+                        }
+                    })
+                    .log_err();
+            }
+        });
+        cx.on_mouse_event({
+            let markdown = self.markdown.downgrade();
+            move |event: &MouseUpEvent, phase, cx| {
+                if phase.bubble() {
+                    return;
+                }
+
+                markdown
+                    .update(cx, |markdown, cx| {
+                        if markdown.is_selecting {
+                            markdown.is_selecting = false;
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+            }
+        });
+
         rendered_markdown.element.paint(cx);
     }
 }
@@ -380,22 +480,49 @@ struct MarkdownElementBuilder {
 struct PendingLine {
     text: String,
     runs: Vec<TextRun>,
-    indices: Vec<TextIndex>,
+    spans: Vec<TextSpan>,
 }
 
 struct RenderedLine {
     layout: TextLayout,
-    indices: Vec<TextIndex>,
+    spans: Vec<TextSpan>,
 }
 
-struct TextIndex {
+#[derive(Debug)]
+struct TextSpan {
     element_index: usize,
     markdown_index: usize,
 }
 
 pub struct RenderedMarkdown {
     element: AnyElement,
+    text: RenderedText,
+}
+
+#[derive(Clone)]
+struct RenderedText {
     lines: Arc<[RenderedLine]>,
+}
+
+impl RenderedText {
+    fn index_for_position(&self, position: Point<Pixels>) -> Option<usize> {
+        for line in self.lines.iter() {
+            // todo!("change index for position to return a result")
+            if let Some(line_index) = line.layout.index_for_position(position) {
+                let span = match line
+                    .spans
+                    .binary_search_by_key(&line_index, |probe| probe.element_index)
+                {
+                    Ok(ix) => &line.spans[ix],
+                    Err(ix) => &line.spans[ix - 1],
+                };
+
+                return Some(span.markdown_index + (line_index - span.element_index));
+            }
+        }
+
+        None
+    }
 }
 
 struct ListStackEntry {
@@ -468,7 +595,7 @@ impl MarkdownElementBuilder {
     }
 
     fn push_text(&mut self, text: &str, markdown_index: usize) {
-        self.pending_line.indices.push(TextIndex {
+        self.pending_line.spans.push(TextSpan {
             element_index: self.pending_line.text.len(),
             markdown_index,
         });
@@ -521,7 +648,7 @@ impl MarkdownElementBuilder {
         let text = StyledText::new(line.text).with_runs(line.runs);
         self.rendered_lines.push(RenderedLine {
             layout: text.layout().clone(),
-            indices: line.indices,
+            spans: line.spans,
         });
         self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
@@ -531,7 +658,9 @@ impl MarkdownElementBuilder {
         self.flush_text();
         RenderedMarkdown {
             element: self.div_stack.pop().unwrap().into_any(),
-            lines: self.rendered_lines.into(),
+            text: RenderedText {
+                lines: self.rendered_lines.into(),
+            },
         }
     }
 }
