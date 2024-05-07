@@ -3,14 +3,13 @@ mod parser;
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, HighlightedRange,
-    HighlightedRangeLine, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Point,
-    Render, StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun, TextStyle,
-    TextStyleRefinement, View,
+    point, quad, AnyElement, Bounds, Edges, FontStyle, FontWeight, GlobalElementId, Hsla,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Point, Render, StrikethroughStyle,
+    Style, StyledText, Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
-use std::{cmp, iter, mem, ops::Range, sync::Arc};
+use std::{iter, mem, ops::Range, sync::Arc};
 use theme::SyntaxTheme;
 use ui::prelude::*;
 use util::{ResultExt, TryFutureExt};
@@ -225,91 +224,82 @@ impl Element for MarkdownElement {
         let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
         for (range, event) in parsed_markdown.events.iter() {
             match event {
-                MarkdownEvent::Start(tag) => {
-                    match tag {
-                        MarkdownTag::Paragraph => {
-                            builder.push_div(div().line_height(rems(1.3)));
-                        }
-                        MarkdownTag::Heading { level, .. } => {
-                            let mut heading = div().mt_2();
-                            heading = match level {
-                                pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
-                                pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
-                                pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
-                                pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
-                                _ => heading,
-                            };
-                            builder.push_div(heading);
-                        }
-                        MarkdownTag::BlockQuote => {
-                            builder.push_text_style(self.style.block_quote.clone());
-                            builder.push_div(
-                                div()
-                                    .pl_4()
-                                    .my_2()
-                                    .border_l_4()
-                                    .border_color(self.style.block_quote_border_color),
-                            );
-                        }
-                        MarkdownTag::CodeBlock(kind) => {
-                            let language = if let CodeBlockKind::Fenced(language) = kind {
-                                self.load_language(language.as_ref(), cx)
-                            } else {
-                                None
-                            };
-
-                            builder.push_code_block(language);
-                            builder.push_text_style(self.style.code_block.clone());
-                            builder.push_div(div().p_4().my_2().w_full().when_some(
-                                self.style.code_block.background_color,
-                                |div, color| div.bg(color),
-                            ));
-                        }
-                        MarkdownTag::HtmlBlock => builder.push_div(div()),
-                        MarkdownTag::List(number) => {
-                            builder.push_list(*number);
-                            builder.push_div(div().pl_4());
-                        }
-                        MarkdownTag::Item => {
-                            builder.push_div(div());
-                            if let Some(item_index) = builder.next_list_item_index() {
-                                builder.push_text(&format!("{}. ", item_index), range.start);
-                            } else {
-                                builder.push_text("• ", range.start);
-                            };
-                        }
-                        MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
-                            font_style: Some(FontStyle::Italic),
-                            ..Default::default()
-                        }),
-                        MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
-                            font_weight: Some(FontWeight::BOLD),
-                            ..Default::default()
-                        }),
-                        MarkdownTag::Strikethrough => {
-                            builder.push_text_style(TextStyleRefinement {
-                                strikethrough: Some(StrikethroughStyle {
-                                    thickness: px(1.),
-                                    color: None,
-                                }),
-                                ..Default::default()
-                            })
-                        }
-                        MarkdownTag::Link {
-                            link_type,
-                            dest_url,
-                            title,
-                            id,
-                        } => builder.push_text_style(self.style.link.clone()),
-                        MarkdownTag::Image {
-                            link_type,
-                            dest_url,
-                            title,
-                            id,
-                        } => todo!(),
-                        _ => log::info!("unsupported markdown tag {:?}", tag),
+                MarkdownEvent::Start(tag) => match tag {
+                    MarkdownTag::Paragraph => {
+                        builder.push_div(div().line_height(rems(1.3)));
                     }
-                }
+                    MarkdownTag::Heading { level, .. } => {
+                        let mut heading = div().mt_2();
+                        heading = match level {
+                            pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
+                            pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
+                            pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
+                            pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
+                            _ => heading,
+                        };
+                        builder.push_div(heading);
+                    }
+                    MarkdownTag::BlockQuote => {
+                        builder.push_text_style(self.style.block_quote.clone());
+                        builder.push_div(
+                            div()
+                                .pl_4()
+                                .my_2()
+                                .border_l_4()
+                                .border_color(self.style.block_quote_border_color),
+                        );
+                    }
+                    MarkdownTag::CodeBlock(kind) => {
+                        let language = if let CodeBlockKind::Fenced(language) = kind {
+                            self.load_language(language.as_ref(), cx)
+                        } else {
+                            None
+                        };
+
+                        builder.push_code_block(language);
+                        builder.push_text_style(self.style.code_block.clone());
+                        builder.push_div(
+                            div()
+                                .p_4()
+                                .my_2()
+                                .w_full()
+                                .when_some(self.style.code_block.background_color, |div, color| {
+                                    div.bg(color)
+                                }),
+                        );
+                    }
+                    MarkdownTag::HtmlBlock => builder.push_div(div()),
+                    MarkdownTag::List(number) => {
+                        builder.push_list(*number);
+                        builder.push_div(div().pl_4());
+                    }
+                    MarkdownTag::Item => {
+                        builder.push_div(div());
+                        if let Some(item_index) = builder.next_list_item_index() {
+                            builder.push_text(&format!("{}. ", item_index), range.start);
+                        } else {
+                            builder.push_text("• ", range.start);
+                        };
+                    }
+                    MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }),
+                    MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
+                        font_weight: Some(FontWeight::BOLD),
+                        ..Default::default()
+                    }),
+                    MarkdownTag::Strikethrough => builder.push_text_style(TextStyleRefinement {
+                        strikethrough: Some(StrikethroughStyle {
+                            thickness: px(1.),
+                            color: None,
+                        }),
+                        ..Default::default()
+                    }),
+                    MarkdownTag::Link { .. } => builder.push_text_style(self.style.link.clone()),
+                    MarkdownTag::Image { .. } => todo!(),
+                    _ => log::info!("unsupported markdown tag {:?}", tag),
+                },
                 MarkdownEvent::End(tag) => match tag {
                     MarkdownTagEnd::Paragraph => {
                         builder.pop_div();
@@ -378,7 +368,7 @@ impl Element for MarkdownElement {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Self::PrepaintState {
@@ -461,46 +451,89 @@ impl Element for MarkdownElement {
         rendered_markdown.element.paint(cx);
 
         let selection = self.markdown.read(cx).selection;
-        let mut highlighted_range = HighlightedRange {
-            start_y: Pixels::ZERO,
-            line_height: cx.line_height(),
-            lines: Vec::new(),
-            color: {
+
+        let mut selection_start: Option<(Point<Pixels>, Pixels)> = None;
+        let mut selection_end: Option<(Point<Pixels>, Pixels)> = None;
+
+        for line in rendered_markdown.text.lines.iter() {
+            let line_height = line.layout.line_height();
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            let line_source_range = line_source_start..=line.source_end;
+
+            if line_source_range.contains(&selection.start) {
+                let selection_start_position = line
+                    .layout
+                    .position_for_index(line.rendered_index_for_source_index(selection.start))
+                    .unwrap();
+                selection_start = Some((selection_start_position, line_height));
+            }
+
+            if line_source_range.contains(&selection.end) {
+                let selection_end_position = line
+                    .layout
+                    .position_for_index(line.rendered_index_for_source_index(selection.end))
+                    .unwrap();
+                selection_end = Some((selection_end_position, line_height));
+            }
+        }
+
+        if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
+            selection_start.zip(selection_end)
+        {
+            let selection_background = {
                 // todo!("use the right color")
                 let mut red = gpui::red();
                 red.fade_out(0.9);
                 red
-            },
-            corner_radius: 0.15 * cx.line_height(),
-        };
+            };
 
-        for line in rendered_markdown.text.lines.iter() {
-            let source_start = line.source_mappings.first().unwrap().source_index;
-            if selection.start > line.source_end {
-                continue;
-            } else if selection.end < source_start {
-                break;
+            if start_position.y == end_position.y {
+                cx.paint_quad(quad(
+                    Bounds::from_corners(
+                        start_position,
+                        point(end_position.x, end_position.y + end_line_height),
+                    ),
+                    Pixels::ZERO,
+                    selection_background,
+                    Edges::default(),
+                    Hsla::transparent_black(),
+                ));
             } else {
-                if highlighted_range.lines.is_empty() {
-                    highlighted_range.start_y = line.layout.bounds().top();
+                cx.paint_quad(quad(
+                    Bounds::from_corners(
+                        start_position,
+                        point(bounds.right(), start_position.y + start_line_height),
+                    ),
+                    Pixels::ZERO,
+                    selection_background,
+                    Edges::default(),
+                    Hsla::transparent_black(),
+                ));
+
+                if end_position.y > start_position.y + start_line_height {
+                    cx.paint_quad(quad(
+                        Bounds::from_corners(
+                            point(bounds.left(), start_position.y + start_line_height),
+                            point(bounds.right(), end_position.y),
+                        ),
+                        Pixels::ZERO,
+                        selection_background,
+                        Edges::default(),
+                        Hsla::transparent_black(),
+                    ));
                 }
 
-                let line_source_start = cmp::max(source_start, selection.start) - source_start;
-                let line_source_end = cmp::min(line.source_end, selection.end) - source_start;
-                highlighted_range.lines.extend(
-                    line.layout
-                        .line_bounds_for_range(line_source_start..line_source_end)
-                        .into_iter()
-                        .map(|bounds| HighlightedRangeLine {
-                            start_x: bounds.left(),
-                            end_x: bounds.right(),
-                        }),
-                );
+                cx.paint_quad(quad(
+                    Bounds::from_corners(
+                        point(bounds.left(), end_position.y),
+                        point(end_position.x, end_position.y + end_line_height),
+                    ),
+                    Pixels::ZERO,
+                    selection_background,
+                    Edges::default(),
+                    Hsla::transparent_black(),
+                ));
             }
-        }
-
-        if !highlighted_range.lines.is_empty() {
-            highlighted_range.paint(bounds, cx);
         }
     }
 }
@@ -517,7 +550,7 @@ struct MarkdownElementBuilder {
     div_stack: Vec<Div>,
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
-    source_len: usize,
+    current_source_index: usize,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
@@ -532,75 +565,6 @@ struct PendingLine {
     source_mappings: Vec<SourceMapping>,
 }
 
-struct RenderedLine {
-    layout: TextLayout,
-    source_mappings: Vec<SourceMapping>,
-    source_end: usize,
-}
-
-#[derive(Copy, Clone, Debug, Default)]
-struct SourceMapping {
-    rendered_index: usize,
-    source_index: usize,
-}
-
-pub struct RenderedMarkdown {
-    element: AnyElement,
-    text: RenderedText,
-}
-
-#[derive(Clone)]
-struct RenderedText {
-    lines: Arc<[RenderedLine]>,
-}
-
-impl RenderedText {
-    fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
-        let mut lines = self.lines.iter().peekable();
-
-        while let Some(line) = lines.next() {
-            let line_bounds = line.layout.bounds();
-            if position.y > line_bounds.bottom() {
-                if let Some(next_line) = lines.peek() {
-                    if position.y < next_line.layout.bounds().top() {
-                        return Err(line.source_end);
-                    }
-                }
-
-                continue;
-            }
-
-            let index_within_line;
-            let out_of_bounds;
-            match line.layout.index_for_position(position) {
-                Ok(ix) => {
-                    index_within_line = ix;
-                    out_of_bounds = false;
-                }
-                Err(ix) => {
-                    index_within_line = ix;
-                    out_of_bounds = true;
-                }
-            };
-            let mapping = match line
-                .source_mappings
-                .binary_search_by_key(&index_within_line, |probe| probe.rendered_index)
-            {
-                Ok(ix) => &line.source_mappings[ix],
-                Err(ix) => &line.source_mappings[ix - 1],
-            };
-            let source_index = mapping.source_index + (index_within_line - mapping.rendered_index);
-            if out_of_bounds {
-                return Err(source_index);
-            } else {
-                return Ok(source_index);
-            }
-        }
-
-        Err(self.lines.last().map_or(0, |line| line.source_end))
-    }
-}
-
 struct ListStackEntry {
     item_index: Option<u64>,
 }
@@ -611,7 +575,7 @@ impl MarkdownElementBuilder {
             div_stack: vec![div().debug_selector(|| "inner".into())],
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
-            source_len: 0,
+            current_source_index: 0,
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
@@ -677,7 +641,7 @@ impl MarkdownElementBuilder {
             source_index,
         });
         self.pending_line.text.push_str(text);
-        self.source_len = source_index + text.len();
+        self.current_source_index = source_index + text.len();
 
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
@@ -714,6 +678,7 @@ impl MarkdownElementBuilder {
                 .text
                 .truncate(self.pending_line.text.len() - 1);
             self.pending_line.runs.last_mut().unwrap().len -= 1;
+            self.current_source_index -= 1;
         }
     }
 
@@ -727,7 +692,7 @@ impl MarkdownElementBuilder {
         self.rendered_lines.push(RenderedLine {
             layout: text.layout().clone(),
             source_mappings: line.source_mappings,
-            source_end: self.source_len,
+            source_end: self.current_source_index,
         });
         self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
@@ -741,5 +706,91 @@ impl MarkdownElementBuilder {
                 lines: self.rendered_lines.into(),
             },
         }
+    }
+}
+
+struct RenderedLine {
+    layout: TextLayout,
+    source_mappings: Vec<SourceMapping>,
+    source_end: usize,
+}
+
+impl RenderedLine {
+    fn rendered_index_for_source_index(&self, source_index: usize) -> usize {
+        let mapping = match self
+            .source_mappings
+            .binary_search_by_key(&source_index, |probe| probe.source_index)
+        {
+            Ok(ix) => &self.source_mappings[ix],
+            Err(ix) => &self.source_mappings[ix - 1],
+        };
+        mapping.rendered_index + (source_index - mapping.source_index)
+    }
+
+    fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        let index_within_line;
+        let out_of_bounds;
+        match self.layout.index_for_position(position) {
+            Ok(ix) => {
+                index_within_line = ix;
+                out_of_bounds = false;
+            }
+            Err(ix) => {
+                index_within_line = ix;
+                out_of_bounds = true;
+            }
+        };
+        let mapping = match self
+            .source_mappings
+            .binary_search_by_key(&index_within_line, |probe| probe.rendered_index)
+        {
+            Ok(ix) => &self.source_mappings[ix],
+            Err(ix) => &self.source_mappings[ix - 1],
+        };
+        let source_index = mapping.source_index + (index_within_line - mapping.rendered_index);
+        if out_of_bounds {
+            Err(source_index)
+        } else {
+            Ok(source_index)
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+struct SourceMapping {
+    rendered_index: usize,
+    source_index: usize,
+}
+
+pub struct RenderedMarkdown {
+    element: AnyElement,
+    text: RenderedText,
+}
+
+#[derive(Clone)]
+struct RenderedText {
+    lines: Arc<[RenderedLine]>,
+}
+
+impl RenderedText {
+    fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        let mut lines = self.lines.iter().peekable();
+
+        while let Some(line) = lines.next() {
+            let line_bounds = line.layout.bounds();
+            if position.y > line_bounds.bottom() {
+                if let Some(next_line) = lines.peek() {
+                    if position.y < next_line.layout.bounds().top() {
+                        return Err(line.source_end);
+                    }
+                }
+
+                continue;
+            }
+
+            return line.source_index_for_position(position);
+        }
+
+        Err(self.lines.last().map_or(0, |line| line.source_end))
     }
 }

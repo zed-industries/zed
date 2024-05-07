@@ -9,8 +9,8 @@ use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
 use std::{
     cell::{Cell, RefCell},
-    cmp::{self, Ordering},
-    iter, mem,
+    cmp::Ordering,
+    mem,
     ops::Range,
     rc::Rc,
     sync::Arc,
@@ -394,7 +394,7 @@ impl TextLayout {
     }
 
     /// todo!()
-    pub fn line_bounds_for_range<'a>(&self, range: Range<usize>) -> SmallVec<[Bounds<Pixels>; 4]> {
+    pub fn position_for_index<'a>(&self, index: usize) -> Option<Point<Pixels>> {
         let element_state = self.lock();
         let element_state = element_state
             .as_ref()
@@ -404,7 +404,6 @@ impl TextLayout {
             .expect("prepaint has not been performed");
         let line_height = element_state.line_height;
 
-        let mut line_bounds = SmallVec::new();
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0;
 
@@ -412,35 +411,26 @@ impl TextLayout {
             let line_bottom = line_origin.y + line.size(line_height).height;
             let line_end_ix = line_start_ix + line.len();
 
-            if range.start > line_end_ix {
-                line_origin.y = line_bottom;
-                line_start_ix = line_end_ix + 1;
-                continue;
-            } else if range.end < line_start_ix {
-                break;
-            } else {
-                let start_ix_within_line = cmp::max(range.start, line_start_ix) - line_start_ix;
-                let end_ix_within_line = cmp::min(range.end, line_end_ix) - line_start_ix;
-
-                line_bounds.extend(
-                    line.line_bounds_for_range(
-                        start_ix_within_line..end_ix_within_line,
-                        line_height,
-                    )
-                    .map(move |bounds| bounds.map_origin(|origin| line_origin + origin)),
-                );
-
-                line_origin.y = line_bottom;
-                line_start_ix = line_end_ix + 1;
+            if (line_start_ix..=line_end_ix).contains(&index) {
+                let ix_within_line = index - line_start_ix;
+                return Some(line_origin + line.position_for_index(ix_within_line, line_height)?);
             }
+
+            line_origin.y = line_bottom;
+            line_start_ix = line_end_ix + 1;
         }
 
-        line_bounds
+        None
     }
 
     /// todo!()
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.0.lock().as_ref().unwrap().bounds.unwrap()
+    }
+
+    /// todo!()
+    pub fn line_height(&self) -> Pixels {
+        self.0.lock().as_ref().unwrap().line_height
     }
 }
 

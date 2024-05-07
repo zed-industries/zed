@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{prelude::*, App, ScrollHandle, Task, View, WindowOptions};
+use gpui::{prelude::*, App, Task, View, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::FakeNodeRuntime;
