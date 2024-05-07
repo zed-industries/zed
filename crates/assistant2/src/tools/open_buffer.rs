@@ -74,12 +74,10 @@ impl LanguageModelTool for OpenBufferTool {
         };
 
         let buffer_tasks = project.update(cx, |project, cx| {
-            let worktree_id = worktree_id.clone();
             let excerpts = excerpts.clone();
             excerpts
                 .iter()
                 .map(|excerpt| {
-                    let worktree_id = worktree_id.clone();
                     let project_path = ProjectPath {
                         worktree_id,
                         path: Path::new(&excerpt.path).into(),
@@ -93,7 +91,7 @@ impl LanguageModelTool for OpenBufferTool {
             let buffers = futures::future::try_join_all(buffer_tasks).await?;
 
             let multibuffer = cx.new_model(|_cx| {
-                MultiBuffer::new(0, language::Capability::ReadWrite).with_title(title.into())
+                MultiBuffer::new(0, language::Capability::ReadWrite).with_title(title)
             })?;
             let editor =
                 cx.new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), cx))?;
