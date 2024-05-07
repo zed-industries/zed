@@ -22,7 +22,7 @@ pub struct ActiveFileButton {
 
 impl ActiveFileButton {
     pub fn new(
-        attachment_store: Arc<AttachmentRegistry>,
+        attachment_registry: Arc<AttachmentRegistry>,
         workspace: View<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -31,7 +31,7 @@ impl ActiveFileButton {
         cx.defer(move |this, cx| this.update_active_buffer(workspace.clone(), cx));
 
         Self {
-            attachment_registry: attachment_store,
+            attachment_registry,
             status: Status::NoFile,
             workspace_subscription,
         }
