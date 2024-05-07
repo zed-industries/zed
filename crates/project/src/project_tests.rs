@@ -193,6 +193,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             all_tasks,
             vec![
                 (
+                    global_task_source_kind.clone(),
+                    "cargo check".to_string(),
+                    vec!["check".to_string(), "--all".to_string()],
+                    HashMap::default(),
+                ),
+                (
                     TaskSourceKind::Worktree {
                         id: workree_id,
                         abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
@@ -200,12 +206,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                     },
                     "cargo check".to_string(),
                     vec!["check".to_string()],
-                    HashMap::default(),
-                ),
-                (
-                    global_task_source_kind.clone(),
-                    "cargo check".to_string(),
-                    vec!["check".to_string(), "--all".to_string()],
                     HashMap::default(),
                 ),
             ]
@@ -281,16 +281,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 (
                     TaskSourceKind::Worktree {
                         id: workree_id,
-                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
-                        id_base: "local_tasks_for_worktree",
-                    },
-                    "cargo check".to_string(),
-                    vec!["check".to_string()],
-                    HashMap::default(),
-                ),
-                (
-                    TaskSourceKind::Worktree {
-                        id: workree_id,
                         abs_path: PathBuf::from("/the-root/.zed/tasks.json"),
                         id_base: "local_tasks_for_worktree",
                     },
@@ -304,6 +294,16 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                         "RUSTFLAGS".to_string(),
                         "-Zunstable-options".to_string()
                     ))),
+                ),
+                (
+                    TaskSourceKind::Worktree {
+                        id: workree_id,
+                        abs_path: PathBuf::from("/the-root/b/.zed/tasks.json"),
+                        id_base: "local_tasks_for_worktree",
+                    },
+                    "cargo check".to_string(),
+                    vec!["check".to_string()],
+                    HashMap::default(),
                 ),
             ]
         );
@@ -397,7 +397,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
             version: 0,
             text: "const A: i32 = 1;".to_string(),
-            language_id: Default::default()
+            language_id: "rust".to_string(),
         }
     );
 
@@ -444,7 +444,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
             version: 0,
             text: "{\"a\": 1}".to_string(),
-            language_id: Default::default()
+            language_id: "json".to_string(),
         }
     );
 
@@ -529,7 +529,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
             version: 0,
             text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
-            language_id: Default::default()
+            language_id: "rust".to_string(),
         },
     );
 
@@ -579,7 +579,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
             version: 0,
             text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
-            language_id: Default::default()
+            language_id: "json".to_string(),
         },
     );
 
@@ -634,7 +634,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
             version: 0,
             text: rust_buffer.update(cx, |buffer, _| buffer.text()),
-            language_id: Default::default()
+            language_id: "rust".to_string(),
         }
     );
 
@@ -655,13 +655,13 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
                 uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
                 version: 0,
                 text: json_buffer.update(cx, |buffer, _| buffer.text()),
-                language_id: Default::default()
+                language_id: "json".to_string(),
             },
             lsp::TextDocumentItem {
                 uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
                 version: 0,
                 text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
-                language_id: Default::default()
+                language_id: "json".to_string(),
             }
         ]
     );

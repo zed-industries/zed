@@ -37,6 +37,7 @@ pub unsafe fn new_renderer(
     _native_window: *mut c_void,
     _native_view: *mut c_void,
     _bounds: crate::Size<f32>,
+    _transparent: bool,
 ) -> Renderer {
     MetalRenderer::new(context)
 }
@@ -229,6 +230,10 @@ impl MetalRenderer {
                 setDrawableSize: size
             ];
         }
+    }
+
+    pub fn update_transparency(&mut self, _transparent: bool) {
+        // todo(mac)?
     }
 
     pub fn destroy(&mut self) {

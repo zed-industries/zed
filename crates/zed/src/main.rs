@@ -16,6 +16,7 @@ use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
+use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext, AsyncAppContext, Context, Task, VisualContext};
 use image_viewer;
 use language::LanguageRegistry;
@@ -119,6 +120,7 @@ fn init_headless(dev_server_token: DevServerToken) {
         project::Project::init(&client, cx);
         client::init(&client, cx);
 
+        let git_hosting_provider_registry = GitHostingProviderRegistry::default_global(cx);
         let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
             cx.path_for_auxiliary_executable("git")
                 .context("could not find git binary path")
@@ -126,7 +128,9 @@ fn init_headless(dev_server_token: DevServerToken) {
         } else {
             None
         };
-        let fs = Arc::new(RealFs::new(git_binary_path));
+        let fs = Arc::new(RealFs::new(git_hosting_provider_registry, git_binary_path));
+
+        git_hosting_providers::init(cx);
 
         let mut languages =
             LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
@@ -186,6 +190,7 @@ fn init_ui(args: Args) {
     let session_id = Uuid::new_v4().to_string();
     reliability::init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
+    let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
         app.path_for_auxiliary_executable("git")
             .context("could not find git binary path")
@@ -195,7 +200,10 @@ fn init_ui(args: Args) {
     };
     log::info!("Using git binary path: {:?}", git_binary_path);
 
-    let fs = Arc::new(RealFs::new(git_binary_path));
+    let fs = Arc::new(RealFs::new(
+        git_hosting_provider_registry.clone(),
+        git_binary_path,
+    ));
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -235,6 +243,9 @@ fn init_ui(args: Args) {
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
+
+        GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
+        git_hosting_providers::init(cx);
 
         SystemAppearance::init(cx);
         OpenListener::set_global(listener.clone(), cx);

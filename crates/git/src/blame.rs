@@ -1,11 +1,11 @@
 use crate::commit::get_messages;
-use crate::permalink::{build_commit_permalink, parse_git_remote_url, BuildCommitPermalinkParams};
-use crate::Oid;
+use crate::{parse_git_remote_url, BuildCommitPermalinkParams, GitHostingProviderRegistry, Oid};
 use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::{ops::Range, path::Path};
 use text::Rope;
 use time;
@@ -34,6 +34,7 @@ impl Blame {
         path: &Path,
         content: &Rope,
         remote_url: Option<String>,
+        provider_registry: Arc<GitHostingProviderRegistry>,
     ) -> Result<Self> {
         let output = run_git_blame(git_binary, working_directory, path, &content)?;
         let mut entries = parse_git_blame(&output)?;
@@ -41,18 +42,22 @@ impl Blame {
 
         let mut permalinks = HashMap::default();
         let mut unique_shas = HashSet::default();
-        let parsed_remote_url = remote_url.as_deref().and_then(parse_git_remote_url);
+        let parsed_remote_url = remote_url
+            .as_deref()
+            .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);
             // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
             // now do the parsing.
-            if let Some(remote) = parsed_remote_url.as_ref() {
+            if let Some((provider, remote)) = parsed_remote_url.as_ref() {
                 permalinks.entry(entry.sha).or_insert_with(|| {
-                    build_commit_permalink(BuildCommitPermalinkParams {
+                    provider.build_commit_permalink(
                         remote,
-                        sha: entry.sha.to_string().as_str(),
-                    })
+                        BuildCommitPermalinkParams {
+                            sha: entry.sha.to_string().as_str(),
+                        },
+                    )
                 });
             }
         }

@@ -35,7 +35,7 @@ use windows::{
     },
 };
 
-use crate::platform::blade::BladeRenderer;
+use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
 use crate::*;
 
 pub(crate) struct WindowsWindowInner {
@@ -63,6 +63,7 @@ impl WindowsWindowInner {
         handle: AnyWindowHandle,
         hide_title_bar: bool,
         display: Rc<WindowsDisplay>,
+        transparent: bool,
     ) -> Self {
         let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
         let origin = Cell::new(point(DevicePixels(cs.x), DevicePixels(cs.y)));
@@ -90,7 +91,7 @@ impl WindowsWindowInner {
             }
         }
 
-        let raw = RawWindow { hwnd: hwnd.0 as _ };
+        let raw = RawWindow { hwnd: hwnd.0 };
         let gpu = Arc::new(
             unsafe {
                 gpu::Context::init_windowed(
@@ -104,12 +105,11 @@ impl WindowsWindowInner {
             }
             .unwrap(),
         );
-        let extent = gpu::Extent {
-            width: 1,
-            height: 1,
-            depth: 1,
+        let config = BladeSurfaceConfig {
+            size: gpu::Extent::default(),
+            transparent,
         };
-        let renderer = RefCell::new(BladeRenderer::new(gpu, extent));
+        let renderer = RefCell::new(BladeRenderer::new(gpu, config));
         let callbacks = RefCell::new(Callbacks::default());
         let display = RefCell::new(display);
         let click_state = RefCell::new(ClickState::new());
@@ -814,8 +814,7 @@ impl WindowsWindowInner {
             let Some(mut input_handler) = self.input_handler.take() else {
                 return Some(1);
             };
-            // we are composing, this should never fail
-            let caret_range = input_handler.selected_text_range().unwrap();
+            let caret_range = input_handler.selected_text_range().unwrap_or_default();
             let caret_position = input_handler.bounds_for_range(caret_range).unwrap();
             self.input_handler.set(Some(input_handler));
             let scale_factor = self.scale_factor.get();
@@ -1247,7 +1246,6 @@ struct Callbacks {
     input: Option<Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    fullscreen: Option<Box<dyn FnMut(bool)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
@@ -1265,6 +1263,7 @@ struct WindowCreateContext {
     handle: AnyWindowHandle,
     hide_title_bar: bool,
     display: Rc<WindowsDisplay>,
+    transparent: bool,
 }
 
 impl WindowsWindow {
@@ -1297,6 +1296,7 @@ impl WindowsWindow {
             // todo(windows) move window to target monitor
             // options.display_id
             display: Rc::new(WindowsDisplay::primary_monitor().unwrap()),
+            transparent: options.window_background != WindowBackgroundAppearance::Opaque,
         };
         let lpparam = Some(&context as *const _ as *const _);
         unsafe {
@@ -1542,8 +1542,11 @@ impl PlatformWindow for WindowsWindow {
 
     fn set_app_id(&mut self, _app_id: &str) {}
 
-    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
-        // todo(windows)
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+        self.inner
+            .renderer
+            .borrow_mut()
+            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
     }
 
     // todo(windows)
@@ -1651,16 +1654,16 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                 lindex: -1,
                 tymed: TYMED_HGLOBAL.0 as _,
             };
-            let mut paths = SmallVec::<[PathBuf; 2]>::new();
             if idata_obj.QueryGetData(&config as _) == S_OK {
                 *pdweffect = DROPEFFECT_LINK;
-                let Ok(mut idata) = idata_obj.GetData(&config as _) else {
+                let Some(mut idata) = idata_obj.GetData(&config as _).log_err() else {
                     return Ok(());
                 };
                 if idata.u.hGlobal.is_invalid() {
                     return Ok(());
                 }
                 let hdrop = idata.u.hGlobal.0 as *mut HDROP;
+                let mut paths = SmallVec::<[PathBuf; 2]>::new();
                 let file_count = DragQueryFileW(*hdrop, DRAGDROP_GET_FILES_COUNT, None);
                 for file_index in 0..file_count {
                     let filename_length = DragQueryFileW(*hdrop, file_index, None) as usize;
@@ -1670,19 +1673,25 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
                         log::error!("unable to read file name");
                         continue;
                     }
-                    if let Ok(file_name) = String::from_utf16(&buffer[0..filename_length]) {
-                        if let Ok(path) = PathBuf::from_str(&file_name) {
+                    if let Some(file_name) =
+                        String::from_utf16(&buffer[0..filename_length]).log_err()
+                    {
+                        if let Some(path) = PathBuf::from_str(&file_name).log_err() {
                             paths.push(path);
                         }
                     }
                 }
                 ReleaseStgMedium(&mut idata);
-                let input = PlatformInput::FileDrop(crate::FileDropEvent::Entered {
-                    position: Point {
-                        x: Pixels(pt.x as _),
-                        y: Pixels(pt.y as _),
-                    },
-                    paths: crate::ExternalPaths(paths),
+                let mut cursor_position = POINT { x: pt.x, y: pt.y };
+                ScreenToClient(self.0.hwnd, &mut cursor_position);
+                let scale_factor = self.0.scale_factor.get();
+                let input = PlatformInput::FileDrop(FileDropEvent::Entered {
+                    position: logical_point(
+                        cursor_position.x as f32,
+                        cursor_position.y as f32,
+                        scale_factor,
+                    ),
+                    paths: ExternalPaths(paths),
                 });
                 self.0.handle_drag_drop(input);
             } else {
@@ -1698,11 +1707,17 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
         pt: &POINTL,
         _pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
-        let input = PlatformInput::FileDrop(crate::FileDropEvent::Pending {
-            position: Point {
-                x: Pixels(pt.x as _),
-                y: Pixels(pt.y as _),
-            },
+        let mut cursor_position = POINT { x: pt.x, y: pt.y };
+        unsafe {
+            ScreenToClient(self.0.hwnd, &mut cursor_position);
+        }
+        let scale_factor = self.0.scale_factor.get();
+        let input = PlatformInput::FileDrop(FileDropEvent::Pending {
+            position: logical_point(
+                cursor_position.x as f32,
+                cursor_position.y as f32,
+                scale_factor,
+            ),
         });
         self.0.handle_drag_drop(input);
 
@@ -1710,7 +1725,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
     }
 
     fn DragLeave(&self) -> windows::core::Result<()> {
-        let input = PlatformInput::FileDrop(crate::FileDropEvent::Exited);
+        let input = PlatformInput::FileDrop(FileDropEvent::Exited);
         self.0.handle_drag_drop(input);
 
         Ok(())
@@ -1723,11 +1738,17 @@ impl IDropTarget_Impl for WindowsDragDropHandler {
         pt: &POINTL,
         _pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
-        let input = PlatformInput::FileDrop(crate::FileDropEvent::Submit {
-            position: Point {
-                x: Pixels(pt.x as _),
-                y: Pixels(pt.y as _),
-            },
+        let mut cursor_position = POINT { x: pt.x, y: pt.y };
+        unsafe {
+            ScreenToClient(self.0.hwnd, &mut cursor_position);
+        }
+        let scale_factor = self.0.scale_factor.get();
+        let input = PlatformInput::FileDrop(FileDropEvent::Submit {
+            position: logical_point(
+                cursor_position.x as f32,
+                cursor_position.y as f32,
+                scale_factor,
+            ),
         });
         self.0.handle_drag_drop(input);
 
@@ -1814,6 +1835,7 @@ unsafe extern "system" fn wnd_proc(
             ctx.handle,
             ctx.hide_title_bar,
             ctx.display.clone(),
+            ctx.transparent,
         ));
         let weak = Box::new(Rc::downgrade(&inner));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };

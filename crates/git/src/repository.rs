@@ -1,4 +1,5 @@
 use crate::blame::Blame;
+use crate::GitHostingProviderRegistry;
 use anyhow::{Context, Result};
 use collections::HashMap;
 use git2::{BranchType, StatusShow};
@@ -71,13 +72,19 @@ impl std::fmt::Debug for dyn GitRepository {
 pub struct RealGitRepository {
     pub repository: LibGitRepository,
     pub git_binary_path: PathBuf,
+    hosting_provider_registry: Arc<GitHostingProviderRegistry>,
 }
 
 impl RealGitRepository {
-    pub fn new(repository: LibGitRepository, git_binary_path: Option<PathBuf>) -> Self {
+    pub fn new(
+        repository: LibGitRepository,
+        git_binary_path: Option<PathBuf>,
+        hosting_provider_registry: Arc<GitHostingProviderRegistry>,
+    ) -> Self {
         Self {
             repository,
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
+            hosting_provider_registry,
         }
     }
 }
@@ -246,6 +253,7 @@ impl GitRepository for RealGitRepository {
             path,
             &content,
             remote_url,
+            self.hosting_provider_registry.clone(),
         )
     }
 }

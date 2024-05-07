@@ -241,7 +241,11 @@ message Envelope {
         DeleteDevServerProject delete_dev_server_project = 197;
 
         GetSupermavenApiKey get_supermaven_api_key = 198;
-        GetSupermavenApiKeyResponse get_supermaven_api_key_response = 199; // current max
+        GetSupermavenApiKeyResponse get_supermaven_api_key_response = 199;
+
+        RegenerateDevServerToken regenerate_dev_server_token = 200;
+        RegenerateDevServerTokenResponse regenerate_dev_server_token_response = 201;
+        RenameDevServer rename_dev_server = 202; // Current max
     }
 
     reserved 158 to 161;
@@ -488,6 +492,15 @@ message CreateDevServer {
     string name = 2;
 }
 
+message RegenerateDevServerToken {
+    uint64 dev_server_id = 1;
+}
+
+message RegenerateDevServerTokenResponse {
+    uint64 dev_server_id = 1;
+    string access_token = 2;
+}
+
 message CreateDevServerResponse {
     uint64 dev_server_id = 1;
     reserved 2;
@@ -496,6 +509,11 @@ message CreateDevServerResponse {
 }
 
 message ShutdownDevServer {
+}
+
+message RenameDevServer {
+    uint64 dev_server_id = 1;
+    string name = 2;
 }
 
 message DeleteDevServer {

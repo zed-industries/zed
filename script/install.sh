@@ -80,8 +80,7 @@ linux() {
     mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 
     # Link the binary
-    binary_name="zed${suffix}"
-    ln -sf ~/.local/zed$suffix.app/bin/zed "$HOME/.local/bin/${binary_name}"
+    ln -sf ~/.local/zed$suffix.app/bin/zed "$HOME/.local/bin/zed"
 
     # Copy .desktop file
     desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
@@ -89,14 +88,14 @@ linux() {
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
     sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
 
-    if which "${binary_name}" >/dev/null 2>&1; then
-        echo "Zed has been installed. Run with '${binary_name}'"
+    if which "zed" >/dev/null 2>&1; then
+        echo "Zed has been installed. Run with 'zed'"
     else
         echo "To run Zed from your terminal, you must add ~/.local/bin to your PATH"
         echo "Run:"
         echo "   echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc"
         echo "   source ~/.bashrc"
-        echo "To run Zed now, '~/.local/bin/${binary_name}'"
+        echo "To run Zed now, '~/.local/bin/zed'"
     fi
 }
 

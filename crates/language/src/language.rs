@@ -152,7 +152,7 @@ pub struct CachedLspAdapter {
     pub name: LanguageServerName,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
-    pub language_ids: HashMap<String, String>,
+    language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     /// Indicates whether this language server is the primary language server
@@ -246,6 +246,13 @@ impl CachedLspAdapter {
             .clone()
             .labels_for_symbols(symbols, language)
             .await
+    }
+
+    pub fn language_id(&self, language: &Language) -> String {
+        self.language_ids
+            .get(language.name().as_ref())
+            .cloned()
+            .unwrap_or_else(|| language.lsp_id())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1372,6 +1379,13 @@ impl Language {
 
     pub fn prettier_plugins(&self) -> &Vec<Arc<str>> {
         &self.config.prettier_plugins
+    }
+
+    pub fn lsp_id(&self) -> String {
+        match self.config.name.as_ref() {
+            "Plain Text" => "plaintext".to_string(),
+            language_name => language_name.to_lowercase(),
+        }
     }
 }
 

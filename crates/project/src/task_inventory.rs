@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use collections::{hash_map, HashMap, VecDeque};
+use collections::{btree_map, BTreeMap, VecDeque};
 use gpui::{AppContext, Context, Model, ModelContext};
 use itertools::{Either, Itertools};
 use language::Language;
@@ -32,16 +32,16 @@ struct SourceInInventory {
 pub enum TaskSourceKind {
     /// bash-like commands spawned by users, not associated with any path
     UserInput,
-    /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
-    AbsPath {
-        id_base: &'static str,
-        abs_path: PathBuf,
-    },
     /// Tasks from the worktree's .zed/task.json
     Worktree {
         id: WorktreeId,
         abs_path: PathBuf,
         id_base: &'static str,
+    },
+    /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
+    AbsPath {
+        id_base: &'static str,
+        abs_path: PathBuf,
     },
     /// Languages-specific tasks coming from extensions.
     Language { name: Arc<str> },
@@ -197,7 +197,7 @@ impl Inventory {
                 }
             })
             .fold(
-                HashMap::default(),
+                BTreeMap::default(),
                 |mut tasks, (task_source_kind, resolved_task)| {
                     tasks.entry(&resolved_task.id).or_insert_with(|| {
                         (task_source_kind, resolved_task, post_inc(&mut lru_score))
@@ -238,18 +238,18 @@ impl Inventory {
             .into_iter()
             .map(|(_, (kind, task, lru_score))| (kind.clone(), task.clone(), lru_score));
 
-        let mut tasks_by_label = HashMap::default();
+        let mut tasks_by_label = BTreeMap::default();
         tasks_by_label = previously_spawned_tasks.into_iter().fold(
             tasks_by_label,
             |mut tasks_by_label, (source, task, lru_score)| {
                 match tasks_by_label.entry((source, task.resolved_label.clone())) {
-                    hash_map::Entry::Occupied(mut o) => {
+                    btree_map::Entry::Occupied(mut o) => {
                         let (_, previous_lru_score) = o.get();
                         if previous_lru_score >= &lru_score {
                             o.insert((task, lru_score));
                         }
                     }
-                    hash_map::Entry::Vacant(v) => {
+                    btree_map::Entry::Vacant(v) => {
                         v.insert((task, lru_score));
                     }
                 }
@@ -260,7 +260,7 @@ impl Inventory {
             tasks_by_label,
             |mut tasks_by_label, (source, task, lru_score)| {
                 match tasks_by_label.entry((source, task.resolved_label.clone())) {
-                    hash_map::Entry::Occupied(mut o) => {
+                    btree_map::Entry::Occupied(mut o) => {
                         let (previous_task, _) = o.get();
                         let new_template = task.original_task();
                         if new_template.ignore_previously_resolved
@@ -269,7 +269,7 @@ impl Inventory {
                             o.insert((task, lru_score));
                         }
                     }
-                    hash_map::Entry::Vacant(v) => {
+                    btree_map::Entry::Vacant(v) => {
                         v.insert((task, lru_score));
                     }
                 }
@@ -668,13 +668,6 @@ mod tests {
             (
                 TaskSourceKind::AbsPath {
                     id_base: "test source",
-                    abs_path: path_2.to_path_buf(),
-                },
-                common_name.to_string(),
-            ),
-            (
-                TaskSourceKind::AbsPath {
-                    id_base: "test source",
                     abs_path: path_1.to_path_buf(),
                 },
                 "static_source_1".to_string(),
@@ -683,6 +676,13 @@ mod tests {
                 TaskSourceKind::AbsPath {
                     id_base: "test source",
                     abs_path: path_1.to_path_buf(),
+                },
+                common_name.to_string(),
+            ),
+            (
+                TaskSourceKind::AbsPath {
+                    id_base: "test source",
+                    abs_path: path_2.to_path_buf(),
                 },
                 common_name.to_string(),
             ),
