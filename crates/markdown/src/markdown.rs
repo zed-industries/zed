@@ -450,10 +450,7 @@ impl MarkdownElementBuilder {
         }
 
         let text = StyledText::new(text).with_runs(runs);
-        self.div_stack
-            .last_mut()
-            .unwrap()
-            .extend(iter::once(text.into_any()));
+        self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
 
     fn finish(mut self) -> Div {
