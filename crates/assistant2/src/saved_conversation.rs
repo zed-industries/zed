@@ -8,6 +8,9 @@ pub struct SavedMessage {
     pub text: String,
 }
 
+/// Returns a list of placeholder conversations for mocking the UI.
+///
+/// Once we have real saved conversations to pull from we can use those instead.
 pub fn placeholder_conversations() -> Vec<SavedConversation> {
     vec![
         SavedConversation {
