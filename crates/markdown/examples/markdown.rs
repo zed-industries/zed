@@ -1,3 +1,4 @@
+use assets::Assets;
 use gpui::{prelude::*, App, ScrollHandle, Task, View, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
@@ -84,7 +85,7 @@ Remember, markdown processors may have slight differences and extensions, so alw
 "#;
 
 pub fn main() {
-    App::new().run(|cx| {
+    App::new().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         language::init(cx);
@@ -99,6 +100,7 @@ pub fn main() {
         ));
         languages::init(language_registry.clone(), node_runtime, cx);
         theme::init(LoadThemes::JustBase, cx);
+        Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
         cx.open_window(WindowOptions::default(), |cx| {
@@ -158,6 +160,7 @@ impl Render for MarkdownExample {
             .relative()
             .bg(gpui::white())
             .size_full()
+            .p_4()
             .overflow_y_scroll()
             .child(self.markdown.clone())
     }
