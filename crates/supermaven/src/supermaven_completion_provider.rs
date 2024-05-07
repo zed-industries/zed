@@ -3,9 +3,7 @@ use anyhow::Result;
 use editor::{Direction, InlineCompletionProvider};
 use futures::StreamExt as _;
 use gpui::{AppContext, Model, ModelContext, Task};
-use language::{
-    language_settings::all_language_settings, Anchor, Buffer, OffsetRangeExt as _, ToOffset,
-};
+use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
 use std::time::Duration;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
@@ -110,13 +108,6 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
             None
         }
     }
-}
-
-fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
-    a.zip(b)
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len_utf8())
-        .sum()
 }
 
 fn trim_to_end_of_line_unless_leading_newline(mut text: String) -> String {
