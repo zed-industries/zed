@@ -1,7 +1,7 @@
 use crate::Project;
 use collections::HashMap;
 use gpui::{AnyWindowHandle, Context, Entity, Model, ModelContext, WeakModel};
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::path::{Path, PathBuf};
 use task::SpawnInTerminal;
@@ -21,6 +21,7 @@ pub struct Terminals {
 impl Project {
     pub fn create_terminal(
         &mut self,
+        settings_location: Option<SettingsLocation>,
         working_directory: Option<PathBuf>,
         spawn_task: Option<SpawnInTerminal>,
         window: AnyWindowHandle,
@@ -32,7 +33,7 @@ impl Project {
         );
 
         let is_terminal = spawn_task.is_none();
-        let settings = TerminalSettings::get_global(cx);
+        let settings = TerminalSettings::get(settings_location, cx);
         let python_settings = settings.detect_venv.clone();
         let (completion_tx, completion_rx) = bounded(1);
 

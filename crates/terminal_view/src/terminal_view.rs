@@ -13,7 +13,7 @@ use gpui::{
 use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, Fs, LocalWorktree, Metadata, Project};
-use settings::SettingsStore;
+use settings::{SettingsLocation, SettingsStore};
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -117,11 +117,26 @@ impl TerminalView {
         let working_directory =
             get_working_directory(workspace, cx, strategy.working_directory.clone());
 
+        let found_local_worktree = if let Some(working_directory) = working_directory.as_ref() {
+            workspace.project().read(cx).find_local_worktree(working_directory, cx)
+        } else {
+            None
+        };
+
+        let settings_location = if let Some((worktree, path)) = found_local_worktree.as_ref() {
+            Some(SettingsLocation {
+                worktree_id: worktree.read_with(cx, |worktree, _| worktree.id().to_usize()),
+                path
+            })
+        } else {
+            None
+        };
+
         let window = cx.window_handle();
         let terminal = workspace
             .project()
             .update(cx, |project, cx| {
-                project.create_terminal(working_directory, None, window, cx)
+                project.create_terminal(settings_location, working_directory, None, window, cx)
             })
             .notify_err(workspace, cx);
 
@@ -894,8 +909,25 @@ impl Item for TerminalView {
                 })
                 .filter(|cwd| !cwd.as_os_str().is_empty());
 
+            let found_local_worktree = if let Some(working_directory) = cwd.as_ref() {
+                cx.update(|cx| {
+                    project.read(cx).find_local_worktree(working_directory, cx)
+                        .map(|(worktree, path)| (worktree.read_with(cx, |worktree, _| worktree.id().to_usize()), path))
+                })
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+
+            let settings_location = if let Some(&(worktree_id, ref path)) = found_local_worktree.as_ref() {
+                Some(SettingsLocation { worktree_id, path })
+            } else {
+                None
+            };
+
             let terminal = project.update(&mut cx, |project, cx| {
-                project.create_terminal(cwd, None, window, cx)
+                project.create_terminal(settings_location, cwd, None, window, cx)
             })??;
             pane.update(&mut cx, |_, cx| {
                 cx.new_view(|cx| TerminalView::new(terminal, workspace, workspace_id, cx))
