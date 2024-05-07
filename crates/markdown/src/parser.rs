@@ -3,23 +3,31 @@ pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{Alignment, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser};
 use std::ops::Range;
 
-pub fn parse_markdown(text: &str) -> Vec<MarkdownEvent> {
+pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
     Parser::new_ext(text, Options::all())
         .into_offset_iter()
-        .map(|(pulldown_event, range)| match pulldown_event {
-            pulldown_cmark::Event::Start(tag) => MarkdownEvent::Start(tag.into()),
-            pulldown_cmark::Event::End(tag) => MarkdownEvent::End(MarkdownTagEnd::from(tag)),
-            pulldown_cmark::Event::Text(_) => MarkdownEvent::Text(range),
-            pulldown_cmark::Event::Code(_) => MarkdownEvent::Code(range.start + 1..range.end - 1),
-            pulldown_cmark::Event::Html(_) => MarkdownEvent::Html(range),
-            pulldown_cmark::Event::InlineHtml(_) => MarkdownEvent::InlineHtml(range),
-            pulldown_cmark::Event::FootnoteReference(_) => MarkdownEvent::FootnoteReference(range),
-            pulldown_cmark::Event::SoftBreak => MarkdownEvent::SoftBreak,
-            pulldown_cmark::Event::HardBreak => MarkdownEvent::HardBreak,
-            pulldown_cmark::Event::Rule => MarkdownEvent::Rule,
-            pulldown_cmark::Event::TaskListMarker(checked) => {
-                MarkdownEvent::TaskListMarker(checked)
-            }
+        .map(|(pulldown_event, mut range)| {
+            let event = match pulldown_event {
+                pulldown_cmark::Event::Start(tag) => MarkdownEvent::Start(tag.into()),
+                pulldown_cmark::Event::End(tag) => MarkdownEvent::End(MarkdownTagEnd::from(tag)),
+                pulldown_cmark::Event::Text(_) => MarkdownEvent::Text,
+                pulldown_cmark::Event::Code(_) => {
+                    range.start += 1;
+                    range.end -= 1;
+                    MarkdownEvent::Code
+                }
+                pulldown_cmark::Event::Html(_) => MarkdownEvent::Html,
+                pulldown_cmark::Event::InlineHtml(_) => MarkdownEvent::InlineHtml,
+                pulldown_cmark::Event::FootnoteReference(_) => MarkdownEvent::FootnoteReference,
+                pulldown_cmark::Event::SoftBreak => MarkdownEvent::SoftBreak,
+                pulldown_cmark::Event::HardBreak => MarkdownEvent::HardBreak,
+                pulldown_cmark::Event::Rule => MarkdownEvent::Rule,
+                pulldown_cmark::Event::TaskListMarker(checked) => {
+                    MarkdownEvent::TaskListMarker(checked)
+                }
+            };
+
+            (range, event)
         })
         .collect()
 }
@@ -35,17 +43,17 @@ pub enum MarkdownEvent {
     /// End of a tagged element.
     End(MarkdownTagEnd),
     /// A text node.
-    Text(Range<usize>),
+    Text,
     /// An inline code node.
-    Code(Range<usize>),
+    Code,
     /// An HTML node.
-    Html(Range<usize>),
+    Html,
     /// An inline HTML node.
-    InlineHtml(Range<usize>),
+    InlineHtml,
     /// A reference to a footnote with given label, which may or may not be defined
     /// by an event with a `Tag::FootnoteDefinition` tag. Definitions and references to them may
     /// occur in any order.
-    FootnoteReference(Range<usize>),
+    FootnoteReference,
     /// A soft line break.
     SoftBreak,
     /// A hard line break.

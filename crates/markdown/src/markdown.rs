@@ -3,12 +3,12 @@ mod parser;
 use futures::FutureExt;
 use gpui::{
     AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, Hsla, Render, StrikethroughStyle,
-    Style, StyledText, Task, TextRun, TextStyle, TextStyleRefinement, WrappedLine,
+    Style, StyledText, Task, TextLayout, TextRun, TextStyle, TextStyleRefinement,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
-use std::{cell::Cell, iter, mem, rc::Rc, sync::Arc};
-use theme::{SyntaxTheme, Theme};
+use std::{iter, mem, ops::Range, sync::Arc};
+use theme::SyntaxTheme;
 use ui::prelude::*;
 use util::TryFutureExt;
 
@@ -108,7 +108,7 @@ impl Render for Markdown {
 #[derive(Clone)]
 struct ParsedMarkdown {
     text: SharedString,
-    events: Arc<[MarkdownEvent]>,
+    events: Arc<[(Range<usize>, MarkdownEvent)]>,
 }
 
 impl Default for ParsedMarkdown {
@@ -168,7 +168,7 @@ impl MarkdownElement {
 }
 
 impl Element for MarkdownElement {
-    type RequestLayoutState = AnyElement;
+    type RequestLayoutState = RenderedMarkdown;
     type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> {
@@ -181,7 +181,7 @@ impl Element for MarkdownElement {
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let mut builder = MarkdownElementBuilder::new(cx.text_style(), self.style.syntax.clone());
-        for event in self.markdown.events.iter() {
+        for (range, event) in self.markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => match tag {
                     MarkdownTag::Paragraph => {
@@ -233,9 +233,9 @@ impl Element for MarkdownElement {
                     MarkdownTag::Item => {
                         builder.push_div(div());
                         if let Some(item_index) = builder.next_list_item_index() {
-                            builder.push_text(&format!("{}. ", item_index));
+                            builder.push_text(&format!("{}. ", item_index), range.start);
                         } else {
-                            builder.push_text("• ");
+                            builder.push_text("• ", range.start);
                         };
                     }
                     MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
@@ -295,22 +295,22 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Image => todo!(),
                     _ => log::info!("unsupported markdown tag end: {:?}", tag),
                 },
-                MarkdownEvent::Text(range) => {
-                    builder.push_text(&self.markdown.text[range.clone()]);
+                MarkdownEvent::Text => {
+                    builder.push_text(&self.markdown.text[range.clone()], range.start);
                 }
-                MarkdownEvent::Code(range) => {
+                MarkdownEvent::Code => {
                     builder.push_text_style(TextStyleRefinement {
                         background_color: Some(self.style.code_background_color),
                         ..self.style.code.clone()
                     });
-                    builder.push_text(&self.markdown.text[range.clone()]);
+                    builder.push_text(&self.markdown.text[range.clone()], range.start);
                     builder.pop_text_style();
                 }
-                MarkdownEvent::Html(range) => {
-                    builder.push_text(&self.markdown.text[range.clone()]);
+                MarkdownEvent::Html => {
+                    builder.push_text(&self.markdown.text[range.clone()], range.start);
                 }
-                MarkdownEvent::InlineHtml(range) => {
-                    builder.push_text(&self.markdown.text[range.clone()]);
+                MarkdownEvent::InlineHtml => {
+                    builder.push_text(&self.markdown.text[range.clone()], range.start);
                 }
 
                 MarkdownEvent::Rule => {
@@ -322,39 +322,38 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::FootnoteReference(_) => todo!(),
+                MarkdownEvent::FootnoteReference => todo!(),
                 MarkdownEvent::SoftBreak => todo!(),
                 MarkdownEvent::HardBreak => todo!(),
                 MarkdownEvent::TaskListMarker(_) => todo!(),
             }
         }
 
-        let mut element = builder.finish().into_any();
-        let child_layout_id = element.request_layout(cx);
+        let mut rendered_markdown = builder.finish();
+        let child_layout_id = rendered_markdown.element.request_layout(cx);
         let layout_id = cx.request_layout(&Style::default(), [child_layout_id]);
-
-        (layout_id, element)
+        (layout_id, rendered_markdown)
     }
 
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
+        rendered_markdown: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Self::PrepaintState {
-        request_layout.prepaint(cx);
+        rendered_markdown.element.prepaint(cx);
     }
 
     fn paint(
         &mut self,
-        id: Option<&GlobalElementId>,
-        bounds: Bounds<Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
-        prepaint: &mut Self::PrepaintState,
+        _id: Option<&GlobalElementId>,
+        _bounds: Bounds<Pixels>,
+        rendered_markdown: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
-        request_layout.paint(cx);
+        rendered_markdown.element.paint(cx);
     }
 }
 
@@ -366,21 +365,37 @@ impl IntoElement for MarkdownElement {
     }
 }
 
-#[derive(Clone)]
-struct TextBlock {
-    bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    line: WrappedLine,
-}
-
 struct MarkdownElementBuilder {
     div_stack: Vec<Div>,
-    pending_text: String,
-    pending_runs: Vec<TextRun>,
+    rendered_lines: Vec<RenderedLine>,
+    pending_line: PendingLine,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
     list_stack: Vec<ListStackEntry>,
     syntax_theme: Arc<SyntaxTheme>,
+}
+
+#[derive(Default)]
+struct PendingLine {
+    text: String,
+    runs: Vec<TextRun>,
+    indices: Vec<TextIndex>,
+}
+
+struct RenderedLine {
+    layout: TextLayout,
+    indices: Vec<TextIndex>,
+}
+
+struct TextIndex {
+    element_index: usize,
+    markdown_index: usize,
+}
+
+pub struct RenderedMarkdown {
+    element: AnyElement,
+    lines: Arc<[RenderedLine]>,
 }
 
 struct ListStackEntry {
@@ -391,8 +406,8 @@ impl MarkdownElementBuilder {
     fn new(base_text_style: TextStyle, syntax_theme: Arc<SyntaxTheme>) -> Self {
         Self {
             div_stack: vec![div().debug_selector(|| "inner".into())],
-            pending_text: String::new(),
-            pending_runs: Vec::new(),
+            rendered_lines: Vec::new(),
+            pending_line: PendingLine::default(),
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
@@ -452,14 +467,19 @@ impl MarkdownElementBuilder {
         self.code_block_stack.pop();
     }
 
-    fn push_text(&mut self, text: &str) {
-        self.pending_text.push_str(text);
+    fn push_text(&mut self, text: &str, markdown_index: usize) {
+        self.pending_line.indices.push(TextIndex {
+            element_index: self.pending_line.text.len(),
+            markdown_index,
+        });
+        self.pending_line.text.push_str(text);
 
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
             for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
                 if range.start > offset {
-                    self.pending_runs
+                    self.pending_line
+                        .runs
                         .push(self.text_style().to_run(range.start - offset));
                 }
 
@@ -467,40 +487,51 @@ impl MarkdownElementBuilder {
                 if let Some(highlight) = highlight_id.style(&self.syntax_theme) {
                     run_style = run_style.highlight(highlight);
                 }
-                self.pending_runs.push(run_style.to_run(range.len()));
+                self.pending_line.runs.push(run_style.to_run(range.len()));
                 offset = range.end;
             }
 
             if offset < text.len() {
-                self.pending_runs
+                self.pending_line
+                    .runs
                     .push(self.text_style().to_run(text.len() - offset));
             }
         } else {
-            self.pending_runs.push(self.text_style().to_run(text.len()));
+            self.pending_line
+                .runs
+                .push(self.text_style().to_run(text.len()));
         }
     }
 
     fn trim_trailing_newline(&mut self) {
-        if self.pending_text.ends_with('\n') {
-            self.pending_text.truncate(self.pending_text.len() - 1);
-            self.pending_runs.last_mut().unwrap().len -= 1;
+        if self.pending_line.text.ends_with('\n') {
+            self.pending_line
+                .text
+                .truncate(self.pending_line.text.len() - 1);
+            self.pending_line.runs.last_mut().unwrap().len -= 1;
         }
     }
 
     fn flush_text(&mut self) {
-        let text = mem::take(&mut self.pending_text);
-        let runs = mem::take(&mut self.pending_runs);
-        if text.is_empty() {
+        let line = mem::take(&mut self.pending_line);
+        if line.text.is_empty() {
             return;
         }
 
-        let text = StyledText::new(text).with_runs(runs);
+        let text = StyledText::new(line.text).with_runs(line.runs);
+        self.rendered_lines.push(RenderedLine {
+            layout: text.layout().clone(),
+            indices: line.indices,
+        });
         self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
 
-    fn finish(mut self) -> Div {
+    fn finish(mut self) -> RenderedMarkdown {
         debug_assert_eq!(self.div_stack.len(), 1);
         self.flush_text();
-        self.div_stack.pop().unwrap()
+        RenderedMarkdown {
+            element: self.div_stack.pop().unwrap().into_any(),
+            lines: self.rendered_lines.into(),
+        }
     }
 }
