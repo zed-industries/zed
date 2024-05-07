@@ -9747,39 +9747,41 @@ impl Editor {
             return None;
         }
 
+        let indent_candidates = indents
+            .iter()
+            .enumerate()
+            .filter(|(_, indent_guide)| indent_guide.size == target_indent)
+            .collect::<Vec<_>>();
+
         // Find exact match
-        for (i, indent) in indents.iter().enumerate() {
+        for (i, indent) in indent_candidates.iter() {
             if cursor_fold_range.start.row + 1 == indent.start
                 && indent.end == cursor_fold_range.end.row
-                && indent.size == target_indent
             {
-                return Some(i);
+                return Some(*i);
             }
         }
 
         // Find match that is partially on screen (start/end of fold is the same as the indent start)
-        for (i, indent) in indents.iter().enumerate() {
+        for (i, indent) in indent_candidates.iter() {
             if cursor_fold_range.start.row + 1 <= indent.start
                 && indent.end == cursor_fold_range.end.row
-                && indent.size == target_indent
             {
-                return Some(i);
+                return Some(*i);
             }
             if cursor_fold_range.start.row + 1 == indent.start
                 && indent.end <= cursor_fold_range.end.row
-                && indent.size == target_indent
             {
-                return Some(i);
+                return Some(*i);
             }
         }
 
         // Find match that where the start and the end is not on screen
-        for (i, indent) in indents.iter().enumerate() {
+        for (i, indent) in indent_candidates.iter() {
             if cursor_fold_range.start.row <= indent.start
                 && indent.end <= cursor_fold_range.end.row
-                && target_indent == indent.size
             {
-                return Some(i);
+                return Some(*i);
             }
         }
 
