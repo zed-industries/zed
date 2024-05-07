@@ -1,6 +1,6 @@
 # Vim Mode
 
-Zed includes a vim emulation layer known as “vim mode”. This document aims to describe how it works, and how to make the most out of it.
+Zed includes a vim emulation layer known as "vim mode". This document aims to describe how it works, and how to make the most out of it.
 
 ## Philosophy
 
@@ -10,39 +10,41 @@ This means Zed will never be 100% vim compatible, but should be 100% vim familia
 
 ## Zed-specific features
 
-Zed is built on a modern foundation that (among other things) uses tree-sitter to understand the content of the file you're editing, and supports multiple cursors out of the box.
+Zed is built on a modern foundation that (among other things) uses tree-sitter and language servers to understand the content of the file you're editing, and supports multiple cursors out of the box.
 
 Vim mode has several "core Zed" key bindings, that will help you make the most of Zed's specific feature set.
 
 ```
-# Normal mode
+# Language server
 g d   Go to definition
 g D   Go to type definition
 c d   Rename (change definition)
 g A   Go to All references to the current word
 
-g <space>  Open the current search excerpt
-
-<ctrl-w> <space>  Open the current search excerpt in a split
-<ctrl-w> g d      Go to definition in a split
-<ctrl-w> g D      Go to type definition in a split
-
 g s   Find symbol in current file
 g S   Find symbol in entire project
-
-g l   Add a visual selection for the next copy of the current word
-g L   The same, but backwards
-g >   Skip latest word selection, and add next.
-g <   The same, but backwards
-g a   Add a visual selection for every copy of the current word
 
 g ]   Go to next diagnostic
 g [   Go to previous diagnostic
 g h   Show inline error (hover)
 g .   Open the code actions menu
 
+# Treesitter
 ] x   Select a smaller syntax node
 [ x   Select a larger syntax node
+
+# Multi cursor
+g l   Add a visual selection for the next copy of the current word
+g L   The same, but backwards
+g >   Skip latest word selection, and add next.
+g <   The same, but backwards
+g a   Add a visual selection for every copy of the current word
+
+# Pane management
+g <space>  Open the current search excerpt
+<ctrl-w> <space>  Open the current search excerpt in a split
+<ctrl-w> g d      Go to definition in a split
+<ctrl-w> g D      Go to type definition in a split
 
 # Insert mode
 ctrl-x ctrl-o  Open the completion menu
@@ -51,7 +53,7 @@ ctrl-x ctrl-a  Open the inline AI assistant (if configured)
 ctrl-x ctrl-l  Open the code actions menu
 ctrl-x ctrl-z  Hides all suggestions
 
-# Ex commands (as of zed 0.124.0)
+# Ex commands
 :E[xplore]    Open the project panel
 :C[ollab]     Open the collaboration panel
 :Ch[at]       Open the chat panel
@@ -70,8 +72,6 @@ Vim mode emulates visual block mode using Zed's multiple cursor support. This ag
 Finally, Vim mode's search and replace functionality is backed by Zed's. This means that the pattern syntax is slightly different, see the section on [Regex differences](#regex-differences) for details.
 
 ## Custom key bindings
-
-Zed does not yet have an equivalent to vim’s `map` command to convert one set of keystrokes into another, however you can bind any sequence of keys to fire any Action documented in the [Key bindings documentation](https://zed.dev/docs/key-bindings).
 
 You can edit your personal key bindings with `:keymap`.
 For vim-specific shortcuts, you may find the following template a good place to start:
@@ -109,9 +109,9 @@ For vim-specific shortcuts, you may find the following template a good place to 
 ]
 ```
 
-You can see the bindings that are enabled by default in vim mode [here](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
-
 If you would like to emulate vim's `map` (`nmap` etc.) commands you can bind to the [`workspace::SendKeystrokes`](/docs/key-bindings#remapping-keys) action in the correct context.
+
+You can see the bindings that are enabled by default in vim mode [here](https://github.com/zed-industries/zed/blob/main/assets/keymaps/vim.json).
 
 The details of the context are a little out of scope for this doc, but suffice to say that `menu` is true when a menu is open (e.g. the completions menu), `VimWaiting` is true after you type `f` or `t` when we’re waiting for a new key (and you probably don’t want bindings to happen). Please reach out on [GitHub](https://github.com/zed-industries/zed) if you want help making a key bindings work.
 
@@ -171,9 +171,12 @@ Currently supported vim-specific commands:
 :/foo and :?foo
     to jump to next/prev line matching foo
 
-# replacement
+# replacement (/g is always assumed and Zed uses different regex syntax to vim)
 :%s/foo/bar/
-    to replace instances of foo with bar (/g is always assumed, the range must always be %, and Zed uses different regex syntax to vim)
+  to replace instances of foo with bar
+:X,Ys/foo/bar/
+    to limit replcaement between line X and Y
+    other ranges are not yet implemented
 
 # editing
 :j[oin]
@@ -242,6 +245,20 @@ If you want to navigate between the editor and docks (terminal, project panel, A
     // ... or other keybindings
   }
 }
+```
+
+Subword motion is not enabled by default. To enable it, add these bindings to your keymap.
+
+```json
+  {
+    "context": "Editor && VimControl && !VimWaiting && !menu",
+    "bindings": {
+      "w": "vim::NextSubwordStart",
+      "b": "vim::PreviousSubwordStart",
+      "e": "vim::NextSubwordEnd",
+      "g e": "vim::PreviousSubwordEnd"
+    }
+  },
 ```
 
 ## Supported plugins
