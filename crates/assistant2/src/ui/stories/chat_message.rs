@@ -28,8 +28,7 @@ impl Render for ChatMessageStory {
                     ChatMessage::new(
                         MessageId(0),
                         UserOrAssistant::User(Some(user_1.clone())),
-                        Some(div().child("What can I do here?").into_any_element()),
-                        None,
+                        vec![div().child("What can I do here?").into_any_element()],
                         false,
                         Box::new(|_, _| {}),
                     ),
@@ -39,8 +38,7 @@ impl Render for ChatMessageStory {
                     ChatMessage::new(
                         MessageId(0),
                         UserOrAssistant::User(Some(user_1.clone())),
-                        Some(div().child("What can I do here?").into_any_element()),
-                        None,
+                        vec![div().child("What can I do here?").into_any_element()],
                         true,
                         Box::new(|_, _| {}),
                     ),
@@ -53,8 +51,7 @@ impl Render for ChatMessageStory {
                     ChatMessage::new(
                         MessageId(0),
                         UserOrAssistant::Assistant,
-                        Some(div().child("You can talk to me!").into_any_element()),
-                        None,
+                        vec![div().child("You can talk to me!").into_any_element()],
                         false,
                         Box::new(|_, _| {}),
                     ),
@@ -64,8 +61,7 @@ impl Render for ChatMessageStory {
                     ChatMessage::new(
                         MessageId(0),
                         UserOrAssistant::Assistant,
-                        Some(div().child(MULTI_LINE_MESSAGE).into_any_element()),
-                        None,
+                        vec![div().child(MULTI_LINE_MESSAGE).into_any_element()],
                         true,
                         Box::new(|_, _| {}),
                     ),
@@ -79,24 +75,21 @@ impl Render for ChatMessageStory {
                     .child(ChatMessage::new(
                         MessageId(0),
                         UserOrAssistant::User(Some(user_1.clone())),
-                        Some(div().child("What is Rust??").into_any_element()),
-                        None,
+                        vec![div().child("What is Rust??").into_any_element()],
                         false,
                         Box::new(|_, _| {}),
                     ))
                     .child(ChatMessage::new(
                         MessageId(0),
                         UserOrAssistant::Assistant,
-                        Some(div().child("Rust is a multi-paradigm programming language focused on performance and safety").into_any_element()),
-                        None,
+                        vec![div().child("Rust is a multi-paradigm programming language focused on performance and safety").into_any_element()],
                         false,
                         Box::new(|_, _| {}),
                     ))
                     .child(ChatMessage::new(
                         MessageId(0),
                         UserOrAssistant::User(Some(user_1)),
-                        Some(div().child("Sounds pretty cool!").into_any_element()),
-                        None,
+                        vec![div().child("Sounds pretty cool!").into_any_element()],
                         false,
                         Box::new(|_, _| {}),
                     )),

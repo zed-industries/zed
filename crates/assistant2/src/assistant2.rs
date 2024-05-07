@@ -342,8 +342,8 @@ impl AssistantChat {
         }
 
         if self.pending_completion.take().is_some() {
-            if let Some(ChatMessage::Assistant(message)) = self.messages.last() {
-                if message.body.text.is_empty() {
+            if let Some(ChatMessage::Assistant(grouping)) = self.messages.last() {
+                if grouping.messages.is_empty() {
                     self.pop_message(cx);
                 }
             }
@@ -479,21 +479,29 @@ impl AssistantChat {
                     let delta = delta?;
                     this.update(cx, |this, cx| {
                         if let Some(ChatMessage::Assistant(GroupedAssistantMessage {
-                            body: message_body,
-                            tool_calls: message_tool_calls,
+                            messages,
                             ..
                         })) = this.messages.last_mut()
                         {
+                            if messages.is_empty() {
+                                messages.push(AssistantMessage {
+                                    body: RichText::default(),
+                                    tool_calls: Vec::new(),
+                                })
+                            }
+
+                            let message = messages.last_mut().unwrap();
+
                             if let Some(content) = &delta.content {
                                 body.push_str(content);
                             }
 
                             for tool_call in delta.tool_calls {
                                 let index = tool_call.index as usize;
-                                if index >= message_tool_calls.len() {
-                                    message_tool_calls.resize_with(index + 1, Default::default);
+                                if index >= message.tool_calls.len() {
+                                    message.tool_calls.resize_with(index + 1, Default::default);
                                 }
-                                let call = &mut message_tool_calls[index];
+                                let call = &mut message.tool_calls[index];
 
                                 if let Some(id) = &tool_call.id {
                                     call.id.push_str(id);
@@ -512,7 +520,7 @@ impl AssistantChat {
                                 }
                             }
 
-                            *message_body =
+                            message.body =
                                 RichText::new(body.clone(), &[], &this.language_registry);
                             cx.notify();
                         } else {
@@ -529,7 +537,7 @@ impl AssistantChat {
             this.update(cx, |this, cx| {
                 if let Some(ChatMessage::Assistant(GroupedAssistantMessage {
                     error: message_error,
-                    tool_calls,
+                    messages,
                     ..
                 })) = this.messages.last_mut()
                 {
@@ -537,8 +545,10 @@ impl AssistantChat {
                         message_error.replace(SharedString::from(error.to_string()));
                         cx.notify();
                     } else {
-                        for tool_call in tool_calls.iter() {
-                            tool_tasks.push(this.tool_registry.call(tool_call, cx));
+                        if let Some(current_message) = messages.last_mut() {
+                            for tool_call in current_message.tool_calls.iter() {
+                                tool_tasks.push(this.tool_registry.call(tool_call, cx));
+                            }
                         }
                     }
                 }
@@ -554,12 +564,15 @@ impl AssistantChat {
             let tools = tools.into_iter().filter_map(|tool| tool.ok()).collect();
 
             this.update(cx, |this, cx| {
-                if let Some(ChatMessage::Assistant(GroupedAssistantMessage {
-                    tool_calls, ..
-                })) = this.messages.last_mut()
+                if let Some(ChatMessage::Assistant(GroupedAssistantMessage { messages, .. })) =
+                    this.messages.last_mut()
                 {
-                    *tool_calls = tools;
-                    cx.notify();
+                    if let Some(current_message) = messages.last_mut() {
+                        current_message.tool_calls = tools;
+                        cx.notify();
+                    } else {
+                        unreachable!()
+                    }
                 }
             })?;
         }
@@ -568,8 +581,7 @@ impl AssistantChat {
     fn push_new_assistant_message(&mut self, cx: &mut ViewContext<Self>) {
         let message = ChatMessage::Assistant(GroupedAssistantMessage {
             id: self.next_message_id.post_inc(),
-            body: RichText::default(),
-            tool_calls: Vec::new(),
+            messages: Vec::new(),
             error: None,
         });
         self.push_message(message, cx);
