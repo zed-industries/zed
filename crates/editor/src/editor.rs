@@ -505,6 +505,7 @@ pub struct Editor {
     last_bounds: Option<Bounds<Pixels>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: HashMap<u32, RunnableTasks>,
+    tasks_update_task: Option<Task<()>>,
 }
 
 #[derive(Clone)]
@@ -1688,8 +1689,9 @@ impl Editor {
                     });
                 }),
             ],
+            tasks_update_task: None,
         };
-
+        this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
 
         this.end_selection(cx);
@@ -7687,25 +7689,68 @@ impl Editor {
         self.select_larger_syntax_node_stack = stack;
     }
 
-    fn runnable_display_rows(
-        &self,
-        range: Range<Anchor>,
+    fn refresh_runnables(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+        let project = self.project.clone();
+        cx.spawn(|this, mut cx| async move {
+            let Ok(display_snapshot) = this.update(&mut cx, |this, cx| {
+                this.display_map.update(cx, |map, cx| map.snapshot(cx))
+            }) else {
+                return;
+            };
+
+            let Some(project) = project else {
+                return;
+            };
+            if project
+                .update(&mut cx, |this, _| this.is_remote())
+                .unwrap_or(true)
+            {
+                // Do not display any test indicators in remote projects.
+                return;
+            }
+            let new_rows =
+                cx.background_executor()
+                    .spawn({
+                        let snapshot = display_snapshot.clone();
+                        async move {
+                            Self::fetch_runnable_ranges(&snapshot, Anchor::min()..Anchor::max())
+                        }
+                    })
+                    .await;
+            let rows = Self::refresh_runnable_display_rows(
+                project,
+                display_snapshot,
+                new_rows,
+                cx.clone(),
+            );
+
+            this.update(&mut cx, |this, _| {
+                this.clear_tasks();
+                for (row, tasks) in rows {
+                    this.insert_tasks(row, tasks);
+                }
+            })
+            .ok();
+        })
+    }
+    fn fetch_runnable_ranges(
         snapshot: &DisplaySnapshot,
-        cx: &WindowContext,
+        range: Range<Anchor>,
+    ) -> Vec<(Range<usize>, Runnable)> {
+        snapshot.buffer_snapshot.runnable_ranges(range).collect()
+    }
+    fn refresh_runnable_display_rows(
+        project: Model<Project>,
+        snapshot: DisplaySnapshot,
+        runnable_ranges: Vec<(Range<usize>, Runnable)>,
+        mut cx: AsyncWindowContext,
     ) -> Vec<(u32, RunnableTasks)> {
-        if self
-            .project
-            .as_ref()
-            .map_or(false, |project| project.read(cx).is_remote())
-        {
-            // Do not display any test indicators in remote projects.
-            return vec![];
-        }
-        snapshot
-            .buffer_snapshot
-            .runnable_ranges(range)
+        runnable_ranges
+            .into_iter()
             .filter_map(|(multi_buffer_range, mut runnable)| {
-                let (tasks, _) = self.resolve_runnable(&mut runnable, cx);
+                let (tasks, _) = cx
+                    .update(|cx| Self::resolve_runnable(project.clone(), &mut runnable, cx))
+                    .ok()?;
                 if tasks.is_empty() {
                     return None;
                 }
@@ -7722,13 +7767,10 @@ impl Editor {
     }
 
     fn resolve_runnable(
-        &self,
+        project: Model<Project>,
         runnable: &mut Runnable,
         cx: &WindowContext<'_>,
     ) -> (Vec<(TaskSourceKind, TaskTemplate)>, Option<WorktreeId>) {
-        let Some(project) = self.project.as_ref() else {
-            return Default::default();
-        };
         let (inventory, worktree_id) = project.read_with(cx, |project, cx| {
             let worktree_id = project
                 .buffer_for_id(runnable.buffer)
@@ -10070,7 +10112,11 @@ impl Editor {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
-            multi_buffer::Event::Reparsed => cx.emit(EditorEvent::Reparsed),
+            multi_buffer::Event::Reparsed => {
+                self.tasks_update_task = Some(self.refresh_runnables(cx));
+
+                cx.emit(EditorEvent::Reparsed);
+            }
             multi_buffer::Event::LanguageChanged => {
                 cx.emit(EditorEvent::Reparsed);
                 cx.notify();
