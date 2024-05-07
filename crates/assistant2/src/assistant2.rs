@@ -31,6 +31,7 @@ use semantic_index::{CloudEmbeddingProvider, ProjectIndex, ProjectIndexDebugView
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
+use tools::OpenBufferTool;
 use ui::{ActiveFileButton, Composer, ProjectIndexButton};
 use util::{maybe, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::{
@@ -125,15 +126,16 @@ impl AssistantPanel {
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry
                     .register(ProjectIndexTool::new(project_index.clone()), cx)
-                    .context("failed to register ProjectIndexTool")
-                    .log_err();
+                    .unwrap();
                 tool_registry
                     .register(
                         CreateBufferTool::new(workspace.clone(), project.clone()),
                         cx,
                     )
-                    .context("failed to register CreateBufferTool")
-                    .log_err();
+                    .unwrap();
+                tool_registry
+                    .register(OpenBufferTool::new(workspace.clone(), project.clone()), cx)
+                    .unwrap();
 
                 let mut attachment_registry = AttachmentRegistry::new();
                 attachment_registry
