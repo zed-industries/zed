@@ -66,6 +66,13 @@ impl fmt::Display for DevServerToken {
 lazy_static! {
     static ref ZED_SERVER_URL: Option<String> = std::env::var("ZED_SERVER_URL").ok();
     static ref ZED_RPC_URL: Option<String> = std::env::var("ZED_RPC_URL").ok();
+    /// An environment variable whose presence indicates that the development auth
+    /// provider should be used.
+    ///
+    /// Only works in development. Setting this environment variable in other release
+    /// channels is a no-op.
+    pub static ref ZED_DEVELOPMENT_AUTH: bool =
+        std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty());
     pub static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
@@ -300,13 +307,18 @@ impl Credentials {
     }
 }
 
-// #[async_trait]
+/// A provider for [`Credentials`].
+///
+/// Used to abstract over reading and writing credentials to some form of
+/// persistence (like the system keychain).
 trait CredentialsProvider {
+    /// Reads the credentials from the provider.
     fn read_credentials<'a>(
         &'a self,
         cx: &'a AsyncAppContext,
     ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>>;
 
+    /// Writes the credentials to the provider.
     fn write_credentials<'a>(
         &'a self,
         user_id: u64,
@@ -314,14 +326,11 @@ trait CredentialsProvider {
         cx: &'a AsyncAppContext,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
 
-    // async fn read_credentials(&self, cx: &AsyncAppContext) -> Option<Credentials>;
-
-    // async fn write_credentials(
-    //     &self,
-    //     user_id: u64,
-    //     access_token: String,
-    //     cx: &AsyncAppContext,
-    // ) -> Result<()>;
+    /// Deletes the credentials from the provider.
+    fn delete_credentials<'a>(
+        &'a self,
+        cx: &'a AsyncAppContext,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
 }
 
 impl Default for ClientState {
@@ -470,13 +479,15 @@ impl Client {
         cx: &mut AppContext,
     ) -> Arc<Self> {
         let use_zed_development_auth = match ReleaseChannel::global(cx) {
-            ReleaseChannel::Dev => std::env::var("ZED_DEVELOPMENT_AUTH").is_ok(),
+            ReleaseChannel::Dev => *ZED_DEVELOPMENT_AUTH,
             ReleaseChannel::Nightly | ReleaseChannel::Preview | ReleaseChannel::Stable => false,
         };
 
         let credentials_provider: Arc<dyn CredentialsProvider + Send + Sync + 'static> =
             if use_zed_development_auth {
-                Arc::new(DevelopmentCredentialsProvider)
+                Arc::new(DevelopmentCredentialsProvider {
+                    path: util::paths::CONFIG_DIR.join("development_auth"),
+                })
             } else {
                 Arc::new(KeychainCredentialsProvider)
             };
@@ -802,7 +813,7 @@ impl Client {
         }
     }
 
-    pub async fn has_keychain_credentials(&self, cx: &AsyncAppContext) -> bool {
+    pub async fn has_credentials(&self, cx: &AsyncAppContext) -> bool {
         self.credentials_provider
             .read_credentials(cx)
             .await
@@ -817,7 +828,7 @@ impl Client {
     #[async_recursion(?Send)]
     pub async fn authenticate_and_connect(
         self: &Arc<Self>,
-        try_keychain: bool,
+        try_provider: bool,
         cx: &AsyncAppContext,
     ) -> anyhow::Result<()> {
         let was_disconnected = match *self.status().borrow() {
@@ -838,11 +849,11 @@ impl Client {
             self.set_status(Status::Reauthenticating, cx)
         }
 
-        let mut read_from_keychain = false;
+        let mut read_from_provider = false;
         let mut credentials = self.state.read().credentials.clone();
-        if credentials.is_none() && try_keychain {
+        if credentials.is_none() && try_provider {
             credentials = self.credentials_provider.read_credentials(cx).await;
-            read_from_keychain = credentials.is_some();
+            read_from_provider = credentials.is_some();
         }
 
         if credentials.is_none() {
@@ -881,7 +892,7 @@ impl Client {
                 match connection {
                     Ok(conn) => {
                         self.state.write().credentials = Some(credentials.clone());
-                        if !read_from_keychain && IMPERSONATE_LOGIN.is_none() {
+                        if !read_from_provider && IMPERSONATE_LOGIN.is_none() {
                             if let Credentials::User{user_id, access_token} = credentials {
                                 self.credentials_provider.write_credentials(user_id, access_token, cx).await.log_err();
                             }
@@ -897,8 +908,8 @@ impl Client {
                     }
                     Err(EstablishConnectionError::Unauthorized) => {
                         self.state.write().credentials.take();
-                        if read_from_keychain {
-                            delete_credentials_from_keychain(cx).await.log_err();
+                        if read_from_provider {
+                            self.credentials_provider.delete_credentials(cx).await.log_err();
                             self.set_status(Status::SignedOut, cx);
                             self.authenticate_and_connect(false, cx).await
                         } else {
@@ -1307,8 +1318,11 @@ impl Client {
         self.state.write().credentials = None;
         self.disconnect(&cx);
 
-        if self.has_keychain_credentials(cx).await {
-            delete_credentials_from_keychain(cx).await.log_err();
+        if self.has_credentials(cx).await {
+            self.credentials_provider
+                .delete_credentials(cx)
+                .await
+                .log_err();
         }
     }
 
@@ -1514,7 +1528,16 @@ struct DevelopmentCredentials {
     access_token: String,
 }
 
-struct DevelopmentCredentialsProvider;
+/// A credentials provider that stores credentials in a local file.
+///
+/// This MUST only be used in development, as this is not a secure way of storing
+/// credentials on user machines.
+///
+/// Its existence is purely to work around the annoyance of having to constantly
+/// re-allow access to the system keychain when developing Zed.
+struct DevelopmentCredentialsProvider {
+    path: PathBuf,
+}
 
 impl CredentialsProvider for DevelopmentCredentialsProvider {
     fn read_credentials<'a>(
@@ -1526,7 +1549,7 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
                 return None;
             }
 
-            let json = std::fs::read(util::paths::CONFIG_DIR.join("development_auth")).log_err()?;
+            let json = std::fs::read(&self.path).log_err()?;
 
             let credentials: DevelopmentCredentials = serde_json::from_slice(&json).log_err()?;
 
@@ -1550,14 +1573,22 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
                 access_token,
             })?;
 
-            std::fs::write(util::paths::CONFIG_DIR.join("development_auth"), json)?;
+            std::fs::write(&self.path, json)?;
 
             Ok(())
         }
         .boxed_local()
     }
+
+    fn delete_credentials<'a>(
+        &'a self,
+        _cx: &'a AsyncAppContext,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        async move { Ok(std::fs::remove_file(&self.path)?) }.boxed_local()
+    }
 }
 
+/// A credentials provider that stores credentials in the system keychain.
 struct KeychainCredentialsProvider;
 
 impl CredentialsProvider for KeychainCredentialsProvider {
@@ -1602,11 +1633,17 @@ impl CredentialsProvider for KeychainCredentialsProvider {
         }
         .boxed_local()
     }
-}
 
-async fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
-    cx.update(move |cx| cx.delete_credentials(&ClientSettings::get_global(cx).server_url))?
-        .await
+    fn delete_credentials<'a>(
+        &'a self,
+        cx: &'a AsyncAppContext,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        async move {
+            cx.update(move |cx| cx.delete_credentials(&ClientSettings::get_global(cx).server_url))?
+                .await
+        }
+        .boxed_local()
+    }
 }
 
 /// prefix for the zed:// url scheme
