@@ -396,7 +396,7 @@ impl RenderOnce for DecoratedIcon {
             .parent_background
             .unwrap_or(cx.theme().colors().background);
 
-        let size = self.icon.size.clone();
+        let size = self.icon.size;
 
         let decoration_icon = match self.decoration {
             IconDecoration::Strikethrough => IconName::Strikethrough,
@@ -430,7 +430,7 @@ impl RenderOnce for DecoratedIcon {
             .relative()
             .size(self.icon.size)
             .child(self.icon)
-            .child(decoration_knockout(decoration_icon.clone()))
+            .child(decoration_knockout(decoration_icon))
             .child(decoration_svg(decoration_icon))
     }
 }
