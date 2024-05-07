@@ -31,6 +31,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, SettingsStore};
 use std::fmt;
+use std::pin::Pin;
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -162,6 +163,7 @@ pub struct Client {
     peer: Arc<Peer>,
     http: Arc<HttpClientWithUrl>,
     telemetry: Arc<Telemetry>,
+    credentials_provider: Arc<dyn CredentialsProvider + Send + Sync + 'static>,
     state: RwLock<ClientState>,
 
     #[allow(clippy::type_complexity)]
@@ -299,15 +301,28 @@ impl Credentials {
     }
 }
 
+// #[async_trait]
 trait CredentialsProvider {
-    async fn read_credentials(&self, cx: &AsyncAppContext) -> Option<Credentials>;
+    fn read_credentials<'a>(
+        &'a self,
+        cx: &'a AsyncAppContext,
+    ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>>;
 
-    async fn write_credentials(
-        &self,
+    fn write_credentials<'a>(
+        &'a self,
         user_id: u64,
         access_token: String,
-        cx: &AsyncAppContext,
-    ) -> Result<()>;
+        cx: &'a AsyncAppContext,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
+
+    // async fn read_credentials(&self, cx: &AsyncAppContext) -> Option<Credentials>;
+
+    // async fn write_credentials(
+    //     &self,
+    //     user_id: u64,
+    //     access_token: String,
+    //     cx: &AsyncAppContext,
+    // ) -> Result<()>;
 }
 
 impl Default for ClientState {
@@ -455,11 +470,14 @@ impl Client {
         http: Arc<HttpClientWithUrl>,
         cx: &mut AppContext,
     ) -> Arc<Self> {
+        let credentials_provider = Arc::new(KeychainCredentialsProvider);
+
         Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
             telemetry: Telemetry::new(clock, http.clone(), cx),
             http,
+            credentials_provider,
             state: Default::default(),
 
             #[cfg(any(test, feature = "test-support"))]
@@ -816,7 +834,7 @@ impl Client {
         let mut read_from_keychain = false;
         let mut credentials = self.state.read().credentials.clone();
         if credentials.is_none() && try_keychain {
-            credentials = KeychainCredentialsProvider.read_credentials(cx).await;
+            credentials = self.credentials_provider.read_credentials(cx).await;
             read_from_keychain = credentials.is_some();
         }
 
@@ -1485,60 +1503,120 @@ impl Client {
 
 struct DevelopmentCredentialsProvider;
 
+// #[async_trait]
 impl CredentialsProvider for DevelopmentCredentialsProvider {
-    async fn read_credentials(&self, cx: &AsyncAppContext) -> Option<Credentials> {
-        if IMPERSONATE_LOGIN.is_some() {
-            return None;
-        }
-
-        None
+    fn read_credentials<'a>(
+        &'a self,
+        cx: &'a AsyncAppContext,
+    ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>> {
+        async move { todo!() }.boxed_local()
     }
 
-    async fn write_credentials(
-        &self,
+    fn write_credentials<'a>(
+        &'a self,
         user_id: u64,
         access_token: String,
-        cx: &AsyncAppContext,
-    ) -> Result<()> {
-        todo!()
+        cx: &'a AsyncAppContext,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        async move { todo!() }.boxed_local()
     }
+
+    // async fn read_credentials(&self, cx: &AsyncAppContext) -> Option<Credentials> {
+    //     if IMPERSONATE_LOGIN.is_some() {
+    //         return None;
+    //     }
+
+    //     None
+    // }
+
+    // async fn write_credentials(
+    //     &self,
+    //     user_id: u64,
+    //     access_token: String,
+    //     cx: &AsyncAppContext,
+    // ) -> Result<()> {
+    //     todo!()
+    // }
 }
 
 struct KeychainCredentialsProvider;
 
+// #[async_trait(?Send)]
 impl CredentialsProvider for KeychainCredentialsProvider {
-    async fn read_credentials(&self, cx: &AsyncAppContext) -> Option<Credentials> {
-        if IMPERSONATE_LOGIN.is_some() {
-            return None;
+    fn read_credentials<'a>(
+        &'a self,
+        cx: &'a AsyncAppContext,
+    ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>> {
+        async move {
+            if IMPERSONATE_LOGIN.is_some() {
+                return None;
+            }
+
+            let (user_id, access_token) = cx
+                .update(|cx| cx.read_credentials(&ClientSettings::get_global(cx).server_url))
+                .log_err()?
+                .await
+                .log_err()??;
+
+            Some(Credentials::User {
+                user_id: user_id.parse().ok()?,
+                access_token: String::from_utf8(access_token).ok()?,
+            })
         }
-
-        let (user_id, access_token) = cx
-            .update(|cx| cx.read_credentials(&ClientSettings::get_global(cx).server_url))
-            .log_err()?
-            .await
-            .log_err()??;
-
-        Some(Credentials::User {
-            user_id: user_id.parse().ok()?,
-            access_token: String::from_utf8(access_token).ok()?,
-        })
+        .boxed_local()
     }
 
-    async fn write_credentials(
-        &self,
+    fn write_credentials<'a>(
+        &'a self,
         user_id: u64,
         access_token: String,
-        cx: &AsyncAppContext,
-    ) -> Result<()> {
-        cx.update(move |cx| {
-            cx.write_credentials(
-                &ClientSettings::get_global(cx).server_url,
-                &user_id.to_string(),
-                access_token.as_bytes(),
-            )
-        })?
-        .await
+        cx: &'a AsyncAppContext,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        async move {
+            cx.update(move |cx| {
+                cx.write_credentials(
+                    &ClientSettings::get_global(cx).server_url,
+                    &user_id.to_string(),
+                    access_token.as_bytes(),
+                )
+            })?
+            .await
+        }
+        .boxed_local()
     }
+
+    // async fn read_credentials(&self, cx: &AsyncAppContext) -> Option<Credentials> {
+    //     if IMPERSONATE_LOGIN.is_some() {
+    //         return None;
+    //     }
+
+    //     let (user_id, access_token) = cx
+    //         .update(|cx| cx.read_credentials(&ClientSettings::get_global(cx).server_url))
+    //         .log_err()?
+    //         .await
+    //         .log_err()??;
+
+    //     Some(Credentials::User {
+    //         user_id: user_id.parse().ok()?,
+    //         access_token: String::from_utf8(access_token).ok()?,
+    //     })
+    // }
+
+    // async fn write_credentials(
+    //     &self,
+    //     user_id: u64,
+    //     access_token: String,
+    //     cx: &AsyncAppContext,
+    // ) -> Result<()> {
+    //     cx.update(move |cx| {
+    //         cx.write_credentials(
+    //             &ClientSettings::get_global(cx).server_url,
+    //             &user_id.to_string(),
+    //             access_token.as_bytes(),
+    //         )
+    //     })?
+    //     .await
+    // }
 }
 
 async fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
