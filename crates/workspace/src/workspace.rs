@@ -8,6 +8,7 @@ mod persistence;
 pub mod searchable;
 pub mod shared_screen;
 mod status_bar;
+pub mod tasks;
 mod toolbar;
 mod workspace_settings;
 
@@ -3322,7 +3323,7 @@ impl Workspace {
         }
 
         if &update.id != &self.last_active_view_id {
-            self.last_active_view_id = update.id.clone();
+            self.last_active_view_id.clone_from(&update.id);
             self.update_followers(
                 is_project_item,
                 proto::update_followers::Variant::UpdateActiveView(update),
@@ -4122,8 +4123,8 @@ impl Render for Workspace {
                     .flex()
                     .flex_col()
                     .overflow_hidden()
-                    .border_t()
-                    .border_b()
+                    .border_t_1()
+                    .border_b_1()
                     .border_color(colors.border)
                     .child({
                         let this = cx.view().clone();
@@ -4229,10 +4230,10 @@ impl Render for Workspace {
                             .shadow_lg();
 
                         Some(match self.zoomed_position {
-                            Some(DockPosition::Left) => div.right_2().border_r(),
-                            Some(DockPosition::Right) => div.left_2().border_l(),
-                            Some(DockPosition::Bottom) => div.top_2().border_t(),
-                            None => div.top_2().bottom_2().left_2().right_2().border(),
+                            Some(DockPosition::Left) => div.right_2().border_r_1(),
+                            Some(DockPosition::Right) => div.left_2().border_l_1(),
+                            Some(DockPosition::Bottom) => div.top_2().border_t_1(),
+                            None => div.top_2().bottom_2().left_2().right_2().border_1(),
                         })
                     }))
                     .child(self.modal_layer.clone())

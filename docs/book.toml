@@ -1,6 +1,20 @@
 [book]
-authors = ["Nate Butler"]
+authors = ["The Zed Team"]
 language = "en"
 multilingual = false
 src = "src"
-title = "Zed App Docs"
+title = "Zed"
+site-url = "/docs/"
+
+[output.html]
+no-section-label = true
+preferred-dark-theme = "light"
+
+[output.html.print]
+enable = false
+
+[output.html.redirect]
+"/elixir.html" = "/docs/languages/elixir.html"
+"/javascript.html" = "/docs/languages/javascript.html"
+"/ruby.html" = "/docs/languages/ruby.html"
+"/python.html" = "/docs/languages/python.html"

@@ -9,16 +9,15 @@ mod zed;
 use anyhow::{anyhow, Context as _, Result};
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{parse_zed_link, telemetry::Telemetry, Client, DevServerToken, UserStore};
+use client::{parse_zed_link, Client, DevServerToken, UserStore};
 use collab_ui::channel_view::ChannelView;
-use copilot::Copilot;
-use copilot_ui::CopilotCompletionProvider;
 use db::kvp::KEY_VALUE_STORE;
-use editor::{Editor, EditorMode};
+use editor::Editor;
 use env_logger::Builder;
 use fs::RealFs;
 use futures::{future, StreamExt};
-use gpui::{App, AppContext, AsyncAppContext, Context, Task, ViewContext, VisualContext};
+use git::GitHostingProviderRegistry;
+use gpui::{App, AppContext, AsyncAppContext, Context, Task, VisualContext};
 use image_viewer;
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -54,6 +53,8 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, IsOnlyInstance,
     OpenListener, OpenRequest,
 };
+
+use crate::zed::inline_completion_registry;
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -119,6 +120,7 @@ fn init_headless(dev_server_token: DevServerToken) {
         project::Project::init(&client, cx);
         client::init(&client, cx);
 
+        let git_hosting_provider_registry = GitHostingProviderRegistry::default_global(cx);
         let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
             cx.path_for_auxiliary_executable("git")
                 .context("could not find git binary path")
@@ -126,7 +128,9 @@ fn init_headless(dev_server_token: DevServerToken) {
         } else {
             None
         };
-        let fs = Arc::new(RealFs::new(git_binary_path));
+        let fs = Arc::new(RealFs::new(git_hosting_provider_registry, git_binary_path));
+
+        git_hosting_providers::init(cx);
 
         let mut languages =
             LanguageRegistry::new(Task::ready(()), cx.background_executor().clone());
@@ -186,6 +190,7 @@ fn init_ui(args: Args) {
     let session_id = Uuid::new_v4().to_string();
     reliability::init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
+    let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
         app.path_for_auxiliary_executable("git")
             .context("could not find git binary path")
@@ -195,7 +200,10 @@ fn init_ui(args: Args) {
     };
     log::info!("Using git binary path: {:?}", git_binary_path);
 
-    let fs = Arc::new(RealFs::new(git_binary_path));
+    let fs = Arc::new(RealFs::new(
+        git_hosting_provider_registry.clone(),
+        git_binary_path,
+    ));
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -236,6 +244,9 @@ fn init_ui(args: Args) {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
 
+        GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
+        git_hosting_providers::init(cx);
+
         SystemAppearance::init(cx);
         OpenListener::set_global(listener.clone(), cx);
 
@@ -270,17 +281,20 @@ fn init_ui(args: Args) {
         editor::init(cx);
         image_viewer::init(cx);
         diagnostics::init(cx);
+
+        // Initialize each completion provider. Settings are used for toggling between them.
         copilot::init(
             copilot_language_server_id,
             client.http_client(),
             node_runtime.clone(),
             cx,
         );
+        supermaven::init(client.clone(), cx);
 
         assistant::init(client.clone(), cx);
         assistant2::init(client.clone(), cx);
 
-        init_inline_completion_provider(client.telemetry().clone(), cx);
+        inline_completion_registry::init(client.telemetry().clone(), cx);
 
         extension::init(
             fs.clone(),
@@ -294,7 +308,7 @@ fn init_ui(args: Args) {
 
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
-
+        watch_languages(fs.clone(), languages.clone(), cx);
         watch_file_types(fs.clone(), cx);
 
         languages.set_theme(cx.theme().clone());
@@ -859,6 +873,37 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 }
 
 #[cfg(debug_assertions)]
+fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &mut AppContext) {
+    use std::time::Duration;
+
+    let path = {
+        let p = Path::new("crates/languages/src");
+        let Ok(full_path) = p.canonicalize() else {
+            return;
+        };
+        full_path
+    };
+
+    cx.spawn(|_| async move {
+        let mut events = fs.watch(path.as_path(), Duration::from_millis(100)).await;
+        while let Some(event) = events.next().await {
+            let has_language_file = event.iter().any(|path| {
+                path.extension()
+                    .map(|ext| ext.to_string_lossy().as_ref() == "scm")
+                    .unwrap_or(false)
+            });
+            if has_language_file {
+                languages.reload();
+            }
+        }
+    })
+    .detach()
+}
+
+#[cfg(not(debug_assertions))]
+fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut AppContext) {}
+
+#[cfg(debug_assertions)]
 fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use std::time::Duration;
 
@@ -888,45 +933,3 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 
 #[cfg(not(debug_assertions))]
 fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
-
-fn init_inline_completion_provider(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
-    if let Some(copilot) = Copilot::global(cx) {
-        cx.observe_new_views(move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
-            if editor.mode() == EditorMode::Full {
-                // We renamed some of these actions to not be copilot-specific, but that
-                // would have not been backwards-compatible. So here we are re-registering
-                // the actions with the old names to not break people's keymaps.
-                editor
-                    .register_action(cx.listener(
-                        |editor, _: &copilot::Suggest, cx: &mut ViewContext<Editor>| {
-                            editor.show_inline_completion(&Default::default(), cx);
-                        },
-                    ))
-                    .register_action(cx.listener(
-                        |editor, _: &copilot::NextSuggestion, cx: &mut ViewContext<Editor>| {
-                            editor.next_inline_completion(&Default::default(), cx);
-                        },
-                    ))
-                    .register_action(cx.listener(
-                        |editor, _: &copilot::PreviousSuggestion, cx: &mut ViewContext<Editor>| {
-                            editor.previous_inline_completion(&Default::default(), cx);
-                        },
-                    ))
-                    .register_action(cx.listener(
-                        |editor,
-                         _: &editor::actions::AcceptPartialCopilotSuggestion,
-                         cx: &mut ViewContext<Editor>| {
-                            editor.accept_partial_inline_completion(&Default::default(), cx);
-                        },
-                    ));
-
-                let provider = cx.new_model(|_| {
-                    CopilotCompletionProvider::new(copilot.clone())
-                        .with_telemetry(telemetry.clone())
-                });
-                editor.set_inline_completion_provider(provider, cx)
-            }
-        })
-        .detach();
-    }
-}

@@ -6,9 +6,8 @@ mod task_template;
 mod vscode_format;
 
 use collections::{HashMap, HashSet};
-use gpui::ModelContext;
+use gpui::SharedString;
 use serde::Serialize;
-use std::any::Any;
 use std::borrow::Cow;
 use std::path::PathBuf;
 
@@ -17,7 +16,7 @@ pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TaskId(pub String);
 
 /// Contains all information needed by Zed to spawn a new terminal tab for the given task.
@@ -103,6 +102,8 @@ pub enum VariableName {
     Column,
     /// Text from the latest selection.
     SelectedText,
+    /// The symbol selected by the symbol tagging system, specifically the @run capture in a runnables.scm
+    RunnableSymbol,
     /// Custom variable, provided by the plugin or other external source.
     /// Will be printed with `ZED_` prefix to avoid potential conflicts with other variables.
     Custom(Cow<'static, str>),
@@ -132,6 +133,7 @@ impl std::fmt::Display for VariableName {
             Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
             Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
             Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
+            Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
             Self::Custom(s) => write!(f, "{ZED_VARIABLE_NAME_PREFIX}CUSTOM_{s}"),
         }
     }
@@ -169,13 +171,6 @@ pub struct TaskContext {
     pub task_variables: TaskVariables,
 }
 
-/// [`Source`] produces tasks that can be scheduled.
-///
-/// Implementations of this trait could be e.g. [`StaticSource`] that parses tasks from a .json files and provides process templates to be spawned;
-/// another one could be a language server providing lenses with tests or build server listing all targets for a given project.
-pub trait TaskSource: Any {
-    /// A way to erase the type of the source, processing and storing them generically.
-    fn as_any(&mut self) -> &mut dyn Any;
-    /// Collects all tasks available for scheduling.
-    fn tasks_to_schedule(&mut self, cx: &mut ModelContext<Box<dyn TaskSource>>) -> TaskTemplates;
-}
+/// This is a new type representing a 'tag' on a 'runnable symbol', typically a test of main() function, found via treesitter.
+#[derive(Clone, Debug)]
+pub struct RunnableTag(pub SharedString);

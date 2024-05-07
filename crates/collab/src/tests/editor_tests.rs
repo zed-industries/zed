@@ -667,7 +667,7 @@ async fn test_collaborating_with_code_actions(
     editor_b.update(cx_b, |editor, cx| {
         editor.toggle_code_actions(
             &ToggleCodeActions {
-                deployed_from_indicator: false,
+                deployed_from_indicator: None,
             },
             cx,
         );

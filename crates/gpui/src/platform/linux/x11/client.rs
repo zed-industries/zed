@@ -3,19 +3,21 @@ use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
-use calloop::{EventLoop, LoopHandle};
+use calloop::generic::{FdWrapper, Generic};
+use calloop::{EventLoop, LoopHandle, RegistrationToken};
 use collections::HashMap;
 use copypasta::x11_clipboard::{Clipboard, Primary, X11ClipboardContext};
 use copypasta::ClipboardProvider;
 
 use util::ResultExt;
 use x11rb::connection::{Connection, RequestConnection};
+use x11rb::cursor;
 use x11rb::errors::ConnectionError;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::xinput::{ConnectionExt, ScrollClass};
 use x11rb::protocol::xkb::ConnectionExt as _;
-use x11rb::protocol::xproto::ConnectionExt as _;
-use x11rb::protocol::{randr, xinput, xkb, xproto, Event};
+use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt as _};
+use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
 use x11rb::resource_manager::Database;
 use x11rb::xcb_ffi::XCBConnection;
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
@@ -29,14 +31,13 @@ use crate::{
     Size, TouchPhase, WindowParams, X11Window,
 };
 
-use super::{super::SCROLL_LINES, X11Display, X11WindowStatePtr, XcbAtoms};
-use super::{button_of_key, modifiers_from_state};
+use super::{
+    super::{open_uri_internal, SCROLL_LINES},
+    X11Display, X11WindowStatePtr, XcbAtoms,
+};
+use super::{button_from_mask, button_of_key, modifiers_from_state};
 use crate::platform::linux::is_within_click_distance;
 use crate::platform::linux::platform::DOUBLE_CLICK_INTERVAL;
-use calloop::{
-    generic::{FdWrapper, Generic},
-    RegistrationToken,
-};
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -69,6 +70,10 @@ pub struct X11ClientState {
     pub(crate) focused_window: Option<xproto::Window>,
     pub(crate) xkb: xkbc::State,
 
+    pub(crate) cursor_handle: cursor::Handle,
+    pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
+    pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
+
     pub(crate) scroll_class_data: Vec<xinput::DeviceClassDataScroll>,
     pub(crate) scroll_x: Option<f32>,
     pub(crate) scroll_y: Option<f32>,
@@ -89,6 +94,8 @@ impl X11ClientStatePtr {
         if let Some(window_ref) = state.windows.remove(&x_window) {
             state.loop_handle.remove(window_ref.refresh_event_token);
         }
+
+        state.cursor_styles.remove(&x_window);
 
         if state.windows.is_empty() {
             state.common.signal.stop();
@@ -119,6 +126,9 @@ impl X11Client {
             .unwrap();
         xcb_connection
             .prefetch_extension_information(randr::X11_EXTENSION_NAME)
+            .unwrap();
+        xcb_connection
+            .prefetch_extension_information(render::X11_EXTENSION_NAME)
             .unwrap();
         xcb_connection
             .prefetch_extension_information(xinput::X11_EXTENSION_NAME)
@@ -207,6 +217,11 @@ impl X11Client {
             .map(|dpi: f32| dpi / 96.0)
             .unwrap_or(1.0);
 
+        let cursor_handle = cursor::Handle::new(&xcb_connection, x_root_index, &resource_database)
+            .unwrap()
+            .reply()
+            .unwrap();
+
         let clipboard = X11ClipboardContext::<Clipboard>::new().unwrap();
         let primary = X11ClipboardContext::<Primary>::new().unwrap();
 
@@ -250,6 +265,10 @@ impl X11Client {
             windows: HashMap::default(),
             focused_window: None,
             xkb: xkb_state,
+
+            cursor_handle,
+            cursor_styles: HashMap::default(),
+            cursor_cache: HashMap::default(),
 
             scroll_class_data,
             scroll_x: None,
@@ -371,16 +390,16 @@ impl X11Client {
                 drop(state);
                 window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent { keystroke }));
             }
-            Event::ButtonPress(event) => {
+            Event::XinputButtonPress(event) => {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
 
-                let modifiers = modifiers_from_state(event.state);
+                let modifiers = modifiers_from_xinput_info(event.mods);
                 let position = point(
-                    px(event.event_x as f32 / state.scale_factor),
-                    px(event.event_y as f32 / state.scale_factor),
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
-                if let Some(button) = button_of_key(event.detail) {
+                if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
                     let click_elapsed = state.last_click.elapsed();
 
                     if click_elapsed < DOUBLE_CLICK_INTERVAL
@@ -407,15 +426,15 @@ impl X11Client {
                     log::warn!("Unknown button press: {event:?}");
                 }
             }
-            Event::ButtonRelease(event) => {
+            Event::XinputButtonRelease(event) => {
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
-                let modifiers = modifiers_from_state(event.state);
+                let modifiers = modifiers_from_xinput_info(event.mods);
                 let position = point(
-                    px(event.event_x as f32 / state.scale_factor),
-                    px(event.event_y as f32 / state.scale_factor),
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
-                if let Some(button) = button_of_key(event.detail) {
+                if let Some(button) = button_of_key(event.detail.try_into().unwrap()) {
                     let click_count = state.current_count;
                     drop(state);
                     window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
@@ -429,6 +448,7 @@ impl X11Client {
             Event::XinputMotion(event) => {
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
+                let pressed_button = button_from_mask(event.button_mask[0]);
                 let position = point(
                     px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
                     px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
@@ -445,7 +465,7 @@ impl X11Client {
                 if event.valuator_mask[0] & 3 != 0 {
                     window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
                         position,
-                        pressed_button: None,
+                        pressed_button,
                         modifiers,
                     }));
                 }
@@ -505,32 +525,20 @@ impl X11Client {
                     valuator_idx += 1;
                 }
             }
-            Event::MotionNotify(event) => {
+            Event::XinputLeave(event) => {
+                self.0.borrow_mut().scroll_x = None; // Set last scroll to `None` so that a large delta isn't created if scrolling is done outside the window (the valuator is global)
+                self.0.borrow_mut().scroll_y = None;
+
                 let window = self.get_window(event.event)?;
                 let state = self.0.borrow();
-                let pressed_button = super::button_from_state(event.state);
+                let pressed_button = button_from_mask(event.buttons[0]);
                 let position = point(
-                    px(event.event_x as f32 / state.scale_factor),
-                    px(event.event_y as f32 / state.scale_factor),
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
                 );
-                let modifiers = modifiers_from_state(event.state);
+                let modifiers = modifiers_from_xinput_info(event.mods);
                 drop(state);
-                window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
-                    pressed_button,
-                    position,
-                    modifiers,
-                }));
-            }
-            Event::LeaveNotify(event) => {
-                let window = self.get_window(event.event)?;
-                let state = self.0.borrow();
-                let pressed_button = super::button_from_state(event.state);
-                let position = point(
-                    px(event.event_x as f32 / state.scale_factor),
-                    px(event.event_y as f32 / state.scale_factor),
-                );
-                let modifiers = modifiers_from_state(event.state);
-                drop(state);
+
                 window.handle_input(PlatformInput::MouseExited(crate::MouseExitEvent {
                     pressed_button,
                     position,
@@ -669,8 +677,47 @@ impl LinuxClient for X11Client {
         Box::new(window)
     }
 
-    //todo(linux)
-    fn set_cursor_style(&self, _style: CursorStyle) {}
+    fn set_cursor_style(&self, style: CursorStyle) {
+        let mut state = self.0.borrow_mut();
+        let Some(focused_window) = state.focused_window else {
+            return;
+        };
+        let current_style = state
+            .cursor_styles
+            .get(&focused_window)
+            .unwrap_or(&CursorStyle::Arrow);
+        if *current_style == style {
+            return;
+        }
+
+        let cursor = match state.cursor_cache.get(&style) {
+            Some(cursor) => *cursor,
+            None => {
+                let cursor = state
+                    .cursor_handle
+                    .load_cursor(&state.xcb_connection, &style.to_icon_name())
+                    .expect("failed to load cursor");
+                state.cursor_cache.insert(style, cursor);
+                cursor
+            }
+        };
+
+        state.cursor_styles.insert(focused_window, style);
+        state
+            .xcb_connection
+            .change_window_attributes(
+                focused_window,
+                &ChangeWindowAttributesAux {
+                    cursor: Some(cursor),
+                    ..Default::default()
+                },
+            )
+            .expect("failed to change window cursor");
+    }
+
+    fn open_uri(&self, uri: &str) {
+        open_uri_internal(uri, None);
+    }
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {
         self.0.borrow_mut().primary.set_contents(item.text);

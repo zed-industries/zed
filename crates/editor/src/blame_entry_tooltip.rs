@@ -61,7 +61,7 @@ struct CommitAvatarAsset {
 impl Hash for CommitAvatarAsset {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.sha.hash(state);
-        self.remote.host.hash(state);
+        self.remote.host.name().hash(state);
     }
 }
 
@@ -128,8 +128,7 @@ impl Render for BlameEntryTooltip {
 
         let author_email = self.blame_entry.author_mail.clone();
 
-        let pretty_commit_id = format!("{}", self.blame_entry.sha);
-        let short_commit_id = pretty_commit_id.chars().take(6).collect::<String>();
+        let short_commit_id = self.blame_entry.sha.display_short();
         let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry, cx);
 
         let message = self

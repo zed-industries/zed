@@ -2,28 +2,31 @@
 #![allow(unused)]
 
 use crate::{
-    platform::blade::BladeRenderer, size, Bounds, DevicePixels, ForegroundExecutor, Modifiers,
-    Pixels, Platform, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, Scene, Size, WindowAppearance, WindowBackgroundAppearance,
-    WindowOptions, WindowParams, X11Client, X11ClientState, X11ClientStatePtr,
+    platform::blade::{BladeRenderer, BladeSurfaceConfig},
+    size, Bounds, DevicePixels, ForegroundExecutor, Modifiers, Pixels, Platform, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptLevel,
+    Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams,
+    X11Client, X11ClientState, X11ClientStatePtr,
 };
 use blade_graphics as gpu;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use util::ResultExt;
 use x11rb::{
-    connection::Connection,
+    connection::{Connection as _, RequestConnection as _},
     protocol::{
-        xinput,
+        render::{self, ConnectionExt as _},
+        xinput::{self, ConnectionExt as _},
         xproto::{self, ConnectionExt as _, CreateWindowAux},
     },
     resource_manager::Database,
-    wrapper::ConnectionExt,
+    wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
 
 use std::{
     cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
     ffi::c_void,
     iter::Zip,
     mem,
@@ -61,6 +64,76 @@ fn query_render_extent(xcb_connection: &XCBConnection, x_window: xproto::Window)
     }
 }
 
+#[derive(Debug)]
+struct Visual {
+    id: xproto::Visualid,
+    colormap: u32,
+    depth: u8,
+}
+
+struct VisualSet {
+    inherit: Visual,
+    opaque: Option<Visual>,
+    transparent: Option<Visual>,
+    root: u32,
+    black_pixel: u32,
+}
+
+fn find_visuals(xcb_connection: &XCBConnection, screen_index: usize) -> VisualSet {
+    let screen = &xcb_connection.setup().roots[screen_index];
+    let mut set = VisualSet {
+        inherit: Visual {
+            id: screen.root_visual,
+            colormap: screen.default_colormap,
+            depth: screen.root_depth,
+        },
+        opaque: None,
+        transparent: None,
+        root: screen.root,
+        black_pixel: screen.black_pixel,
+    };
+
+    for depth_info in screen.allowed_depths.iter() {
+        for visual_type in depth_info.visuals.iter() {
+            let visual = Visual {
+                id: visual_type.visual_id,
+                colormap: 0,
+                depth: depth_info.depth,
+            };
+            log::debug!("Visual id: {}, class: {:?}, depth: {}, bits_per_value: {}, masks: 0x{:x} 0x{:x} 0x{:x}",
+                visual_type.visual_id,
+                visual_type.class,
+                depth_info.depth,
+                visual_type.bits_per_rgb_value,
+                visual_type.red_mask, visual_type.green_mask, visual_type.blue_mask,
+            );
+
+            if (
+                visual_type.red_mask,
+                visual_type.green_mask,
+                visual_type.blue_mask,
+            ) != (0xFF0000, 0xFF00, 0xFF)
+            {
+                continue;
+            }
+            let color_mask = visual_type.red_mask | visual_type.green_mask | visual_type.blue_mask;
+            let alpha_mask = color_mask as usize ^ ((1usize << depth_info.depth) - 1);
+
+            if alpha_mask == 0 {
+                if set.opaque.is_none() {
+                    set.opaque = Some(visual);
+                }
+            } else {
+                if set.transparent.is_none() {
+                    set.transparent = Some(visual);
+                }
+            }
+        }
+    }
+
+    set
+}
+
 struct RawWindow {
     connection: *mut c_void,
     screen_id: usize,
@@ -74,7 +147,6 @@ pub struct Callbacks {
     input: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
-    fullscreen: Option<Box<dyn FnMut(bool)>>,
     moved: Option<Box<dyn FnMut()>>,
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
@@ -90,7 +162,6 @@ pub(crate) struct X11WindowState {
     scale_factor: f32,
     renderer: BladeRenderer,
     display: Rc<dyn PlatformDisplay>,
-
     input_handler: Option<PlatformInputHandler>,
 }
 
@@ -106,7 +177,8 @@ pub(crate) struct X11WindowStatePtr {
 impl rwh::HasWindowHandle for RawWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
         let non_zero = NonZeroU32::new(self.window_id).unwrap();
-        let handle = rwh::XcbWindowHandle::new(non_zero);
+        let mut handle = rwh::XcbWindowHandle::new(non_zero);
+        handle.visual_id = NonZeroU32::new(self.visual_id);
         Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
@@ -144,52 +216,71 @@ impl X11WindowState {
         let x_screen_index = params
             .display_id
             .map_or(x_main_screen_index, |did| did.0 as usize);
-        let screen = xcb_connection.setup().roots.get(x_screen_index).unwrap();
 
-        let win_aux = xproto::CreateWindowAux::new().event_mask(
-            xproto::EventMask::EXPOSURE
-                | xproto::EventMask::STRUCTURE_NOTIFY
-                | xproto::EventMask::ENTER_WINDOW
-                | xproto::EventMask::LEAVE_WINDOW
-                | xproto::EventMask::FOCUS_CHANGE
-                | xproto::EventMask::KEY_PRESS
-                | xproto::EventMask::KEY_RELEASE
-                | xproto::EventMask::BUTTON_PRESS
-                | xproto::EventMask::BUTTON_RELEASE
-                | xproto::EventMask::POINTER_MOTION
-                | xproto::EventMask::BUTTON1_MOTION
-                | xproto::EventMask::BUTTON2_MOTION
-                | xproto::EventMask::BUTTON3_MOTION
-                | xproto::EventMask::BUTTON_MOTION,
-        );
+        let visual_set = find_visuals(&xcb_connection, x_screen_index);
+        let visual_maybe = match params.window_background {
+            WindowBackgroundAppearance::Opaque => visual_set.opaque,
+            WindowBackgroundAppearance::Transparent | WindowBackgroundAppearance::Blurred => {
+                visual_set.transparent
+            }
+        };
+        let visual = match visual_maybe {
+            Some(visual) => visual,
+            None => {
+                log::warn!(
+                    "Unable to find a matching visual for {:?}",
+                    params.window_background
+                );
+                visual_set.inherit
+            }
+        };
+        log::info!("Using {:?}", visual);
+
+        let colormap = if visual.colormap != 0 {
+            visual.colormap
+        } else {
+            let id = xcb_connection.generate_id().unwrap();
+            log::info!("Creating colormap {}", id);
+            xcb_connection
+                .create_colormap(xproto::ColormapAlloc::NONE, id, visual_set.root, visual.id)
+                .unwrap()
+                .check()
+                .unwrap();
+            id
+        };
+
+        let win_aux = xproto::CreateWindowAux::new()
+            .background_pixel(x11rb::NONE)
+            // https://stackoverflow.com/questions/43218127/x11-xlib-xcb-creating-a-window-requires-border-pixel-if-specifying-colormap-wh
+            .border_pixel(visual_set.black_pixel)
+            .colormap(colormap)
+            .event_mask(
+                xproto::EventMask::EXPOSURE
+                    | xproto::EventMask::STRUCTURE_NOTIFY
+                    | xproto::EventMask::ENTER_WINDOW
+                    | xproto::EventMask::LEAVE_WINDOW
+                    | xproto::EventMask::FOCUS_CHANGE
+                    | xproto::EventMask::KEY_PRESS
+                    | xproto::EventMask::KEY_RELEASE,
+            );
 
         xcb_connection
             .create_window(
-                x11rb::COPY_FROM_PARENT as _,
+                visual.depth,
                 x_window,
-                screen.root,
+                visual_set.root,
                 params.bounds.origin.x.0 as i16,
                 params.bounds.origin.y.0 as i16,
                 params.bounds.size.width.0 as u16,
                 params.bounds.size.height.0 as u16,
                 0,
                 xproto::WindowClass::INPUT_OUTPUT,
-                screen.root_visual,
+                visual.id,
                 &win_aux,
             )
+            .unwrap()
+            .check()
             .unwrap();
-
-        xinput::ConnectionExt::xinput_xi_select_events(
-            &xcb_connection,
-            x_window,
-            &[xinput::EventMask {
-                deviceid: 1,
-                mask: vec![xinput::XIEventMask::MOTION],
-            }],
-        )
-        .unwrap()
-        .check()
-        .unwrap();
 
         if let Some(titlebar) = params.titlebar {
             if let Some(title) = titlebar.title {
@@ -215,6 +306,21 @@ impl X11WindowState {
             )
             .unwrap();
 
+        xcb_connection
+            .xinput_xi_select_events(
+                x_window,
+                &[xinput::EventMask {
+                    deviceid: 1,
+                    mask: vec![
+                        xinput::XIEventMask::MOTION
+                            | xinput::XIEventMask::BUTTON_PRESS
+                            | xinput::XIEventMask::BUTTON_RELEASE
+                            | xinput::XIEventMask::LEAVE,
+                    ],
+                }],
+            )
+            .unwrap();
+
         xcb_connection.map_window(x_window).unwrap();
         xcb_connection.flush().unwrap();
 
@@ -224,7 +330,7 @@ impl X11WindowState {
             ) as *mut _,
             screen_id: x_screen_index,
             window_id: x_window,
-            visual_id: screen.root_visual,
+            visual_id: visual.id,
         };
         let gpu = Arc::new(
             unsafe {
@@ -240,9 +346,12 @@ impl X11WindowState {
             .unwrap(),
         );
 
-        // Note: this has to be done after the GPU init, or otherwise
-        // the sizes are immediately invalidated.
-        let gpu_extent = query_render_extent(xcb_connection, x_window);
+        let config = BladeSurfaceConfig {
+            // Note: this has to be done after the GPU init, or otherwise
+            // the sizes are immediately invalidated.
+            size: query_render_extent(xcb_connection, x_window),
+            transparent: params.window_background != WindowBackgroundAppearance::Opaque,
+        };
 
         Self {
             client,
@@ -251,9 +360,8 @@ impl X11WindowState {
             raw,
             bounds: params.bounds.map(|v| v.0),
             scale_factor,
-            renderer: BladeRenderer::new(gpu, gpu_extent),
+            renderer: BladeRenderer::new(gpu, config),
             atoms: *atoms,
-
             input_handler: None,
         }
     }
@@ -460,10 +568,6 @@ impl PlatformWindow for X11Window {
         Modifiers::default()
     }
 
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.state.borrow_mut().input_handler = Some(input_handler);
     }
@@ -537,8 +641,10 @@ impl PlatformWindow for X11Window {
     // todo(linux)
     fn set_edited(&mut self, edited: bool) {}
 
-    fn set_background_appearance(&mut self, _background_appearance: WindowBackgroundAppearance) {
-        // todo(linux)
+    fn set_background_appearance(&mut self, background_appearance: WindowBackgroundAppearance) {
+        let mut inner = self.0.state.borrow_mut();
+        let transparent = background_appearance != WindowBackgroundAppearance::Opaque;
+        inner.renderer.update_transparency(transparent);
     }
 
     // todo(linux), this corresponds to `orderFrontCharacterPalette` on macOS,
@@ -587,10 +693,6 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().resize = Some(callback);
     }
 
-    fn on_fullscreen(&self, callback: Box<dyn FnMut(bool)>) {
-        self.0.callbacks.borrow_mut().fullscreen = Some(callback);
-    }
-
     fn on_moved(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().moved = Some(callback);
     }
@@ -605,11 +707,6 @@ impl PlatformWindow for X11Window {
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
-    }
-
-    // todo(linux)
-    fn is_topmost_for_position(&self, _position: Point<Pixels>) -> bool {
-        unimplemented!()
     }
 
     fn draw(&self, scene: &Scene) {
