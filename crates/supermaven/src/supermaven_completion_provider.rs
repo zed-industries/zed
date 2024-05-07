@@ -3,7 +3,7 @@ use anyhow::Result;
 use editor::{Direction, InlineCompletionProvider};
 use futures::StreamExt as _;
 use gpui::{AppContext, Model, ModelContext, Task};
-use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
+use language::{language_settings::all_language_settings, Anchor, Buffer};
 use std::time::Duration;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);

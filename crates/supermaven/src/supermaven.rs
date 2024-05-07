@@ -1,7 +1,6 @@
 mod messages;
 mod supermaven_completion_provider;
 
-use editor::Direction;
 pub use supermaven_completion_provider::*;
 
 use anyhow::{Context as _, Result};
@@ -22,7 +21,7 @@ use smol::{
     io::AsyncWriteExt,
     process::{Child, ChildStdin, ChildStdout, Command},
 };
-use std::{ops::Range, path::PathBuf, process::Stdio, sync::Arc};
+use std::{path::PathBuf, process::Stdio, sync::Arc};
 use ui::prelude::*;
 use util::ResultExt;
 
