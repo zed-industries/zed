@@ -3,9 +3,7 @@ use anyhow::Result;
 use editor::{Direction, InlineCompletionProvider};
 use futures::StreamExt as _;
 use gpui::{AppContext, Model, ModelContext, Task};
-use language::{
-    language_settings::all_language_settings, Anchor, Buffer, OffsetRangeExt as _, ToOffset,
-};
+use language::{language_settings::all_language_settings, Anchor, Buffer};
 use std::time::Duration;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
@@ -92,29 +90,16 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         cursor_position: Anchor,
         cx: &'a AppContext,
     ) -> Option<&'a str> {
-        let completion_id = self.completion_id?;
-        let buffer = buffer.read(cx);
-        let cursor_offset = cursor_position.to_offset(buffer);
-        let completion = self.supermaven.read(cx).completion(completion_id)?;
+        let completion_text = self
+            .supermaven
+            .read(cx)
+            .completion(buffer, cursor_position, cx)?;
 
-        let mut completion_range = completion.range.to_offset(buffer);
+        let completion_text = trim_to_end_of_line_unless_leading_newline(completion_text);
 
-        let prefix_len = common_prefix(
-            buffer.chars_for_range(completion_range.clone()),
-            completion.text.chars(),
-        );
-        completion_range.start += prefix_len;
-        let suffix_len = common_prefix(
-            buffer.reversed_chars_for_range(completion_range.clone()),
-            completion.text[prefix_len..].chars().rev(),
-        );
-        completion_range.end = completion_range.end.saturating_sub(suffix_len);
+        let completion_text = completion_text.trim_end();
 
-        let completion_text = &completion.text[prefix_len..completion.text.len() - suffix_len];
-        if completion_range.is_empty()
-            && completion_range.start == cursor_offset
-            && !completion_text.trim().is_empty()
-        {
+        if !completion_text.trim().is_empty() {
             Some(completion_text)
         } else {
             None
@@ -122,9 +107,24 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
     }
 }
 
-fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
-    a.zip(b)
-        .take_while(|(a, b)| a == b)
-        .map(|(a, _)| a.len_utf8())
-        .sum()
+fn trim_to_end_of_line_unless_leading_newline(text: &str) -> &str {
+    if has_leading_newline(&text) {
+        text
+    } else if let Some(i) = text.find('\n') {
+        &text[..i]
+    } else {
+        text
+    }
+}
+
+fn has_leading_newline(text: &str) -> bool {
+    for c in text.chars() {
+        if c == '\n' {
+            return true;
+        }
+        if !c.is_whitespace() {
+            return false;
+        }
+    }
+    false
 }

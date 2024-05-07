@@ -30,7 +30,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &'a AppContext,
-    ) -> Option<&str>;
+    ) -> Option<&'a str>;
 }
 
 pub trait InlineCompletionProviderHandle {
