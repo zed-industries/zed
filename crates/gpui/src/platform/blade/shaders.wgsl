@@ -235,7 +235,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         quad.corner_radii.bottom_right == 0.0 && quad.border_widths.top == 0.0 &&
         quad.border_widths.left == 0.0 && quad.border_widths.right == 0.0 &&
         quad.border_widths.bottom == 0.0) {
-        return input.background_color;
+        return blend_color(input.background_color, 1.0);
     }
 
     let half_size = quad.bounds.size / 2.0;

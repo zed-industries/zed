@@ -1,5 +1,5 @@
 use anyhow::Result;
-use assistant_tooling::LanguageModelTool;
+use assistant_tooling::{LanguageModelTool, ProjectContext, ToolOutput};
 use editor::Editor;
 use gpui::{prelude::*, Model, Task, View, WeakView};
 use project::Project;
@@ -31,11 +31,9 @@ pub struct CreateBufferInput {
     language: String,
 }
 
-pub struct CreateBufferOutput {}
-
 impl LanguageModelTool for CreateBufferTool {
     type Input = CreateBufferInput;
-    type Output = CreateBufferOutput;
+    type Output = ();
     type View = CreateBufferView;
 
     fn name(&self) -> String {
@@ -83,32 +81,39 @@ impl LanguageModelTool for CreateBufferTool {
                     })
                     .log_err();
 
-                Ok(CreateBufferOutput {})
+                Ok(())
             }
         })
     }
 
-    fn format(input: &Self::Input, output: &Result<Self::Output>) -> String {
-        match output {
-            Ok(_) => format!("Created a new {} buffer", input.language),
-            Err(err) => format!("Failed to create buffer: {err:?}"),
-        }
-    }
-
     fn output_view(
-        _tool_call_id: String,
-        _input: Self::Input,
-        _output: Result<Self::Output>,
+        input: Self::Input,
+        output: Result<Self::Output>,
         cx: &mut WindowContext,
     ) -> View<Self::View> {
-        cx.new_view(|_cx| CreateBufferView {})
+        cx.new_view(|_cx| CreateBufferView {
+            language: input.language,
+            output,
+        })
     }
 }
 
-pub struct CreateBufferView {}
+pub struct CreateBufferView {
+    language: String,
+    output: Result<()>,
+}
 
 impl Render for CreateBufferView {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().child("Opening a buffer")
+    }
+}
+
+impl ToolOutput for CreateBufferView {
+    fn generate(&self, _: &mut ProjectContext, _: &mut WindowContext) -> String {
+        match &self.output {
+            Ok(_) => format!("Created a new {} buffer", self.language),
+            Err(err) => format!("Failed to create buffer: {err:?}"),
+        }
     }
 }

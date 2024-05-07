@@ -1,5 +1,4 @@
 mod hosting_provider;
-mod hosting_providers;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -11,7 +10,6 @@ pub use git2 as libgit;
 pub use lazy_static::lazy_static;
 
 pub use crate::hosting_provider::*;
-pub use crate::hosting_providers::*;
 
 pub mod blame;
 pub mod commit;
@@ -38,6 +36,11 @@ impl Oid {
 
     pub(crate) fn is_zero(&self) -> bool {
         self.0.is_zero()
+    }
+
+    /// Returns this [`Oid`] as a short SHA.
+    pub fn display_short(&self) -> String {
+        self.to_string().chars().take(7).collect()
     }
 }
 
