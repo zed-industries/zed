@@ -271,14 +271,20 @@ pub(crate) trait PlatformTextSystem: Send + Sync {
 /// Basic metadata about the current application and operating system.
 #[derive(Clone, Debug)]
 pub struct AppMetadata {
+    /// The current version of the application
+    pub version: Option<SemanticVersion>,
+    /// Basic metadata about the operating system
+    pub os: OsMetadata,
+}
+
+/// Basic metadata about the operating system.
+#[derive(Clone, Debug)]
+pub struct OsMetadata {
     /// The name of the current operating system
-    pub os_name: &'static str,
+    pub name: &'static str,
 
     /// The operating system's version
-    pub os_version: Option<SemanticVersion>,
-
-    /// The current version of the application
-    pub app_version: Option<SemanticVersion>,
+    pub version: Option<SemanticVersion>,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]

@@ -63,7 +63,7 @@ impl AppVersion {
             from_env.parse().expect("invalid ZED_APP_VERSION")
         } else {
             cx.app_metadata()
-                .app_version
+                .version
                 .unwrap_or_else(|| pkg_version.parse().expect("invalid version in Cargo.toml"))
         };
         cx.set_global(GlobalAppVersion(version))

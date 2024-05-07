@@ -12,6 +12,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use futures::{channel::oneshot, future::LocalBoxFuture, Future};
+use semantic_version::SemanticVersion;
 use slotmap::SlotMap;
 use smol::future::FutureExt;
 use time::UtcOffset;
@@ -31,8 +32,8 @@ use crate::{
     current_platform, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
     AppMetadata, AssetCache, AssetSource, BackgroundExecutor, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
+    Keystroke, LayoutId, Menu, OsMetadata, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, View, ViewContext,
     Window, WindowAppearance, WindowContext, WindowHandle, WindowId,
 };
@@ -128,6 +129,12 @@ impl App {
         context_lock.asset_source = asset_source.clone();
         context_lock.svg_renderer = SvgRenderer::new(asset_source);
         drop(context_lock);
+        self
+    }
+
+    /// Assign the version of the application.
+    pub fn with_version(mut self, version: Option<SemanticVersion>) -> Self {
+        self.0.borrow_mut().app_metadata.version = version;
         self
     }
 
@@ -263,9 +270,11 @@ impl AppContext {
         let entities = EntityMap::new();
 
         let app_metadata = AppMetadata {
-            os_name: platform.os_name(),
-            os_version: platform.os_version().ok(),
-            app_version: platform.app_version().ok(),
+            version: None,
+            os: OsMetadata {
+                name: platform.os_name(),
+                version: platform.os_version().ok(),
+            },
         };
 
         let app = Rc::new_cyclic(|this| AppCell {
@@ -350,6 +359,11 @@ impl AppContext {
     /// Get metadata about the app and platform.
     pub fn app_metadata(&self) -> AppMetadata {
         self.app_metadata.clone()
+    }
+
+    /// Set the version of the application.
+    pub fn set_app_version(&mut self, version: SemanticVersion) {
+        self.app_metadata.version = Some(version);
     }
 
     /// Schedules all windows in the application to be redrawn. This can be called

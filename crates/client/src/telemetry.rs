@@ -445,15 +445,12 @@ impl Telemetry {
                             installation_id: state.installation_id.as_deref().map(Into::into),
                             session_id: state.session_id.clone(),
                             is_staff: state.is_staff,
-                            app_version: state
-                                .app_metadata
-                                .app_version
-                                .unwrap_or_default()
-                                .to_string(),
-                            os_name: state.app_metadata.os_name.to_string(),
+                            app_version: state.app_metadata.version.unwrap_or_default().to_string(),
+                            os_name: state.app_metadata.os.name.to_string(),
                             os_version: state
                                 .app_metadata
-                                .os_version
+                                .os
+                                .version
                                 .map(|version| version.to_string()),
                             architecture: state.architecture.to_string(),
 

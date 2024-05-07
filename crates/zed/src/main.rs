@@ -60,8 +60,12 @@ use crate::zed::inline_completion_registry;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn fail_to_launch(e: anyhow::Error) {
-    App::new().run(move |cx| {
+    App::new()
+        .with_version(APP_VERSION.parse().ok())
+        .run(move |cx| {
         let window = cx.open_window(gpui::WindowOptions::default(), |cx| cx.new_view(|_| gpui::Empty));
         window.update(cx, |_, cx| {
             let response = cx.prompt(gpui::PromptLevel::Critical, "Zed failed to launch", Some(&format!("{}\n\nFor help resolving this, please open an issue on https://github.com/zed-industries/zed", e)), &["Exit"]);
@@ -83,7 +87,7 @@ fn init_headless(dev_server_token: DevServerToken) {
     }
     init_logger();
 
-    let app = App::new();
+    let app = App::new().with_version(APP_VERSION.parse().ok());
 
     let session_id = Uuid::new_v4().to_string();
     let (installation_id, _) = app
@@ -95,7 +99,7 @@ fn init_headless(dev_server_token: DevServerToken) {
     reliability::init_panic_hook(&app, installation_id.clone(), session_id.clone());
 
     app.run(|cx| {
-        release_channel::init(env!("CARGO_PKG_VERSION"), cx);
+        release_channel::init(APP_VERSION, cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
@@ -180,7 +184,9 @@ fn init_ui(args: Args) {
     }
 
     log::info!("========== starting zed ==========");
-    let app = App::new().with_assets(Assets);
+    let app = App::new()
+        .with_version(APP_VERSION.parse().ok())
+        .with_assets(Assets);
 
     let (installation_id, existing_installation_id_found) = app
         .background_executor()
@@ -239,7 +245,7 @@ fn init_ui(args: Args) {
     });
 
     app.run(move |cx| {
-        release_channel::init(env!("CARGO_PKG_VERSION"), cx);
+        release_channel::init(APP_VERSION, cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }

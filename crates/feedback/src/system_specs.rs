@@ -20,7 +20,7 @@ impl SystemSpecs {
     pub fn new(cx: &AppContext) -> Self {
         let app_version = AppVersion::global(cx).to_string();
         let release_channel = ReleaseChannel::global(cx);
-        let os_name = cx.app_metadata().os_name;
+        let os_name = cx.app_metadata().os.name;
         let system = System::new_with_specifics(
             RefreshKind::new().with_memory(MemoryRefreshKind::everything()),
         );
@@ -28,7 +28,8 @@ impl SystemSpecs {
         let architecture = env::consts::ARCH;
         let os_version = cx
             .app_metadata()
-            .os_version
+            .os
+            .version
             .map(|os_version| os_version.to_string());
         let commit_sha = match release_channel {
             ReleaseChannel::Dev | ReleaseChannel::Nightly => {

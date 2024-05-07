@@ -93,7 +93,7 @@ pub fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: S
             std::process::exit(-1);
         }
 
-        let app_version = if let Some(version) = app_metadata.app_version {
+        let app_version = if let Some(version) = app_metadata.version {
             version.to_string()
         } else {
             option_env!("CARGO_PKG_VERSION")
@@ -130,9 +130,10 @@ pub fn init_panic_hook(app: &App, installation_id: Option<String>, session_id: S
             }),
             app_version: app_version.to_string(),
             release_channel: RELEASE_CHANNEL.display_name().into(),
-            os_name: app_metadata.os_name.into(),
+            os_name: app_metadata.os.name.into(),
             os_version: app_metadata
-                .os_version
+                .os
+                .version
                 .as_ref()
                 .map(SemanticVersion::to_string),
             architecture: env::consts::ARCH.into(),
@@ -327,9 +328,9 @@ pub fn monitor_main_thread_hangs(
 
                     let report = HangReport {
                         backtrace,
-                        app_version: metadata.app_version,
-                        os_name: metadata.os_name.to_owned(),
-                        os_version: metadata.os_version,
+                        app_version: metadata.version,
+                        os_name: metadata.os.name.to_owned(),
+                        os_version: metadata.os.version,
                         architecture: env::consts::ARCH.into(),
                         installation_id: installation_id.clone(),
                     };
