@@ -1,6 +1,7 @@
 mod messages;
 mod supermaven_completion_provider;
 
+use editor::Direction;
 pub use supermaven_completion_provider::*;
 
 use anyhow::{Context as _, Result};
@@ -10,7 +11,9 @@ use collections::BTreeMap;
 
 use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, EntityId, Global, Model, ModelContext, Task, WeakModel};
-use language::{language_settings::all_language_settings, Anchor, Buffer, ToOffset};
+use language::{
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, ToOffset,
+};
 use messages::*;
 use postage::watch;
 use serde::{Deserialize, Serialize};
@@ -128,8 +131,7 @@ impl Supermaven {
                 state_id,
                 SupermavenCompletionState {
                     buffer_id,
-                    prefix: content[..offset].to_string(),
-                    range: cursor_position.bias_left(buffer)..cursor_position.bias_right(buffer),
+                    prefix_anchor: cursor_position,
                     text: String::new(),
                     dedent: String::new(),
                     updates_tx,
@@ -157,9 +159,19 @@ impl Supermaven {
         }
     }
 
-    pub fn completion(&self, text_before_cursor: &str) -> Option<&str> {
+    pub fn completion(
+        &self,
+        buffer: &Model<Buffer>,
+        cursor_position: Anchor,
+        cx: &AppContext,
+    ) -> Option<&str> {
         if let Self::Spawned(agent) = self {
-            find_relevant_completion(&agent.states, text_before_cursor)
+            find_relevant_completion(
+                &agent.states,
+                buffer.entity_id(),
+                &buffer.read(cx).snapshot(),
+                cursor_position,
+            )
         } else {
             None
         }
@@ -168,26 +180,41 @@ impl Supermaven {
 
 fn find_relevant_completion<'a>(
     states: &'a BTreeMap<SupermavenCompletionStateId, SupermavenCompletionState>,
-    text_before_cursor: &str,
+    buffer_id: EntityId,
+    buffer: &BufferSnapshot,
+    cursor_position: Anchor,
 ) -> Option<&'a str> {
     let mut best_completion: Option<&str> = None;
-    for (_key, state) in states {
-        if !text_before_cursor.starts_with(&state.prefix) {
+    'completions: for state in states.values() {
+        if state.buffer_id != buffer_id {
             continue;
         }
         let Some(state_completion) = state.text.strip_prefix(&state.dedent) else {
             continue;
         };
-        let delta = &text_before_cursor[state.prefix.len()..];
-        if !state_completion.starts_with(delta) {
+
+        let current_cursor_offset = cursor_position.to_offset(buffer);
+        let original_cursor_offset = state.prefix_anchor.to_offset(buffer);
+        if current_cursor_offset < original_cursor_offset {
             continue;
         }
-        let trimmed_completion = &state_completion[delta.len()..];
-        if best_completion.is_none()
-            || trimmed_completion.len() > best_completion.as_ref().unwrap().len()
-        {
-            best_completion = Some(trimmed_completion);
+
+        let text_inserted_since_completion_request =
+            buffer.text_for_range(original_cursor_offset..current_cursor_offset);
+        let mut trimmed_completion = state_completion;
+        for chunk in text_inserted_since_completion_request {
+            if let Some(suffix) = trimmed_completion.strip_prefix(chunk) {
+                trimmed_completion = suffix;
+            } else {
+                continue 'completions;
+            }
         }
+
+        if best_completion.map_or(false, |best| best.len() > trimmed_completion.len()) {
+            continue;
+        }
+
+        best_completion = Some(trimmed_completion);
     }
     best_completion
 }
@@ -358,8 +385,7 @@ pub struct SupermavenCompletionStateId(usize);
 #[allow(dead_code)]
 pub struct SupermavenCompletionState {
     buffer_id: EntityId,
-    range: Range<Anchor>,
-    prefix: String,
+    prefix_anchor: Anchor,
     text: String,
     dedent: String,
     updates_tx: watch::Sender<()>,

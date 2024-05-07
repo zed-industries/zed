@@ -90,13 +90,10 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         cursor_position: Anchor,
         cx: &'a AppContext,
     ) -> Option<&'a str> {
-        let buffer = buffer.read(cx);
-        let cursor_offset = cursor_position.to_offset(buffer);
-        let text_before_cursor = buffer.text_for_range(0..cursor_offset).collect::<String>();
         let completion_text = self
             .supermaven
             .read(cx)
-            .completion(text_before_cursor.as_str())?;
+            .completion(buffer, cursor_position, cx)?;
 
         let completion_text = trim_to_end_of_line_unless_leading_newline(completion_text);
 
