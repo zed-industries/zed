@@ -2286,6 +2286,7 @@ dependencies = [
  "fs",
  "futures 0.3.28",
  "git",
+ "git_hosting_providers",
  "google_ai",
  "gpui",
  "headless",
@@ -4394,12 +4395,13 @@ dependencies = [
  "async-trait",
  "clock",
  "collections",
+ "derive_more",
  "git2",
+ "gpui",
  "lazy_static",
  "log",
  "parking_lot",
  "pretty_assertions",
- "regex",
  "rope",
  "serde",
  "serde_json",
@@ -4424,6 +4426,25 @@ dependencies = [
  "libgit2-sys",
  "log",
  "url",
+]
+
+[[package]]
+name = "git_hosting_providers"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures 0.3.28",
+ "git",
+ "gpui",
+ "isahc",
+ "pretty_assertions",
+ "regex",
+ "serde",
+ "serde_json",
+ "unindent",
+ "url",
+ "util",
 ]
 
 [[package]]
@@ -12766,6 +12787,8 @@ dependencies = [
  "file_icons",
  "fs",
  "futures 0.3.28",
+ "git",
+ "git_hosting_providers",
  "go_to_line",
  "gpui",
  "headless",

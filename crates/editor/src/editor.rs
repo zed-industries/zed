@@ -41,7 +41,7 @@ mod editor_tests;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 use ::git::diff::{DiffHunk, DiffHunkStatus};
-use ::git::{parse_git_remote_url, BuildPermalinkParams};
+use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -9548,8 +9548,9 @@ impl Editor {
         let selections = self.selections.all::<Point>(cx);
         let selection = selections.iter().peekable().next();
 
-        let (provider, remote) = parse_git_remote_url(&origin_url)
-            .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
+        let (provider, remote) =
+            parse_git_remote_url(GitHostingProviderRegistry::default_global(cx), &origin_url)
+                .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
         Ok(provider.build_permalink(
             remote,

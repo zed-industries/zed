@@ -4,7 +4,7 @@ use anyhow::Result;
 use collections::HashMap;
 use git::{
     blame::{Blame, BlameEntry},
-    parse_git_remote_url, GitHostingProvider, Oid, PullRequest,
+    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
 };
 use gpui::{Model, ModelContext, Subscription, Task};
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
@@ -330,6 +330,7 @@ impl GitBlame {
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
         let languages = self.project.read(cx).languages().clone();
+        let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx
@@ -345,9 +346,14 @@ impl GitBlame {
                         } = blame.await?;
 
                         let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
-                        let commit_details =
-                            parse_commit_messages(messages, remote_url, &permalinks, &languages)
-                                .await;
+                        let commit_details = parse_commit_messages(
+                            messages,
+                            remote_url,
+                            &permalinks,
+                            provider_registry,
+                            &languages,
+                        )
+                        .await;
 
                         anyhow::Ok((entries, commit_details))
                     }
@@ -438,11 +444,14 @@ async fn parse_commit_messages(
     messages: impl IntoIterator<Item = (Oid, String)>,
     remote_url: Option<String>,
     deprecated_permalinks: &HashMap<Oid, Url>,
+    provider_registry: Arc<GitHostingProviderRegistry>,
     languages: &Arc<LanguageRegistry>,
 ) -> HashMap<Oid, CommitDetails> {
     let mut commit_details = HashMap::default();
 
-    let parsed_remote_url = remote_url.as_deref().and_then(parse_git_remote_url);
+    let parsed_remote_url = remote_url
+        .as_deref()
+        .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
         let parsed_message = parse_markdown(&message, &languages).await;

@@ -1,13 +1,16 @@
 use std::sync::{Arc, OnceLock};
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
+use futures::AsyncReadExt;
+use isahc::config::Configurable;
+use isahc::{AsyncBody, Request};
 use regex::Regex;
+use serde::Deserialize;
 use url::Url;
-use util::github;
 use util::http::HttpClient;
 
-use crate::{
+use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, Oid, ParsedGitRemote,
     PullRequest,
 };
@@ -18,7 +21,71 @@ fn pull_request_number_regex() -> &'static Regex {
     PULL_REQUEST_NUMBER_REGEX.get_or_init(|| Regex::new(r"\(#(\d+)\)$").unwrap())
 }
 
+#[derive(Debug, Deserialize)]
+struct CommitDetails {
+    commit: Commit,
+    author: Option<User>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Commit {
+    author: Author,
+}
+
+#[derive(Debug, Deserialize)]
+struct Author {
+    email: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct User {
+    pub id: u64,
+    pub avatar_url: String,
+}
+
 pub struct Github;
+
+impl Github {
+    async fn fetch_github_commit_author(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: &str,
+        client: &Arc<dyn HttpClient>,
+    ) -> Result<Option<User>> {
+        let url = format!("https://api.github.com/repos/{repo_owner}/{repo}/commits/{commit}");
+
+        let mut request = Request::get(&url)
+            .redirect_policy(isahc::config::RedirectPolicy::Follow)
+            .header("Content-Type", "application/json");
+
+        if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
+            request = request.header("Authorization", format!("Bearer {}", github_token));
+        }
+
+        let mut response = client
+            .send(request.body(AsyncBody::default())?)
+            .await
+            .with_context(|| format!("error fetching GitHub commit details at {:?}", url))?;
+
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+
+        if response.status().is_client_error() {
+            let text = String::from_utf8_lossy(body.as_slice());
+            bail!(
+                "status error {}, response: {text:?}",
+                response.status().as_u16()
+            );
+        }
+
+        let body_str = std::str::from_utf8(&body)?;
+
+        serde_json::from_str::<CommitDetails>(body_str)
+            .map(|commit| commit.author)
+            .context("failed to deserialize GitHub commit details")
+    }
+}
 
 #[async_trait]
 impl GitHostingProvider for Github {
@@ -110,15 +177,15 @@ impl GitHostingProvider for Github {
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         let commit = commit.to_string();
-        let avatar_url =
-            github::fetch_github_commit_author(repo_owner, repo, &commit, &http_client)
-                .await?
-                .map(|author| -> Result<Url, url::ParseError> {
-                    let mut url = Url::parse(&author.avatar_url)?;
-                    url.set_query(Some("size=128"));
-                    Ok(url)
-                })
-                .transpose()?;
+        let avatar_url = self
+            .fetch_github_commit_author(repo_owner, repo, &commit, &http_client)
+            .await?
+            .map(|author| -> Result<Url, url::ParseError> {
+                let mut url = Url::parse(&author.avatar_url)?;
+                url.set_query(Some("size=128"));
+                Ok(url)
+            })
+            .transpose()?;
         Ok(avatar_url)
     }
 }
