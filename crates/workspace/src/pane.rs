@@ -203,6 +203,7 @@ pub struct Pane {
     custom_drop_handle:
         Option<Arc<dyn Fn(&mut Pane, &dyn Any, &mut ViewContext<Pane>) -> ControlFlow<(), ()>>>,
     can_split: bool,
+    should_display_tab_bar: Rc<dyn Fn(&ViewContext<Pane>) -> bool>,
     render_tab_bar_buttons: Rc<dyn Fn(&mut Pane, &mut ViewContext<Pane>) -> AnyElement>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
@@ -312,6 +313,9 @@ impl Pane {
             can_drop_predicate,
             custom_drop_handle: None,
             can_split: true,
+            should_display_tab_bar: Rc::new(|cx| {
+                TabBarSettings::get_global(cx).placement == TabBarPlacement::Top
+            }),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
                 // `end_slot`, but due to needing a view here that isn't possible.
@@ -466,6 +470,13 @@ impl Pane {
 
     pub fn activation_history(&self) -> &Vec<EntityId> {
         &self.activation_history
+    }
+
+    pub fn set_should_display_tab_bar<F>(&mut self, should_display_tab_bar: F)
+    where
+        F: 'static + Fn(&ViewContext<Pane>) -> bool,
+    {
+        self.should_display_tab_bar = Rc::new(should_display_tab_bar);
     }
 
     pub fn set_can_split(&mut self, can_split: bool, cx: &mut ViewContext<Self>) {
@@ -1431,7 +1442,6 @@ impl Pane {
         ix: usize,
         item: &Box<dyn ItemHandle>,
         detail: usize,
-        tab_bar_placement: ui::TabBarPlacement,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
@@ -1456,7 +1466,6 @@ impl Pane {
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
 
         let tab = Tab::new(ix)
-            .tab_bar_placement(tab_bar_placement)
             .position(if is_first_item {
                 TabPosition::First
             } else if is_last_item {
@@ -1669,18 +1678,7 @@ impl Pane {
         })
     }
 
-    fn need_tab_bar_at(&self, placement: TabBarPlacement, cx: &mut ViewContext<'_, Pane>) -> bool {
-        let Some(item) = self.active_item() else {
-            return false;
-        };
-        item.tab_bar_placement(cx) == placement
-    }
-
-    fn render_tab_bar(
-        &mut self,
-        placement: ui::TabBarPlacement,
-        cx: &mut ViewContext<'_, Pane>,
-    ) -> impl IntoElement {
+    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
@@ -1702,7 +1700,6 @@ impl Pane {
             .tooltip(|cx| Tooltip::for_action("Go Forward", &GoForward, cx));
 
         TabBar::new("tab_bar")
-            .placement(placement)
             .track_scroll(self.tab_bar_scroll_handle.clone())
             .when(
                 self.display_nav_history_buttons.unwrap_or_default(),
@@ -1719,7 +1716,7 @@ impl Pane {
                     .iter()
                     .enumerate()
                     .zip(tab_details(&self.items, cx))
-                    .map(|((ix, item), detail)| self.render_tab(ix, item, detail, placement, cx)),
+                    .map(|((ix, item), detail)| self.render_tab(ix, item, detail, cx)),
             )
             .child(
                 div()
@@ -1977,6 +1974,9 @@ impl Render for Pane {
             key_context.add("EmptyPane");
         }
 
+        let should_display_tab_bar = self.should_display_tab_bar.clone();
+        let display_tab_bar = should_display_tab_bar(cx);
+
         v_flex()
             .key_context(key_context)
             .track_focus(&self.focus_handle)
@@ -2075,8 +2075,8 @@ impl Render for Pane {
                     }
                 }),
             )
-            .when(self.need_tab_bar_at(TabBarPlacement::Top, cx), |pane| {
-                pane.child(self.render_tab_bar(ui::TabBarPlacement::Top, cx))
+            .when(self.active_item().is_some() && display_tab_bar, |pane| {
+                pane.child(self.render_tab_bar(cx))
             })
             .child({
                 let has_worktrees = self.project.read(cx).worktrees().next().is_some();
@@ -2145,9 +2145,6 @@ impl Render for Pane {
                                 }
                             }),
                     )
-            })
-            .when(self.need_tab_bar_at(TabBarPlacement::Bottom, cx), |pane| {
-                pane.child(self.render_tab_bar(ui::TabBarPlacement::Bottom, cx))
             })
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),

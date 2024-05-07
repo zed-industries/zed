@@ -20,10 +20,7 @@ use multi_buffer::AnchorRangeExt;
 use project::{search::SearchQuery, FormatTrigger, Item as _, Project, ProjectPath};
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::{
-    item::{ItemSettings, TabContentParams},
-    TabBarPlacement,
-};
+use workspace::item::{ItemSettings, TabContentParams};
 
 use std::{
     any::TypeId,
@@ -802,10 +799,6 @@ impl Item for Editor {
 
     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<gpui::Point<Pixels>> {
         self.pixel_position_of_newest_cursor
-    }
-
-    fn tab_bar_placement(&self) -> TabBarPlacement {
-        self.tab_bar_placement
     }
 
     fn breadcrumb_location(&self) -> ToolbarItemLocation {

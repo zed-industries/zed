@@ -137,13 +137,12 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use workspace::item::{ItemHandle, PreviewTabsSettings};
+use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{
-    item::{ItemHandle, PreviewTabsSettings},
-    notifications::{DetachAndPromptErr, NotificationId},
-    searchable::SearchEvent,
-    ItemNavHistory, OpenInTerminal, OpenTerminal, SplitDirection, TabBarPlacement, TabBarSettings,
-    Toast, ViewId, Workspace, WorkspaceId,
+    searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
+use workspace::{OpenInTerminal, OpenTerminal, Toast};
 
 use crate::hover_links::find_url;
 
@@ -444,7 +443,6 @@ pub struct Editor {
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
     mode: EditorMode,
-    tab_bar_placement: TabBarPlacement,
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_wrap_guides: Option<bool>,
@@ -1614,7 +1612,6 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             mode,
-            tab_bar_placement: TabBarSettings::get_global(cx).placement,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode == EditorMode::Full,
             show_wrap_guides: None,
@@ -10165,7 +10162,6 @@ impl Editor {
         let editor_settings = EditorSettings::get_global(cx);
         self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
         self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
-        self.tab_bar_placement = TabBarSettings::get_global(cx).placement;
 
         if self.mode == EditorMode::Full {
             let inline_blame_enabled = ProjectSettings::get_global(cx).git.inline_blame_enabled();

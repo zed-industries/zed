@@ -2,7 +2,7 @@ use crate::{
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
-    workspace_settings::{AutosaveSetting, TabBarPlacement, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, WorkspaceSettings},
     DelayedDebouncedEditAction, FollowableItemBuilders, ItemNavHistory, ToolbarItemLocation,
     ViewId, Workspace, WorkspaceId,
 };
@@ -230,10 +230,6 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
 
-    fn tab_bar_placement(&self) -> TabBarPlacement {
-        TabBarPlacement::Top
-    }
-
     fn breadcrumb_location(&self) -> ToolbarItemLocation {
         ToolbarItemLocation::Hidden
     }
@@ -329,7 +325,6 @@ pub trait ItemHandle: 'static + Send {
         callback: Box<dyn FnOnce(&mut AppContext) + Send>,
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
-    fn tab_bar_placement(&self, cx: &AppContext) -> TabBarPlacement;
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
     fn serialized_item_kind(&self) -> Option<&'static str>;
@@ -686,10 +681,6 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
         self.read(cx).as_searchable(self)
-    }
-
-    fn tab_bar_placement(&self, cx: &AppContext) -> TabBarPlacement {
-        self.read(cx).tab_bar_placement()
     }
 
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {

@@ -321,9 +321,7 @@
     //
     // 1. Show tab bar at the top of the editor (default):
     //    "top"
-    // 2. Show tab bar at the bottom of the editor:
-    //    "bottom"
-    // 3. Don't show the tab bar:
+    // 2. Don't show the tab bar:
     //   "none"
     "placement": "top",
     // Whether or not to show the navigation history buttons.

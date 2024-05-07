@@ -1821,7 +1821,6 @@ pub mod tests {
         cx.set_global(settings);
         language::init(cx);
         crate::init(cx);
-        workspace::init_settings(cx);
         Project::init_settings(cx);
         theme::init(LoadThemes::JustBase, cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {

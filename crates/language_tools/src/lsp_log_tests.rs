@@ -108,7 +108,6 @@ fn init_test(cx: &mut gpui::TestAppContext) {
         release_channel::init("0.0.0", cx);
         language::init(cx);
         client::init_settings(cx);
-        workspace::init_settings(cx);
         Project::init_settings(cx);
         editor::init_settings(cx);
     });

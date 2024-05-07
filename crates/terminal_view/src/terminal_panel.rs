@@ -74,6 +74,7 @@ impl TerminalPanel {
             pane.set_can_split(false, cx);
             pane.set_can_navigate(false, cx);
             pane.display_nav_history_buttons(None);
+            pane.set_should_display_tab_bar(|_| true);
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
                 h_flex()
                     .gap_2()

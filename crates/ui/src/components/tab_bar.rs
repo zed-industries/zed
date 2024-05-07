@@ -3,19 +3,9 @@ use smallvec::SmallVec;
 
 use crate::prelude::*;
 
-/// Placement of the tab bar in relation to the main content area.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum TabBarPlacement {
-    /// On top.
-    Top,
-    /// At the bottom.
-    Bottom,
-}
-
 #[derive(IntoElement)]
 pub struct TabBar {
     id: ElementId,
-    placement: TabBarPlacement,
     start_children: SmallVec<[AnyElement; 2]>,
     children: SmallVec<[AnyElement; 2]>,
     end_children: SmallVec<[AnyElement; 2]>,
@@ -26,17 +16,11 @@ impl TabBar {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
-            placement: TabBarPlacement::Top,
             start_children: SmallVec::new(),
             children: SmallVec::new(),
             end_children: SmallVec::new(),
             scroll_handle: None,
         }
-    }
-
-    pub fn placement(mut self, placement: TabBarPlacement) -> Self {
-        self.placement = placement;
-        self
     }
 
     pub fn track_scroll(mut self, scroll_handle: ScrollHandle) -> Self {
@@ -106,9 +90,6 @@ impl ParentElement for TabBar {
 
 impl RenderOnce for TabBar {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let placement_top = self.placement == TabBarPlacement::Top;
-        let placement_bottom = self.placement == TabBarPlacement::Bottom;
-
         div()
             .id(self.id)
             .group("tab_bar")
@@ -126,9 +107,7 @@ impl RenderOnce for TabBar {
                     h_flex()
                         .flex_none()
                         .gap(Spacing::Small.rems(cx))
-                        .px(Spacing::Small.rems(cx))
-                        .when(placement_top, Styled::border_b_1)
-                        .when(placement_bottom, Styled::border_t_1)
+                        .px(Spacing::Medium.rems(cx))
                         .border_b_1()
                         .border_r_1()
                         .border_color(cx.theme().colors().border)
@@ -147,8 +126,7 @@ impl RenderOnce for TabBar {
                             .top_0()
                             .left_0()
                             .size_full()
-                            .when(placement_top, Styled::border_b_1)
-                            .when(placement_bottom, Styled::border_t_1)
+                            .border_b_1()
                             .border_color(cx.theme().colors().border),
                     )
                     .child(
@@ -168,8 +146,6 @@ impl RenderOnce for TabBar {
                         .flex_none()
                         .gap(Spacing::Small.rems(cx))
                         .px(Spacing::Medium.rems(cx))
-                        .when(placement_top, Styled::border_b_1)
-                        .when(placement_bottom, Styled::border_t_1)
                         .border_b_1()
                         .border_l_1()
                         .border_color(cx.theme().colors().border)

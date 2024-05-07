@@ -344,15 +344,7 @@ List of `string` values
 }
 ```
 
-2. Place the tab bar at the bottom of the editor:
-
-```json
-{
-  "placement": "bottom"
-}
-```
-
-3. Hide the tab bar:
+2. Hide the tab bar:
 
 ```json
 {

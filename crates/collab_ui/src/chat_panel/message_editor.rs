@@ -631,7 +631,6 @@ mod tests {
             let http = FakeHttpClient::with_404_response();
             let client = Client::new(clock, http.clone(), cx);
             let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
-            workspace::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             Project::init_settings(cx);
             language::init(cx);

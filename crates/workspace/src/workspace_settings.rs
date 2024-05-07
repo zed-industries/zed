@@ -66,8 +66,6 @@ pub enum TabBarPlacement {
     None,
     /// Place tab bar on top of the pane.
     Top,
-    /// Place tab bar at the bottom of the pane.
-    Bottom,
 }
 
 #[derive(Deserialize)]

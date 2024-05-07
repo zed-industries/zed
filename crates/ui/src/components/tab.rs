@@ -1,10 +1,9 @@
 use std::cmp::Ordering;
 
-use crate::TabBarPlacement;
-use crate::{prelude::*, BASE_REM_SIZE_IN_PX};
-
 use gpui::{AnyElement, IntoElement, Stateful};
 use smallvec::SmallVec;
+
+use crate::{prelude::*, BASE_REM_SIZE_IN_PX};
 
 /// The position of a [`Tab`] within a list of tabs.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -31,7 +30,6 @@ pub enum TabCloseSide {
 pub struct Tab {
     div: Stateful<Div>,
     selected: bool,
-    tab_bar_placement: TabBarPlacement,
     position: TabPosition,
     close_side: TabCloseSide,
     start_slot: Option<AnyElement>,
@@ -47,7 +45,6 @@ impl Tab {
                 .id(id.clone())
                 .debug_selector(|| format!("TAB-{}", id)),
             selected: false,
-            tab_bar_placement: TabBarPlacement::Top,
             position: TabPosition::First,
             close_side: TabCloseSide::End,
             start_slot: None,
@@ -59,11 +56,6 @@ impl Tab {
     pub const CONTAINER_HEIGHT_IN_REMS: f32 = 29. / BASE_REM_SIZE_IN_PX;
 
     const CONTENT_HEIGHT_IN_REMS: f32 = 28. / BASE_REM_SIZE_IN_PX;
-
-    pub fn tab_bar_placement(mut self, tab_bar_placement: TabBarPlacement) -> Self {
-        self.tab_bar_placement = tab_bar_placement;
-        self
-    }
 
     pub fn position(mut self, position: TabPosition) -> Self {
         self.position = position;
@@ -125,9 +117,6 @@ impl RenderOnce for Tab {
             ),
         };
 
-        let placement_top = self.tab_bar_placement == TabBarPlacement::Top;
-        let placement_bottom = self.tab_bar_placement == TabBarPlacement::Bottom;
-
         self.div
             .h(rems(Self::CONTAINER_HEIGHT_IN_REMS))
             .bg(tab_bg)
@@ -135,46 +124,21 @@ impl RenderOnce for Tab {
             .map(|this| match self.position {
                 TabPosition::First => {
                     if self.selected {
-                        this.pl_px()
-                            .border_r_1()
-                            .when(placement_top, Styled::pb_px)
-                            .when(placement_bottom, Styled::pt_px)
+                        this.pl_px().border_r_1().pb_px()
                     } else {
-                        this.pl_px()
-                            .pr_px()
-                            .when(placement_top, Styled::border_b_1)
-                            .when(placement_bottom, Styled::border_t_1)
+                        this.pl_px().pr_px().border_b_1()
                     }
                 }
                 TabPosition::Last => {
                     if self.selected {
-                        this.border_l_1()
-                            .border_r_1()
-                            .when(placement_top, Styled::pb_px)
-                            .when(placement_bottom, Styled::pt_px)
+                        this.border_l_1().border_r_1().pb_px()
                     } else {
-                        this.pr_px()
-                            .pl_px()
-                            .border_r_1()
-                            .when(placement_top, Styled::border_b_1)
-                            .when(placement_bottom, Styled::border_t_1)
+                        this.pr_px().pl_px().border_b_1().border_r_1()
                     }
                 }
-                TabPosition::Middle(Ordering::Equal) => this
-                    .border_l_1()
-                    .border_r_1()
-                    .when(placement_top, Styled::pb_px)
-                    .when(placement_bottom, Styled::pt_px),
-                TabPosition::Middle(Ordering::Less) => this
-                    .border_l_1()
-                    .pr_px()
-                    .when(placement_top, Styled::border_b_1)
-                    .when(placement_bottom, Styled::border_t_1),
-                TabPosition::Middle(Ordering::Greater) => this
-                    .border_r_1()
-                    .pl_px()
-                    .when(placement_top, Styled::border_b_1)
-                    .when(placement_bottom, Styled::border_t_1),
+                TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
+                TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
+                TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
             })
             .cursor_pointer()
             .child(
