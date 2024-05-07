@@ -359,14 +359,17 @@ impl TextLayout {
     }
 
     /// todo!()
-    pub fn index_for_position(&self, position: Point<Pixels>) -> Option<usize> {
+    pub fn index_for_position(&self, mut position: Point<Pixels>) -> Result<usize, usize> {
         let element_state = self.lock();
         let element_state = element_state
             .as_ref()
             .expect("measurement has not been performed");
-        let bounds = element_state.bounds?;
-        if !bounds.contains(&position) {
-            return None;
+        let bounds = element_state
+            .bounds
+            .expect("prepaint has not been performed");
+
+        if position.y < bounds.top() {
+            return Err(0);
         }
 
         let line_height = element_state.line_height;
@@ -379,13 +382,14 @@ impl TextLayout {
                 line_start_ix += line.len() + 1;
             } else {
                 let position_within_line = position - line_origin;
-                let index_within_line =
-                    line.index_for_position(position_within_line, line_height)?;
-                return Some(line_start_ix + index_within_line);
+                match line.index_for_position(position_within_line, line_height) {
+                    Ok(index_within_line) => return Ok(line_start_ix + index_within_line),
+                    Err(index_within_line) => return Err(line_start_ix + index_within_line),
+                }
             }
         }
 
-        None
+        Err(line_start_ix.saturating_sub(1))
     }
 
     /// todo!()
@@ -531,7 +535,7 @@ impl Element for InteractiveText {
                 let mut interactive_state = interactive_state.unwrap_or_default();
                 if let Some(click_listener) = self.click_listener.take() {
                     let mouse_position = cx.mouse_position();
-                    if let Some(ix) = text_layout.index_for_position(mouse_position) {
+                    if let Some(ix) = text_layout.index_for_position(mouse_position).ok() {
                         if self
                             .clickable_ranges
                             .iter()
@@ -549,7 +553,7 @@ impl Element for InteractiveText {
                         cx.on_mouse_event(move |event: &MouseUpEvent, phase, cx| {
                             if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                                 if let Some(mouse_up_index) =
-                                    text_layout.index_for_position(event.position)
+                                    text_layout.index_for_position(event.position).ok()
                                 {
                                     click_listener(
                                         &clickable_ranges,
@@ -570,7 +574,7 @@ impl Element for InteractiveText {
                         cx.on_mouse_event(move |event: &MouseDownEvent, phase, cx| {
                             if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                                 if let Some(mouse_down_index) =
-                                    text_layout.index_for_position(event.position)
+                                    text_layout.index_for_position(event.position).ok()
                                 {
                                     mouse_down.set(Some(mouse_down_index));
                                     cx.refresh();
@@ -588,7 +592,7 @@ impl Element for InteractiveText {
                     move |event: &MouseMoveEvent, phase, cx| {
                         if phase == DispatchPhase::Bubble && hitbox.is_hovered(cx) {
                             let current = hovered_index.get();
-                            let updated = text_layout.index_for_position(event.position);
+                            let updated = text_layout.index_for_position(event.position).ok();
                             if current != updated {
                                 hovered_index.set(updated);
                                 if let Some(hover_listener) = hover_listener.as_ref() {
@@ -607,7 +611,7 @@ impl Element for InteractiveText {
                     let text_layout = text_layout.clone();
 
                     cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                        let position = text_layout.index_for_position(event.position);
+                        let position = text_layout.index_for_position(event.position).ok();
                         let is_hovered = position.is_some()
                             && hitbox.is_hovered(cx)
                             && pending_mouse_down.get().is_none();

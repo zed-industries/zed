@@ -218,6 +218,8 @@ impl Element for MarkdownElement {
         _id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        dbg!(self.markdown.read(cx).selection);
+
         let mut builder = MarkdownElementBuilder::new(cx.text_style(), self.style.syntax.clone());
         let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
         for (range, event) in parsed_markdown.events.iter() {
@@ -402,7 +404,10 @@ impl Element for MarkdownElement {
 
                 markdown
                     .update(cx, |markdown, cx| {
-                        if let Some(index) = rendered_text.index_for_position(event.position) {
+                        if let Some(index) = rendered_text
+                            .markdown_index_for_position(event.position)
+                            .ok()
+                        {
                             markdown.selection = Selection {
                                 start: index,
                                 end: index,
@@ -426,10 +431,12 @@ impl Element for MarkdownElement {
                 markdown
                     .update(cx, |markdown, cx| {
                         if markdown.is_selecting {
-                            if let Some(index) = rendered_text.index_for_position(event.position) {
-                                markdown.selection.set_head(index);
-                                cx.notify();
-                            }
+                            let index =
+                                match rendered_text.markdown_index_for_position(event.position) {
+                                    Ok(ix) | Err(ix) => ix,
+                                };
+                            markdown.selection.set_head(index);
+                            cx.notify();
                         }
                     })
                     .log_err();
@@ -469,6 +476,7 @@ struct MarkdownElementBuilder {
     div_stack: Vec<Div>,
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
+    text_position: TextPosition,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
@@ -480,16 +488,16 @@ struct MarkdownElementBuilder {
 struct PendingLine {
     text: String,
     runs: Vec<TextRun>,
-    spans: Vec<TextSpan>,
+    positions: Vec<TextPosition>,
 }
 
 struct RenderedLine {
     layout: TextLayout,
-    spans: Vec<TextSpan>,
+    positions: Vec<TextPosition>,
 }
 
-#[derive(Debug)]
-struct TextSpan {
+#[derive(Copy, Clone, Debug, Default)]
+struct TextPosition {
     element_index: usize,
     markdown_index: usize,
 }
@@ -505,23 +513,43 @@ struct RenderedText {
 }
 
 impl RenderedText {
-    fn index_for_position(&self, position: Point<Pixels>) -> Option<usize> {
+    fn markdown_index_for_position(&self, mut position: Point<Pixels>) -> Result<usize, usize> {
+        let mut out_of_bounds = false;
         for line in self.lines.iter() {
-            // todo!("change index for position to return a result")
-            if let Some(line_index) = line.layout.index_for_position(position) {
-                let span = match line
-                    .spans
-                    .binary_search_by_key(&line_index, |probe| probe.element_index)
-                {
-                    Ok(ix) => &line.spans[ix],
-                    Err(ix) => &line.spans[ix - 1],
-                };
+            let line_bounds = line.layout.bounds();
+            if position.y > line_bounds.bottom() {
+                continue;
+            }
 
-                return Some(span.markdown_index + (line_index - span.element_index));
+            let index_within_line;
+            let out_of_bounds;
+            match line.layout.index_for_position(position) {
+                Ok(ix) => {
+                    index_within_line = ix;
+                    out_of_bounds = false;
+                }
+                Err(ix) => {
+                    index_within_line = ix;
+                    out_of_bounds = false;
+                }
+            };
+            let position = match line
+                .positions
+                .binary_search_by_key(&index_within_line, |probe| probe.element_index)
+            {
+                Ok(ix) => &line.positions[ix],
+                Err(ix) => &line.positions[ix - 1],
+            };
+            let markdown_index =
+                position.markdown_index + (index_within_line - position.element_index);
+            if out_of_bounds {
+                return Err(markdown_index);
+            } else {
+                return Ok(markdown_index);
             }
         }
 
-        None
+        Err(self.lines.last().unwrap().end_position.markdown_index)
     }
 }
 
@@ -535,6 +563,7 @@ impl MarkdownElementBuilder {
             div_stack: vec![div().debug_selector(|| "inner".into())],
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
+            text_position: TextPosition::default(),
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
@@ -595,7 +624,7 @@ impl MarkdownElementBuilder {
     }
 
     fn push_text(&mut self, text: &str, markdown_index: usize) {
-        self.pending_line.spans.push(TextSpan {
+        self.pending_line.positions.push(TextPosition {
             element_index: self.pending_line.text.len(),
             markdown_index,
         });
@@ -648,7 +677,7 @@ impl MarkdownElementBuilder {
         let text = StyledText::new(line.text).with_runs(line.runs);
         self.rendered_lines.push(RenderedLine {
             layout: text.layout().clone(),
-            spans: line.spans,
+            positions: line.positions,
         });
         self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
