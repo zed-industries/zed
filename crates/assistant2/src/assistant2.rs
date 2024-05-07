@@ -171,6 +171,7 @@ impl AssistantPanel {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         fs: Arc<dyn Fs>,
         language_registry: Arc<LanguageRegistry>,
