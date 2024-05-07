@@ -348,7 +348,12 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn app_version(&self) -> Result<SemanticVersion> {
-        Ok(SemanticVersion::new(1, 0, 0))
+        const VERSION: Option<&str> = option_env!("RELEASE_VERSION");
+        if let Some(version) = VERSION {
+            version.parse()
+        } else {
+            Ok(SemanticVersion::new(1, 0, 0))
+        }
     }
 
     fn app_path(&self) -> Result<PathBuf> {
