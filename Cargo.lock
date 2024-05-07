@@ -2154,6 +2154,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion 0.3.2",
+ "async-trait",
  "async-tungstenite",
  "chrono",
  "clock",

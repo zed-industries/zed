@@ -6,6 +6,7 @@ pub mod user;
 
 use anyhow::{anyhow, Context as _, Result};
 use async_recursion::async_recursion;
+use async_trait::async_trait;
 use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
@@ -296,6 +297,17 @@ impl Credentials {
             } => format!("{} {}", user_id, access_token),
         }
     }
+}
+
+trait CredentialsProvider {
+    async fn read_credentials(&self, cx: &AsyncAppContext) -> Option<Credentials>;
+
+    async fn write_credentials(
+        &self,
+        user_id: u64,
+        access_token: String,
+        cx: &AsyncAppContext,
+    ) -> Result<()>;
 }
 
 impl Default for ClientState {
@@ -764,7 +776,10 @@ impl Client {
     }
 
     pub async fn has_keychain_credentials(&self, cx: &AsyncAppContext) -> bool {
-        read_credentials_from_keychain(cx).await.is_some()
+        KeychainCredentialsProvider
+            .read_credentials(cx)
+            .await
+            .is_some()
     }
 
     pub fn set_dev_server_token(&self, token: DevServerToken) -> &Self {
@@ -796,12 +811,15 @@ impl Client {
             self.set_status(Status::Reauthenticating, cx)
         }
 
+        let use_zed_development_auth = std::env::var("ZED_DEVELOPMENT_AUTH").is_ok();
+
         let mut read_from_keychain = false;
         let mut credentials = self.state.read().credentials.clone();
         if credentials.is_none() && try_keychain {
-            credentials = read_credentials_from_keychain(cx).await;
+            credentials = KeychainCredentialsProvider.read_credentials(cx).await;
             read_from_keychain = credentials.is_some();
         }
+
         if credentials.is_none() {
             let mut status_rx = self.status();
             let _ = status_rx.next().await;
@@ -840,7 +858,7 @@ impl Client {
                         self.state.write().credentials = Some(credentials.clone());
                         if !read_from_keychain && IMPERSONATE_LOGIN.is_none() {
                             if let Credentials::User{user_id, access_token} = credentials {
-                                write_credentials_to_keychain(user_id, access_token, cx).await.log_err();
+                                KeychainCredentialsProvider.write_credentials(user_id, access_token, cx).await.log_err();
                             }
                         }
 
@@ -1465,36 +1483,62 @@ impl Client {
     }
 }
 
-async fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
-    if IMPERSONATE_LOGIN.is_some() {
-        return None;
+struct DevelopmentCredentialsProvider;
+
+impl CredentialsProvider for DevelopmentCredentialsProvider {
+    async fn read_credentials(&self, cx: &AsyncAppContext) -> Option<Credentials> {
+        if IMPERSONATE_LOGIN.is_some() {
+            return None;
+        }
+
+        None
     }
 
-    let (user_id, access_token) = cx
-        .update(|cx| cx.read_credentials(&ClientSettings::get_global(cx).server_url))
-        .log_err()?
-        .await
-        .log_err()??;
-
-    Some(Credentials::User {
-        user_id: user_id.parse().ok()?,
-        access_token: String::from_utf8(access_token).ok()?,
-    })
+    async fn write_credentials(
+        &self,
+        user_id: u64,
+        access_token: String,
+        cx: &AsyncAppContext,
+    ) -> Result<()> {
+        todo!()
+    }
 }
 
-async fn write_credentials_to_keychain(
-    user_id: u64,
-    access_token: String,
-    cx: &AsyncAppContext,
-) -> Result<()> {
-    cx.update(move |cx| {
-        cx.write_credentials(
-            &ClientSettings::get_global(cx).server_url,
-            &user_id.to_string(),
-            access_token.as_bytes(),
-        )
-    })?
-    .await
+struct KeychainCredentialsProvider;
+
+impl CredentialsProvider for KeychainCredentialsProvider {
+    async fn read_credentials(&self, cx: &AsyncAppContext) -> Option<Credentials> {
+        if IMPERSONATE_LOGIN.is_some() {
+            return None;
+        }
+
+        let (user_id, access_token) = cx
+            .update(|cx| cx.read_credentials(&ClientSettings::get_global(cx).server_url))
+            .log_err()?
+            .await
+            .log_err()??;
+
+        Some(Credentials::User {
+            user_id: user_id.parse().ok()?,
+            access_token: String::from_utf8(access_token).ok()?,
+        })
+    }
+
+    async fn write_credentials(
+        &self,
+        user_id: u64,
+        access_token: String,
+        cx: &AsyncAppContext,
+    ) -> Result<()> {
+        cx.update(move |cx| {
+            cx.write_credentials(
+                &ClientSettings::get_global(cx).server_url,
+                &user_id.to_string(),
+                access_token.as_bytes(),
+            )
+        })?
+        .await
+    }
 }
 
 async fn delete_credentials_from_keychain(cx: &AsyncAppContext) -> Result<()> {
