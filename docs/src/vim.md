@@ -268,6 +268,7 @@ Zed has nascent support for some Vim plugins:
 - From `vim-surround`, `ys`, `cs` and `ds` work. Though you cannot add new HTML tags yet.
 - From `vim-commentary`, `gc` in visual mode and `gcc` in normal mode. Though you cannot operate on arbitrary objects yet.
 - From `netrw`, most keybindings are supported in the project panel.
+- From `vim-spider`/`CamelCaseMotion` you can use subword motions as described above.
 
 ## Regex differences
 
