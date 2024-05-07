@@ -1,0 +1,8 @@
+[
+  {
+    "label": "php test $ZED_SYMBOL",
+    "command": "vendor/bin/phpunit",
+    "args": ["--filter=$ZED_SYMBOL"],
+    "tags": ["php-test"]
+  }
+]
