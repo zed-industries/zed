@@ -25,6 +25,7 @@ extend-exclude = [
 
 [default]
 extend-ignore-re = [
+    'cl\[ist]',
     '"ba"',
     ":ba\\|z",
     # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
