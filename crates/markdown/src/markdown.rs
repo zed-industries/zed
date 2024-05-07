@@ -27,7 +27,7 @@ pub struct MarkdownStyle {
 }
 
 pub struct Markdown {
-    text: String,
+    source: String,
     selection: Selection,
     is_selecting: bool,
     style: MarkdownStyle,
@@ -39,13 +39,13 @@ pub struct Markdown {
 
 impl Markdown {
     pub fn new(
-        text: String,
+        source: String,
         style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut this = Self {
-            text: text.into(),
+            source: source.into(),
             selection: Selection::default(),
             is_selecting: false,
             style,
@@ -59,12 +59,12 @@ impl Markdown {
     }
 
     pub fn append(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        self.text.push_str(text);
+        self.source.push_str(text);
         self.parse(cx);
     }
 
     fn parse(&mut self, cx: &mut ViewContext<Self>) {
-        if self.text.is_empty() {
+        if self.source.is_empty() {
             return;
         }
 
@@ -73,11 +73,14 @@ impl Markdown {
             return;
         }
 
-        let text = self.text.clone();
+        let text = self.source.clone();
         let parsed = cx.background_executor().spawn(async move {
             let text = SharedString::from(text);
             let events = Arc::from(parse_markdown(text.as_ref()));
-            anyhow::Ok(ParsedMarkdown { text, events })
+            anyhow::Ok(ParsedMarkdown {
+                source: text,
+                events,
+            })
         });
 
         self.should_reparse = false;
@@ -145,14 +148,14 @@ impl Selection {
 
 #[derive(Clone)]
 struct ParsedMarkdown {
-    text: SharedString,
+    source: SharedString,
     events: Arc<[(Range<usize>, MarkdownEvent)]>,
 }
 
 impl Default for ParsedMarkdown {
     fn default() -> Self {
         Self {
-            text: SharedString::default(),
+            source: SharedString::default(),
             events: Arc::from([]),
         }
     }
@@ -218,8 +221,6 @@ impl Element for MarkdownElement {
         _id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        dbg!(self.markdown.read(cx).selection);
-
         let mut builder = MarkdownElementBuilder::new(cx.text_style(), self.style.syntax.clone());
         let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
         for (range, event) in parsed_markdown.events.iter() {
@@ -337,21 +338,21 @@ impl Element for MarkdownElement {
                     _ => log::info!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
-                    builder.push_text(&parsed_markdown.text[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(TextStyleRefinement {
                         background_color: Some(self.style.code_background_color),
                         ..self.style.code.clone()
                     });
-                    builder.push_text(&parsed_markdown.text[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                     builder.pop_text_style();
                 }
                 MarkdownEvent::Html => {
-                    builder.push_text(&parsed_markdown.text[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                 }
                 MarkdownEvent::InlineHtml => {
-                    builder.push_text(&parsed_markdown.text[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
                 }
 
                 MarkdownEvent::Rule => {
@@ -370,7 +371,7 @@ impl Element for MarkdownElement {
             }
         }
 
-        let mut rendered_markdown = builder.finish();
+        let mut rendered_markdown = builder.build();
         let child_layout_id = rendered_markdown.element.request_layout(cx);
         let layout_id = cx.request_layout(&Style::default(), [child_layout_id]);
         (layout_id, rendered_markdown)
@@ -476,7 +477,7 @@ struct MarkdownElementBuilder {
     div_stack: Vec<Div>,
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
-    text_position: TextPosition,
+    source_len: usize,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
@@ -488,18 +489,19 @@ struct MarkdownElementBuilder {
 struct PendingLine {
     text: String,
     runs: Vec<TextRun>,
-    positions: Vec<TextPosition>,
+    source_mappings: Vec<SourceMapping>,
 }
 
 struct RenderedLine {
     layout: TextLayout,
-    positions: Vec<TextPosition>,
+    source_mappings: Vec<SourceMapping>,
+    source_end: usize,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
-struct TextPosition {
-    element_index: usize,
-    markdown_index: usize,
+struct SourceMapping {
+    rendered_index: usize,
+    source_index: usize,
 }
 
 pub struct RenderedMarkdown {
@@ -513,11 +515,18 @@ struct RenderedText {
 }
 
 impl RenderedText {
-    fn markdown_index_for_position(&self, mut position: Point<Pixels>) -> Result<usize, usize> {
-        let mut out_of_bounds = false;
-        for line in self.lines.iter() {
+    fn markdown_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        let mut lines = self.lines.iter().peekable();
+
+        while let Some(line) = lines.next() {
             let line_bounds = line.layout.bounds();
             if position.y > line_bounds.bottom() {
+                if let Some(next_line) = lines.peek() {
+                    if position.y < next_line.layout.bounds().top() {
+                        return Err(line.source_end);
+                    }
+                }
+
                 continue;
             }
 
@@ -530,26 +539,25 @@ impl RenderedText {
                 }
                 Err(ix) => {
                     index_within_line = ix;
-                    out_of_bounds = false;
+                    out_of_bounds = true;
                 }
             };
-            let position = match line
-                .positions
-                .binary_search_by_key(&index_within_line, |probe| probe.element_index)
+            let mapping = match line
+                .source_mappings
+                .binary_search_by_key(&index_within_line, |probe| probe.rendered_index)
             {
-                Ok(ix) => &line.positions[ix],
-                Err(ix) => &line.positions[ix - 1],
+                Ok(ix) => &line.source_mappings[ix],
+                Err(ix) => &line.source_mappings[ix - 1],
             };
-            let markdown_index =
-                position.markdown_index + (index_within_line - position.element_index);
+            let source_index = mapping.source_index + (index_within_line - mapping.rendered_index);
             if out_of_bounds {
-                return Err(markdown_index);
+                return Err(source_index);
             } else {
-                return Ok(markdown_index);
+                return Ok(source_index);
             }
         }
 
-        Err(self.lines.last().unwrap().end_position.markdown_index)
+        Err(self.lines.last().map_or(0, |line| line.source_end))
     }
 }
 
@@ -563,7 +571,7 @@ impl MarkdownElementBuilder {
             div_stack: vec![div().debug_selector(|| "inner".into())],
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
-            text_position: TextPosition::default(),
+            source_len: 0,
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
@@ -623,12 +631,13 @@ impl MarkdownElementBuilder {
         self.code_block_stack.pop();
     }
 
-    fn push_text(&mut self, text: &str, markdown_index: usize) {
-        self.pending_line.positions.push(TextPosition {
-            element_index: self.pending_line.text.len(),
-            markdown_index,
+    fn push_text(&mut self, text: &str, source_index: usize) {
+        self.pending_line.source_mappings.push(SourceMapping {
+            rendered_index: self.pending_line.text.len(),
+            source_index,
         });
         self.pending_line.text.push_str(text);
+        self.source_len = source_index + text.len();
 
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
@@ -677,12 +686,13 @@ impl MarkdownElementBuilder {
         let text = StyledText::new(line.text).with_runs(line.runs);
         self.rendered_lines.push(RenderedLine {
             layout: text.layout().clone(),
-            positions: line.positions,
+            source_mappings: line.source_mappings,
+            source_end: self.source_len,
         });
         self.div_stack.last_mut().unwrap().extend([text.into_any()]);
     }
 
-    fn finish(mut self) -> RenderedMarkdown {
+    fn build(mut self) -> RenderedMarkdown {
         debug_assert_eq!(self.div_stack.len(), 1);
         self.flush_text();
         RenderedMarkdown {
