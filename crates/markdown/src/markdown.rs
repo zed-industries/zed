@@ -1,19 +1,19 @@
 mod parser;
 
+use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, Hsla, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Point, Render, StrikethroughStyle, Style, StyledText, Task,
-    TextLayout, TextRun, TextStyle, TextStyleRefinement, View,
+    AnyElement, Bounds, FontStyle, FontWeight, GlobalElementId, HighlightedRange,
+    HighlightedRangeLine, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Point,
+    Render, StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun, TextStyle,
+    TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
-use std::{iter, mem, ops::Range, sync::Arc};
+use std::{cmp, iter, mem, ops::Range, sync::Arc};
 use theme::SyntaxTheme;
 use ui::prelude::*;
 use util::{ResultExt, TryFutureExt};
-
-use crate::parser::CodeBlockKind;
 
 #[derive(Clone)]
 pub struct MarkdownStyle {
@@ -388,7 +388,7 @@ impl Element for MarkdownElement {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
         cx: &mut WindowContext,
@@ -403,9 +403,8 @@ impl Element for MarkdownElement {
 
                 markdown
                     .update(cx, |markdown, cx| {
-                        if let Some(index) = rendered_text
-                            .markdown_index_for_position(event.position)
-                            .ok()
+                        if let Some(index) =
+                            rendered_text.source_index_for_position(event.position).ok()
                         {
                             markdown.selection = Selection {
                                 start: index,
@@ -431,7 +430,7 @@ impl Element for MarkdownElement {
                     .update(cx, |markdown, cx| {
                         if markdown.is_selecting {
                             let index =
-                                match rendered_text.markdown_index_for_position(event.position) {
+                                match rendered_text.source_index_for_position(event.position) {
                                     Ok(ix) | Err(ix) => ix,
                                 };
                             markdown.selection.set_head(index);
@@ -443,7 +442,7 @@ impl Element for MarkdownElement {
         });
         cx.on_mouse_event({
             let markdown = self.markdown.downgrade();
-            move |event: &MouseUpEvent, phase, cx| {
+            move |_event: &MouseUpEvent, phase, cx| {
                 if phase.bubble() {
                     return;
                 }
@@ -460,6 +459,49 @@ impl Element for MarkdownElement {
         });
 
         rendered_markdown.element.paint(cx);
+
+        let selection = self.markdown.read(cx).selection;
+        let mut highlighted_range = HighlightedRange {
+            start_y: Pixels::ZERO,
+            line_height: cx.line_height(),
+            lines: Vec::new(),
+            color: {
+                // todo!("use the right color")
+                let mut red = gpui::red();
+                red.fade_out(0.9);
+                red
+            },
+            corner_radius: 0.15 * cx.line_height(),
+        };
+
+        for line in rendered_markdown.text.lines.iter() {
+            let source_start = line.source_mappings.first().unwrap().source_index;
+            if selection.start > line.source_end {
+                continue;
+            } else if selection.end < source_start {
+                break;
+            } else {
+                if highlighted_range.lines.is_empty() {
+                    highlighted_range.start_y = line.layout.bounds().top();
+                }
+
+                let line_source_start = cmp::max(source_start, selection.start) - source_start;
+                let line_source_end = cmp::min(line.source_end, selection.end) - source_start;
+                highlighted_range.lines.extend(
+                    line.layout
+                        .line_bounds_for_range(line_source_start..line_source_end)
+                        .into_iter()
+                        .map(|bounds| HighlightedRangeLine {
+                            start_x: bounds.left(),
+                            end_x: bounds.right(),
+                        }),
+                );
+            }
+        }
+
+        if !highlighted_range.lines.is_empty() {
+            highlighted_range.paint(bounds, cx);
+        }
     }
 }
 
@@ -513,7 +555,7 @@ struct RenderedText {
 }
 
 impl RenderedText {
-    fn markdown_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+    fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
         let mut lines = self.lines.iter().peekable();
 
         while let Some(line) = lines.next() {

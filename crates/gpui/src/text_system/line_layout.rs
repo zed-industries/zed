@@ -1,10 +1,12 @@
-use crate::{px, FontId, GlyphId, Pixels, PlatformTextSystem, Point, Size};
+use crate::{point, px, size, Bounds, FontId, GlyphId, Pixels, PlatformTextSystem, Point, Size};
 use collections::FxHashMap;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
+    cmp,
     hash::{Hash, Hasher},
+    iter,
     ops::Range,
     sync::Arc,
 };
@@ -300,6 +302,59 @@ impl WrappedLineLayout {
                 .index_for_x(position_in_unwrapped_line.x)
                 .unwrap())
         }
+    }
+
+    /// todo!()
+    pub fn line_bounds_for_range<'a>(
+        &'a self,
+        range: Range<usize>,
+        line_height: Pixels,
+    ) -> impl 'a + Iterator<Item = Bounds<Pixels>> {
+        let mut line_ranges = self
+            .wrap_boundaries
+            .iter()
+            .map(|wrap_boundary| {
+                let run = &self.unwrapped_layout.runs[wrap_boundary.run_ix];
+                let glyph = &run.glyphs[wrap_boundary.glyph_ix];
+                glyph.index
+            })
+            .chain([self.len()])
+            .map({
+                let mut line_start_ix = 0;
+                move |index| {
+                    let range = line_start_ix..index;
+                    line_start_ix = index;
+                    range
+                }
+            })
+            .enumerate();
+        iter::from_fn(move || {
+            while let Some((ix, line_range)) = line_ranges.next() {
+                let line_y = ix as f32 * line_height;
+
+                if range.start > line_range.end {
+                    continue;
+                } else if range.end < line_range.start {
+                    break;
+                } else {
+                    let line_start_x = self.unwrapped_layout.x_for_index(line_range.start);
+                    let start_x = self
+                        .unwrapped_layout
+                        .x_for_index(cmp::max(range.start, line_range.start))
+                        - line_start_x;
+                    let end_x = self
+                        .unwrapped_layout
+                        .x_for_index(cmp::min(range.end, line_range.end))
+                        - line_start_x;
+
+                    return Some(Bounds::new(
+                        point(start_x, line_y),
+                        size(end_x - start_x, line_height),
+                    ));
+                }
+            }
+            None
+        })
     }
 }
 
