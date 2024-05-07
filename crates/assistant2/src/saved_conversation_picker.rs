@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use fuzzy::StringMatch;
+use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, View, WeakView};
 use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-use crate::saved_conversation::SavedConversation;
+use crate::saved_conversation::{self, SavedConversation};
 use crate::ToggleSavedConversations;
 
 pub struct SavedConversationPicker {
@@ -55,8 +55,16 @@ pub struct SavedConversationPickerDelegate {
 
 impl SavedConversationPickerDelegate {
     pub fn new(weak_view: WeakView<SavedConversationPicker>) -> Self {
-        let saved_conversations = Vec::new();
-        let matches = Vec::new();
+        let saved_conversations = saved_conversation::placeholder_conversations();
+        let matches = saved_conversations
+            .iter()
+            .map(|conversation| StringMatch {
+                candidate_id: 0,
+                score: 0.0,
+                positions: Default::default(),
+                string: conversation.title.clone(),
+            })
+            .collect();
 
         Self {
             view: weak_view,
@@ -91,12 +99,58 @@ impl PickerDelegate for SavedConversationPickerDelegate {
         query: String,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> gpui::Task<()> {
-        cx.spawn(move |this, cx| async move {
-            // TODO: Implement match updating.
+        let background_executor = cx.background_executor().clone();
+        let candidates = self
+            .saved_conversations
+            .iter()
+            .enumerate()
+            .map(|(id, conversation)| {
+                let text = conversation.title.clone();
+
+                StringMatchCandidate {
+                    id,
+                    char_bag: text.as_str().into(),
+                    string: text,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(move |this, mut cx| async move {
+            let matches = if query.is_empty() {
+                candidates
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, candidate)| StringMatch {
+                        candidate_id: index,
+                        string: candidate.string,
+                        positions: Vec::new(),
+                        score: 0.0,
+                    })
+                    .collect()
+            } else {
+                match_strings(
+                    &candidates,
+                    &query,
+                    false,
+                    100,
+                    &Default::default(),
+                    background_executor,
+                )
+                .await
+            };
+
+            this.update(&mut cx, |this, _cx| {
+                this.delegate.matches = matches;
+                this.delegate.selected_index = this
+                    .delegate
+                    .selected_index
+                    .min(this.delegate.matches.len().saturating_sub(1));
+            })
+            .log_err();
         })
     }
 
-    fn confirm(&mut self, secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if self.matches.is_empty() {
             self.dismissed(cx);
             return;
