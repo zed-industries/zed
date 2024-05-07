@@ -258,12 +258,14 @@ impl PlatformWindow for TestWindow {
         unimplemented!()
     }
 
-    #[cfg(target_os = "linux")]
+    fn show_window_menu(&self, _position: Point<Pixels>) {
+        unimplemented!()
+    }
+
     fn start_system_move(&self) {
         unimplemented!()
     }
 
-    #[cfg(target_os = "linux")]
     fn should_render_window_controls(&self) -> bool {
         false
     }

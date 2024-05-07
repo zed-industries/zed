@@ -1133,7 +1133,6 @@ impl<'a> WindowContext<'a> {
 
     /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland only)
     pub fn show_window_menu(&self, position: Point<Pixels>) {
-        #[cfg(target_os = "linux")]
         self.window.platform_window.show_window_menu(position)
     }
 
@@ -1141,13 +1140,11 @@ impl<'a> WindowContext<'a> {
     ///
     /// Events may not be received during a move operation.
     pub fn start_system_move(&self) {
-        #[cfg(target_os = "linux")]
         self.window.platform_window.start_system_move()
     }
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
     pub fn should_render_window_controls(&self) -> bool {
-        #[cfg(target_os = "linux")]
         self.window.platform_window.should_render_window_controls()
     }
 
