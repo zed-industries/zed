@@ -2,6 +2,7 @@ mod case;
 mod change;
 mod delete;
 mod increment;
+pub(crate) mod mark;
 mod paste;
 pub(crate) mod repeat;
 mod scroll;

@@ -1073,3 +1073,20 @@ async fn test_mouse_selection(cx: &mut TestAppContext) {
 
     cx.assert_state("one «ˇtwo» three", Mode::Visual)
 }
+
+#[gpui::test]
+async fn test_marks(cx: &mut TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("line one\nline ˇtwo\nline three").await;
+    cx.simulate_shared_keystrokes(["m", "a", "l", "'", "a"])
+        .await;
+    cx.assert_shared_state("line one\nˇline two\nline three")
+        .await;
+    cx.simulate_shared_keystrokes(["`", "a"]).await;
+    cx.assert_shared_state("line one\nline ˇtwo\nline three")
+        .await;
+
+    cx.simulate_shared_keystrokes(["^", "d", "`", "a"]).await;
+    cx.assert_shared_state("line one\nˇtwo\nline three").await;
+}

@@ -194,7 +194,9 @@ fn observe_keystrokes(keystroke_event: &KeystrokeEvent, cx: &mut WindowContext) 
             | Operator::Replace
             | Operator::AddSurrounds { .. }
             | Operator::ChangeSurrounds { .. }
-            | Operator::DeleteSurrounds,
+            | Operator::DeleteSurrounds
+            | Operator::Mark
+            | Operator::Jump { .. },
         ) => {}
         Some(_) => {
             vim.clear_operator(cx);
@@ -706,6 +708,10 @@ impl Vim {
                 }
                 _ => Vim::update(cx, |vim, cx| vim.clear_operator(cx)),
             },
+            Some(Operator::Mark) => {
+                Vim::update(cx, |vim, cx| normal::mark::create_mark(vim, text, cx))
+            }
+            Some(Operator::Jump { line }) => normal::mark::jump(text, line, cx),
             _ => match Vim::read(cx).state().mode {
                 Mode::Replace => multi_replace(text, cx),
                 _ => {}
