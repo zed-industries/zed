@@ -7,13 +7,13 @@
         modifier: (_)? @modifier
         (#not-eq? @modifier "abstract")
         name: (_) @name
-        (#match? @name ".*Test")
+        (#match? @name ".*Test$")
         body: (declaration_list
             (method_declaration
                 (visibility_modifier)? @visibility
                 (#eq? @visibility "public")
                 name: (_) @run
-                (#match? @run "test.*")
+                (#match? @run "^test.*")
             )
         )
     )
@@ -28,7 +28,7 @@
         modifier: (_)? @modifier
         (#not-eq? @modifier "abstract")
         name: (_) @name
-        (#match? @name ".*Test")
+        (#match? @name ".*Test$")
         body: (declaration_list
             ((comment) @comment
                 (#match? @comment ".*@test.*")
@@ -49,6 +49,6 @@
         modifier: (_)? @modifier
         (#not-eq? @modifier "abstract")
         name: (_) @run
-        (#match? @run ".*Test")
+        (#match? @run ".*Test$")
     )
 ) @phpunit-test
