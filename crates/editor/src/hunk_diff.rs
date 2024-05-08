@@ -14,8 +14,8 @@ use util::{debug_panic, RangeExt};
 use crate::{
     git::{diff_hunk_to_display, DisplayDiffHunk},
     hunks_for_selections, BlockDisposition, BlockId, BlockProperties, BlockStyle, DiffRowHighlight,
-    Editor, ExpandAllHunkDiffs, RangeToAnchorExt, RevertSelectedHunks, ToDisplayPoint,
-    ToggleHunkDiff,
+    Editor, EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt, RevertSelectedHunks,
+    ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -184,7 +184,11 @@ impl Editor {
                     }
 
                     for removed_rows in highlights_to_remove {
-                        editor.highlight_rows::<DiffRowHighlight>(removed_rows, None, cx);
+                        editor.highlight_rows::<DiffRowHighlight>(
+                            to_inclusive_row_range(removed_rows, &snapshot),
+                            None,
+                            cx,
+                        );
                     }
                     editor.remove_blocks(blocks_to_remove, None, cx);
                     for hunk in hunks_to_expand {
@@ -216,9 +220,9 @@ impl Editor {
         let hunk_end = hunk.multi_buffer_range.end;
 
         let buffer = self.buffer().clone();
+        let snapshot = self.snapshot(cx);
         let (diff_base_buffer, deleted_text_lines) = buffer.update(cx, |buffer, cx| {
-            let snapshot = buffer.snapshot(cx);
-            let hunk = buffer_diff_hunk(&snapshot, multi_buffer_row_range.clone())?;
+            let hunk = buffer_diff_hunk(&snapshot.buffer_snapshot, multi_buffer_row_range.clone())?;
             let mut buffer_ranges = buffer.range_to_buffer_ranges(multi_buffer_row_range, cx);
             if buffer_ranges.len() == 1 {
                 let (buffer, _, _) = buffer_ranges.pop()?;
@@ -256,7 +260,7 @@ impl Editor {
             }
             DiffHunkStatus::Added => {
                 self.highlight_rows::<DiffRowHighlight>(
-                    hunk_start..hunk_end,
+                    to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
                     Some(added_hunk_color(cx)),
                     cx,
                 );
@@ -264,7 +268,7 @@ impl Editor {
             }
             DiffHunkStatus::Modified => {
                 self.highlight_rows::<DiffRowHighlight>(
-                    hunk_start..hunk_end,
+                    to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
                     Some(added_hunk_color(cx)),
                     cx,
                 );
@@ -461,7 +465,11 @@ impl Editor {
                     });
 
                     for removed_rows in highlights_to_remove {
-                        editor.highlight_rows::<DiffRowHighlight>(removed_rows, None, cx);
+                        editor.highlight_rows::<DiffRowHighlight>(
+                            to_inclusive_row_range(removed_rows, &snapshot),
+                            None,
+                            cx,
+                        );
                     }
                     editor.remove_blocks(blocks_to_remove, None, cx);
 
@@ -618,4 +626,15 @@ fn buffer_diff_hunk(
         return Some(hunk);
     }
     None
+}
+
+fn to_inclusive_row_range(row_range: Range<Anchor>, snapshot: &EditorSnapshot) -> Range<Anchor> {
+    let mut display_row_range =
+        row_range.start.to_display_point(snapshot)..row_range.end.to_display_point(snapshot);
+    if display_row_range.end.row() > display_row_range.start.row() {
+        *display_row_range.end.row_mut() -= 1;
+    }
+    let point_range = display_row_range.start.to_point(&snapshot.display_snapshot)
+        ..display_row_range.end.to_point(&snapshot.display_snapshot);
+    point_range.to_anchors(&snapshot.buffer_snapshot)
 }
