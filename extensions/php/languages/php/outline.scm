@@ -27,3 +27,31 @@
     "trait" @context
     name: (_) @name
     ) @item
+
+; Add support for Pest runnable (non chainable method)
+(expression_statement
+    (function_call_expression
+        function: (_) @context
+        (#any-of? @context "it" "test" "describe")
+        arguments: (arguments
+            (argument
+                (encapsed_string (string_value) @name)
+            )
+        )
+    )
+) @item
+
+; Add support for Pest runnable (chainable method)
+(expression_statement
+    (member_call_expression
+        object: (function_call_expression
+            function: (_) @context
+            (#any-of? @context "it" "test" "describe")
+            arguments: (arguments
+                (argument
+                    (encapsed_string (string_value) @name)
+                )
+            )
+        )
+    )
+) @item
