@@ -104,25 +104,25 @@ jobs:
   # todo(linux): Actually run the tests
   linux_tests:
     name: (Linux) Run Clippy and tests
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - deploy
     steps:
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           clean: false
           submodules: "recursive"
 
-      - name: Cache dependencies
-        uses: swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: configure linux
-        shell: bash -euxo pipefail {0}
-        run: script/linux
-
       - name: cargo clippy
-        run: cargo xtask clippy
+        run: |
+          whoami
+          ls -lah ~
+          echo $PATH
+          cargo xtask clippy
 
       - name: Build Zed
         run: cargo build -p zed
