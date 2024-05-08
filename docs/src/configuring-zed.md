@@ -323,38 +323,24 @@ List of `string` values
 
 ```json
 "tab_bar": {
-  "placement": "top",
+  "show": true,
   "show_nav_history_buttons": true
 }
 ```
 
-### Placement
+### Show
 
-- Description: Where to place the editor tab bar.
-- Setting: `placement`
-- Default: `top`
+- Description: Whether or not to show the tab bar in the editor.
+- Setting: `show`
+- Default: `true`
 
 **Options**
 
-1. Place the tab bar on top of the editor:
-
-```json
-{
-  "placement": "top"
-}
-```
-
-2. Hide the tab bar:
-
-```json
-{
-  "placement": "none"
-}
-```
+`boolean` values
 
 ### Navigation History Buttons
 
-- Description: Whether to show the navigation history buttons.
+- Description: Whether or not to show the navigation history buttons.
 - Setting: `show_nav_history_buttons`
 - Default: `true`
 

@@ -4,7 +4,7 @@ use crate::{
         WeakItemHandle,
     },
     toolbar::Toolbar,
-    workspace_settings::{AutosaveSetting, TabBarPlacement, TabBarSettings, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     NewCenterTerminal, NewFile, NewSearch, OpenInTerminal, OpenTerminal, OpenVisible,
     SplitDirection, ToggleZoom, Workspace,
 };
@@ -313,9 +313,7 @@ impl Pane {
             can_drop_predicate,
             custom_drop_handle: None,
             can_split: true,
-            should_display_tab_bar: Rc::new(|cx| {
-                TabBarSettings::get_global(cx).placement == TabBarPlacement::Top
-            }),
+            should_display_tab_bar: Rc::new(|cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, cx| {
                 // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
                 // `end_slot`, but due to needing a view here that isn't possible.

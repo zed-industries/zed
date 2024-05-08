@@ -316,14 +316,8 @@
   "autosave": "off",
   // Settings related to the editor's tab bar.
   "tab_bar": {
-    // Where to show the tab bar in the editor.
-    // This setting can take three values:
-    //
-    // 1. Show tab bar at the top of the editor (default):
-    //    "top"
-    // 2. Don't show the tab bar:
-    //   "none"
-    "placement": "top",
+    // Whether or not to show the tab bar in the editor
+    "show": false,
     // Whether or not to show the navigation history buttons.
     "show_nav_history_buttons": true
   },
