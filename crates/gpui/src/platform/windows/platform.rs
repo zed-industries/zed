@@ -827,14 +827,14 @@ fn end_vsync_timer(timer_stop_event: HANDLE) {
 }
 
 fn select_vsync_fn() -> Box<dyn Fn(HANDLE) -> bool + Send> {
-    if let Some(dcomp_fn) = load_dcomp_vsync_fn() {
-        log::info!("use DCompositionWaitForCompositorClock for vsync");
-        return Box::new(move |timer_stop_event| {
-            // will be 0 if woken up by timer_stop_event or 1 if the compositor clock ticked
-            // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
-            (unsafe { dcomp_fn(1, &timer_stop_event, INFINITE) }) == 1
-        });
-    }
+    // if let Some(dcomp_fn) = load_dcomp_vsync_fn() {
+    //     log::info!("use DCompositionWaitForCompositorClock for vsync");
+    //     return Box::new(move |timer_stop_event| {
+    //         // will be 0 if woken up by timer_stop_event or 1 if the compositor clock ticked
+    //         // SEE: https://learn.microsoft.com/en-us/windows/win32/directcomp/compositor-clock/compositor-clock
+    //         (unsafe { dcomp_fn(1, &timer_stop_event, INFINITE) }) == 1
+    //     });
+    // }
     log::info!("use fallback vsync function");
     Box::new(fallback_vsync_fn())
 }
