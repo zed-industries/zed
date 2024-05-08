@@ -1377,55 +1377,46 @@ impl EditorElement {
 
     fn layout_indent_guides(
         &self,
-        visible_range: Range<u32>,
-        buffer_rows: Vec<Option<u32>>,
+        mut visible_buffer_range: Range<u32>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         text_hitbox: &Hitbox,
         snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
     ) -> Vec<IndentGuideLayout> {
-        //TODO actually figure out how to get buffer lines instead of display lines (these include wrapping already - range is incorrect)
-        let visible_range = visible_range.start..visible_range.end.min(snapshot.max_buffer_row());
+        //TODO actually figure out why the visible range is sometimes off by one
+        if visible_buffer_range.start > 0 {
+            visible_buffer_range.start -= 1;
+        }
 
         let indent_guides =
             self.editor
                 .read(cx)
-                .indent_guides_in_range(visible_range.clone(), snapshot, cx);
+                .indent_guides_in_range(visible_buffer_range, snapshot, cx);
 
         indent_guides
             .into_iter()
-            .filter_map(|guide| {
-                let start_x = text_hitbox.origin.x + self.column_pixels(guide.size as usize, cx)
+            .filter_map(|indent_guide| {
+                let start_x = text_hitbox.origin.x
+                    + self.column_pixels(indent_guide.size as usize, cx)
                     - scroll_pixel_position.x;
                 if start_x >= text_hitbox.origin.x {
-                    // Skip the first row, which is the row that the guide is on.
-                    let mut buffer_rows = buffer_rows.iter();
-                    let mut start_y = px(0.);
-                    while let Some(next) = buffer_rows.next() {
-                        if let Some(next_row) = next {
-                            if next_row >= &guide.start {
-                                break;
-                            }
-                        }
-                        start_y += line_height;
-                    }
-                    let mut length = line_height;
-                    while let Some(next) = buffer_rows.next() {
-                        if let Some(next_row) = next {
-                            if next_row > &guide.end {
-                                break;
-                            }
-                        }
-                        length += line_height;
-                    }
+                    let start_row = Point::new(indent_guide.start, 0)
+                        .to_display_point(snapshot)
+                        .row();
+                    let end_row = Point::new(indent_guide.end + 1, 0)
+                        .to_display_point(snapshot)
+                        .row();
 
-                    let start_y =
-                        text_hitbox.origin.y + start_y - (scroll_pixel_position.y % line_height);
+                    let start_y = text_hitbox.origin.y + (start_row as f32 * line_height)
+                        - scroll_pixel_position.y;
+
+                    let length = (end_row - start_row) as f32 * line_height;
+
                     Some(IndentGuideLayout {
                         origin: point(start_x, start_y),
                         length,
-                        active: guide.active,
+                        active: indent_guide.active,
                     })
                 } else {
                     None
@@ -3968,9 +3959,10 @@ impl Element for EditorElement {
                     scroll_position.y * line_height,
                 );
 
+                let start_buffer_row = start_anchor.to_point(&snapshot.buffer_snapshot).row;
+                let end_buffer_row = end_anchor.to_point(&snapshot.buffer_snapshot).row;
                 let indent_guides = self.layout_indent_guides(
-                    start_row..end_row,
-                    buffer_rows.clone().collect(),
+                    start_buffer_row..end_buffer_row,
                     scroll_pixel_position,
                     line_height,
                     &text_hitbox,
