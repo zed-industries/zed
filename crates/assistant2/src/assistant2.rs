@@ -1,15 +1,19 @@
 mod assistant_settings;
 mod attachments;
 mod completion_provider;
+mod saved_conversation;
+mod saved_conversation_picker;
 mod tools;
 pub mod ui;
 
+use crate::saved_conversation::{SavedConversation, SavedMessage, SavedMessageRole};
+use crate::saved_conversation_picker::SavedConversationPicker;
 use crate::{
     attachments::ActiveEditorAttachmentTool,
     tools::{CreateBufferTool, ProjectIndexTool},
     ui::UserOrAssistant,
 };
-use ::ui::{div, prelude::*, Color, ViewContext};
+use ::ui::{div, prelude::*, Color, Tooltip, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{
     AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry, UserAttachment,
@@ -19,6 +23,7 @@ use collections::HashMap;
 use completion_provider::*;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
+use fs::Fs;
 use futures::{future::join_all, StreamExt};
 use gpui::{
     list, AnyElement, AppContext, AsyncWindowContext, ClickEvent, EventEmitter, FocusHandle,
@@ -28,10 +33,12 @@ use language::{language_settings::SoftWrap, LanguageRegistry};
 use open_ai::{FunctionContent, ToolCall, ToolCallContent};
 use rich_text::RichText;
 use semantic_index::{CloudEmbeddingProvider, ProjectIndex, ProjectIndexDebugView, SemanticIndex};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::sync::Arc;
+use tools::AnnotationTool;
 use ui::{ActiveFileButton, Composer, ProjectIndexButton};
+use util::paths::CONVERSATIONS_DIR;
 use util::{maybe, paths::EMBEDDINGS_DIR, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -56,7 +63,15 @@ pub enum SubmitMode {
     Codebase,
 }
 
-gpui::actions!(assistant2, [Cancel, ToggleFocus, DebugProjectIndex]);
+gpui::actions!(
+    assistant2,
+    [
+        Cancel,
+        ToggleFocus,
+        DebugProjectIndex,
+        ToggleSavedConversations
+    ]
+);
 gpui::impl_actions!(assistant2, [Submit]);
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
@@ -96,6 +111,8 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         },
     )
     .detach();
+    cx.observe_new_views(SavedConversationPicker::register)
+        .detach();
 }
 
 pub fn enabled(cx: &AppContext) -> bool {
@@ -125,23 +142,26 @@ impl AssistantPanel {
                 let mut tool_registry = ToolRegistry::new();
                 tool_registry
                     .register(ProjectIndexTool::new(project_index.clone()), cx)
-                    .context("failed to register ProjectIndexTool")
-                    .log_err();
+                    .unwrap();
                 tool_registry
                     .register(
                         CreateBufferTool::new(workspace.clone(), project.clone()),
                         cx,
                     )
-                    .context("failed to register CreateBufferTool")
-                    .log_err();
+                    .unwrap();
+                tool_registry
+                    .register(AnnotationTool::new(workspace.clone(), project.clone()), cx)
+                    .unwrap();
 
-                let mut attachment_store = AttachmentRegistry::new();
-                attachment_store.register(ActiveEditorAttachmentTool::new(workspace.clone(), cx));
+                let mut attachment_registry = AttachmentRegistry::new();
+                attachment_registry
+                    .register(ActiveEditorAttachmentTool::new(workspace.clone(), cx));
 
                 Self::new(
+                    project.read(cx).fs().clone(),
                     app_state.languages.clone(),
                     Arc::new(tool_registry),
-                    Arc::new(attachment_store),
+                    Arc::new(attachment_registry),
                     app_state.user_store.clone(),
                     project_index,
                     workspace,
@@ -151,10 +171,12 @@ impl AssistantPanel {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        fs: Arc<dyn Fs>,
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
-        attachment_store: Arc<AttachmentRegistry>,
+        attachment_registry: Arc<AttachmentRegistry>,
         user_store: Model<UserStore>,
         project_index: Model<ProjectIndex>,
         workspace: WeakView<Workspace>,
@@ -162,9 +184,10 @@ impl AssistantPanel {
     ) -> Self {
         let chat = cx.new_view(|cx| {
             AssistantChat::new(
+                fs,
                 language_registry,
                 tool_registry.clone(),
-                attachment_store,
+                attachment_registry,
                 user_store,
                 project_index,
                 workspace,
@@ -238,6 +261,7 @@ pub struct AssistantChat {
     model: String,
     messages: Vec<ChatMessage>,
     list_state: ListState,
+    fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     composer_editor: View<Editor>,
     project_index_button: View<ProjectIndexButton>,
@@ -259,7 +283,9 @@ struct EditingMessage {
 }
 
 impl AssistantChat {
+    #[allow(clippy::too_many_arguments)]
     fn new(
+        fs: Arc<dyn Fs>,
         language_registry: Arc<LanguageRegistry>,
         tool_registry: Arc<ToolRegistry>,
         attachment_registry: Arc<AttachmentRegistry>,
@@ -304,6 +330,7 @@ impl AssistantChat {
             }),
             list_state,
             user_store,
+            fs,
             language_registry,
             project_index_button,
             active_file_button,
@@ -342,8 +369,8 @@ impl AssistantChat {
         }
 
         if self.pending_completion.take().is_some() {
-            if let Some(ChatMessage::Assistant(message)) = self.messages.last() {
-                if message.body.text.is_empty() {
+            if let Some(ChatMessage::Assistant(grouping)) = self.messages.last() {
+                if grouping.messages.is_empty() {
                     self.pop_message(cx);
                 }
             }
@@ -394,8 +421,8 @@ impl AssistantChat {
         let mode = *mode;
         self.pending_completion = Some(cx.spawn(move |this, mut cx| async move {
             let attachments_task = this.update(&mut cx, |this, cx| {
-                let attachment_store = this.attachment_registry.clone();
-                attachment_store.call_all_attachment_tools(cx)
+                let attachment_registry = this.attachment_registry.clone();
+                attachment_registry.call_all_attachment_tools(cx)
             });
 
             let attachments = maybe!(async {
@@ -478,22 +505,30 @@ impl AssistantChat {
                 while let Some(delta) = stream.next().await {
                     let delta = delta?;
                     this.update(cx, |this, cx| {
-                        if let Some(ChatMessage::Assistant(AssistantMessage {
-                            body: message_body,
-                            tool_calls: message_tool_calls,
+                        if let Some(ChatMessage::Assistant(GroupedAssistantMessage {
+                            messages,
                             ..
                         })) = this.messages.last_mut()
                         {
+                            if messages.is_empty() {
+                                messages.push(AssistantMessage {
+                                    body: RichText::default(),
+                                    tool_calls: Vec::new(),
+                                })
+                            }
+
+                            let message = messages.last_mut().unwrap();
+
                             if let Some(content) = &delta.content {
                                 body.push_str(content);
                             }
 
                             for tool_call in delta.tool_calls {
                                 let index = tool_call.index as usize;
-                                if index >= message_tool_calls.len() {
-                                    message_tool_calls.resize_with(index + 1, Default::default);
+                                if index >= message.tool_calls.len() {
+                                    message.tool_calls.resize_with(index + 1, Default::default);
                                 }
-                                let call = &mut message_tool_calls[index];
+                                let call = &mut message.tool_calls[index];
 
                                 if let Some(id) = &tool_call.id {
                                     call.id.push_str(id);
@@ -512,7 +547,7 @@ impl AssistantChat {
                                 }
                             }
 
-                            *message_body =
+                            message.body =
                                 RichText::new(body.clone(), &[], &this.language_registry);
                             cx.notify();
                         } else {
@@ -527,9 +562,9 @@ impl AssistantChat {
 
             let mut tool_tasks = Vec::new();
             this.update(cx, |this, cx| {
-                if let Some(ChatMessage::Assistant(AssistantMessage {
+                if let Some(ChatMessage::Assistant(GroupedAssistantMessage {
                     error: message_error,
-                    tool_calls,
+                    messages,
                     ..
                 })) = this.messages.last_mut()
                 {
@@ -537,8 +572,10 @@ impl AssistantChat {
                         message_error.replace(SharedString::from(error.to_string()));
                         cx.notify();
                     } else {
-                        for tool_call in tool_calls.iter() {
-                            tool_tasks.push(this.tool_registry.call(tool_call, cx));
+                        if let Some(current_message) = messages.last_mut() {
+                            for tool_call in current_message.tool_calls.iter() {
+                                tool_tasks.push(this.tool_registry.call(tool_call, cx));
+                            }
                         }
                     }
                 }
@@ -554,21 +591,38 @@ impl AssistantChat {
             let tools = tools.into_iter().filter_map(|tool| tool.ok()).collect();
 
             this.update(cx, |this, cx| {
-                if let Some(ChatMessage::Assistant(AssistantMessage { tool_calls, .. })) =
+                if let Some(ChatMessage::Assistant(GroupedAssistantMessage { messages, .. })) =
                     this.messages.last_mut()
                 {
-                    *tool_calls = tools;
-                    cx.notify();
+                    if let Some(current_message) = messages.last_mut() {
+                        current_message.tool_calls = tools;
+                        cx.notify();
+                    } else {
+                        unreachable!()
+                    }
                 }
             })?;
         }
     }
 
     fn push_new_assistant_message(&mut self, cx: &mut ViewContext<Self>) {
-        let message = ChatMessage::Assistant(AssistantMessage {
+        // If the last message is a grouped assistant message, add to the grouped message
+        if let Some(ChatMessage::Assistant(GroupedAssistantMessage { messages, .. })) =
+            self.messages.last_mut()
+        {
+            messages.push(AssistantMessage {
+                body: RichText::default(),
+                tool_calls: Vec::new(),
+            });
+            return;
+        }
+
+        let message = ChatMessage::Assistant(GroupedAssistantMessage {
             id: self.next_message_id.post_inc(),
-            body: RichText::default(),
-            tool_calls: Vec::new(),
+            messages: vec![AssistantMessage {
+                body: RichText::default(),
+                tool_calls: Vec::new(),
+            }],
             error: None,
         });
         self.push_message(message, cx);
@@ -614,6 +668,69 @@ impl AssistantChat {
         *entry = !*entry;
     }
 
+    fn new_conversation(&mut self, cx: &mut ViewContext<Self>) {
+        let messages = self
+            .messages
+            .drain(..)
+            .map(|message| {
+                let text = match &message {
+                    ChatMessage::User(message) => message.body.read(cx).text(cx),
+                    ChatMessage::Assistant(message) => message
+                        .messages
+                        .iter()
+                        .map(|message| message.body.text.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n\n"),
+                };
+
+                SavedMessage {
+                    id: message.id(),
+                    role: match message {
+                        ChatMessage::User(_) => SavedMessageRole::User,
+                        ChatMessage::Assistant(_) => SavedMessageRole::Assistant,
+                    },
+                    text,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // Reset the chat for the new conversation.
+        self.list_state.reset(0);
+        self.editing_message.take();
+        self.collapsed_messages.clear();
+
+        let title = messages
+            .first()
+            .map(|message| message.text.clone())
+            .unwrap_or_else(|| "A conversation with the assistant.".to_string());
+
+        let saved_conversation = SavedConversation {
+            version: "0.3.0".to_string(),
+            title,
+            messages,
+        };
+
+        let discriminant = 1;
+
+        let path = CONVERSATIONS_DIR.join(&format!(
+            "{title} - {discriminant}.zed.{version}.json",
+            title = saved_conversation.title,
+            version = saved_conversation.version
+        ));
+
+        cx.spawn({
+            let fs = self.fs.clone();
+            |_this, _cx| async move {
+                fs.create_dir(CONVERSATIONS_DIR.as_ref()).await?;
+                fs.atomic_write(path, serde_json::to_string(&saved_conversation)?)
+                    .await?;
+
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn render_error(
         &self,
         error: Option<SharedString>,
@@ -641,7 +758,7 @@ impl AssistantChat {
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         let is_first = ix == 0;
-        let is_last = ix == self.messages.len() - 1;
+        let is_last = ix == self.messages.len().saturating_sub(1);
 
         let padding = Spacing::Large.rems(cx);
 
@@ -687,15 +804,14 @@ impl AssistantChat {
                                 crate::ui::ChatMessage::new(
                                     *id,
                                     UserOrAssistant::User(self.user_store.read(cx).current_user()),
-                                    Some(
+                                    // todo!(): clean up the vec usage
+                                    vec![
                                         RichText::new(
                                             body.read(cx).text(cx),
                                             &[],
                                             &self.language_registry,
                                         )
                                         .element(ElementId::from(id.0), cx),
-                                    ),
-                                    Some(
                                         h_flex()
                                             .gap_2()
                                             .children(
@@ -704,7 +820,7 @@ impl AssistantChat {
                                                     .map(|attachment| attachment.view.clone()),
                                             )
                                             .into_any_element(),
-                                    ),
+                                    ],
                                     self.is_message_collapsed(id),
                                     Box::new(cx.listener({
                                         let id = *id;
@@ -719,33 +835,34 @@ impl AssistantChat {
                     }
                 })
                 .into_any(),
-            ChatMessage::Assistant(AssistantMessage {
+            ChatMessage::Assistant(GroupedAssistantMessage {
                 id,
-                body,
+                messages,
                 error,
-                tool_calls,
                 ..
             }) => {
-                let assistant_body = if body.text.is_empty() {
-                    None
-                } else {
-                    Some(
-                        div()
-                            .child(body.element(ElementId::from(id.0), cx))
-                            .into_any_element(),
-                    )
-                };
+                let mut message_elements = Vec::new();
 
-                let tools = tool_calls
-                    .iter()
-                    .map(|tool_call| self.tool_registry.render_tool_call(tool_call, cx))
-                    .collect::<Vec<AnyElement>>();
+                for message in messages {
+                    if !message.body.text.is_empty() {
+                        message_elements.push(
+                            div()
+                                // todo!(): The element Id will need to be a combo of the base ID and the index within the grouping
+                                .child(message.body.element(ElementId::from(id.0), cx))
+                                .into_any_element(),
+                        )
+                    }
 
-                let tools_body = if tools.is_empty() {
-                    None
-                } else {
-                    Some(div().children(tools).into_any_element())
-                };
+                    let tools = message
+                        .tool_calls
+                        .iter()
+                        .map(|tool_call| self.tool_registry.render_tool_call(tool_call, cx))
+                        .collect::<Vec<AnyElement>>();
+
+                    if !tools.is_empty() {
+                        message_elements.push(div().children(tools).into_any_element())
+                    }
+                }
 
                 div()
                     .when(is_first, |this| this.pt(padding))
@@ -753,8 +870,7 @@ impl AssistantChat {
                         crate::ui::ChatMessage::new(
                             *id,
                             UserOrAssistant::Assistant,
-                            assistant_body,
-                            tools_body,
+                            message_elements,
                             self.is_message_collapsed(id),
                             Box::new(cx.listener({
                                 let id = *id;
@@ -796,46 +912,47 @@ impl AssistantChat {
                         content: body.read(cx).text(cx),
                     });
                 }
-                ChatMessage::Assistant(AssistantMessage {
-                    body, tool_calls, ..
-                }) => {
-                    // In no case do we want to send an empty message. This shouldn't happen, but we might as well
-                    // not break the Chat API if it does.
-                    if body.text.is_empty() && tool_calls.is_empty() {
-                        continue;
-                    }
+                ChatMessage::Assistant(GroupedAssistantMessage { messages, .. }) => {
+                    for message in messages {
+                        let body = message.body.clone();
 
-                    let tool_calls_from_assistant = tool_calls
-                        .iter()
-                        .map(|tool_call| ToolCall {
-                            content: ToolCallContent::Function {
-                                function: FunctionContent {
-                                    name: tool_call.name.clone(),
-                                    arguments: tool_call.arguments.clone(),
+                        if body.text.is_empty() && message.tool_calls.is_empty() {
+                            continue;
+                        }
+
+                        let tool_calls_from_assistant = message
+                            .tool_calls
+                            .iter()
+                            .map(|tool_call| ToolCall {
+                                content: ToolCallContent::Function {
+                                    function: FunctionContent {
+                                        name: tool_call.name.clone(),
+                                        arguments: tool_call.arguments.clone(),
+                                    },
                                 },
-                            },
-                            id: tool_call.id.clone(),
-                        })
-                        .collect();
+                                id: tool_call.id.clone(),
+                            })
+                            .collect();
 
-                    completion_messages.push(CompletionMessage::Assistant {
-                        content: Some(body.text.to_string()),
-                        tool_calls: tool_calls_from_assistant,
-                    });
-
-                    for tool_call in tool_calls {
-                        // Every tool call _must_ have a result by ID, otherwise OpenAI will error.
-                        let content = match &tool_call.result {
-                            Some(result) => {
-                                result.generate(&tool_call.name, &mut project_context, cx)
-                            }
-                            None => "".to_string(),
-                        };
-
-                        completion_messages.push(CompletionMessage::Tool {
-                            content,
-                            tool_call_id: tool_call.id.clone(),
+                        completion_messages.push(CompletionMessage::Assistant {
+                            content: Some(body.text.to_string()),
+                            tool_calls: tool_calls_from_assistant,
                         });
+
+                        for tool_call in &message.tool_calls {
+                            // Every tool call _must_ have a result by ID, otherwise OpenAI will error.
+                            let content = match &tool_call.result {
+                                Some(result) => {
+                                    result.generate(&tool_call.name, &mut project_context, cx)
+                                }
+                                None => "".to_string(),
+                            };
+
+                            completion_messages.push(CompletionMessage::Tool {
+                                content,
+                                tool_call_id: tool_call.id.clone(),
+                            });
+                        }
                     }
                 }
             }
@@ -861,6 +978,22 @@ impl Render for AssistantChat {
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
             .text_color(Color::Default.color(cx))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("open-saved-conversations", "Saved Conversations").on_click(
+                            |_event, cx| cx.dispatch_action(Box::new(ToggleSavedConversations)),
+                        ),
+                    )
+                    .child(
+                        IconButton::new("new-conversation", IconName::Plus)
+                            .on_click(cx.listener(move |this, _event, cx| {
+                                this.new_conversation(cx);
+                            }))
+                            .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
+                    ),
+            )
             .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(
                 self.composer_editor.clone(),
@@ -872,7 +1005,7 @@ impl Render for AssistantChat {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct MessageId(usize);
 
 impl MessageId {
@@ -885,10 +1018,17 @@ impl MessageId {
 
 enum ChatMessage {
     User(UserMessage),
-    Assistant(AssistantMessage),
+    Assistant(GroupedAssistantMessage),
 }
 
 impl ChatMessage {
+    pub fn id(&self) -> MessageId {
+        match self {
+            ChatMessage::User(message) => message.id,
+            ChatMessage::Assistant(message) => message.id,
+        }
+    }
+
     fn focus_handle(&self, cx: &AppContext) -> Option<FocusHandle> {
         match self {
             ChatMessage::User(UserMessage { body, .. }) => Some(body.focus_handle(cx)),
@@ -904,8 +1044,12 @@ struct UserMessage {
 }
 
 struct AssistantMessage {
-    id: MessageId,
     body: RichText,
     tool_calls: Vec<ToolFunctionCall>,
+}
+
+struct GroupedAssistantMessage {
+    id: MessageId,
+    messages: Vec<AssistantMessage>,
     error: Option<SharedString>,
 }

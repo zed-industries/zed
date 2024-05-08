@@ -15,8 +15,7 @@ pub enum UserOrAssistant {
 pub struct ChatMessage {
     id: MessageId,
     player: UserOrAssistant,
-    message: Option<AnyElement>,
-    tools_used: Option<AnyElement>,
+    messages: Vec<AnyElement>,
     selected: bool,
     collapsed: bool,
     on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
@@ -26,16 +25,14 @@ impl ChatMessage {
     pub fn new(
         id: MessageId,
         player: UserOrAssistant,
-        message: Option<AnyElement>,
-        tools_used: Option<AnyElement>,
+        messages: Vec<AnyElement>,
         collapsed: bool,
         on_collapse_handle_click: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
     ) -> Self {
         Self {
             id,
             player,
-            message,
-            tools_used,
+            messages,
             selected: false,
             collapsed,
             on_collapse_handle_click,
@@ -117,19 +114,10 @@ impl RenderOnce for ChatMessage {
                             .icon_color(Color::Muted)
                             .on_click(self.on_collapse_handle_click)
                             .tooltip(|cx| Tooltip::text("Collapse Message", cx)),
-                        ), // .child(
-                           //     IconButton::new("copy-message", IconName::Copy)
-                           //         .icon_color(Color::Muted)
-                           //         .icon_size(IconSize::XSmall),
-                           // )
-                           // .child(
-                           //     IconButton::new("menu", IconName::Ellipsis)
-                           //         .icon_color(Color::Muted)
-                           //         .icon_size(IconSize::XSmall),
-                           // ),
+                        ),
                     ),
             )
-            .when(self.message.is_some() || self.tools_used.is_some(), |el| {
+            .when(self.messages.len() > 0, |el| {
                 el.child(
                     h_flex().child(
                         v_flex()
@@ -144,8 +132,7 @@ impl RenderOnce for ChatMessage {
                                 this.bg(background_color)
                             })
                             .when(self.collapsed, |this| this.h(collapsed_height))
-                            .children(self.message)
-                            .when_some(self.tools_used, |this, tools_used| this.child(tools_used)),
+                            .children(self.messages),
                     ),
                 )
             })

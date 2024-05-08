@@ -37,6 +37,11 @@ impl Oid {
     pub(crate) fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
+
+    /// Returns this [`Oid`] as a short SHA.
+    pub fn display_short(&self) -> String {
+        self.to_string().chars().take(7).collect()
+    }
 }
 
 impl FromStr for Oid {

@@ -7,7 +7,8 @@ mod story_selector;
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
-    div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowOptions,
+    div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowBounds,
+    WindowOptions,
 };
 use log::LevelFilter;
 use project::Project;
@@ -85,7 +86,7 @@ fn main() {
         let bounds = Bounds::centered(None, size, cx);
         let _window = cx.open_window(
             WindowOptions {
-                bounds: Some(bounds),
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
             move |cx| {

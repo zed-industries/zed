@@ -564,12 +564,7 @@ impl Buffer {
         let buffer_id = BufferId::new(message.id)
             .with_context(|| anyhow!("Could not deserialize buffer_id"))?;
         let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
-        let mut this = Self::build(
-            buffer,
-            message.diff_base.map(|text| text.into()),
-            file,
-            capability,
-        );
+        let mut this = Self::build(buffer, message.diff_base, file, capability);
         this.text.set_line_ending(proto::deserialize_line_ending(
             rpc::proto::LineEnding::from_i32(message.line_ending)
                 .ok_or_else(|| anyhow!("missing line_ending"))?,
@@ -658,7 +653,7 @@ impl Buffer {
     /// Builds a [Buffer] with the given underlying [TextBuffer], diff base, [File] and [Capability].
     pub fn build(
         buffer: TextBuffer,
-        diff_base: Option<Rope>,
+        diff_base: Option<String>,
         file: Option<Arc<dyn File>>,
         capability: Capability,
     ) -> Self {
@@ -671,7 +666,12 @@ impl Buffer {
             transaction_depth: 0,
             was_dirty_before_starting_transaction: None,
             text: buffer,
-            diff_base,
+            diff_base: diff_base
+                .map(|mut raw_diff_base| {
+                    LineEnding::normalize(&mut raw_diff_base);
+                    raw_diff_base
+                })
+                .map(Rope::from),
             diff_base_version: 0,
             git_diff: git::diff::BufferDiff::new(),
             file,
@@ -900,8 +900,13 @@ impl Buffer {
 
     /// Sets the text that will be used to compute a Git diff
     /// against the buffer text.
-    pub fn set_diff_base(&mut self, diff_base: Option<Rope>, cx: &mut ModelContext<Self>) {
-        self.diff_base = diff_base;
+    pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
+        self.diff_base = diff_base
+            .map(|mut raw_diff_base| {
+                LineEnding::normalize(&mut raw_diff_base);
+                raw_diff_base
+            })
+            .map(Rope::from);
         self.diff_base_version += 1;
         if let Some(recalc_task) = self.git_diff_recalc(cx) {
             cx.spawn(|buffer, mut cx| async move {
@@ -923,7 +928,7 @@ impl Buffer {
 
     /// Recomputes the Git diff status.
     pub fn git_diff_recalc(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
-        let diff_base = self.diff_base.clone()?; // TODO: Make this an Arc
+        let diff_base = self.diff_base.clone()?;
         let snapshot = self.snapshot();
 
         let mut diff = self.git_diff.clone();

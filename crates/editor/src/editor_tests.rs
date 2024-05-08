@@ -9,7 +9,7 @@ use crate::{
     JoinLines,
 };
 use futures::StreamExt;
-use gpui::{div, TestAppContext, VisualTestContext, WindowOptions};
+use gpui::{div, TestAppContext, VisualTestContext, WindowBounds, WindowOptions};
 use indoc::indoc;
 use language::{
     language_settings::{AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent},
@@ -2824,6 +2824,31 @@ async fn test_join_lines_with_git_diff_base(
         "#
         .unindent(),
     );
+}
+
+#[gpui::test]
+async fn test_custom_newlines_cause_no_false_positive_diffs(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("Line 0\r\nLine 1\rˇ\nLine 2\r\nLine 3");
+    cx.set_diff_base(Some("Line 0\r\nLine 1\r\nLine 2\r\nLine 3"));
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .git_diff_hunks_in_range(0..u32::MAX)
+                .collect::<Vec<_>>(),
+            Vec::new(),
+            "Should not have any diffs for files with custom newlines"
+        );
+    });
 }
 
 #[gpui::test]
@@ -7468,10 +7493,10 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let follower = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
-                bounds: Some(Bounds::from_corners(
+                window_bounds: Some(WindowBounds::Windowed(Bounds::from_corners(
                     gpui::Point::new(0.into(), 0.into()),
                     gpui::Point::new(10.into(), 80.into()),
-                )),
+                ))),
                 ..Default::default()
             },
             |cx| cx.new_view(|cx| build_editor(buffer.clone(), cx)),
@@ -9026,7 +9051,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
                     .collect::<String>(),
                 cx,
             );
-            buffer.set_diff_base(Some(sample_text.into()), cx);
+            buffer.set_diff_base(Some(sample_text), cx);
         });
         cx.executor().run_until_parked();
     }
@@ -10041,17 +10066,17 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         "vvvv\nwwww\nxxxx\nyyyy\nzzzz\n@@@@\n{{{{\n||||\n}}}}\n~~~~\n\u{7f}\u{7f}\u{7f}\u{7f}";
     let buffer_1 = cx.new_model(|cx| {
         let mut buffer = Buffer::local(modified_sample_text_1.to_string(), cx);
-        buffer.set_diff_base(Some(sample_text_1.clone().into()), cx);
+        buffer.set_diff_base(Some(sample_text_1.clone()), cx);
         buffer
     });
     let buffer_2 = cx.new_model(|cx| {
         let mut buffer = Buffer::local(modified_sample_text_2.to_string(), cx);
-        buffer.set_diff_base(Some(sample_text_2.clone().into()), cx);
+        buffer.set_diff_base(Some(sample_text_2.clone()), cx);
         buffer
     });
     let buffer_3 = cx.new_model(|cx| {
         let mut buffer = Buffer::local(modified_sample_text_3.to_string(), cx);
-        buffer.set_diff_base(Some(sample_text_3.clone().into()), cx);
+        buffer.set_diff_base(Some(sample_text_3.clone()), cx);
         buffer
     });
 

@@ -4,7 +4,8 @@ use crate::{
     DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptLevel,
-    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowKind, WindowParams,
+    Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind,
+    WindowParams,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -260,6 +261,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_did_change_occlusion_state as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
+        sel!(windowWillEnterFullScreen:),
+        window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
         sel!(windowDidMove:),
         window_did_move as extern "C" fn(&Object, Sel, id),
     );
@@ -302,14 +307,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         sel!(concludeDragOperation:),
         conclude_drag_operation as extern "C" fn(&Object, Sel, id),
     );
-    decl.add_method(
-        sel!(windowDidMiniaturize:),
-        window_did_miniaturize as extern "C" fn(&Object, Sel, id),
-    );
-    decl.add_method(
-        sel!(windowDidDeminiaturize:),
-        window_did_deminiaturize as extern "C" fn(&Object, Sel, id),
-    );
 
     decl.register()
 }
@@ -348,7 +345,7 @@ struct MacWindowState {
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
-    minimized: bool,
+    fullscreen_restore_bounds: Bounds<DevicePixels>,
 }
 
 impl MacWindowState {
@@ -435,10 +432,6 @@ impl MacWindowState {
         }
     }
 
-    fn is_minimized(&self) -> bool {
-        self.minimized
-    }
-
     fn is_fullscreen(&self) -> bool {
         unsafe {
             let style_mask = self.native_window.styleMask();
@@ -492,6 +485,14 @@ impl MacWindowState {
             let frame = NSWindow::frame(self.native_window);
             let content_layout_rect: CGRect = msg_send![self.native_window, contentLayoutRect];
             px((frame.size.height - content_layout_rect.size.height) as f32)
+        }
+    }
+
+    fn window_bounds(&self) -> WindowBounds {
+        if self.is_fullscreen() {
+            WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
+        } else {
+            WindowBounds::Windowed(self.bounds())
         }
     }
 }
@@ -639,7 +640,7 @@ impl MacWindow {
                 previous_keydown_inserted_text: None,
                 external_files_dragged: false,
                 first_mouse: false,
-                minimized: false,
+                fullscreen_restore_bounds: Bounds::default(),
             })));
 
             (*native_window).set_ivar(
@@ -775,12 +776,12 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().bounds()
     }
 
-    fn is_maximized(&self) -> bool {
-        self.0.as_ref().lock().is_maximized()
+    fn window_bounds(&self) -> WindowBounds {
+        self.0.as_ref().lock().window_bounds()
     }
 
-    fn is_minimized(&self) -> bool {
-        self.0.as_ref().lock().is_minimized()
+    fn is_maximized(&self) -> bool {
+        self.0.as_ref().lock().is_maximized()
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -1466,6 +1467,12 @@ extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     window_state.as_ref().lock().move_traffic_light();
 }
 
+extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut lock = window_state.as_ref().lock();
+    lock.fullscreen_restore_bounds = lock.bounds();
+}
+
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
@@ -1861,18 +1868,6 @@ extern "C" fn conclude_drag_operation(this: &Object, _: Sel, _: id) {
         &window_state,
         PlatformInput::FileDrop(FileDropEvent::Exited),
     );
-}
-
-extern "C" fn window_did_miniaturize(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-
-    window_state.lock().minimized = true;
-}
-
-extern "C" fn window_did_deminiaturize(this: &Object, _: Sel, _: id) {
-    let window_state = unsafe { get_window_state(this) };
-
-    window_state.lock().minimized = false;
 }
 
 async fn synthetic_drag(

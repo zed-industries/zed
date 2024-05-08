@@ -184,7 +184,7 @@ unsafe impl Send for DisplayId {}
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<DevicePixels>;
     fn is_maximized(&self) -> bool;
-    fn is_minimized(&self) -> bool;
+    fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
@@ -515,9 +515,10 @@ pub trait InputHandler: 'static {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 pub struct WindowOptions {
-    /// The bounds of the window in screen coordinates.
-    /// None -> inherit, Some(bounds) -> set bounds
-    pub bounds: Option<Bounds<DevicePixels>>,
+    /// Specifies the state and bounds of the window in screen coordinates.
+    /// - `None`: Inherit the bounds.
+    /// - `Some(WindowBounds)`: Open a window with corresponding state and its restore size.
+    pub window_bounds: Option<WindowBounds>,
 
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
@@ -527,9 +528,6 @@ pub struct WindowOptions {
 
     /// Whether the window should be shown when created
     pub show: bool,
-
-    /// Whether the window should be fullscreen when created
-    pub fullscreen: bool,
 
     /// The kind of window to create
     pub kind: WindowKind,
@@ -571,10 +569,40 @@ pub(crate) struct WindowParams {
     pub window_background: WindowBackgroundAppearance,
 }
 
+/// Represents the status of how a window should be opened.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum WindowBounds {
+    /// Indicates that the window should open in a windowed state with the given bounds.
+    Windowed(Bounds<DevicePixels>),
+    /// Indicates that the window should open in a maximized state.
+    /// The bounds provided here represent the restore size of the window.
+    Maximized(Bounds<DevicePixels>),
+    /// Indicates that the window should open in fullscreen mode.
+    /// The bounds provided here represent the restore size of the window.
+    Fullscreen(Bounds<DevicePixels>),
+}
+
+impl Default for WindowBounds {
+    fn default() -> Self {
+        WindowBounds::Windowed(Bounds::default())
+    }
+}
+
+impl WindowBounds {
+    /// Retrieve the inner bounds
+    pub fn get_bounds(&self) -> Bounds<DevicePixels> {
+        match self {
+            WindowBounds::Windowed(bounds) => *bounds,
+            WindowBounds::Maximized(bounds) => *bounds,
+            WindowBounds::Fullscreen(bounds) => *bounds,
+        }
+    }
+}
+
 impl Default for WindowOptions {
     fn default() -> Self {
         Self {
-            bounds: None,
+            window_bounds: None,
             titlebar: Some(TitlebarOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
@@ -585,7 +613,6 @@ impl Default for WindowOptions {
             kind: WindowKind::Normal,
             is_movable: true,
             display_id: None,
-            fullscreen: false,
             window_background: WindowBackgroundAppearance::default(),
             app_id: None,
         }
