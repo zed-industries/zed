@@ -100,7 +100,6 @@ impl WindowsPlatform {
             state,
             raw_window_handles,
             icon,
-            main_receiver,
             background_executor,
             foreground_executor,
             text_system,
@@ -322,7 +321,6 @@ impl Platform for WindowsPlatform {
             options,
             self.icon,
             self.foreground_executor.clone(),
-            self.main_receiver.clone(),
             lock.settings.mouse_wheel_settings,
             lock.current_cursor,
         );

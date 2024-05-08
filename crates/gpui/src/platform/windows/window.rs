@@ -12,7 +12,6 @@ use std::{
 
 use ::util::ResultExt;
 use anyhow::Context;
-use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use raw_window_handle as rwh;
@@ -58,7 +57,6 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
     pub(crate) executor: ForegroundExecutor,
-    pub(crate) main_receiver: flume::Receiver<Runnable>,
 }
 
 impl WindowsWindowState {
@@ -208,7 +206,6 @@ impl WindowsWindowStatePtr {
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             executor: context.executor.clone(),
-            main_receiver: context.main_receiver.clone(),
         })
     }
 }
@@ -232,7 +229,6 @@ struct WindowCreateContext {
     display: WindowsDisplay,
     transparent: bool,
     executor: ForegroundExecutor,
-    main_receiver: flume::Receiver<Runnable>,
     mouse_wheel_settings: MouseWheelSettings,
     current_cursor: HCURSOR,
 }
@@ -243,7 +239,6 @@ impl WindowsWindow {
         params: WindowParams,
         icon: HICON,
         executor: ForegroundExecutor,
-        main_receiver: flume::Receiver<Runnable>,
         mouse_wheel_settings: MouseWheelSettings,
         current_cursor: HCURSOR,
     ) -> Self {
@@ -272,7 +267,6 @@ impl WindowsWindow {
             display: WindowsDisplay::primary_monitor().unwrap(),
             transparent: params.window_background != WindowBackgroundAppearance::Opaque,
             executor,
-            main_receiver,
             mouse_wheel_settings,
             current_cursor,
         };
