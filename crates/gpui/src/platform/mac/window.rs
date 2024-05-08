@@ -1477,11 +1477,6 @@ fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
     if is_fullscreen {
         lock.fullscreen_restore_bounds = lock.bounds();
     }
-    if let Some(mut callback) = lock.fullscreen_callback.take() {
-        drop(lock);
-        callback(is_fullscreen);
-        window_state.lock().fullscreen_callback = Some(callback);
-    }
 }
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
