@@ -261,6 +261,10 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         window_did_change_occlusion_state as extern "C" fn(&Object, Sel, id),
     );
     decl.add_method(
+        sel!(windowWillEnterFullScreen:),
+        window_will_enter_fullscreen as extern "C" fn(&Object, Sel, id),
+    );
+    decl.add_method(
         sel!(windowDidMove:),
         window_did_move as extern "C" fn(&Object, Sel, id),
     );
@@ -1464,19 +1468,9 @@ extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
 }
 
 extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
-    window_fullscreen_changed(this, true);
-}
-
-extern "C" fn window_will_exit_fullscreen(this: &Object, _: Sel, _: id) {
-    window_fullscreen_changed(this, false);
-}
-
-fn window_fullscreen_changed(this: &Object, is_fullscreen: bool) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    if is_fullscreen {
-        lock.fullscreen_restore_bounds = lock.bounds();
-    }
+    lock.fullscreen_restore_bounds = lock.bounds();
 }
 
 extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
