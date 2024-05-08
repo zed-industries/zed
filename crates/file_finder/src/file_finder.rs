@@ -424,8 +424,7 @@ impl FileFinderDelegate {
             match event {
                 project::Event::WorktreeUpdatedEntries(_, _)
                 | project::Event::WorktreeAdded
-                | project::Event::WorktreeRemoved(_)
-                | project::Event::WorktreesSorted => file_finder
+                | project::Event::WorktreeRemoved(_) => file_finder
                     .picker
                     .update(cx, |picker, cx| picker.refresh(cx)),
                 _ => {}
