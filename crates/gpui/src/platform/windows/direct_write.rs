@@ -1126,49 +1126,60 @@ fn get_font_names_from_collection(
     }
 }
 
-unsafe fn get_font_identifier_and_font_struct(
+fn get_font_identifier_and_font_struct(
     font_face: &IDWriteFontFace3,
     locale: &str,
 ) -> Option<(FontIdentifier, Font, bool)> {
-    let Some(identifier) = get_font_identifier(font_face, locale) else {
+    let Some(postscript_name) = get_postscript_name(font_face, locale) else {
         return None;
     };
-    let Some(localized_family_name) = font_face.GetFamilyNames().log_err() else {
+    let Some(localized_family_name) = (unsafe { font_face.GetFamilyNames().log_err() }) else {
         return None;
     };
     let Some(family_name) = get_name(localized_family_name, locale) else {
         return None;
     };
+    let weight = unsafe { font_face.GetWeight() };
+    let style = unsafe { font_face.GetStyle() };
+    let identifier = FontIdentifier {
+        postscript_name,
+        weight: weight.0,
+        style: style.0,
+    };
     let font_struct = Font {
         family: family_name.into(),
         features: FontFeatures::default(),
-        weight: font_face.GetWeight().into(),
-        style: font_face.GetStyle().into(),
+        weight: weight.into(),
+        style: style.into(),
     };
-    let is_emoji = font_face.IsColorFont().as_bool();
+    let is_emoji = unsafe { font_face.IsColorFont().as_bool() };
     Some((identifier, font_struct, is_emoji))
 }
 
+#[inline]
 fn get_font_identifier(font_face: &IDWriteFontFace3, locale: &str) -> Option<FontIdentifier> {
     let weight = unsafe { font_face.GetWeight().0 };
     let style = unsafe { font_face.GetStyle().0 };
-    unsafe { get_postscript_name(font_face, locale) }.map(|postscript_name| FontIdentifier {
+    get_postscript_name(font_face, locale).map(|postscript_name| FontIdentifier {
         postscript_name,
         weight,
         style,
     })
 }
 
-unsafe fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Option<String> {
-    let mut info = std::mem::zeroed();
+#[inline]
+fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Option<String> {
+    let mut info = None;
     let mut exists = BOOL(0);
-    font_face
-        .GetInformationalStrings(
-            DWRITE_INFORMATIONAL_STRING_POSTSCRIPT_NAME,
-            &mut info,
-            &mut exists,
-        )
-        .log_err();
+    unsafe {
+        font_face
+            .GetInformationalStrings(
+                DWRITE_INFORMATIONAL_STRING_POSTSCRIPT_NAME,
+                &mut info,
+                &mut exists,
+            )
+            .log_err();
+    }
     if !exists.as_bool() || info.is_none() {
         return None;
     }
@@ -1177,7 +1188,7 @@ unsafe fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Opt
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
-unsafe fn apply_font_features(
+fn apply_font_features(
     direct_write_features: &IDWriteTypography,
     features: &FontFeatures,
 ) -> Result<()> {
@@ -1206,11 +1217,15 @@ unsafe fn apply_font_features(
             continue;
         }
 
-        direct_write_features.AddFontFeature(make_direct_write_feature(&tag, enable))?;
+        unsafe {
+            direct_write_features.AddFontFeature(make_direct_write_feature(&tag, enable))?;
+        }
     }
-    direct_write_features.AddFontFeature(feature_liga)?;
-    direct_write_features.AddFontFeature(feature_clig)?;
-    direct_write_features.AddFontFeature(feature_calt)?;
+    unsafe {
+        direct_write_features.AddFontFeature(feature_liga)?;
+        direct_write_features.AddFontFeature(feature_clig)?;
+        direct_write_features.AddFontFeature(feature_calt)?;
+    }
 
     Ok(())
 }
@@ -1246,32 +1261,39 @@ fn make_direct_write_tag(tag_name: &str) -> DWRITE_FONT_FEATURE_TAG {
     DWRITE_FONT_FEATURE_TAG(make_open_type_tag(tag_name))
 }
 
-unsafe fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Option<String> {
+#[inline]
+fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Option<String> {
     let mut locale_name_index = 0u32;
     let mut exists = BOOL(0);
-    string
-        .FindLocaleName(
-            &HSTRING::from(locale),
-            &mut locale_name_index,
-            &mut exists as _,
-        )
-        .log_err();
-    if !exists.as_bool() {
+    unsafe {
         string
             .FindLocaleName(
-                DEFAULT_LOCALE_NAME,
-                &mut locale_name_index as _,
+                &HSTRING::from(locale),
+                &mut locale_name_index,
                 &mut exists as _,
             )
             .log_err();
+    }
+    if !exists.as_bool() {
+        unsafe {
+            string
+                .FindLocaleName(
+                    DEFAULT_LOCALE_NAME,
+                    &mut locale_name_index as _,
+                    &mut exists as _,
+                )
+                .log_err();
+        }
         if !exists.as_bool() {
             return None;
         }
     }
 
-    let name_length = string.GetStringLength(locale_name_index).unwrap() as usize;
+    let name_length = unsafe { string.GetStringLength(locale_name_index).unwrap() } as usize;
     let mut name_vec = vec![0u16; name_length + 1];
-    string.GetString(locale_name_index, &mut name_vec).unwrap();
+    unsafe {
+        string.GetString(locale_name_index, &mut name_vec).unwrap();
+    }
 
     Some(String::from_utf16_lossy(&name_vec[..name_length]))
 }
@@ -1302,7 +1324,8 @@ fn get_system_ui_font_name() -> SharedString {
             // Segoe UI is the Windows font intended for user interface text strings.
             "Segoe UI".into()
         } else {
-            String::from_utf16_lossy(&info.lfFaceName).into()
+            let font_name = String::from_utf16_lossy(&info.lfFaceName);
+            font_name.trim_matches(char::from(0)).to_owned().into()
         };
         log::info!("Use {} as UI font.", font_family);
         font_family
