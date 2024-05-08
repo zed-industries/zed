@@ -140,7 +140,7 @@ impl Platform for TestPlatform {
 
     fn quit(&self) {}
 
-    fn restart(&self) {
+    fn restart(&self, _: Option<PathBuf>) {
         unimplemented!()
     }
 

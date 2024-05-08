@@ -268,7 +268,7 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self) {
+    fn restart(&self, _: Option<PathBuf>) {
         let pid = std::process::id();
         let Some(app_path) = self.app_path().log_err() else {
             return;
