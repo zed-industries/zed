@@ -3,7 +3,7 @@ use std::{ops::Range, sync::Arc};
 use collections::HashSet;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    Anchor, DisplayPoint,
+    movement, Anchor, Bias, DisplayPoint,
 };
 use gpui::WindowContext;
 use language::SelectionGoal;
@@ -13,13 +13,51 @@ use crate::{
     Vim,
 };
 
-pub fn create_mark(vim: &mut Vim, text: Arc<str>, cx: &mut WindowContext) {
+pub fn create_mark(vim: &mut Vim, text: Arc<str>, tail: bool, cx: &mut WindowContext) {
     let Some(anchors) = vim.update_active_editor(cx, |_, editor, _| {
         editor
             .selections
             .disjoint_anchors()
             .iter()
-            .map(|s| s.head().clone())
+            .map(|s| if tail { s.tail() } else { s.head() })
+            .collect::<Vec<_>>()
+    }) else {
+        return;
+    };
+
+    vim.update_state(|state| state.marks.insert(text.to_string(), anchors));
+    vim.clear_operator(cx);
+}
+
+pub fn create_mark_after(vim: &mut Vim, text: Arc<str>, cx: &mut WindowContext) {
+    let Some(anchors) = vim.update_active_editor(cx, |_, editor, cx| {
+        let (map, selections) = editor.selections.all_display(cx);
+        selections
+            .into_iter()
+            .map(|selection| {
+                let point = movement::saturating_right(&map, selection.tail());
+                map.buffer_snapshot
+                    .anchor_before(point.to_offset(&map, Bias::Left))
+            })
+            .collect::<Vec<_>>()
+    }) else {
+        return;
+    };
+
+    vim.update_state(|state| state.marks.insert(text.to_string(), anchors));
+    vim.clear_operator(cx);
+}
+
+pub fn create_mark_before(vim: &mut Vim, text: Arc<str>, cx: &mut WindowContext) {
+    let Some(anchors) = vim.update_active_editor(cx, |_, editor, cx| {
+        let (map, selections) = editor.selections.all_display(cx);
+        selections
+            .into_iter()
+            .map(|selection| {
+                let point = movement::saturating_left(&map, selection.head());
+                map.buffer_snapshot
+                    .anchor_before(point.to_offset(&map, Bias::Left))
+            })
             .collect::<Vec<_>>()
     }) else {
         return;
@@ -30,13 +68,32 @@ pub fn create_mark(vim: &mut Vim, text: Arc<str>, cx: &mut WindowContext) {
 }
 
 pub fn jump(text: Arc<str>, line: bool, cx: &mut WindowContext) {
-    let Some(anchors) = Vim::read(cx).state().marks.get(&*text).cloned() else {
-        return;
+    let anchors = match &*text {
+        "{" | "}" => Vim::update(cx, |vim, cx| {
+            vim.update_active_editor(cx, |_, editor, cx| {
+                let (map, selections) = editor.selections.all_display(cx);
+                selections
+                    .into_iter()
+                    .map(|selection| {
+                        let point = if &*text == "{" {
+                            movement::start_of_paragraph(&map, selection.head(), 1)
+                        } else {
+                            movement::end_of_paragraph(&map, selection.head(), 1)
+                        };
+                        map.buffer_snapshot
+                            .anchor_before(point.to_offset(&map, Bias::Left))
+                    })
+                    .collect::<Vec<Anchor>>()
+            })
+        }),
+        _ => Vim::read(cx).state().marks.get(&*text).cloned(),
     };
 
     Vim::update(cx, |vim, cx| {
         vim.pop_operator(cx);
     });
+
+    let Some(anchors) = anchors else { return };
 
     let is_active_operator = Vim::read(cx).state().active_operator().is_some();
     if is_active_operator {

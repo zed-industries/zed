@@ -473,6 +473,7 @@ impl Motion {
             | WindowTop
             | WindowMiddle
             | WindowBottom
+            | Jump { line: true, .. }
             | EndOfParagraph => true,
             EndOfLine { .. }
             | Matching
@@ -496,7 +497,7 @@ impl Motion {
             | FindBackward { .. }
             | RepeatFind { .. }
             | RepeatFindReversed { .. }
-            | Jump { .. }
+            | Jump { line: false, .. }
             | ZedSearchResult { .. } => false,
         }
     }
