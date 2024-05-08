@@ -10106,7 +10106,7 @@ impl Editor {
             }
         }
 
-        result_vec.extend(indent_stack.into_iter());
+        result_vec.extend(indent_stack);
 
         if let Some(active_indent_index) =
             self.find_active_indent_index(&mut result_vec, snapshot, cx)
@@ -10171,8 +10171,7 @@ impl Editor {
 
         // Find match that is partially on screen (start/end of fold is the same as the indent start)
         for (i, indent) in indent_candidates.iter() {
-            if cursor_fold_range.start.row + 1 <= indent.start
-                && indent.end == cursor_fold_range.end.row
+            if cursor_fold_range.start.row < indent.start && indent.end == cursor_fold_range.end.row
             {
                 return Some(*i);
             }

@@ -1377,17 +1377,17 @@ impl EditorElement {
 
     fn layout_indent_guides(
         &self,
-        mut visible_buffer_range: Range<u32>,
+        visible_buffer_range: Range<u32>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         text_hitbox: &Hitbox,
         snapshot: &DisplaySnapshot,
         cx: &mut WindowContext,
     ) -> Vec<IndentGuideLayout> {
-        //TODO actually figure out why the visible range is sometimes off by one
-        if visible_buffer_range.start > 0 {
-            visible_buffer_range.start -= 1;
-        }
+        // TODO actually figure out why the visible range is sometimes off by one
+        // Also seems fine to keep as calculating two additional lines won't really make a difference
+        let visible_buffer_range = visible_buffer_range.start.saturating_sub(1)
+            ..visible_buffer_range.end.saturating_add(1);
 
         let indent_guides =
             self.editor
