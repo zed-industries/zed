@@ -975,6 +975,8 @@ impl AssistantChat {
 
 impl Render for AssistantChat {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let header_height = Spacing::Small.rems(cx) * 2.0 + ButtonSize::Default.rems();
+
         div()
             .relative()
             .flex_1()
@@ -983,23 +985,51 @@ impl Render for AssistantChat {
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::cancel))
             .text_color(Color::Default.color(cx))
+            .child(list(self.list_state.clone()).flex_1().pt(header_height))
             .child(
                 h_flex()
-                    .gap_2()
+                    .absolute()
+                    .top_0()
+                    .justify_between()
+                    .w_full()
+                    .h(header_height)
+                    .p(Spacing::Small.rems(cx))
                     .child(
-                        Button::new("open-saved-conversations", "Saved Conversations").on_click(
-                            |_event, cx| cx.dispatch_action(Box::new(ToggleSavedConversations)),
-                        ),
+                        IconButton::new("open-saved-conversations", IconName::ChevronLeft)
+                            .on_click(|_event, cx| {
+                                cx.dispatch_action(Box::new(ToggleSavedConversations))
+                            })
+                            .tooltip(move |cx| {
+                                Tooltip::with_meta(
+                                    "Switch Conversations",
+                                    Some(&ToggleSavedConversations),
+                                    "UI will change, temporary.",
+                                    cx,
+                                )
+                            }),
                     )
                     .child(
-                        IconButton::new("new-conversation", IconName::Plus)
-                            .on_click(cx.listener(move |this, _event, cx| {
-                                this.new_conversation(cx);
-                            }))
-                            .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
+                        h_flex()
+                            .gap(Spacing::Large.rems(cx))
+                            .child(
+                                IconButton::new("new-conversation", IconName::Plus)
+                                    .on_click(cx.listener(move |this, _event, cx| {
+                                        this.new_conversation(cx);
+                                    }))
+                                    .tooltip(move |cx| Tooltip::text("New Conversation", cx)),
+                            )
+                            .child(
+                                IconButton::new("assistant-menu", IconName::Menu)
+                                    .disabled(true)
+                                    .tooltip(move |cx| {
+                                        Tooltip::text(
+                                            "Coming soon – Assistant settings & controls",
+                                            cx,
+                                        )
+                                    }),
+                            ),
                     ),
             )
-            .child(list(self.list_state.clone()).flex_1())
             .child(Composer::new(
                 self.composer_editor.clone(),
                 self.project_index_button.clone(),
