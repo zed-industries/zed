@@ -10,6 +10,8 @@ use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
 use language::{Bias, Point};
+use release_channel::RELEASE_CHANNEL_NAME;
+use std::os::unix::net::{SocketAddr, UnixDatagram};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -114,6 +116,31 @@ impl OpenListener {
             .map_err(|_| anyhow!("no listener for open requests"))
             .log_err();
     }
+}
+
+#[cfg(target_os = "linux")]
+pub fn listen_for_cli_connections(opener: Arc<OpenListener>) -> Result<oneshot::Receiver<()>> {
+    use std::os::linux::net::SocketAddrExt;
+
+    let uid: u32 = unsafe { libc::getuid() };
+    let sock_addr =
+        SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL_NAME, uid))?;
+
+    let (tx, rx) = oneshot::channel();
+
+    let mut send = Some(tx);
+    let listener = UnixDatagram::bind_addr(&sock_addr)?;
+    thread::spawn(move || {
+        let mut buf = [0u8; 1024];
+        while let Ok(len) = listener.recv(&mut buf) {
+            opener.open_urls(vec![dbg!(String::from_utf8_lossy(&buf[..len]).to_string())]);
+        }
+
+        if let Some(tx) = send.take() {
+            tx.send(()).ok();
+        }
+    });
+    Ok(rx)
 }
 
 fn connect_to_cli(

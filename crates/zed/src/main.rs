@@ -37,6 +37,7 @@ use std::{
     io::{IsTerminal, Write},
     path::Path,
     sync::Arc,
+    time::Duration,
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use util::{
@@ -54,7 +55,7 @@ use zed::{
     OpenListener, OpenRequest,
 };
 
-use crate::zed::inline_completion_registry;
+use crate::zed::{inline_completion_registry, listen_for_cli_connections};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -175,10 +176,6 @@ fn init_ui(args: Args) {
 
     init_logger();
 
-    if ensure_only_instance() != IsOnlyInstance::Yes {
-        return;
-    }
-
     log::info!("========== starting zed ==========");
     let app = App::new().with_assets(Assets);
 
@@ -189,6 +186,33 @@ fn init_ui(args: Args) {
         .unzip();
     let session_id = Uuid::new_v4().to_string();
     reliability::init_panic_hook(&app, installation_id.clone(), session_id.clone());
+
+    let (listener, mut open_rx) = OpenListener::new();
+    let listener = Arc::new(listener);
+    let open_listener = listener.clone();
+    if cfg!(target_os = "linux") {
+        match listen_for_cli_connections(listener.clone()) {
+            Ok(rx) => {
+                // on macOS we can be sure that the cli url is opened during app.run
+                // on linux, we block here to ensure that if we are opened via the cli
+                // we don't open the default workspace.
+                if std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).is_ok() {
+                    app.background_executor()
+                        .block_with_timeout(Duration::from_millis(100), async move { rx.await })
+                        .ok();
+                }
+            }
+            Err(_) => {
+                println!("zed is already running");
+                return;
+            }
+        }
+    } else {
+        if ensure_only_instance() != IsOnlyInstance::Yes {
+            println!("zed is already running");
+            return;
+        }
+    }
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     let git_binary_path = if option_env!("ZED_BUNDLE").as_deref() == Some("true") {
@@ -223,9 +247,6 @@ fn init_ui(args: Args) {
         })
     };
 
-    let (listener, mut open_rx) = OpenListener::new();
-    let listener = Arc::new(listener);
-    let open_listener = listener.clone();
     app.on_open_urls(move |urls| open_listener.open_urls(urls));
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
@@ -462,6 +483,7 @@ fn handle_open_request(
     app_state: Arc<AppState>,
     cx: &mut AppContext,
 ) -> bool {
+    dbg!(&request);
     if let Some(connection) = request.cli_connection {
         let app_state = app_state.clone();
         cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))

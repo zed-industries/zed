@@ -2,10 +2,8 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{
-    ipc::{IpcReceiver, IpcSender},
-    CliRequest, CliResponse,
-};
+use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
+use once_cell::sync::Lazy;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -16,8 +14,11 @@ struct Detect;
 
 trait InstalledApp {
     fn zed_version_string(&self) -> String;
-    fn launch(&self) -> anyhow::Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)>;
+    fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
 }
+
+static RELEASE_CHANNEL: Lazy<String> =
+    Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
 
 #[derive(Parser, Debug)]
 #[command(name = "zed", disable_version_flag = true)]
@@ -98,7 +99,14 @@ fn main() -> Result<()> {
         paths.push(canonicalized.to_string(|path| path.display().to_string()))
     }
 
-    let (tx, rx) = app.launch()?;
+    let (server, server_name) =
+        IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
+    let url = format!("zed-cli://{server_name}");
+
+    app.launch(url)?;
+    let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+    let (tx, rx) = (handshake.requests, handshake.responses);
+
     let open_new_workspace = if args.new {
         Some(true)
     } else if args.add {
@@ -128,11 +136,116 @@ fn main() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::path::Path;
+    use std::{
+        env, io,
+        os::{
+            linux::net::SocketAddrExt,
+            unix::net::{SocketAddr, UnixDatagram},
+        },
+        path::{Path, PathBuf},
+        process, thread,
+        time::Duration,
+    };
+
+    use anyhow::anyhow;
+    use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
+    use fork::Fork;
+
+    use crate::{Detect, InstalledApp, RELEASE_CHANNEL};
+
+    struct App(PathBuf);
 
     impl Detect {
-        pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
-            unimplemented!()
+        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+            let path = if let Some(path) = path {
+                path.to_path_buf().canonicalize()
+            } else {
+                let cli = env::current_exe()?;
+                let dir = cli
+                    .parent()
+                    .ok_or_else(|| anyhow!("no parent path for cli"))?;
+
+                match dir.join("zed").canonicalize() {
+                    Ok(path) => Ok(path),
+                    // development builds have Zed capitalized
+                    Err(e) => match dir.join("Zed").canonicalize() {
+                        Ok(path) => Ok(path),
+                        Err(_) => Err(e),
+                    },
+                }
+            }?;
+
+            Ok(App(path))
+        }
+    }
+
+    impl InstalledApp for App {
+        fn zed_version_string(&self) -> String {
+            format!(
+                "Zed {}{} – {}",
+                if *RELEASE_CHANNEL == "stable" {
+                    "".to_string()
+                } else {
+                    format!(" {} ", *RELEASE_CHANNEL)
+                },
+                option_env!("RELEASE_VERSION").unwrap_or_default(),
+                self.0.display(),
+            )
+        }
+
+        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
+            let uid: u32 = unsafe { libc::getuid() };
+            let sock_addr =
+                SocketAddr::from_abstract_name(format!("zed-{}-{}", *RELEASE_CHANNEL, uid))?;
+
+            let mut sock = UnixDatagram::unbound()?;
+            if sock.connect_addr(&sock_addr).is_err() {
+                self.boot_background()?;
+                self.wait_for_socket(&sock_addr, &mut sock)?;
+            }
+            sock.send(ipc_url.as_bytes())?;
+            Ok(())
+        }
+    }
+
+    impl App {
+        fn boot_background(&self) -> anyhow::Result<()> {
+            let path = &self.0;
+
+            match fork::fork() {
+                Ok(Fork::Parent(_)) => Ok(()),
+                Ok(Fork::Child) => {
+                    std::env::set_var(FORCE_CLI_MODE_ENV_VAR_NAME, "");
+                    if let Err(_) = fork::setsid() {
+                        eprintln!("failed to setsid: {}", std::io::Error::last_os_error());
+                        process::exit(1);
+                    }
+                    if std::env::var("ZED_KEEP_FD").is_err() {
+                        if let Err(_) = fork::close_fd() {
+                            eprintln!("failed to close_fd: {}", std::io::Error::last_os_error());
+                        }
+                    }
+                    let error = exec::execvp(path.clone(), &[path.as_os_str()]);
+                    // if exec succeeded, we never get here.
+                    eprintln!("failed to exec {:?}: {}", path, error);
+                    process::exit(1)
+                }
+                Err(_) => Err(anyhow!(io::Error::last_os_error())),
+            }
+        }
+
+        fn wait_for_socket(
+            &self,
+            sock_addr: &SocketAddr,
+            sock: &mut UnixDatagram,
+        ) -> Result<(), std::io::Error> {
+            for _ in 0..100 {
+                thread::sleep(Duration::from_millis(10));
+                if sock.connect_addr(&sock_addr).is_ok() {
+                    return Ok(());
+                }
+            }
+            sock.connect_addr(&sock_addr)
         }
     }
 }
@@ -167,8 +280,7 @@ mod mac_os {
         ptr,
     };
 
-    use cli::{CliRequest, CliResponse, IpcHandshake, FORCE_CLI_MODE_ENV_VAR_NAME};
-    use ipc_channel::ipc::{IpcOneShotServer, IpcReceiver, IpcSender};
+    use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 
     use crate::{Detect, InstalledApp};
 
@@ -252,11 +364,7 @@ mod mac_os {
             )
         }
 
-        fn launch(&self) -> anyhow::Result<(IpcSender<CliRequest>, IpcReceiver<CliResponse>)> {
-            let (server, server_name) =
-                IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
-            let url = format!("zed-cli://{server_name}");
-
+        fn launch(&self, url: String) -> anyhow::Result<()> {
             match self {
                 Self::App { app_bundle, .. } => {
                     let app_path = app_bundle;
@@ -318,8 +426,7 @@ mod mac_os {
                 }
             }
 
-            let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-            Ok((handshake.requests, handshake.responses))
+            Ok(())
         }
     }
 
