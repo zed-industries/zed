@@ -211,10 +211,6 @@ impl WindowsWindowStatePtr {
             main_receiver: context.main_receiver.clone(),
         })
     }
-
-    fn is_minimized(&self) -> bool {
-        unsafe { IsIconic(self.hwnd) }.as_bool()
-    }
 }
 
 #[derive(Default)]
