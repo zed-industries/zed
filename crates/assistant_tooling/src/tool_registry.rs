@@ -4,7 +4,7 @@ use gpui::{
     div, AnyElement, AnyView, IntoElement, ParentElement, Render, Styled, Task, View, WindowContext,
 };
 use schemars::{schema::RootSchema, schema_for, JsonSchema};
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -50,7 +50,7 @@ pub trait LanguageModelTool {
     type Input: DeserializeOwned + JsonSchema;
 
     /// The output returned by executing the tool.
-    type Output: 'static;
+    type Output: DeserializeOwned + Serialize + 'static;
 
     type View: Render + ToolOutput;
 
