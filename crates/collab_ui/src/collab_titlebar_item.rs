@@ -1,4 +1,3 @@
-use crate::face_pile::FacePile;
 use auto_update::AutoUpdateStatus;
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, Client, User, UserStore};
@@ -14,7 +13,8 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     h_flex, popover_menu, prelude::*, Avatar, AvatarAudioStatusIndicator, Button, ButtonLike,
-    ButtonStyle, ContextMenu, Icon, IconButton, IconName, Indicator, TintColor, TitleBar, Tooltip,
+    ButtonStyle, ContextMenu, FacePile, Icon, IconButton, IconName, Indicator, TintColor, TitleBar,
+    Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{build_branch_list, BranchList, OpenRecent as ToggleVcsMenu};

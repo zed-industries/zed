@@ -9,6 +9,7 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{Inventory, TaskSourceKind};
+use smallvec::SmallVec;
 use task::{ResolvedTask, TaskContext, TaskTemplate};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
@@ -353,12 +354,43 @@ impl PickerDelegate for TasksModalDelegate {
             TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
                 .get_type_icon(&name.to_lowercase())
                 .map(|icon_path| Icon::from_path(icon_path)),
+        }
+        .map(|icon| {
+            icon.color(Color::Muted)
+                .size(IconSize::Small)
+                .into_any_element()
+        });
+        let history_run_icon = if Some(ix) <= self.divider_index {
+            Some(
+                Icon::new(IconName::HistoryRerun)
+                    .color(Color::Muted)
+                    .size(IconSize::Small)
+                    .into_any_element(),
+            )
+        } else {
+            Some(
+                v_flex()
+                    .flex_none()
+                    .size(IconSize::Small.rems())
+                    .into_any_element(),
+            )
         };
-
+        let icons = history_run_icon
+            .into_iter()
+            .chain(icon)
+            .collect::<SmallVec<[_; 2]>>();
         Some(
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
-                .inset(true)
+                .inset(false)
+                .start_slot(ui::FacePile::new(icons))
                 .spacing(ListItemSpacing::Sparse)
+                // .map(|this| {
+                //     if Some(ix) <= self.divider_index {
+                //         this.start_slot(Icon::new(IconName::HistoryRerun).size(IconSize::Small))
+                //     } else {
+                //         this.start_slot(v_flex().flex_none().size(IconSize::Small.rems()))
+                //     }
+                // })
                 .when_some(tooltip_label, |list_item, item_label| {
                     list_item.tooltip(move |_| item_label.clone())
                 })
@@ -393,11 +425,7 @@ impl PickerDelegate for TasksModalDelegate {
                     } else {
                         item
                     };
-                    if let Some(icon) = icon {
-                        item.end_slot(icon)
-                    } else {
-                        item
-                    }
+                    item
                 })
                 .selected(selected)
                 .child(highlighted_location.render(cx)),

@@ -168,6 +168,7 @@ pub enum IconName {
     ZedXCopilot,
     ZedAssistant,
     PullRequest,
+    HistoryRerun,
 }
 
 impl IconName {
@@ -278,6 +279,7 @@ impl IconName {
             IconName::ZedXCopilot => "icons/zed_x_copilot.svg",
             IconName::ZedAssistant => "icons/zed_assistant.svg",
             IconName::PullRequest => "icons/pull_request.svg",
+            IconName::HistoryRerun => "icons/history_rerun.svg",
         }
     }
 }

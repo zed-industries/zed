@@ -1,6 +1,6 @@
+use crate::prelude::*;
 use gpui::AnyElement;
 use smallvec::SmallVec;
-use ui::prelude::*;
 
 #[derive(IntoElement)]
 pub struct FacePile {
@@ -31,7 +31,7 @@ impl RenderOnce for FacePile {
                     .into_iter()
                     .enumerate()
                     .rev()
-                    .map(|(ix, player)| div().when(ix > 0, |div| div.ml_neg_1()).child(player)),
+                    .map(|(ix, player)| div().when(ix > 0, |div| div.ml_neg_2()).child(player)),
             )
     }
 }

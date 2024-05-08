@@ -9931,6 +9931,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smallvec",
  "task",
  "tree-sitter-rust",
  "tree-sitter-typescript",
