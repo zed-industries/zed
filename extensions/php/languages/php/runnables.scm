@@ -17,7 +17,7 @@
             )
         )
     )
-) @php-test
+) @phpunit-test
 
 ; Class that follow the naming convention of PHPUnit test classes
 ; and that doesn't have the abstract modifier
@@ -28,4 +28,4 @@
         name: (_) @run
         (#match? @run ".*Test")
     )
-) @php-test
+) @phpunit-test
