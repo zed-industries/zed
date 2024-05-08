@@ -394,7 +394,7 @@ impl TextLayout {
     }
 
     /// todo!()
-    pub fn position_for_index<'a>(&self, index: usize) -> Option<Point<Pixels>> {
+    pub fn position_for_index(&self, index: usize) -> Option<Point<Pixels>> {
         let element_state = self.lock();
         let element_state = element_state
             .as_ref()

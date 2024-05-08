@@ -3,9 +3,10 @@ mod parser;
 use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
-    point, quad, AnyElement, Bounds, Edges, FontStyle, FontWeight, GlobalElementId, Hsla,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Point, Render, StrikethroughStyle,
-    Style, StyledText, Task, TextLayout, TextRun, TextStyle, TextStyleRefinement, View,
+    point, quad, AnyElement, Bounds, CursorStyle, Edges, FontStyle, FontWeight, GlobalElementId,
+    Hitbox, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Point, Render,
+    StrikethroughStyle, Style, StyledText, Task, TextLayout, TextRun, TextStyle,
+    TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -209,11 +210,182 @@ impl MarkdownElement {
             }
         }
     }
+
+    fn paint_selection(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        rendered_text: &RenderedText,
+        cx: &mut WindowContext,
+    ) {
+        let selection = self.markdown.read(cx).selection;
+
+        let mut selection_start: Option<(Point<Pixels>, Pixels)> = None;
+        let mut selection_end: Option<(Point<Pixels>, Pixels)> = None;
+
+        for line in rendered_text.lines.iter() {
+            let line_height = line.layout.line_height();
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            let line_source_range = line_source_start..=line.source_end;
+
+            if line_source_range.contains(&selection.start) {
+                let selection_start_position = line
+                    .layout
+                    .position_for_index(line.rendered_index_for_source_index(selection.start))
+                    .unwrap();
+                selection_start = Some((selection_start_position, line_height));
+            }
+
+            if line_source_range.contains(&selection.end) {
+                let selection_end_position = line
+                    .layout
+                    .position_for_index(line.rendered_index_for_source_index(selection.end))
+                    .unwrap();
+                selection_end = Some((selection_end_position, line_height));
+            }
+        }
+
+        if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
+            selection_start.zip(selection_end)
+        {
+            let selection_background = {
+                // todo!("use the right color")
+                let mut red = gpui::red();
+                red.fade_out(0.9);
+                red
+            };
+
+            if start_position.y == end_position.y {
+                cx.paint_quad(quad(
+                    Bounds::from_corners(
+                        start_position,
+                        point(end_position.x, end_position.y + end_line_height),
+                    ),
+                    Pixels::ZERO,
+                    selection_background,
+                    Edges::default(),
+                    Hsla::transparent_black(),
+                ));
+            } else {
+                cx.paint_quad(quad(
+                    Bounds::from_corners(
+                        start_position,
+                        point(bounds.right(), start_position.y + start_line_height),
+                    ),
+                    Pixels::ZERO,
+                    selection_background,
+                    Edges::default(),
+                    Hsla::transparent_black(),
+                ));
+
+                if end_position.y > start_position.y + start_line_height {
+                    cx.paint_quad(quad(
+                        Bounds::from_corners(
+                            point(bounds.left(), start_position.y + start_line_height),
+                            point(bounds.right(), end_position.y),
+                        ),
+                        Pixels::ZERO,
+                        selection_background,
+                        Edges::default(),
+                        Hsla::transparent_black(),
+                    ));
+                }
+
+                cx.paint_quad(quad(
+                    Bounds::from_corners(
+                        point(bounds.left(), end_position.y),
+                        point(end_position.x, end_position.y + end_line_height),
+                    ),
+                    Pixels::ZERO,
+                    selection_background,
+                    Edges::default(),
+                    Hsla::transparent_black(),
+                ));
+            }
+        }
+    }
+
+    fn paint_mouse_listeners(
+        &mut self,
+        hitbox: &Hitbox,
+        rendered_text: &RenderedText,
+        cx: &mut WindowContext,
+    ) {
+        cx.set_cursor_style(CursorStyle::IBeam, hitbox);
+        cx.on_mouse_event({
+            let rendered_text = rendered_text.clone();
+            let markdown = self.markdown.downgrade();
+            let hitbox = hitbox.clone();
+            move |event: &MouseDownEvent, phase, cx| {
+                markdown
+                    .update(cx, |markdown, cx| {
+                        if hitbox.is_hovered(cx) {
+                            if phase.bubble() {
+                                let index =
+                                    match rendered_text.source_index_for_position(event.position) {
+                                        Ok(index) | Err(index) => index,
+                                    };
+                                markdown.selection = Selection {
+                                    start: index,
+                                    end: index,
+                                    reversed: false,
+                                };
+                                markdown.is_selecting = true;
+                                cx.notify();
+                            }
+                        } else {
+                            markdown.selection = Selection::default();
+                            markdown.is_selecting = false;
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+            }
+        });
+        cx.on_mouse_event({
+            let rendered_text = rendered_text.clone();
+            let markdown = self.markdown.downgrade();
+            move |event: &MouseMoveEvent, phase, cx| {
+                if phase.capture() || event.pressed_button != Some(MouseButton::Left) {
+                    return;
+                }
+
+                markdown
+                    .update(cx, |markdown, cx| {
+                        if markdown.is_selecting {
+                            let index =
+                                match rendered_text.source_index_for_position(event.position) {
+                                    Ok(ix) | Err(ix) => ix,
+                                };
+                            markdown.selection.set_head(index);
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+            }
+        });
+        cx.on_mouse_event({
+            let markdown = self.markdown.downgrade();
+            move |_event: &MouseUpEvent, phase, cx| {
+                if phase.bubble() {
+                    return;
+                }
+
+                markdown
+                    .update(cx, |markdown, cx| {
+                        if markdown.is_selecting {
+                            markdown.is_selecting = false;
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+            }
+        });
+    }
 }
 
 impl Element for MarkdownElement {
     type RequestLayoutState = RenderedMarkdown;
-    type PrepaintState = ();
+    type PrepaintState = Hitbox;
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -381,11 +553,13 @@ impl Element for MarkdownElement {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Self::PrepaintState {
+        let hitbox = cx.insert_hitbox(bounds, false);
         rendered_markdown.element.prepaint(cx);
+        hitbox
     }
 
     fn paint(
@@ -393,163 +567,12 @@ impl Element for MarkdownElement {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
+        hitbox: &mut Self::PrepaintState,
         cx: &mut WindowContext,
     ) {
-        cx.on_mouse_event({
-            let rendered_text = rendered_markdown.text.clone();
-            let markdown = self.markdown.downgrade();
-            move |event: &MouseDownEvent, phase, cx| {
-                if phase.capture() {
-                    return;
-                }
-
-                markdown
-                    .update(cx, |markdown, cx| {
-                        if let Ok(index) = rendered_text.source_index_for_position(event.position) {
-                            markdown.selection = Selection {
-                                start: index,
-                                end: index,
-                                reversed: false,
-                            };
-                            markdown.is_selecting = true;
-                            cx.notify();
-                        } else {
-                            markdown.selection = Selection::default();
-                            markdown.is_selecting = false;
-                            cx.notify();
-                        }
-                    })
-                    .log_err();
-            }
-        });
-        cx.on_mouse_event({
-            let rendered_text = rendered_markdown.text.clone();
-            let markdown = self.markdown.downgrade();
-            move |event: &MouseMoveEvent, phase, cx| {
-                if phase.capture() || event.pressed_button != Some(MouseButton::Left) {
-                    return;
-                }
-
-                markdown
-                    .update(cx, |markdown, cx| {
-                        if markdown.is_selecting {
-                            let index =
-                                match rendered_text.source_index_for_position(event.position) {
-                                    Ok(ix) | Err(ix) => ix,
-                                };
-                            markdown.selection.set_head(index);
-                            cx.notify();
-                        }
-                    })
-                    .log_err();
-            }
-        });
-        cx.on_mouse_event({
-            let markdown = self.markdown.downgrade();
-            move |_event: &MouseUpEvent, phase, cx| {
-                if phase.bubble() {
-                    return;
-                }
-
-                markdown
-                    .update(cx, |markdown, cx| {
-                        if markdown.is_selecting {
-                            markdown.is_selecting = false;
-                            cx.notify();
-                        }
-                    })
-                    .log_err();
-            }
-        });
-
+        self.paint_mouse_listeners(hitbox, &rendered_markdown.text, cx);
         rendered_markdown.element.paint(cx);
-
-        let selection = self.markdown.read(cx).selection;
-
-        let mut selection_start: Option<(Point<Pixels>, Pixels)> = None;
-        let mut selection_end: Option<(Point<Pixels>, Pixels)> = None;
-
-        for line in rendered_markdown.text.lines.iter() {
-            let line_height = line.layout.line_height();
-            let line_source_start = line.source_mappings.first().unwrap().source_index;
-            let line_source_range = line_source_start..=line.source_end;
-
-            if line_source_range.contains(&selection.start) {
-                let selection_start_position = line
-                    .layout
-                    .position_for_index(line.rendered_index_for_source_index(selection.start))
-                    .unwrap();
-                selection_start = Some((selection_start_position, line_height));
-            }
-
-            if line_source_range.contains(&selection.end) {
-                let selection_end_position = line
-                    .layout
-                    .position_for_index(line.rendered_index_for_source_index(selection.end))
-                    .unwrap();
-                selection_end = Some((selection_end_position, line_height));
-            }
-        }
-
-        if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
-            selection_start.zip(selection_end)
-        {
-            let selection_background = {
-                // todo!("use the right color")
-                let mut red = gpui::red();
-                red.fade_out(0.9);
-                red
-            };
-
-            if start_position.y == end_position.y {
-                cx.paint_quad(quad(
-                    Bounds::from_corners(
-                        start_position,
-                        point(end_position.x, end_position.y + end_line_height),
-                    ),
-                    Pixels::ZERO,
-                    selection_background,
-                    Edges::default(),
-                    Hsla::transparent_black(),
-                ));
-            } else {
-                cx.paint_quad(quad(
-                    Bounds::from_corners(
-                        start_position,
-                        point(bounds.right(), start_position.y + start_line_height),
-                    ),
-                    Pixels::ZERO,
-                    selection_background,
-                    Edges::default(),
-                    Hsla::transparent_black(),
-                ));
-
-                if end_position.y > start_position.y + start_line_height {
-                    cx.paint_quad(quad(
-                        Bounds::from_corners(
-                            point(bounds.left(), start_position.y + start_line_height),
-                            point(bounds.right(), end_position.y),
-                        ),
-                        Pixels::ZERO,
-                        selection_background,
-                        Edges::default(),
-                        Hsla::transparent_black(),
-                    ));
-                }
-
-                cx.paint_quad(quad(
-                    Bounds::from_corners(
-                        point(bounds.left(), end_position.y),
-                        point(end_position.x, end_position.y + end_line_height),
-                    ),
-                    Pixels::ZERO,
-                    selection_background,
-                    Edges::default(),
-                    Hsla::transparent_black(),
-                ));
-            }
-        }
+        self.paint_selection(bounds, &rendered_markdown.text, cx);
     }
 }
 
