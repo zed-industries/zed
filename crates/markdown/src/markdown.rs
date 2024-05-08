@@ -24,6 +24,7 @@ pub struct MarkdownStyle {
     pub rule_color: Hsla,
     pub block_quote_border_color: Hsla,
     pub syntax: Arc<SyntaxTheme>,
+    pub selection_background_color: Hsla,
 }
 
 pub struct Markdown {
@@ -247,13 +248,6 @@ impl MarkdownElement {
         if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
             selection_start.zip(selection_end)
         {
-            let selection_background = {
-                // todo!("use the right color")
-                let mut red = gpui::red();
-                red.fade_out(0.9);
-                red
-            };
-
             if start_position.y == end_position.y {
                 cx.paint_quad(quad(
                     Bounds::from_corners(
@@ -261,7 +255,7 @@ impl MarkdownElement {
                         point(end_position.x, end_position.y + end_line_height),
                     ),
                     Pixels::ZERO,
-                    selection_background,
+                    self.style.selection_background_color,
                     Edges::default(),
                     Hsla::transparent_black(),
                 ));
@@ -272,7 +266,7 @@ impl MarkdownElement {
                         point(bounds.right(), start_position.y + start_line_height),
                     ),
                     Pixels::ZERO,
-                    selection_background,
+                    self.style.selection_background_color,
                     Edges::default(),
                     Hsla::transparent_black(),
                 ));
@@ -284,7 +278,7 @@ impl MarkdownElement {
                             point(bounds.right(), end_position.y),
                         ),
                         Pixels::ZERO,
-                        selection_background,
+                        self.style.selection_background_color,
                         Edges::default(),
                         Hsla::transparent_black(),
                     ));
@@ -296,7 +290,7 @@ impl MarkdownElement {
                         point(end_position.x, end_position.y + end_line_height),
                     ),
                     Pixels::ZERO,
-                    selection_background,
+                    self.style.selection_background_color,
                     Edges::default(),
                     Hsla::transparent_black(),
                 ));

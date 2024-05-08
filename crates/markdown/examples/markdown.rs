@@ -134,6 +134,11 @@ pub fn main() {
                             ..Default::default()
                         },
                         syntax: cx.theme().syntax().clone(),
+                        selection_background_color: {
+                            let mut selection = cx.theme().players().local().selection;
+                            selection.fade_out(0.7);
+                            selection
+                        },
                     },
                     language_registry,
                     cx,
