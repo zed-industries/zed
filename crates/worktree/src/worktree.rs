@@ -2767,7 +2767,22 @@ impl BackgroundScannerState {
                 log::info!(
                     "building git repository, `.git` path in the worktree: {dot_git_path:?}"
                 );
-                parent_dir.into()
+
+                // TODO: Maybe we don't want this check, but instead pass in a boolean
+                // whenever we have an outside-project-root git dir. Then we can store that boolean
+                // on `LocalRepositoryEntry` too.
+                let is_ancestor = dot_git_path.is_absolute()
+                    && self
+                        .snapshot
+                        .abs_path()
+                        .ancestors()
+                        .enumerate()
+                        .any(|(level, ancestor)| level != 0 && *ancestor == *parent_dir);
+                if is_ancestor {
+                    PathBuf::from("").into()
+                } else {
+                    parent_dir.into()
+                }
             }
             None => {
                 // `dot_git_path.parent().is_none()` means `.git` directory is the opened worktree itself,
@@ -2801,6 +2816,7 @@ impl BackgroundScannerState {
             },
         );
 
+        // TODO: Does this work?
         let staged_statuses = self.update_git_statuses(&work_directory, &*repo_lock);
         drop(repo_lock);
 
@@ -3452,6 +3468,7 @@ impl BackgroundScanner {
         use futures::FutureExt as _;
 
         // Populate ignores above the root.
+        let mut above_root_git_dir_events = None;
         let root_abs_path = self.state.lock().snapshot.abs_path.clone();
         for (index, ancestor) in root_abs_path.ancestors().enumerate() {
             if index != 0 {
@@ -3465,11 +3482,21 @@ impl BackgroundScanner {
                         .insert(ancestor.into(), (ignore.into(), false));
                 }
             }
-            if ancestor.join(&*DOT_GIT).is_dir() {
+            let root_git_dir = ancestor.join(&*DOT_GIT);
+            if root_git_dir.is_dir() {
                 // Reached root of git repository.
+
+                self.state
+                    .lock()
+                    .build_git_repository(root_git_dir.clone().into(), self.fs.as_ref());
+
+                above_root_git_dir_events =
+                    Some(self.fs.watch(&root_git_dir, FS_WATCH_LATENCY).await);
                 break;
             }
         }
+        let mut above_root_git_dir_events =
+            above_root_git_dir_events.unwrap_or_else(|| Box::pin(futures::stream::empty()));
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
@@ -3510,6 +3537,7 @@ impl BackgroundScanner {
 
         // Continue processing events until the worktree is dropped.
         self.phase = BackgroundScannerPhase::Events;
+
         loop {
             select_biased! {
                 // Process any path refresh requests from the worktree. Prioritize
@@ -3546,6 +3574,15 @@ impl BackgroundScanner {
                         paths.extend(more_paths);
                     }
                     self.process_events(paths.clone()).await;
+                }
+
+                paths = above_root_git_dir_events.next().fuse() => {
+                    let Some(mut paths) = paths else { break };
+                    while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
+                        paths.extend(more_paths);
+                    }
+                    self.process_events(paths.clone()).await;
+
                 }
             }
         }
@@ -3597,6 +3634,14 @@ impl BackgroundScanner {
                 return;
             }
         };
+        let git_dir_paths = self
+            .state
+            .lock()
+            .snapshot
+            .git_repositories
+            .iter()
+            .map(|(_, entry)| entry.git_dir_path.clone())
+            .collect::<Vec<_>>();
 
         let mut relative_paths = Vec::with_capacity(abs_paths.len());
         let mut dot_git_paths_to_reload = HashSet::default();
@@ -3623,9 +3668,15 @@ impl BackgroundScanner {
                     if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
                         path.into()
                     } else {
-                        log::error!(
-                        "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
-                    );
+                        if git_dir_paths.iter().any(|git_dir_path| abs_path.strip_prefix(git_dir_path).is_ok()) {
+                            log::debug!(
+                              "ignoring event {abs_path:?}, since it's in git dir outside of root path {root_canonical_path:?}",
+                            );
+                        } else {
+                            log::error!(
+                              "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
+                            );
+                        }
                         return false;
                     };
 
