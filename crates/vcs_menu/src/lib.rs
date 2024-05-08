@@ -159,14 +159,20 @@ impl PickerDelegate for BranchListDelegate {
             let candidates = picker.update(&mut cx, |view, _| {
                 const RECENT_BRANCHES_COUNT: usize = 10;
                 let mut branches = view.delegate.all_branches.clone();
-                if query.is_empty() && branches.len() > RECENT_BRANCHES_COUNT {
-                    // Truncate list of recent branches
-                    // Do a partial sort to show recent-ish branches first.
-                    branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
-                        rhs.unix_timestamp.cmp(&lhs.unix_timestamp)
+                if query.is_empty() {
+                    if branches.len() > RECENT_BRANCHES_COUNT {
+                        // Truncate list of recent branches
+                        // Do a partial sort to show recent-ish branches first.
+                        branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
+                            rhs.is_head
+                                .cmp(&lhs.is_head)
+                                .then(rhs.unix_timestamp.cmp(&lhs.unix_timestamp))
+                        });
+                        branches.truncate(RECENT_BRANCHES_COUNT);
+                    }
+                    branches.sort_unstable_by(|lhs, rhs| {
+                        rhs.is_head.cmp(&lhs.is_head).then(lhs.name.cmp(&rhs.name))
                     });
-                    branches.truncate(RECENT_BRANCHES_COUNT);
-                    branches.sort_unstable_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
                 }
                 branches
                     .into_iter()
