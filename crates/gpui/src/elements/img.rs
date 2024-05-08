@@ -262,7 +262,7 @@ impl Element for Img {
                     }
                 }
 
-                cx.request_layout(&style, [])
+                cx.request_layout(style, [])
             });
         (layout_id, ())
     }

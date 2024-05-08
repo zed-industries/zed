@@ -603,7 +603,7 @@ impl Element for Empty {
         _id: Option<&GlobalElementId>,
         cx: &mut WindowContext,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        (cx.request_layout(&Style::default(), None), ())
+        (cx.request_layout(Style::default(), None), ())
     }
 
     fn prepaint(
