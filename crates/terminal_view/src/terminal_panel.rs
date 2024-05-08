@@ -596,6 +596,7 @@ impl TerminalPanel {
             .workspace
             .update(cx, |workspace, _| workspace.project().clone())
             .ok()?;
+
         let reveal = spawn_task.reveal;
         let window = cx.window_handle();
         let new_terminal = project.update(cx, |project, cx| {
