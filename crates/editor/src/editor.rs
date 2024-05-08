@@ -458,7 +458,7 @@ pub struct Editor {
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     completion_documentation_pre_resolve_debounce: DebouncedDelay,
-    available_code_actions: Option<(Model<Buffer>, Arc<[CodeAction]>)>,
+    available_code_actions: Option<(Location, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
     pending_rename: Option<RenameState>,
@@ -3851,30 +3851,32 @@ impl Editor {
 
             let spawned_test_task = this.update(&mut cx, |this, cx| {
                 if this.focus_handle.is_focused(cx) {
-                    let snapshot = this.snapshot(cx);
-                    let display_row = action.deployed_from_indicator.unwrap_or_else(|| {
-                        this.selections
-                            .newest::<Point>(cx)
-                            .head()
-                            .to_display_point(&snapshot.display_snapshot)
-                            .row()
-                    });
-
-                    let buffer_point =
-                        DisplayPoint::new(display_row, 0).to_point(&snapshot.display_snapshot);
-                    let buffer_row = snapshot
-                        .buffer_snapshot
-                        .buffer_line_for_row(buffer_point.row)
-                        .map(|(_, Range { start, .. })| start);
-                    let tasks = this.tasks.get(&display_row).map(|t| Arc::new(t.to_owned()));
-                    let (buffer, code_actions) = this.available_code_actions.clone().unzip();
+                    let buffer_row = action
+                        .deployed_from_indicator
+                        .unwrap_or_else(|| this.selections.newest::<Point>(cx).head().row);
+                    let tasks = this.tasks.get(&buffer_row).map(|t| Arc::new(t.to_owned()));
+                    let (location, code_actions) = this
+                        .available_code_actions
+                        .clone()
+                        .and_then(|(location, code_actions)| {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let point_range = location.range.to_point(&snapshot);
+                            let point_range = point_range.start.row..=point_range.end.row;
+                            if point_range.contains(&buffer_row) {
+                                Some((location, code_actions))
+                            } else {
+                                None
+                            }
+                        })
+                        .unzip();
                     if tasks.is_none() && code_actions.is_none() {
                         return None;
                     }
-                    let buffer = buffer.or_else(|| {
+
+                    let buffer = location.map(|location| location.buffer).or_else(|| {
                         let snapshot = this.snapshot(cx);
                         let (buffer_snapshot, _) =
-                            snapshot.buffer_snapshot.buffer_line_for_row(display_row)?;
+                            snapshot.buffer_snapshot.buffer_line_for_row(buffer_row)?;
                         let buffer_id = buffer_snapshot.remote_id();
                         this.buffer().read(cx).buffer(buffer_id)
                     });
@@ -3885,22 +3887,18 @@ impl Editor {
                     this.discard_inline_completion(cx);
                     let task_context = tasks.as_ref().zip(this.workspace.clone()).and_then(
                         |(tasks, (workspace, _))| {
-                            if let Some(buffer_point) = buffer_row {
-                                let position = Point::new(buffer_point.row, tasks.column);
-                                let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
-                                let location = Location {
-                                    buffer: buffer.clone(),
-                                    range: range_start..range_start,
-                                };
-                                workspace
-                                    .update(cx, |workspace, cx| {
-                                        tasks::task_context_for_location(workspace, location, cx)
-                                    })
-                                    .ok()
-                                    .flatten()
-                            } else {
-                                None
-                            }
+                            let position = Point::new(buffer_row, tasks.column);
+                            let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
+                            let location = Location {
+                                buffer: buffer.clone(),
+                                range: range_start..range_start,
+                            };
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    tasks::task_context_for_location(workspace, location, cx)
+                                })
+                                .ok()
+                                .flatten()
                         },
                     );
                     let tasks = tasks
@@ -3916,7 +3914,7 @@ impl Editor {
                                             .map(|task| (kind.clone(), task))
                                     })
                                     .collect(),
-                                position: Point::new(display_row, tasks.column),
+                                position: Point::new(buffer_row, tasks.column),
                             })
                         });
                     let spawn_straight_away = tasks
@@ -3983,7 +3981,7 @@ impl Editor {
                         cx,
                     );
 
-                    None
+                    Some(Task::ready(Ok(())))
                 })
             }
             CodeActionsItem::CodeAction(action) => {
@@ -4124,7 +4122,13 @@ impl Editor {
                 this.available_code_actions = if actions.is_empty() {
                     None
                 } else {
-                    Some((start_buffer, actions.into()))
+                    Some((
+                        Location {
+                            buffer: start_buffer,
+                            range: start..end,
+                        },
+                        actions.into(),
+                    ))
                 };
                 cx.notify();
             })
@@ -7718,12 +7722,7 @@ impl Editor {
                         }
                     })
                     .await;
-            let rows = Self::refresh_runnable_display_rows(
-                project,
-                display_snapshot,
-                new_rows,
-                cx.clone(),
-            );
+            let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
 
             this.update(&mut cx, |this, _| {
                 this.clear_tasks();
@@ -7740,7 +7739,8 @@ impl Editor {
     ) -> Vec<(Range<usize>, Runnable)> {
         snapshot.buffer_snapshot.runnable_ranges(range).collect()
     }
-    fn refresh_runnable_display_rows(
+
+    fn runnable_rows(
         project: Model<Project>,
         snapshot: DisplaySnapshot,
         runnable_ranges: Vec<(Range<usize>, Runnable)>,
@@ -7755,12 +7755,12 @@ impl Editor {
                 if tasks.is_empty() {
                     return None;
                 }
-                let point = multi_buffer_range.start.to_display_point(&snapshot);
+                let point = multi_buffer_range.start.to_point(&snapshot.buffer_snapshot);
                 Some((
-                    point.row(),
+                    point.row,
                     RunnableTasks {
                         templates: tasks,
-                        column: point.column(),
+                        column: point.column,
                     },
                 ))
             })

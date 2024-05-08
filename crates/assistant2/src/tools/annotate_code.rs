@@ -14,46 +14,46 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
 
-pub struct OpenBufferTool {
+pub struct AnnotationTool {
     workspace: WeakView<Workspace>,
     project: Model<Project>,
 }
 
-impl OpenBufferTool {
+impl AnnotationTool {
     pub fn new(workspace: WeakView<Workspace>, project: Model<Project>) -> Self {
         Self { workspace, project }
     }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
-pub struct ExplainInput {
-    /// Name for this set of excerpts
+pub struct AnnotationInput {
+    /// Name for this set of annotations
     title: String,
     /// Excerpts from the file to show to the user.
-    excerpts: Vec<ExplainedExcerpt>,
+    excerpts: Vec<Excerpt>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
-struct ExplainedExcerpt {
+struct Excerpt {
     /// Path to the file
     path: String,
-    /// A short, distinctive string that appears at a certain location in the file.
+    /// A short, distinctive string that appears in the file, used to define a location in the file.
     text_passage: String,
-    /// Text to display near the symbol definition
-    comment: String,
+    /// Text to display above the code excerpt
+    annotation: String,
 }
 
-impl LanguageModelTool for OpenBufferTool {
-    type Input = ExplainInput;
+impl LanguageModelTool for AnnotationTool {
+    type Input = AnnotationInput;
     type Output = String;
-    type View = OpenBufferView;
+    type View = AnnotationResultView;
 
     fn name(&self) -> String {
-        "explain_code".to_string()
+        "annotate_code".to_string()
     }
 
     fn description(&self) -> String {
-        "Show and explain one or more code snippets from files in the current project. Code snippets are identified using a file path and the name of a symbol defined in that file.".to_string()
+        "Dynamically annotate symbols in the current codebase. Opens a buffer in a panel in their editor, to the side of the conversation. The annotations are shown in the editor as a block decoration.".to_string()
     }
 
     fn execute(&self, input: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>> {
@@ -125,13 +125,13 @@ impl LanguageModelTool for OpenBufferTool {
                             cx,
                         )
                     });
-                    let explanation = SharedString::from(excerpt.comment.clone());
+                    let annotation = SharedString::from(excerpt.annotation.clone());
                     editor.insert_blocks(
                         [BlockProperties {
                             position: ranges[0].start,
-                            height: 1,
+                            height: annotation.split('\n').count() as u8 + 1,
                             style: BlockStyle::Fixed,
-                            render: Box::new(move |cx| Self::render_note_block(&explanation, cx)),
+                            render: Box::new(move |cx| Self::render_note_block(&annotation, cx)),
                             disposition: BlockDisposition::Above,
                         }],
                         None,
@@ -156,21 +156,41 @@ impl LanguageModelTool for OpenBufferTool {
         output: Result<Self::Output>,
         cx: &mut WindowContext,
     ) -> View<Self::View> {
-        cx.new_view(|_cx| OpenBufferView { output })
+        cx.new_view(|_cx| AnnotationResultView { output })
     }
 }
 
-impl OpenBufferTool {
-    fn render_note_block(explanation: &SharedString, _cx: &mut BlockContext) -> AnyElement {
-        div().child(explanation.clone()).into_any_element()
+impl AnnotationTool {
+    fn render_note_block(explanation: &SharedString, cx: &mut BlockContext) -> AnyElement {
+        let anchor_x = cx.anchor_x;
+        let gutter_width = cx.gutter_dimensions.width;
+
+        h_flex()
+            .w_full()
+            .py_2()
+            .border_y_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .justify_center()
+                    .w(gutter_width)
+                    .child(Icon::new(IconName::Ai).color(Color::Hint)),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .ml(anchor_x - gutter_width)
+                    .child(explanation.clone()),
+            )
+            .into_any_element()
     }
 }
 
-pub struct OpenBufferView {
+pub struct AnnotationResultView {
     output: Result<String>,
 }
 
-impl Render for OpenBufferView {
+impl Render for AnnotationResultView {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         match &self.output {
             Ok(output) => div().child(output.clone().into_any_element()),
@@ -179,7 +199,7 @@ impl Render for OpenBufferView {
     }
 }
 
-impl ToolOutput for OpenBufferView {
+impl ToolOutput for AnnotationResultView {
     fn generate(&self, _: &mut ProjectContext, _: &mut WindowContext) -> String {
         match &self.output {
             Ok(output) => output.clone(),

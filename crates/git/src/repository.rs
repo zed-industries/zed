@@ -19,6 +19,7 @@ pub use git2::Repository as LibGitRepository;
 
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub struct Branch {
+    pub is_head: bool,
     pub name: Box<str>,
     /// Timestamp of most recent commit, normalized to Unix Epoch format.
     pub unix_timestamp: Option<i64>,
@@ -202,6 +203,7 @@ impl GitRepository for RealGitRepository {
         let valid_branches = local_branches
             .filter_map(|branch| {
                 branch.ok().and_then(|(branch, _)| {
+                    let is_head = branch.is_head();
                     let name = branch.name().ok().flatten().map(Box::from)?;
                     let timestamp = branch.get().peel_to_commit().ok()?.time();
                     let unix_timestamp = timestamp.seconds();
@@ -211,6 +213,7 @@ impl GitRepository for RealGitRepository {
                     let unix_timestamp =
                         time::OffsetDateTime::from_unix_timestamp(unix_timestamp).ok()?;
                     Some(Branch {
+                        is_head,
                         name,
                         unix_timestamp: Some(unix_timestamp.to_offset(utc_offset).unix_timestamp()),
                     })

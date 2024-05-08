@@ -35,6 +35,7 @@ pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
 pub struct WindowsWindowState {
     pub origin: Point<DevicePixels>,
     pub physical_size: Size<DevicePixels>,
+    pub fullscreen_restore_bounds: Bounds<DevicePixels>,
     pub scale_factor: f32,
 
     pub callbacks: Callbacks,
@@ -71,6 +72,10 @@ impl WindowsWindowState {
     ) -> Self {
         let origin = point(cs.x.into(), cs.y.into());
         let physical_size = size(cs.cx.into(), cs.cy.into());
+        let fullscreen_restore_bounds = Bounds {
+            origin,
+            size: physical_size,
+        };
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
@@ -84,6 +89,7 @@ impl WindowsWindowState {
         Self {
             origin,
             physical_size,
+            fullscreen_restore_bounds,
             scale_factor,
             callbacks,
             input_handler,
@@ -110,6 +116,35 @@ impl WindowsWindowState {
         Bounds {
             origin: self.origin,
             size: self.physical_size,
+        }
+    }
+
+    fn window_bounds(&self) -> WindowBounds {
+        let placement = unsafe {
+            let mut placement = WINDOWPLACEMENT {
+                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                ..Default::default()
+            };
+            GetWindowPlacement(self.hwnd, &mut placement).log_err();
+            placement
+        };
+        let bounds = Bounds {
+            origin: point(
+                DevicePixels(placement.rcNormalPosition.left),
+                DevicePixels(placement.rcNormalPosition.top),
+            ),
+            size: size(
+                DevicePixels(placement.rcNormalPosition.right - placement.rcNormalPosition.left),
+                DevicePixels(placement.rcNormalPosition.bottom - placement.rcNormalPosition.top),
+            ),
+        };
+
+        if self.is_fullscreen() {
+            WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
+        } else if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
+            WindowBounds::Maximized(bounds)
+        } else {
+            WindowBounds::Windowed(bounds)
         }
     }
 
@@ -176,10 +211,6 @@ impl WindowsWindowStatePtr {
             main_receiver: context.main_receiver.clone(),
         })
     }
-
-    fn is_minimized(&self) -> bool {
-        unsafe { IsIconic(self.hwnd) }.as_bool()
-    }
 }
 
 #[derive(Default)]
@@ -209,7 +240,7 @@ struct WindowCreateContext {
 impl WindowsWindow {
     pub(crate) fn new(
         handle: AnyWindowHandle,
-        options: WindowParams,
+        params: WindowParams,
         icon: HICON,
         executor: ForegroundExecutor,
         main_receiver: flume::Receiver<Runnable>,
@@ -217,13 +248,13 @@ impl WindowsWindow {
         current_cursor: HCURSOR,
     ) -> Self {
         let classname = register_wnd_class(icon);
-        let hide_title_bar = options
+        let hide_title_bar = params
             .titlebar
             .as_ref()
             .map(|titlebar| titlebar.appears_transparent)
             .unwrap_or(false);
         let windowname = HSTRING::from(
-            options
+            params
                 .titlebar
                 .as_ref()
                 .and_then(|titlebar| titlebar.title.as_ref())
@@ -231,12 +262,6 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let dwstyle = WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX;
-        let x = options.bounds.origin.x.0;
-        let y = options.bounds.origin.y.0;
-        let nwidth = options.bounds.size.width.0;
-        let nheight = options.bounds.size.height.0;
-        let hwndparent = HWND::default();
-        let hmenu = HMENU::default();
         let hinstance = get_module_handle();
         let mut context = WindowCreateContext {
             inner: None,
@@ -245,7 +270,7 @@ impl WindowsWindow {
             // todo(windows) move window to target monitor
             // options.display_id
             display: WindowsDisplay::primary_monitor().unwrap(),
-            transparent: options.window_background != WindowBackgroundAppearance::Opaque,
+            transparent: params.window_background != WindowBackgroundAppearance::Opaque,
             executor,
             main_receiver,
             mouse_wheel_settings,
@@ -258,12 +283,12 @@ impl WindowsWindow {
                 classname,
                 &windowname,
                 dwstyle,
-                x,
-                y,
-                nwidth,
-                nheight,
-                hwndparent,
-                hmenu,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                None,
+                None,
                 hinstance,
                 lpparam,
             )
@@ -272,6 +297,18 @@ impl WindowsWindow {
         register_drag_drop(state_ptr.clone());
         let wnd = Self(state_ptr);
 
+        unsafe {
+            let mut placement = WINDOWPLACEMENT {
+                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+                ..Default::default()
+            };
+            GetWindowPlacement(raw_hwnd, &mut placement).log_err();
+            placement.rcNormalPosition.left = params.bounds.left().0;
+            placement.rcNormalPosition.right = params.bounds.right().0;
+            placement.rcNormalPosition.top = params.bounds.top().0;
+            placement.rcNormalPosition.bottom = params.bounds.bottom().0;
+            SetWindowPlacement(raw_hwnd, &placement).log_err();
+        }
         unsafe { ShowWindow(raw_hwnd, SW_SHOW) };
 
         wnd
@@ -321,8 +358,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().is_maximized()
     }
 
-    fn is_minimized(&self) -> bool {
-        self.0.is_minimized()
+    fn window_bounds(&self) -> WindowBounds {
+        self.0.state.borrow().window_bounds()
     }
 
     /// get the logical size of the app's drawable area.
@@ -493,6 +530,10 @@ impl PlatformWindow for WindowsWindow {
             .executor
             .spawn(async move {
                 let mut lock = state_ptr.state.borrow_mut();
+                lock.fullscreen_restore_bounds = Bounds {
+                    origin: lock.origin,
+                    size: lock.physical_size,
+                };
                 let StyleAndBounds {
                     style,
                     x,

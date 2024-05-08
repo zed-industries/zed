@@ -12,8 +12,8 @@ use crate::{
     RenderSvgParams, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, View, VisualContext, WeakView,
-    WindowAppearance, WindowBackgroundAppearance, WindowOptions, WindowParams, WindowTextSystem,
-    SUBPIXEL_VARIANTS,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions, WindowParams,
+    WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -565,7 +565,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut AppContext) -> Bounds<
     const DEFAULT_WINDOW_OFFSET: Point<DevicePixels> = point(DevicePixels(0), DevicePixels(35));
 
     cx.active_window()
-        .and_then(|w| w.update(cx, |_, cx| cx.window_bounds()).ok())
+        .and_then(|w| w.update(cx, |_, cx| cx.bounds()).ok())
         .map(|bounds| bounds.map_origin(|origin| origin + DEFAULT_WINDOW_OFFSET))
         .unwrap_or_else(|| {
             let display = display_id
@@ -592,19 +592,20 @@ impl Window {
         cx: &mut AppContext,
     ) -> Self {
         let WindowOptions {
-            bounds,
+            window_bounds,
             titlebar,
             focus,
             show,
             kind,
             is_movable,
             display_id,
-            fullscreen,
             window_background,
             app_id,
         } = options;
 
-        let bounds = bounds.unwrap_or_else(|| default_bounds(display_id, cx));
+        let bounds = window_bounds
+            .map(|bounds| bounds.get_bounds())
+            .unwrap_or_else(|| default_bounds(display_id, cx));
         let mut platform_window = cx.platform.open_window(
             handle,
             WindowParams {
@@ -632,8 +633,12 @@ impl Window {
         let next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>> = Default::default();
         let last_input_timestamp = Rc::new(Cell::new(Instant::now()));
 
-        if fullscreen {
-            platform_window.toggle_fullscreen();
+        if let Some(ref window_open_state) = window_bounds {
+            match window_open_state {
+                WindowBounds::Fullscreen(_) => platform_window.toggle_fullscreen(),
+                WindowBounds::Maximized(_) => platform_window.zoom(),
+                WindowBounds::Windowed(_) => {}
+            }
         }
 
         platform_window.on_close(Box::new({
@@ -691,7 +696,7 @@ impl Window {
             let mut cx = cx.to_async();
             move |_, _| {
                 handle
-                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .update(&mut cx, |_, cx| cx.bounds_changed())
                     .log_err();
             }
         }));
@@ -699,7 +704,7 @@ impl Window {
             let mut cx = cx.to_async();
             move || {
                 handle
-                    .update(&mut cx, |_, cx| cx.window_bounds_changed())
+                    .update(&mut cx, |_, cx| cx.bounds_changed())
                     .log_err();
             }
         }));
@@ -943,10 +948,10 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.is_maximized()
     }
 
-    /// Check if the platform window is minimized
-    /// On some platforms (namely Windows) the position is incorrect when minimized
-    pub fn is_minimized(&self) -> bool {
-        self.window.platform_window.is_minimized()
+    /// Return the `WindowBounds` to indicate that how a window should be opened
+    /// after it has been closed
+    pub fn window_bounds(&self) -> WindowBounds {
+        self.window.platform_window.window_bounds()
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -1075,7 +1080,7 @@ impl<'a> WindowContext<'a> {
             .spawn(|app| f(AsyncWindowContext::new(app, self.window.handle)))
     }
 
-    fn window_bounds_changed(&mut self) {
+    fn bounds_changed(&mut self) {
         self.window.scale_factor = self.window.platform_window.scale_factor();
         self.window.viewport_size = self.window.platform_window.content_size();
         self.window.display_id = self.window.platform_window.display().id();
@@ -1088,7 +1093,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Returns the bounds of the current window in the global coordinate space, which could span across multiple displays.
-    pub fn window_bounds(&self) -> Bounds<DevicePixels> {
+    pub fn bounds(&self) -> Bounds<DevicePixels> {
         self.window.platform_window.bounds()
     }
 

@@ -5,7 +5,7 @@ use gpui::{
 };
 use schemars::{schema::RootSchema, schema_for, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::value::RawValue;
+use serde_json::{value::RawValue, Value};
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -98,6 +98,7 @@ pub trait LanguageModelTool {
     /// Executes the tool with the given input.
     fn execute(&self, input: &Self::Input, cx: &mut WindowContext) -> Task<Result<Self::Output>>;
 
+    /// A view of the output of running the tool, for displaying to the user.
     fn view(
         &self,
         input: Self::Input,
@@ -105,9 +106,13 @@ pub trait LanguageModelTool {
         cx: &mut WindowContext,
     ) -> View<Self::View>;
 
-    fn render_running(_cx: &mut WindowContext) -> impl IntoElement {
-        div()
+    fn render_running(_arguments: &Option<Value>, _cx: &mut WindowContext) -> impl IntoElement {
+        tool_running_placeholder()
     }
+}
+
+pub fn tool_running_placeholder() -> AnyElement {
+    ui::Label::new("Researching...").into_any_element()
 }
 
 pub trait ToolOutput: Sized {
@@ -119,7 +124,7 @@ struct RegisteredTool {
     type_id: TypeId,
     execute: Box<dyn Fn(&ToolFunctionCall, &mut WindowContext) -> Task<Result<ToolFunctionCall>>>,
     deserialize: Box<dyn Fn(&SavedToolFunctionCall, &mut WindowContext) -> ToolFunctionCall>,
-    render_running: fn(&mut WindowContext) -> gpui::AnyElement,
+    render_running: fn(&ToolFunctionCall, &mut WindowContext) -> gpui::AnyElement,
     definition: ToolFunctionDefinition,
 }
 
@@ -166,11 +171,15 @@ impl ToolRegistry {
                 .p_2()
                 .child(result.into_any_element(&tool_call.name))
                 .into_any_element(),
-            None => self
-                .registered_tools
-                .get(&tool_call.name)
-                .map(|tool| (tool.render_running)(cx))
-                .unwrap_or_else(|| div().into_any_element()),
+            None => {
+                let tool = self.registered_tools.get(&tool_call.name);
+
+                if let Some(tool) = tool {
+                    (tool.render_running)(&tool_call, cx)
+                } else {
+                    tool_running_placeholder()
+                }
+            }
         }
     }
 
@@ -339,8 +348,14 @@ impl ToolRegistry {
 
         return Ok(());
 
-        fn render_running<T: LanguageModelTool>(cx: &mut WindowContext) -> AnyElement {
-            T::render_running(cx).into_any_element()
+        fn render_running<T: LanguageModelTool>(
+            tool_call: &ToolFunctionCall,
+            cx: &mut WindowContext,
+        ) -> AnyElement {
+            // Attempt to parse the string arguments that are JSON as a JSON value
+            let maybe_arguments = serde_json::to_value(tool_call.arguments.clone()).ok();
+
+            T::render_running(&maybe_arguments, cx).into_any_element()
         }
 
         fn generate<T: LanguageModelTool>(

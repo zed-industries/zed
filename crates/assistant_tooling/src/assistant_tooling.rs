@@ -7,6 +7,7 @@ pub use attachment_registry::{
 };
 pub use project_context::ProjectContext;
 pub use tool_registry::{
-    LanguageModelTool, SavedToolFunctionCall, SavedToolFunctionCallResult, ToolFunctionCall,
-    ToolFunctionDefinition, ToolOutput, ToolRegistry,
+    tool_running_placeholder, LanguageModelTool, SavedToolFunctionCall,
+    SavedToolFunctionCallResult, ToolFunctionCall, ToolFunctionCallResult, ToolFunctionDefinition,
+    ToolOutput, ToolRegistry,
 };
