@@ -16,7 +16,8 @@ use crate::{
 use ::ui::{div, prelude::*, Color, Tooltip, ViewContext};
 use anyhow::{Context, Result};
 use assistant_tooling::{
-    AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry, UserAttachment,
+    tool_running_placeholder, AttachmentRegistry, ProjectContext, ToolFunctionCall, ToolRegistry,
+    UserAttachment,
 };
 use client::{proto, Client, UserStore};
 use collections::HashMap;
@@ -862,6 +863,10 @@ impl AssistantChat {
                     if !tools.is_empty() {
                         message_elements.push(div().children(tools).into_any_element())
                     }
+                }
+
+                if message_elements.is_empty() {
+                    message_elements.push(tool_running_placeholder());
                 }
 
                 div()
