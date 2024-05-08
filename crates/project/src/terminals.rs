@@ -21,7 +21,6 @@ pub struct Terminals {
 impl Project {
     pub fn create_terminal(
         &mut self,
-        settings_location: Option<SettingsLocation>,
         working_directory: Option<PathBuf>,
         spawn_task: Option<SpawnInTerminal>,
         window: AnyWindowHandle,
@@ -31,6 +30,22 @@ impl Project {
             !self.is_remote(),
             "creating terminals as a guest is not supported yet"
         );
+
+        let working_directory = working_directory
+            .or_else(|| spawn_task.as_ref().and_then(|spawn_task| spawn_task.cwd.clone()));
+
+        let worktree = working_directory
+            .as_ref()
+            .and_then(|working_directory| {
+                self.find_local_worktree(working_directory, cx)
+            });
+
+        let settings_location = worktree
+            .as_ref()
+            .map(|(worktree, path)| SettingsLocation {
+                worktree_id: worktree.read(cx).id().to_usize(),
+                path: &path
+            });
 
         let is_terminal = spawn_task.is_none();
         let settings = TerminalSettings::get(settings_location, cx);

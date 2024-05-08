@@ -13,7 +13,7 @@ use itertools::Itertools;
 use project::{Fs, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation};
+use settings::Settings;
 use task::{RevealStrategy, SpawnInTerminal, TaskId};
 use terminal::terminal_settings::{Shell, TerminalDockPosition, TerminalSettings};
 use ui::{
@@ -508,25 +508,10 @@ impl TerminalPanel {
                     crate::get_working_directory(workspace, cx, working_directory_strategy)
                 };
 
-                let found_local_worktree = if let Some(working_directory) = working_directory.as_ref() {
-                    workspace.project().read(cx).find_local_worktree(working_directory, cx)
-                } else {
-                    None
-                };
-
-                let settings_location = if let Some((worktree, path)) = found_local_worktree.as_ref() {
-                    Some(SettingsLocation {
-                        worktree_id: worktree.read_with(cx, |worktree, _| worktree.id().to_usize()),
-                        path
-                    })
-                } else {
-                    None
-                };
-
                 let window = cx.window_handle();
                 if let Some(terminal) = workspace.project().update(cx, |project, cx| {
                     project
-                        .create_terminal(settings_location, working_directory, spawn_task, window, cx)
+                        .create_terminal(working_directory, spawn_task, window, cx)
                         .log_err()
                 }) {
                     let terminal = Box::new(cx.new_view(|cx| {
@@ -612,26 +597,11 @@ impl TerminalPanel {
             .update(cx, |workspace, _| workspace.project().clone())
             .ok()?;
 
-        let found_local_worktree = if let Some(working_directory) = working_directory.as_ref() {
-            project.read(cx).find_local_worktree(working_directory, cx)
-        } else {
-            None
-        };
-
-        let settings_location = if let Some((worktree, path)) = found_local_worktree.as_ref() {
-            Some(SettingsLocation {
-                worktree_id: worktree.read_with(cx, |worktree, _| worktree.id().to_usize()),
-                path
-            })
-        } else {
-            None
-        };
-
         let reveal = spawn_task.reveal;
         let window = cx.window_handle();
         let new_terminal = project.update(cx, |project, cx| {
             project
-                .create_terminal(settings_location, working_directory, Some(spawn_task), window, cx)
+                .create_terminal(working_directory, Some(spawn_task), window, cx)
                 .log_err()
         })?;
         terminal_to_replace.update(cx, |terminal_to_replace, cx| {
