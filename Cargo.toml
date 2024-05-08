@@ -20,7 +20,6 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/copilot",
-    "crates/copilot_ui",
     "crates/db",
     "crates/diagnostics",
     "crates/editor",
@@ -36,12 +35,14 @@ members = [
     "crates/fsevent",
     "crates/fuzzy",
     "crates/git",
+    "crates/git_hosting_providers",
     "crates/go_to_line",
     "crates/google_ai",
     "crates/gpui",
     "crates/gpui_macros",
     "crates/headless",
     "crates/image_viewer",
+    "crates/inline_completion_button",
     "crates/install_cli",
     "crates/journal",
     "crates/language",
@@ -87,6 +88,8 @@ members = [
     "crates/storybook",
     "crates/sum_tree",
     "crates/tab_switcher",
+    "crates/supermaven",
+    "crates/supermaven_api",
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
@@ -160,7 +163,6 @@ color = { path = "crates/color" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 copilot = { path = "crates/copilot" }
-copilot_ui = { path = "crates/copilot_ui" }
 db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
@@ -174,6 +176,7 @@ fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
 git = { path = "crates/git" }
+git_hosting_providers = { path = "crates/git_hosting_providers" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui" }
@@ -181,6 +184,7 @@ gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
 install_cli = { path = "crates/install_cli" }
 image_viewer = { path = "crates/image_viewer" }
+inline_completion_button = { path = "crates/inline_completion_button" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_selector = { path = "crates/language_selector" }
@@ -222,6 +226,8 @@ settings = { path = "crates/settings" }
 snippet = { path = "crates/snippet" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
+supermaven = { path = "crates/supermaven" }
+supermaven_api = { path = "crates/supermaven_api"}
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
 sum_tree = { path = "crates/sum_tree" }
@@ -252,8 +258,8 @@ async-recursion = "1.0.0"
 async-tar = "0.4.2"
 async-trait = "0.1"
 bitflags = "2.4.2"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e82eec97691c3acdb43494484be60d661edfebf3" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e82eec97691c3acdb43494484be60d661edfebf3" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "f5766863de9dcc092e90fdbbc5e0007a99e7f9bf" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "f5766863de9dcc092e90fdbbc5e0007a99e7f9bf" }
 cap-std = "3.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }

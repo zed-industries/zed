@@ -76,8 +76,9 @@ impl LinuxClient for HeadlessClient {
         unimplemented!()
     }
 
-    //todo(linux)
     fn set_cursor_style(&self, _style: CursorStyle) {}
+
+    fn open_uri(&self, _uri: &str) {}
 
     fn write_to_primary(&self, item: crate::ClipboardItem) {}
 

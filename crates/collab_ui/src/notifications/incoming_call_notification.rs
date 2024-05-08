@@ -55,11 +55,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
     .detach();
 }
 
-#[derive(Clone, PartialEq)]
-struct RespondToCall {
-    accept: bool,
-}
-
 struct IncomingCallNotificationState {
     call: IncomingCall,
     app_state: Weak<AppState>,

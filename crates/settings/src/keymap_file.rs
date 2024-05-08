@@ -47,6 +47,9 @@ impl KeymapFile {
     }
 
     pub fn parse(content: &str) -> Result<Self> {
+        if content.is_empty() {
+            return Ok(Self::default());
+        }
         parse_json_with_comments::<Self>(content)
     }
 

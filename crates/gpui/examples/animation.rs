@@ -63,7 +63,11 @@ fn main() {
         .with_assets(Assets {})
         .run(|cx: &mut AppContext| {
             let options = WindowOptions {
-                bounds: Some(Bounds::centered(None, size(px(300.), px(300.)), cx)),
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(300.), px(300.)),
+                    cx,
+                ))),
                 ..Default::default()
             };
             cx.open_window(options, |cx| {

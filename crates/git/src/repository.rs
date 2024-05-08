@@ -1,4 +1,5 @@
 use crate::blame::Blame;
+use crate::GitHostingProviderRegistry;
 use anyhow::{Context, Result};
 use collections::HashMap;
 use git2::{BranchType, StatusShow};
@@ -18,6 +19,7 @@ pub use git2::Repository as LibGitRepository;
 
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub struct Branch {
+    pub is_head: bool,
     pub name: Box<str>,
     /// Timestamp of most recent commit, normalized to Unix Epoch format.
     pub unix_timestamp: Option<i64>,
@@ -71,13 +73,19 @@ impl std::fmt::Debug for dyn GitRepository {
 pub struct RealGitRepository {
     pub repository: LibGitRepository,
     pub git_binary_path: PathBuf,
+    hosting_provider_registry: Arc<GitHostingProviderRegistry>,
 }
 
 impl RealGitRepository {
-    pub fn new(repository: LibGitRepository, git_binary_path: Option<PathBuf>) -> Self {
+    pub fn new(
+        repository: LibGitRepository,
+        git_binary_path: Option<PathBuf>,
+        hosting_provider_registry: Arc<GitHostingProviderRegistry>,
+    ) -> Self {
         Self {
             repository,
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
+            hosting_provider_registry,
         }
     }
 }
@@ -195,6 +203,7 @@ impl GitRepository for RealGitRepository {
         let valid_branches = local_branches
             .filter_map(|branch| {
                 branch.ok().and_then(|(branch, _)| {
+                    let is_head = branch.is_head();
                     let name = branch.name().ok().flatten().map(Box::from)?;
                     let timestamp = branch.get().peel_to_commit().ok()?.time();
                     let unix_timestamp = timestamp.seconds();
@@ -204,6 +213,7 @@ impl GitRepository for RealGitRepository {
                     let unix_timestamp =
                         time::OffsetDateTime::from_unix_timestamp(unix_timestamp).ok()?;
                     Some(Branch {
+                        is_head,
                         name,
                         unix_timestamp: Some(unix_timestamp.to_offset(utc_offset).unix_timestamp()),
                     })
@@ -246,6 +256,7 @@ impl GitRepository for RealGitRepository {
             path,
             &content,
             remote_url,
+            self.hosting_provider_registry.clone(),
         )
     }
 }

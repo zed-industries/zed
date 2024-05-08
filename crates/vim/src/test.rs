@@ -8,7 +8,7 @@ use std::time::Duration;
 use command_palette::CommandPalette;
 use editor::DisplayPoint;
 use futures::StreamExt;
-use gpui::KeyBinding;
+use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
 pub use neovim_backed_binding_test_context::*;
 pub use neovim_backed_test_context::*;
 pub use vim_test_context::*;
@@ -1056,4 +1056,20 @@ async fn test_undo(cx: &mut gpui::TestAppContext) {
         2
         3"})
         .await;
+}
+
+#[gpui::test]
+async fn test_mouse_selection(cx: &mut TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state("ˇone two three", Mode::Normal);
+
+    let start_point = cx.pixel_position("one twˇo three");
+    let end_point = cx.pixel_position("one ˇtwo three");
+
+    cx.simulate_mouse_down(start_point, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(end_point, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(end_point, MouseButton::Left, Modifiers::none());
+
+    cx.assert_state("one «ˇtwo» three", Mode::Visual)
 }

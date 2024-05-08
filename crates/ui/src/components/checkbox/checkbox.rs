@@ -95,7 +95,7 @@ impl RenderOnce for Checkbox {
                     .size(crate::styles::custom_spacing(cx, 16.))
                     .rounded_sm()
                     .bg(bg_color)
-                    .border()
+                    .border_1()
                     .border_color(border_color)
                     .when(!self.disabled, |this| {
                         this.group_hover(group_id.clone(), |el| {

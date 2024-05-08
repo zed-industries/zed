@@ -161,7 +161,7 @@ impl RenderOnce for ListItem {
                 this
                     // TODO: Add focus state
                     // .when(self.state == InteractionState::Focused, |this| {
-                    //     this.border()
+                    //     this.border_1()
                     //         .border_color(cx.theme().colors().border_focused)
                     // })
                     .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
@@ -186,7 +186,7 @@ impl RenderOnce for ListItem {
                         this
                             // TODO: Add focus state
                             // .when(self.state == InteractionState::Focused, |this| {
-                            //     this.border()
+                            //     this.border_1()
                             //         .border_color(cx.theme().colors().border_focused)
                             // })
                             .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))

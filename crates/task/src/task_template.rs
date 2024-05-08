@@ -58,6 +58,10 @@ pub struct TaskTemplate {
     /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
     #[serde(default)]
     pub reveal: RevealStrategy,
+
+    /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
